@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Curvas de Nível — Bolsa Irriga</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+
+/* Header */
+.hdr{background:linear-gradient(135deg,#003d5c,#0077b6,#00b4d8);color:#fff;padding:.55rem 1rem;display:flex;align-items:center;gap:.8rem;flex-shrink:0;box-shadow:0 3px 12px rgba(0,0,0,.2)}
+.hdr-logo img{height:40px;width:40px;object-fit:contain;background:#fff;border-radius:8px;padding:4px}
+.hdr-brand h1{font-size:1rem;font-weight:800}
+.hdr-brand p{font-size:.68rem;opacity:.85}
+.hdr-dev{margin-left:auto;text-align:right;font-size:.65rem;line-height:1.6;opacity:.9}
+.hdr-dev b{font-size:.75rem}
+
+/* Layout */
+.body{display:flex;flex:1;overflow:hidden}
+
+/* Sidebar */
+.sidebar{width:310px;flex-shrink:0;background:#fff;border-right:2px solid #d0e4f0;display:flex;flex-direction:column;overflow-y:auto}
+.sb-section{padding:.75rem .9rem;border-bottom:1px solid #e8f0f8}
+.sb-title{font-size:.72rem;font-weight:800;color:#0077b6;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.6rem;display:flex;align-items:center;gap:.35rem}
+.sb-title::before{content:'';width:3px;height:1em;background:#0077b6;border-radius:2px}
+.field{display:flex;flex-direction:column;gap:.25rem;margin-bottom:.55rem}
+.field label{font-size:.7rem;font-weight:700;color:#607080;text-transform:uppercase;letter-spacing:.04em}
+.field small{font-size:.65rem;color:#90a4b4;line-height:1.4}
+input[type=text],input[type=password],select{padding:.42rem .65rem;border:1.5px solid #b0cce8;border-radius:7px;font-size:.85rem;color:#1a2535;background:#fafeff;outline:none;transition:border-color .15s;width:100%}
+input:focus,select:focus{border-color:#0077b6;box-shadow:0 0 0 3px rgba(0,119,182,.12)}
+.iu{display:flex}
+.iu input{flex:1;border-radius:7px 0 0 7px}
+.iu button{border:1.5px solid #b0cce8;border-left:none;border-radius:0 7px 7px 0;padding:.42rem .7rem;background:#e3f2fd;color:#0077b6;font-size:.8rem;font-weight:700;cursor:pointer}
+.iu button:hover{background:#c8e6f8}
+.btn{width:100%;padding:.6rem;border:none;border-radius:8px;font-size:.88rem;font-weight:800;cursor:pointer;transition:all .15s;margin-bottom:.4rem}
+.btn-blue{background:#0077b6;color:#fff}.btn-blue:hover{background:#005f94}
+.btn-green{background:#2e7d32;color:#fff}.btn-green:hover{background:#1b5e20}
+.btn-red{background:#c62828;color:#fff}.btn-red:hover{background:#8e1c1c}
+.btn-out{background:#fff;color:#0077b6;border:2px solid #0077b6}.btn-out:hover{background:#e3f2fd}
+.btn:disabled{opacity:.45;cursor:default}
+
+/* Status */
+.status{font-size:.75rem;padding:.45rem .65rem;border-radius:6px;margin-bottom:.4rem;line-height:1.5;display:none}
+.status.info{background:#e3f2fd;color:#003d5c;border-left:3px solid #0077b6;display:block}
+.status.ok{background:#e8f5e9;color:#1b5e20;border-left:3px solid #2e7d32;display:block}
+.status.err{background:#ffebee;color:#c62828;border-left:3px solid #c62828;display:block}
+.status.warn{background:#fff8e1;color:#e07b00;border-left:3px solid #f59e0b;display:block}
+
+/* Steps */
+.steps{display:flex;flex-direction:column;gap:.3rem;margin-bottom:.6rem}
+.step{display:flex;align-items:center;gap:.5rem;font-size:.75rem;color:#607080;padding:.3rem .5rem;border-radius:6px;background:#f4f7fb}
+.step.active{background:#e3f2fd;color:#0077b6;font-weight:700}
+.step.done{background:#e8f5e9;color:#2e7d32;font-weight:600}
+.step-num{width:20px;height:20px;border-radius:50%;background:#d0dde8;color:#fff;font-size:.7rem;font-weight:900;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.step.active .step-num{background:#0077b6}
+.step.done .step-num{background:#2e7d32}
+
+/* Legend */
+.legend{padding:.5rem .9rem}
+.leg-title{font-size:.7rem;font-weight:800;color:#607080;text-transform:uppercase;margin-bottom:.4rem}
+.leg-bar{height:14px;border-radius:4px;background:linear-gradient(to right,#228B22,#6BBF00,#FFD700,#D2691E,#8B4513,#800000);margin-bottom:.25rem}
+.leg-labels{display:flex;justify-content:space-between;font-size:.64rem;color:#607080}
+
+/* Elevation info */
+#elev-info{position:absolute;bottom:30px;left:325px;background:rgba(0,0,0,.7);color:#fff;padding:.35rem .7rem;border-radius:6px;font-size:.8rem;pointer-events:none;display:none;z-index:10}
+
+/* Map */
+#map{flex:1;position:relative}
+
+/* Progress bar */
+#progress{position:absolute;top:0;left:0;right:0;height:3px;background:#0077b6;transform:scaleX(0);transform-origin:left;transition:transform .3s;z-index:20}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div class="hdr-logo"><img src="logo perfil branca.png" alt="" onerror="this.style.display='none'"></div>
+  <div class="hdr-brand">
+    <h1>Curvas de N&iacute;vel</h1>
+    <p>Nivelamento via Google Elevation API &middot; Exporta&#231;&atilde;o KML</p>
+  </div>
+  <div class="hdr-dev"><b>Jo&atilde;o Paulo de Oliveira</b><br>Eng. Agr&ocirc;nomo &middot; Irriga&ccedil;&atilde;o<br>bolsairriga.com.br</div>
+</div>
+
+<div class="body">
+
+<!-- Sidebar -->
+<div class="sidebar">
+
+  <!-- API Key -->
+  <div class="sb-section">
+    <div class="sb-title">Chave API Google</div>
+    <div class="field">
+      <label>Google Maps API Key</label>
+      <div class="iu">
+        <input type="password" id="apiKey" placeholder="AIzaSy...">
+        <button onclick="saveKey()">Salvar</button>
+      </div>
+      <small>Habilitar: Maps JavaScript API + Elevation API &middot; <a href="https://console.cloud.google.com/apis" target="_blank" style="color:#0077b6">console.cloud.google.com</a></small>
+    </div>
+    <button class="btn btn-blue" onclick="initMaps()">Carregar Mapa</button>
+  </div>
+
+  <!-- Passos -->
+  <div class="sb-section">
+    <div class="sb-title">Etapas</div>
+    <div class="steps">
+      <div class="step active" id="step1"><span class="step-num">1</span>Clique no mapa: ponto SW (inferior esq.)</div>
+      <div class="step" id="step2"><span class="step-num">2</span>Clique no mapa: ponto NE (superior dir.)</div>
+      <div class="step" id="step3"><span class="step-num">3</span>Gerar curvas de n&iacute;vel</div>
+      <div class="step" id="step4"><span class="step-num">4</span>Exportar KML</div>
+    </div>
+    <button class="btn btn-red" id="btnReset" onclick="resetArea()" style="font-size:.78rem;padding:.4rem">&#8634; Redefinir &Aacute;rea</button>
+  </div>
+
+  <!-- Parâmetros -->
+  <div class="sb-section">
+    <div class="sb-title">Par&acirc;metros</div>
+    <div class="field">
+      <label>Resolu&ccedil;&atilde;o da grade</label>
+      <select id="gridRes">
+        <option value="10">10 × 10 (100 pontos) — r&aacute;pido</option>
+        <option value="15">15 × 15 (225 pontos)</option>
+        <option value="20" selected>20 × 20 (400 pontos) — recomendado</option>
+        <option value="25">25 × 25 (625 pontos)</option>
+        <option value="30">30 × 30 (900 pontos)</option>
+        <option value="40">40 × 40 (1600 pontos) — lento</option>
+        <option value="50">50 × 50 (2500 pontos) — muito lento</option>
+      </select>
+      <small>Resolução SRTM dos dados: ~30 m. Grades maiores = mais requisições à API.</small>
+    </div>
+    <div class="field">
+      <label>Intervalo de curvas</label>
+      <select id="contourInt">
+        <option value="1">1 m</option>
+        <option value="2">2 m</option>
+        <option value="5" selected>5 m</option>
+        <option value="10">10 m</option>
+        <option value="20">20 m</option>
+        <option value="50">50 m</option>
+        <option value="100">100 m</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Curva mestra a cada</label>
+      <select id="masterEvery">
+        <option value="5" selected>5 curvas</option>
+        <option value="10">10 curvas</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Ações -->
+  <div class="sb-section">
+    <div class="sb-title">A&ccedil;&otilde;es</div>
+    <div id="statusBox" class="status"></div>
+    <button class="btn btn-blue" id="btnGerar" onclick="gerar()" disabled>&#9650; Gerar Curvas de N&iacute;vel</button>
+    <button class="btn btn-green" id="btnKML" onclick="exportarKML()" disabled>&#128462; Exportar KML</button>
+    <button class="btn btn-out" id="btnLimpar" onclick="limparCurvas()" disabled>&#10005; Limpar Curvas</button>
+  </div>
+
+  <!-- Info -->
+  <div class="sb-section" id="infoBox" style="display:none">
+    <div class="sb-title">Resultado</div>
+    <div id="infoContent" style="font-size:.75rem;color:#1a2535;line-height:1.8"></div>
+  </div>
+
+  <!-- Legenda -->
+  <div class="legend" id="legendBox" style="display:none">
+    <div class="leg-title">Legenda de Altitude</div>
+    <div class="leg-bar"></div>
+    <div class="leg-labels">
+      <span id="legMin">—</span>
+      <span id="legMid">—</span>
+      <span id="legMax">—</span>
+    </div>
+  </div>
+
+</div>
+<!-- /Sidebar -->
+
+<!-- Mapa -->
+<div id="map">
+  <div id="progress"></div>
+  <div id="elev-info"></div>
+  <div id="map-placeholder" style="display:flex;align-items:center;justify-content:center;height:100%;background:#e8edf2;flex-direction:column;gap:1rem;color:#607080">
+    <span style="font-size:3rem">🗺️</span>
+    <p style="font-size:.95rem">Insira a chave API e clique em <b>Carregar Mapa</b></p>
+    <p style="font-size:.78rem">Maps JavaScript API + Elevation API devem estar habilitadas</p>
+  </div>
+</div>
+
+</div><!-- /body -->
+
+<script>
+// ── Estado global ──────────────────────────────────────────────────────
+let map, elevService;
+let pt1 = null, pt2 = null;
+let markers = [];
+let rectOverlay = null;
+let contourLines = [];
+let elevGrid = null, lats = null, lngs = null;
+let minElev = 0, maxElev = 0;
+let contoursData = [];
+
+// ── Utilitários ────────────────────────────────────────────────────────
+function $(id) { return document.getElementById(id); }
+
+function setStatus(msg, type='info') {
+  const el = $('statusBox');
+  el.textContent = msg;
+  el.className = 'status ' + type;
+}
+
+function setStep(n) {
+  for (let i = 1; i <= 4; i++) {
+    const el = $('step'+i);
+    el.className = 'step' + (i < n ? ' done' : i === n ? ' active' : '');
+  }
+}
+
+function setProgress(p) {
+  $('progress').style.transform = `scaleX(${p})`;
+}
+
+function saveKey() {
+  const k = $('apiKey').value.trim();
+  if (k) { localStorage.setItem('gmaps_key', k); setStatus('Chave salva.', 'ok'); }
+}
+
+// ── Cores por elevação ─────────────────────────────────────────────────
+function elevColor(level, mn, mx) {
+  const t = mx > mn ? (level - mn) / (mx - mn) : 0;
+  const stops = [
+    [34,139,34],[107,186,52],[255,215,0],[210,105,30],[139,69,19],[128,0,0]
+  ];
+  const n = stops.length - 1;
+  const idx = Math.min(Math.floor(t * n), n - 1);
+  const f = t * n - idx;
+  const a = stops[idx], b = stops[Math.min(idx+1,n)];
+  const r = Math.round(a[0]+(b[0]-a[0])*f);
+  const g = Math.round(a[1]+(b[1]-a[1])*f);
+  const bl = Math.round(a[2]+(b[2]-a[2])*f);
+  return {hex:`#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${bl.toString(16).padStart(2,'0')}`, r, g, b:bl};
+}
+
+// ── Marching Squares ───────────────────────────────────────────────────
+function marchingSquares(elev, lts, lns, level) {
+  const rows = elev.length, cols = elev[0].length;
+  const segs = [];
+
+  for (let r = 0; r < rows-1; r++) {
+    for (let c = 0; c < cols-1; c++) {
+      const tl=elev[r][c], tr=elev[r][c+1], br=elev[r+1][c+1], bl=elev[r+1][c];
+      const tlb=tl>=level?1:0, trb=tr>=level?1:0, brb=br>=level?1:0, blb=bl>=level?1:0;
+      const ci=(tlb<<3)|(trb<<2)|(brb<<1)|blb;
+      if(ci===0||ci===15) continue;
+
+      function interp(la,va,lb,vb) {
+        return Math.abs(vb-va)<1e-10?(la+lb)/2:la+(lb-la)*(level-va)/(vb-va);
+      }
+      const T={lat:lts[r], lng:interp(lns[c],tl,lns[c+1],tr)};
+      const R={lat:interp(lts[r],tr,lts[r+1],br), lng:lns[c+1]};
+      const B={lat:lts[r+1], lng:interp(lns[c],bl,lns[c+1],br)};
+      const L={lat:interp(lts[r],tl,lts[r+1],bl), lng:lns[c]};
+      const ctr=(tl+tr+br+bl)/4;
+
+      switch(ci) {
+        case 1:  segs.push([B,L]); break;
+        case 2:  segs.push([R,B]); break;
+        case 3:  segs.push([R,L]); break;
+        case 4:  segs.push([T,R]); break;
+        case 5:
+          if(ctr>=level){segs.push([T,L]);segs.push([R,B]);}
+          else          {segs.push([T,R]);segs.push([B,L]);}
+          break;
+        case 6:  segs.push([T,B]); break;
+        case 7:  segs.push([T,L]); break;
+        case 8:  segs.push([T,L]); break;
+        case 9:  segs.push([T,B]); break;
+        case 10:
+          if(ctr>=level){segs.push([T,R]);segs.push([B,L]);}
+          else          {segs.push([T,L]);segs.push([R,B]);}
+          break;
+        case 11: segs.push([T,R]); break;
+        case 12: segs.push([R,L]); break;
+        case 13: segs.push([R,B]); break;
+        case 14: segs.push([B,L]); break;
+      }
+    }
+  }
+  return chainSegments(segs);
+}
+
+function ptKey(p) {
+  return `${p.lat.toFixed(7)}_${p.lng.toFixed(7)}`;
+}
+
+function chainSegments(segs) {
+  if(!segs.length) return [];
+  const adj = new Map();
+  segs.forEach((s,i) => {
+    const k0=ptKey(s[0]), k1=ptKey(s[1]);
+    if(!adj.has(k0)) adj.set(k0,[]);
+    if(!adj.has(k1)) adj.set(k1,[]);
+    adj.get(k0).push({i,end:0});
+    adj.get(k1).push({i,end:1});
+  });
+  const vis = new Uint8Array(segs.length);
+  const chains = [];
+  for(let s=0;s<segs.length;s++) {
+    if(vis[s]) continue;
+    vis[s]=1;
+    const chain=[segs[s][0],segs[s][1]];
+    // extend forward
+    let ext=true;
+    while(ext) {
+      ext=false;
+      const nbrs=adj.get(ptKey(chain[chain.length-1]))||[];
+      for(const {i,end} of nbrs) {
+        if(!vis[i]){vis[i]=1;chain.push(segs[i][1-end]);ext=true;break;}
+      }
+    }
+    // extend backward
+    ext=true;
+    while(ext) {
+      ext=false;
+      const nbrs=adj.get(ptKey(chain[0]))||[];
+      for(const {i,end} of nbrs) {
+        if(!vis[i]){vis[i]=1;chain.unshift(segs[i][1-end]);ext=true;break;}
+      }
+    }
+    if(chain.length>=2) chains.push(chain);
+  }
+  return chains;
+}
+
+// ── Google Maps init ───────────────────────────────────────────────────
+function initMaps() {
+  const key = $('apiKey').value.trim() || localStorage.getItem('gmaps_key');
+  if(!key) { setStatus('Insira a chave API primeiro.','err'); return; }
+  $('apiKey').value = key;
+  localStorage.setItem('gmaps_key', key);
+
+  if(window.google && window.google.maps) { initMap(); return; }
+
+  setStatus('Carregando Google Maps...','info');
+  const s = document.createElement('script');
+  s.src = `https://maps.googleapis.com/maps/api/js?key=${key}&callback=initMap&v=weekly`;
+  s.async = true;
+  s.onerror = () => setStatus('Erro ao carregar Maps. Verifique a chave e as APIs habilitadas.','err');
+  document.head.appendChild(s);
+}
+
+window.initMap = function() {
+  $('map-placeholder').style.display='none';
+  map = new google.maps.Map($('map'), {
+    center:{lat:-15.8, lng:-47.9},
+    zoom:5,
+    mapTypeId:'hybrid',
+    mapTypeControl:true,
+    streetViewControl:false,
+    fullscreenControl:true,
+  });
+  elevService = new google.maps.ElevationService();
+  setStatus('Mapa carregado. Clique no SW da área.','ok');
+  setStep(1);
+
+  map.addListener('click', e => onMapClick(e.latLng));
+  map.addListener('mousemove', e => showElevInfo(e.latLng, e.domEvent));
+};
+
+// ── Seleção de área ────────────────────────────────────────────────────
+function onMapClick(latLng) {
+  if(!pt1) {
+    pt1 = latLng;
+    addMarker(latLng,'SW');
+    setStatus('Agora clique no NE (superior direito) da área.','info');
+    setStep(2);
+  } else if(!pt2) {
+    pt2 = latLng;
+    addMarker(latLng,'NE');
+    drawRect();
+    setStatus('Área definida. Ajuste os parâmetros e clique em Gerar.','ok');
+    setStep(3);
+    $('btnGerar').disabled = false;
+  }
+}
+
+function addMarker(pos, label) {
+  const m = new google.maps.Marker({
+    position:pos, map,
+    label:{text:label,color:'#fff',fontWeight:'bold'},
+    icon:{path:google.maps.SymbolPath.CIRCLE,scale:8,fillColor:'#0077b6',fillOpacity:1,strokeColor:'#fff',strokeWeight:2}
+  });
+  markers.push(m);
+}
+
+function drawRect() {
+  if(rectOverlay) rectOverlay.setMap(null);
+  const sw = {lat:Math.min(pt1.lat(),pt2.lat()), lng:Math.min(pt1.lng(),pt2.lng())};
+  const ne = {lat:Math.max(pt1.lat(),pt2.lat()), lng:Math.max(pt1.lng(),pt2.lng())};
+  rectOverlay = new google.maps.Rectangle({
+    bounds:{south:sw.lat,west:sw.lng,north:ne.lat,east:ne.lng},
+    map, strokeColor:'#0077b6', strokeWeight:2,
+    fillColor:'#0077b6', fillOpacity:.08
+  });
+}
+
+function resetArea() {
+  pt1=null; pt2=null;
+  markers.forEach(m=>m.setMap(null)); markers=[];
+  if(rectOverlay){rectOverlay.setMap(null);rectOverlay=null;}
+  limparCurvas();
+  $('btnGerar').disabled=true;
+  setStatus('Área redefinida. Clique no SW.','info');
+  setStep(1);
+  $('infoBox').style.display='none';
+  $('legendBox').style.display='none';
+}
+
+// ── Gerar curvas ───────────────────────────────────────────────────────
+async function gerar() {
+  if(!pt1||!pt2){setStatus('Defina a área primeiro.','err');return;}
+
+  const n  = parseInt($('gridRes').value);
+  const sw = {lat:Math.min(pt1.lat(),pt2.lat()), lng:Math.min(pt1.lng(),pt2.lng())};
+  const ne = {lat:Math.max(pt1.lat(),pt2.lat()), lng:Math.max(pt1.lng(),pt2.lng())};
+
+  // Gera grade de pontos
+  lats=[]; lngs=[];
+  for(let r=0;r<n;r++) lats.push(ne.lat - r*(ne.lat-sw.lat)/(n-1));
+  for(let c=0;c<n;c++) lngs.push(sw.lng + c*(ne.lng-sw.lng)/(n-1));
+
+  const allPts=[];
+  for(let r=0;r<n;r++) for(let c=0;c<n;c++) allPts.push({lat:lats[r],lng:lngs[c]});
+
+  // Busca elevação em lotes de 512
+  setStatus(`Buscando elevação de ${allPts.length} pontos...`,'info');
+  $('btnGerar').disabled=true;
+  limparCurvas();
+
+  const BATCH=512;
+  let results=[];
+  const batches=Math.ceil(allPts.length/BATCH);
+
+  for(let b=0;b<batches;b++) {
+    setProgress((b+0.5)/batches);
+    const slice=allPts.slice(b*BATCH,(b+1)*BATCH);
+    try {
+      const res=await new Promise((ok,fail)=>{
+        elevService.getElevationForLocations({locations:slice},(r,s)=>{
+          if(s==='OK') ok(r); else fail(s);
+        });
+      });
+      results=results.concat(res);
+    } catch(e) {
+      setStatus('Erro na Elevation API: '+e+'. Verifique a chave e as APIs habilitadas.','err');
+      $('btnGerar').disabled=false;
+      setProgress(0);
+      return;
+    }
+    if(b<batches-1) await new Promise(r=>setTimeout(r,200));
+  }
+
+  setProgress(1);
+
+  // Reorganiza em grade 2D
+  elevGrid=[];
+  for(let r=0;r<n;r++) {
+    elevGrid.push([]);
+    for(let c=0;c<n;c++) elevGrid[r].push(results[r*n+c].elevation);
+  }
+
+  // Min/max
+  minElev=Infinity; maxElev=-Infinity;
+  elevGrid.flat().forEach(v=>{if(v<minElev)minElev=v;if(v>maxElev)maxElev=v;});
+
+  // Gera curvas
+  const interval=parseInt($('contourInt').value);
+  const masterEvery=parseInt($('masterEvery').value);
+  const first=Math.ceil(minElev/interval)*interval;
+  contoursData=[];
+
+  let lineCount=0;
+  for(let lv=first;lv<=maxElev;lv+=interval) {
+    const chains=marchingSquares(elevGrid,lats,lngs,lv);
+    if(!chains.length) continue;
+    const isMaster=(Math.round(lv/interval)%masterEvery===0);
+    contoursData.push({level:lv,chains,isMaster});
+
+    const col=elevColor(lv,minElev,maxElev);
+    chains.forEach(chain=>{
+      if(chain.length<2) return;
+      const poly=new google.maps.Polyline({
+        path:chain,map,
+        strokeColor:col.hex,
+        strokeWeight:isMaster?2.5:1.2,
+        strokeOpacity:isMaster?0.95:0.75,
+        zIndex:isMaster?2:1
+      });
+      // Tooltip
+      poly.addListener('mouseover', e=>{
+        showFixedInfo(lv, isMaster);
+      });
+      poly.addListener('mouseout', ()=>{$('elev-info').style.display='none';});
+      contourLines.push(poly);
+      lineCount+=chain.length;
+    });
+  }
+
+  // Atualiza legenda
+  $('legendBox').style.display='block';
+  $('legMin').textContent=minElev.toFixed(1)+' m';
+  $('legMid').textContent=((minElev+maxElev)/2).toFixed(1)+' m';
+  $('legMax').textContent=maxElev.toFixed(1)+' m';
+
+  // Área aproximada
+  const dLat=ne.lat-sw.lat, dLng=ne.lng-sw.lng;
+  const areaKm2=(dLat*111.32)*(dLng*111.32*Math.cos((ne.lat+sw.lat)/2*Math.PI/180));
+
+  $('infoBox').style.display='block';
+  $('infoContent').innerHTML=
+    `<b>Área:</b> ${areaKm2.toFixed(2)} km²<br>`+
+    `<b>Alt. mínima:</b> ${minElev.toFixed(1)} m<br>`+
+    `<b>Alt. máxima:</b> ${maxElev.toFixed(1)} m<br>`+
+    `<b>Amplitude:</b> ${(maxElev-minElev).toFixed(1)} m<br>`+
+    `<b>Intervalo:</b> ${interval} m<br>`+
+    `<b>Curvas geradas:</b> ${contoursData.length}<br>`+
+    `<b>Pontos da grade:</b> ${n}×${n}`;
+
+  setStatus(`Concluído: ${contoursData.length} curvas de nível.`,'ok');
+  setProgress(0);
+  setStep(4);
+  $('btnGerar').disabled=false;
+  $('btnKML').disabled=false;
+  $('btnLimpar').disabled=false;
+}
+
+function limparCurvas() {
+  contourLines.forEach(l=>l.setMap(null));
+  contourLines=[];
+  contoursData=[];
+  $('btnKML').disabled=true;
+  $('btnLimpar').disabled=true;
+}
+
+// ── Info de elevação ───────────────────────────────────────────────────
+function showElevInfo(latLng, domEvt) {
+  if(!elevGrid||!lats||!lngs) return;
+  const lat=latLng.lat(), lng=latLng.lng();
+  // Encontra célula mais próxima
+  let ri=0,ci=0,minD=Infinity;
+  for(let r=0;r<lats.length;r++) for(let c=0;c<lngs.length;c++) {
+    const d=Math.abs(lats[r]-lat)+Math.abs(lngs[c]-lng);
+    if(d<minD){minD=d;ri=r;ci=c;}
+  }
+  if(minD<0.05) {
+    const el=$('elev-info');
+    el.textContent=`${lats[ri].toFixed(5)}, ${lngs[ci].toFixed(5)} | Alt.: ${elevGrid[ri][ci].toFixed(1)} m`;
+    el.style.display='block';
+  }
+}
+
+function showFixedInfo(level, isMaster) {
+  const el=$('elev-info');
+  el.textContent=`Cota: ${level} m${isMaster?' (curva mestra)':''}`;
+  el.style.display='block';
+}
+
+// ── KML Export ─────────────────────────────────────────────────────────
+function exportarKML() {
+  if(!contoursData.length){setStatus('Gere as curvas primeiro.','err');return;}
+
+  const date=new Date().toLocaleDateString('pt-BR');
+
+  let kml=`<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+<name>Curvas de Nivel - Bolsa Irriga</name>
+<description>Gerado em ${date} | Alt: ${minElev.toFixed(1)} - ${maxElev.toFixed(1)} m | Intervalo: ${$('contourInt').value} m</description>
+`;
+
+  // Estilos
+  contoursData.forEach(({level,isMaster})=>{
+    const col=elevColor(level,minElev,maxElev);
+    const kmlColor=`ff${col.b.toString(16).padStart(2,'0')}${col.g.toString(16).padStart(2,'0')}${col.r.toString(16).padStart(2,'0')}`;
+    kml+=`<Style id="c${level}"><LineStyle><color>${kmlColor}</color><width>${isMaster?2:1}</width></LineStyle></Style>\n`;
+  });
+
+  // Pasta mestre / intermediária
+  kml+=`<Folder><name>Curvas Mestras</name>\n`;
+  contoursData.filter(d=>d.isMaster).forEach(({level,chains})=>{
+    chains.forEach((ch,i)=>{
+      if(ch.length<2) return;
+      const coords=ch.map(p=>`${p.lng.toFixed(7)},${p.lat.toFixed(7)},0`).join(' ');
+      kml+=`<Placemark><name>${level} m</name><styleUrl>#c${level}</styleUrl>`+
+           `<LineString><tessellate>1</tessellate><altitudeMode>clampToGround</altitudeMode>`+
+           `<coordinates>${coords}</coordinates></LineString></Placemark>\n`;
+    });
+  });
+  kml+=`</Folder>\n`;
+
+  kml+=`<Folder><name>Curvas Intermediárias</name>\n`;
+  contoursData.filter(d=>!d.isMaster).forEach(({level,chains})=>{
+    chains.forEach((ch,i)=>{
+      if(ch.length<2) return;
+      const coords=ch.map(p=>`${p.lng.toFixed(7)},${p.lat.toFixed(7)},0`).join(' ');
+      kml+=`<Placemark><name>${level} m</name><styleUrl>#c${level}</styleUrl>`+
+           `<LineString><tessellate>1</tessellate><altitudeMode>clampToGround</altitudeMode>`+
+           `<coordinates>${coords}</coordinates></LineString></Placemark>\n`;
+    });
+  });
+  kml+=`</Folder>\n`;
+
+  kml+=`</Document></kml>`;
+
+  const blob=new Blob([kml],{type:'application/vnd.google-earth.kml+xml'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=`curvas-nivel-${date.replace(/\//g,'-')}.kml`;
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),60000);
+  setStatus('KML exportado com sucesso.','ok');
+}
+
+// ── Init ───────────────────────────────────────────────────────────────
+const savedKey=localStorage.getItem('gmaps_key');
+if(savedKey) $('apiKey').value=savedKey;
+</script>
+
+</body>
+</html>
