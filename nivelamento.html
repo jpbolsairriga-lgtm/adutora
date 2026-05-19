@@ -709,22 +709,39 @@ function exportarKML() {
 }
 
 // ── Relatório PDF ──────────────────────────────────────────────────────
-function getBoundsZoom(sw,ne,W,H){
-  const T=256,LN2=Math.LN2;
-  const latRad=lat=>Math.log((1+Math.sin(lat*Math.PI/180))/(1-Math.sin(lat*Math.PI/180)))/2;
-  const latF=Math.abs(latRad(ne.lat)-latRad(sw.lat))/Math.PI;
-  const lngF=Math.abs(ne.lng-sw.lng)/360;
-  const zL=Math.floor(Math.log(H/T/latF)/LN2);
-  const zG=Math.floor(Math.log(W/T/lngF)/LN2);
-  return Math.min(zL,zG,20)-1;
-}
-
-function mkLatLngToPx(cLat,cLng,zoom,W,H){
-  const S=256*Math.pow(2,zoom);
-  const wx=lng=>(lng+180)/360*S;
-  const wy=lat=>{const s=Math.sin(lat*Math.PI/180);return(0.5-Math.log((1+s)/(1-s))/(4*Math.PI))*S;};
-  const cx=wx(cLng),cy=wy(cLat);
-  return(lat,lng)=>({x:wx(lng)-cx+W/2,y:wy(lat)-cy+H/2});
+// Captura tiles de satélite ESRI World Imagery e retorna data URL
+async function captureSatelliteBg(sw,ne,W,H){
+  function mX(lng){return(lng+180)/360;}
+  function mY(lat){const s=Math.sin(lat*Math.PI/180);return(1-Math.log((1+s)/(1-s))/(2*Math.PI))/2;}
+  const swX=mX(sw.lng),swY=mY(sw.lat),neX=mX(ne.lng),neY=mY(ne.lat);
+  const xSpan=neX-swX,ySpan=swY-neY;
+  const T=256;
+  const zX=Math.floor(Math.log(W/T/xSpan)/Math.LN2);
+  const zY=Math.floor(Math.log(H/T/ySpan)/Math.LN2);
+  const zoom=Math.min(Math.min(zX,zY),16);
+  const n=Math.pow(2,zoom);
+  const txMin=Math.floor(swX*n),txMax=Math.floor(neX*n);
+  const tyMin=Math.floor(neY*n),tyMax=Math.floor(swY*n);
+  const tileW=(1/n)/xSpan*W,tileH=(1/n)/ySpan*H;
+  const canvas=document.createElement('canvas');
+  canvas.width=W;canvas.height=H;
+  const ctx=canvas.getContext('2d');
+  const load=(tx,ty)=>new Promise(res=>{
+    fetch(`https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${zoom}/${ty}/${tx}`,{mode:'cors'})
+      .then(r=>r.blob()).then(blob=>{
+        const img=new Image(),bu=URL.createObjectURL(blob);
+        img.onload=()=>{
+          ctx.drawImage(img,Math.round((tx/n-swX)/xSpan*W),Math.round((ty/n-neY)/ySpan*H),Math.ceil(tileW+1),Math.ceil(tileH+1));
+          URL.revokeObjectURL(bu);res();
+        };
+        img.onerror=()=>{URL.revokeObjectURL(bu);res();};
+        img.src=bu;
+      }).catch(()=>res());
+  });
+  const tasks=[];
+  for(let tx=txMin;tx<=txMax;tx++) for(let ty=tyMin;ty<=tyMax;ty++) tasks.push(load(tx,ty));
+  await Promise.all(tasks);
+  return canvas.toDataURL('image/jpeg',0.88);
 }
 
 function svgPerfilStr(samples,W,H){
@@ -774,18 +791,29 @@ function svgPerfilStr(samples,W,H){
   </svg>`;
 }
 
-function exportarRelatorio(){
+async function exportarRelatorio(){
   if(!contoursData.length||!mapBounds){setStatus('Gere as curvas primeiro.','err');return;}
   const date=new Date().toLocaleDateString('pt-BR');
   const {sw,ne}=mapBounds;
-
-  // Mapeamento linear: sw→ne preenche o SVG exatamente
   const MW=700,MH=430;
-  const lngR=ne.lng-sw.lng,latR=ne.lat-sw.lat;
+
+  // Projeção Mercator (mesma dos tiles ESRI) — alinhamento perfeito
+  function mX(lng){return(lng+180)/360;}
+  function mY(lat){const s=Math.sin(lat*Math.PI/180);return(1-Math.log((1+s)/(1-s))/(2*Math.PI))/2;}
+  const swX=mX(sw.lng),swY=mY(sw.lat),neX=mX(ne.lng),neY=mY(ne.lat);
+  const xSpan=neX-swX,ySpan=swY-neY;
   const toPx=(lat,lng)=>({
-    x:(lng-sw.lng)/lngR*MW,
-    y:(1-(lat-sw.lat)/latR)*MH
+    x:(mX(lng)-swX)/xSpan*MW,
+    y:(mY(lat)-neY)/ySpan*MH
   });
+
+  // Captura satélite ESRI
+  setStatus('Capturando imagem de satélite...','info');
+  $('btnRelatorio').disabled=true;
+  let bgDataUrl='';
+  try{ bgDataUrl=await captureSatelliteBg(sw,ne,MW,MH); }catch(e){}
+  $('btnRelatorio').disabled=false;
+  setStatus('','info');
 
   // Curvas
   let paths='';
@@ -794,7 +822,7 @@ function exportarRelatorio(){
     chains.forEach(ch=>{
       if(ch.length<2)return;
       const d=ch.map((p,i)=>{const px=toPx(p.lat,p.lng);return`${i?'L':'M'}${px.x.toFixed(1)},${px.y.toFixed(1)}`;}).join('');
-      paths+=`<path d="${d}" fill="none" stroke="${col.hex}" stroke-width="${isMaster?2:0.9}" stroke-opacity="${isMaster?0.95:0.72}"/>`;
+      paths+=`<path d="${d}" fill="none" stroke="${col.hex}" stroke-width="${isMaster?2.5:1}" stroke-opacity="${isMaster?1:0.85}"/>`;
     });
   });
 
@@ -902,8 +930,8 @@ svg.mapa{display:block;width:100%;border:1px solid #b0b0b0;border-radius:3px}
 </div>
 <div class="section">
   <h2>Mapa Topogr&aacute;fico &mdash; Curvas de N&iacute;vel</h2>
-  <svg class="mapa" viewBox="0 0 ${MW} ${MH}" xmlns="http://www.w3.org/2000/svg">
-    <rect width="${MW}" height="${MH}" fill="#f0ede8"/>
+  <svg class="mapa" viewBox="0 0 ${MW} ${MH}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    ${bgDataUrl?`<image href="${bgDataUrl}" width="${MW}" height="${MH}"/>`:`<rect width="${MW}" height="${MH}" fill="#f0ede8"/>`}
     ${paths}
     ${tracePath}
     <g transform="translate(${MW-24},24)">
@@ -911,8 +939,8 @@ svg.mapa{display:block;width:100%;border:1px solid #b0b0b0;border-radius:3px}
       <text y="4" text-anchor="middle" font-size="11" font-weight="bold" fill="#003d5c">N</text>
       <path d="M0,-13 L3.5,-5 L0,-8 L-3.5,-5 Z" fill="#003d5c"/>
     </g>
-    <text x="${MW/2}" y="${MH-4}" text-anchor="middle" font-size="7.5" fill="#888">
-      ${sw.lat.toFixed(4)}°, ${sw.lng.toFixed(4)}° &rarr; ${ne.lat.toFixed(4)}°, ${ne.lng.toFixed(4)}°
+    <text x="${MW/2}" y="${MH-4}" text-anchor="middle" font-size="7" fill="${bgDataUrl?'rgba(255,255,255,0.8)':'#888'}">
+      ${sw.lat.toFixed(4)}°, ${sw.lng.toFixed(4)}° → ${ne.lat.toFixed(4)}°, ${ne.lng.toFixed(4)}° ${bgDataUrl?'· © Esri':''}
     </text>
   </svg>
   <div class="sr">
