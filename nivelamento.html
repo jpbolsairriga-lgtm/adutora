@@ -171,6 +171,7 @@ input:focus,select:focus{border-color:#0077b6;box-shadow:0 0 0 3px rgba(0,119,18
     <div id="statusBox" class="status"></div>
     <button class="btn btn-blue" id="btnGerar" onclick="gerar().catch(e=>{setStatus('⚠ Erro interno: '+(e.message||e),'err');$('btnGerar').disabled=false;setProgress(0);})" disabled>&#9650; Gerar Curvas de N&iacute;vel</button>
     <button class="btn btn-green" id="btnKML" onclick="exportarKML()" disabled>&#128462; Exportar KML</button>
+    <button class="btn" id="btnRelatorio" onclick="exportarRelatorio()" disabled style="background:#6a1b9a;color:#fff">&#128196; Relat&oacute;rio PDF</button>
     <button class="btn btn-out" id="btnLimpar" onclick="limparCurvas()" disabled>&#10005; Limpar Curvas</button>
   </div>
 
@@ -249,6 +250,7 @@ let contourLines = [];
 let elevGrid = null, lats = null, lngs = null;
 let minElev = 0, maxElev = 0;
 let contoursData = [];
+let mapBounds = null;
 
 // ── Utilitários ────────────────────────────────────────────────────────
 function $(id) { return document.getElementById(id); }
@@ -474,6 +476,7 @@ async function gerar() {
   const n  = parseInt($('gridRes').value);
   const sw = {lat:Math.min(pt1.lat(),pt2.lat()), lng:Math.min(pt1.lng(),pt2.lng())};
   const ne = {lat:Math.max(pt1.lat(),pt2.lat()), lng:Math.max(pt1.lng(),pt2.lng())};
+  mapBounds = {sw, ne};
 
   // Gera grade de pontos
   lats=[]; lngs=[];
@@ -614,6 +617,7 @@ async function gerar() {
   setStep(4);
   $('btnGerar').disabled=false;
   $('btnKML').disabled=false;
+  $('btnRelatorio').disabled=false;
   $('btnLimpar').disabled=false;
 }
 
@@ -702,6 +706,214 @@ function exportarKML() {
   a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),60000);
   setStatus('KML exportado com sucesso.','ok');
+}
+
+// ── Relatório PDF ──────────────────────────────────────────────────────
+function getBoundsZoom(sw,ne,W,H){
+  const T=256,LN2=Math.LN2;
+  const latRad=lat=>Math.log((1+Math.sin(lat*Math.PI/180))/(1-Math.sin(lat*Math.PI/180)))/2;
+  const latF=Math.abs(latRad(ne.lat)-latRad(sw.lat))/Math.PI;
+  const lngF=Math.abs(ne.lng-sw.lng)/360;
+  const zL=Math.floor(Math.log(H/T/latF)/LN2);
+  const zG=Math.floor(Math.log(W/T/lngF)/LN2);
+  return Math.min(zL,zG,20)-1;
+}
+
+function mkLatLngToPx(cLat,cLng,zoom,W,H){
+  const S=256*Math.pow(2,zoom);
+  const wx=lng=>(lng+180)/360*S;
+  const wy=lat=>{const s=Math.sin(lat*Math.PI/180);return(0.5-Math.log((1+s)/(1-s))/(4*Math.PI))*S;};
+  const cx=wx(cLng),cy=wy(cLat);
+  return(lat,lng)=>({x:wx(lng)-cx+W/2,y:wy(lat)-cy+H/2});
+}
+
+function svgPerfilStr(samples,W,H){
+  const elevs=samples.map(s=>s.elevation);
+  const dists=[0];
+  for(let i=1;i<samples.length;i++)
+    dists.push(dists[i-1]+haversine(samples[i-1].location,samples[i].location));
+  const totalDist=dists[dists.length-1];
+  const minE=Math.min(...elevs),maxE=Math.max(...elevs),eR=maxE-minE||1;
+  const pad={t:16,r:16,b:30,l:46};
+  const cw=W-pad.l-pad.r,ch=H-pad.t-pad.b;
+  const xS=d=>pad.l+(d/totalDist)*cw;
+  const yS=e=>pad.t+ch-((e-minE)/eR)*ch;
+  let grid='';
+  for(let i=0;i<=5;i++){
+    const d=(totalDist/5)*i,x=xS(d);
+    const lbl=d>=1000?(d/1000).toFixed(1)+'k':Math.round(d)+'';
+    grid+=`<line x1="${x}" y1="${pad.t}" x2="${x}" y2="${pad.t+ch}" stroke="#e8edf2"/>`;
+    grid+=`<text x="${x}" y="${pad.t+ch+12}" text-anchor="middle" font-size="8" fill="#90a4b4">${lbl}</text>`;
+  }
+  for(let i=0;i<=4;i++){
+    const e=minE+(eR/4)*i,y=yS(e);
+    grid+=`<line x1="${pad.l}" y1="${y}" x2="${pad.l+cw}" y2="${y}" stroke="#e8edf2"/>`;
+    grid+=`<text x="${pad.l-4}" y="${y+3}" text-anchor="end" font-size="8" fill="#90a4b4">${Math.round(e)}</text>`;
+  }
+  let path='',area='';
+  samples.forEach((s,i)=>{
+    const x=xS(dists[i]),y=yS(s.elevation);
+    if(i===0){path=`M${x},${y}`;area=`M${x},${pad.t+ch} L${x},${y}`;}
+    else{path+=` L${x},${y}`;area+=` L${x},${y}`;}
+  });
+  area+=` L${xS(totalDist)},${pad.t+ch} Z`;
+  const yRef=yS(elevs[0]);
+  return `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
+    <defs><linearGradient id="pg2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0077b6" stop-opacity=".35"/>
+      <stop offset="100%" stop-color="#0077b6" stop-opacity=".04"/>
+    </linearGradient></defs>
+    ${grid}
+    <line x1="${pad.l}" y1="${yRef}" x2="${pad.l+cw}" y2="${yRef}" stroke="#2e7d32" stroke-width="1" stroke-dasharray="4,3" opacity=".6"/>
+    <path d="${area}" fill="url(#pg2)"/>
+    <path d="${path}" fill="none" stroke="#0077b6" stroke-width="1.8"/>
+    <circle cx="${xS(0)}" cy="${yS(elevs[0])}" r="3.5" fill="#2e7d32" stroke="#fff" stroke-width="1.5"/>
+    <circle cx="${xS(totalDist)}" cy="${yS(elevs[elevs.length-1])}" r="3.5" fill="#c62828" stroke="#fff" stroke-width="1.5"/>
+    <text x="${pad.l+cw/2}" y="${H-2}" text-anchor="middle" font-size="8" fill="#90a4b4">Dist&#226;ncia (m)</text>
+    <text x="9" y="${pad.t+ch/2}" text-anchor="middle" font-size="8" fill="#90a4b4" transform="rotate(-90,9,${pad.t+ch/2})">Cota (m)</text>
+  </svg>`;
+}
+
+function exportarRelatorio(){
+  if(!contoursData.length||!mapBounds){setStatus('Gere as curvas primeiro.','err');return;}
+  const key=$('apiKey').value.trim()||localStorage.getItem('gmaps_key');
+  const date=new Date().toLocaleDateString('pt-BR');
+  const {sw,ne}=mapBounds;
+  const MW=560,MH=340;
+  const cLat=(sw.lat+ne.lat)/2,cLng=(sw.lng+ne.lng)/2;
+  const zoom=getBoundsZoom(sw,ne,MW,MH);
+  const staticUrl=`https://maps.googleapis.com/maps/api/staticmap?center=${cLat},${cLng}&zoom=${zoom}&size=${MW}x${MH}&maptype=satellite&key=${key}`;
+
+  // Curvas → SVG paths
+  const toPx=mkLatLngToPx(cLat,cLng,zoom,MW,MH);
+  let paths='';
+  contoursData.forEach(({level,chains,isMaster})=>{
+    const col=elevColor(level,minElev,maxElev);
+    chains.forEach(ch=>{
+      if(ch.length<2) return;
+      const d=ch.map((p,i)=>{const px=toPx(p.lat,p.lng);return`${i?'L':'M'}${px.x.toFixed(1)},${px.y.toFixed(1)}`;}).join('');
+      paths+=`<path d="${d}" fill="none" stroke="${col.hex}" stroke-width="${isMaster?2:1}" stroke-opacity="${isMaster?.9:.7}"/>`;
+    });
+  });
+
+  // Área
+  const dLat=ne.lat-sw.lat,dLng=ne.lng-sw.lng;
+  const areaKm2=(dLat*111.32)*(dLng*111.32*Math.cos((ne.lat+sw.lat)/2*Math.PI/180));
+  const interval=$('contourInt').value;
+
+  // Estatísticas do card de info
+  const statsHtml=`
+    <div class="sr">
+      <div class="st"><div class="sv">${areaKm2.toFixed(2)} km²</div><div class="sl">&Aacute;rea</div></div>
+      <div class="st"><div class="sv">${minElev.toFixed(1)} m</div><div class="sl">Alt. m&iacute;nima</div></div>
+      <div class="st"><div class="sv">${maxElev.toFixed(1)} m</div><div class="sl">Alt. m&aacute;xima</div></div>
+      <div class="st"><div class="sv">${(maxElev-minElev).toFixed(1)} m</div><div class="sl">Amplitude</div></div>
+      <div class="st"><div class="sv">${interval} m</div><div class="sl">Intervalo</div></div>
+      <div class="st"><div class="sv">${contoursData.length}</div><div class="sl">Curvas</div></div>
+      <div class="st"><div class="sv">${cLat.toFixed(5)}°</div><div class="sl">Latitude</div></div>
+      <div class="st"><div class="sv">${cLng.toFixed(5)}°</div><div class="sl">Longitude</div></div>
+    </div>`;
+
+  // Seção perfil (opcional)
+  let profHtml='';
+  if(perfilSamples){
+    const elevs=perfilSamples.map(s=>s.elevation);
+    const dists=[0];
+    for(let i=1;i<perfilSamples.length;i++)
+      dists.push(dists[i-1]+haversine(perfilSamples[i-1].location,perfilSamples[i].location));
+    const totalDist=dists[dists.length-1];
+    let gain=0,loss=0;
+    for(let i=1;i<elevs.length;i++){const d=elevs[i]-elevs[i-1];if(d>0)gain+=d;else loss+=Math.abs(d);}
+    let maxSl=0;
+    for(let i=1;i<perfilSamples.length;i++){
+      const dd=dists[i]-dists[i-1];
+      if(dd>0)maxSl=Math.max(maxSl,Math.abs((elevs[i]-elevs[i-1])/dd)*100);
+    }
+    const avgSl=totalDist>0?Math.abs((elevs[elevs.length-1]-elevs[0])/totalDist)*100:0;
+    const desn=elevs[elevs.length-1]-elevs[0];
+    profHtml=`
+    <div class="section">
+      <h2>Perfil de Eleva&ccedil;&atilde;o &mdash; Adutora</h2>
+      <div class="sr" style="margin-bottom:.5rem">
+        <div class="st"><div class="sv">${fmtDist(totalDist)}</div><div class="sl">Comprimento</div></div>
+        <div class="st"><div class="sv">${elevs[0].toFixed(1)} m</div><div class="sl">Cota inicial</div></div>
+        <div class="st"><div class="sv">${elevs[elevs.length-1].toFixed(1)} m</div><div class="sl">Cota final</div></div>
+        <div class="st"><div class="sv">${(desn>=0?'+':'')+desn.toFixed(1)} m</div><div class="sl">Desn&iacute;vel</div></div>
+        <div class="st"><div class="sv">+${gain.toFixed(1)} m</div><div class="sl">Ganho acum.</div></div>
+        <div class="st"><div class="sv">-${loss.toFixed(1)} m</div><div class="sl">Perda acum.</div></div>
+        <div class="st"><div class="sv">${avgSl.toFixed(2)}%</div><div class="sl">Incl. m&eacute;dia</div></div>
+        <div class="st"><div class="sv">${maxSl.toFixed(2)}%</div><div class="sl">Incl. m&aacute;x</div></div>
+      </div>
+      ${svgPerfilStr(perfilSamples,560,170)}
+    </div>`;
+  }
+
+  const LSTOPS='#228B22,#6BBF00,#FFD700,#D2691E,#8B4513,#800000';
+  const html=`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
+<title>Curvas de N&iacute;vel &mdash; Bolsa Irriga</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#fff;color:#1a2535;padding:1cm;font-size:11px}
+h1{font-size:15px;font-weight:900;color:#003d5c}
+h2{font-size:11px;font-weight:800;color:#0077b6;margin-bottom:.5rem;padding-bottom:.25rem;border-bottom:1.5px solid #b8dcf0;text-transform:uppercase;letter-spacing:.05em}
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.8rem;padding-bottom:.55rem;border-bottom:2.5px solid #003d5c}
+.hdr-r{text-align:right;color:#607080;font-size:9.5px;line-height:1.7}
+.hdr-r b{color:#003d5c;font-size:11px;display:block}
+.section{margin-bottom:.9rem}
+.map-wrap{position:relative;width:${MW}px;height:${MH}px;margin:0 auto .5rem;border:1px solid #d0e4f0;border-radius:4px;overflow:hidden}
+.map-wrap img{width:${MW}px;height:${MH}px;display:block}
+.map-wrap svg{position:absolute;top:0;left:0;width:${MW}px;height:${MH}px}
+.sr{display:flex;flex-wrap:wrap;gap:.35rem}
+.st{background:#f0f7ff;border:1px solid #d0e4f0;border-radius:5px;padding:.28rem .55rem;min-width:75px}
+.sv{font-size:11.5px;font-weight:800;color:#003d5c}
+.sl{font-size:8.5px;color:#607080;text-transform:uppercase;letter-spacing:.04em}
+.leg{display:flex;align-items:center;gap:.45rem;margin-top:.4rem}
+.leg-bar{flex:1;height:9px;border-radius:3px;background:linear-gradient(to right,${LSTOPS})}
+.leg-lbl{font-size:8.5px;color:#607080;white-space:nowrap}
+.footer{margin-top:1rem;padding-top:.45rem;border-top:1px solid #d0e4f0;color:#aaa;font-size:8.5px;text-align:center;line-height:1.8}
+@media print{body{padding:0}@page{margin:1cm}}
+</style></head><body>
+<div class="hdr">
+  <div>
+    <h1>Curvas de N&iacute;vel &amp; Perfil de Adutora</h1>
+    <p style="color:#607080;font-size:9.5px;margin-top:.2rem">Nivelamento via Google Elevation API &middot; Bolsa Irriga</p>
+  </div>
+  <div class="hdr-r">
+    <b>Jo&atilde;o Paulo de Oliveira</b>
+    Eng. Agr&ocirc;nomo &middot; Especialista em Irriga&ccedil;&atilde;o<br>
+    bolsairriga.com.br &middot; (16) 3702-6571<br>${date}
+  </div>
+</div>
+<div class="section">
+  <h2>Mapa com Curvas de N&iacute;vel</h2>
+  <div class="map-wrap">
+    <img id="smap" src="${staticUrl}" onerror="this.style.background='#e8edf2'">
+    <svg xmlns="http://www.w3.org/2000/svg">${paths}</svg>
+  </div>
+  ${statsHtml}
+  <div class="leg">
+    <span class="leg-lbl">${minElev.toFixed(0)} m</span>
+    <div class="leg-bar"></div>
+    <span class="leg-lbl">${maxElev.toFixed(0)} m</span>
+  </div>
+</div>
+${profHtml}
+<div class="footer">
+  Bolsa Irriga&reg; &mdash; Av. Elias Abr&atilde;o, n&ordm; 140 &middot; Franca &ndash; SP &middot; (16) 3702-6571 &middot; bolsairriga.com.br<br>
+  &copy; 2025 Jo&atilde;o Paulo de Oliveira &middot; Gerado em ${date}
+</div>
+<script>
+window.onload=function(){
+  var img=document.getElementById('smap');
+  var go=function(){setTimeout(function(){window.print();},600);};
+  if(!img||img.complete)go();else{img.onload=go;img.onerror=go;}
+};
+<\/script>
+</body></html>`;
+
+  const win=window.open('','_blank');
+  win.document.write(html);
+  win.document.close();
 }
 
 // ── Adutora / Perfil ───────────────────────────────────────────────────
