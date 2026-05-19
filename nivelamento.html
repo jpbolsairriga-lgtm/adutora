@@ -776,45 +776,62 @@ function svgPerfilStr(samples,W,H){
 
 function exportarRelatorio(){
   if(!contoursData.length||!mapBounds){setStatus('Gere as curvas primeiro.','err');return;}
-  const key=$('apiKey').value.trim()||localStorage.getItem('gmaps_key');
   const date=new Date().toLocaleDateString('pt-BR');
   const {sw,ne}=mapBounds;
-  const MW=560,MH=340;
-  const cLat=(sw.lat+ne.lat)/2,cLng=(sw.lng+ne.lng)/2;
-  const zoom=getBoundsZoom(sw,ne,MW,MH);
-  const staticUrl=`https://maps.googleapis.com/maps/api/staticmap?center=${cLat},${cLng}&zoom=${zoom}&size=${MW}x${MH}&maptype=satellite&key=${key}`;
 
-  // Curvas → SVG paths
-  const toPx=mkLatLngToPx(cLat,cLng,zoom,MW,MH);
+  // Mapeamento linear: sw→ne preenche o SVG exatamente
+  const MW=700,MH=430;
+  const lngR=ne.lng-sw.lng,latR=ne.lat-sw.lat;
+  const toPx=(lat,lng)=>({
+    x:(lng-sw.lng)/lngR*MW,
+    y:(1-(lat-sw.lat)/latR)*MH
+  });
+
+  // Curvas
   let paths='';
   contoursData.forEach(({level,chains,isMaster})=>{
     const col=elevColor(level,minElev,maxElev);
     chains.forEach(ch=>{
-      if(ch.length<2) return;
+      if(ch.length<2)return;
       const d=ch.map((p,i)=>{const px=toPx(p.lat,p.lng);return`${i?'L':'M'}${px.x.toFixed(1)},${px.y.toFixed(1)}`;}).join('');
-      paths+=`<path d="${d}" fill="none" stroke="${col.hex}" stroke-width="${isMaster?2:1}" stroke-opacity="${isMaster?.9:.7}"/>`;
+      paths+=`<path d="${d}" fill="none" stroke="${col.hex}" stroke-width="${isMaster?2:0.9}" stroke-opacity="${isMaster?0.95:0.72}"/>`;
     });
   });
 
-  // Área
+  // Traçado da adutora (se existir)
+  let tracePath='';
+  if(tracePoints.length>=2){
+    const td=tracePoints.map((p,i)=>{const px=toPx(p.lat(),p.lng());return`${i?'L':'M'}${px.x.toFixed(1)},${px.y.toFixed(1)}`;}).join('');
+    tracePath+=`<path d="${td}" fill="none" stroke="#ff6b00" stroke-width="2.5" stroke-opacity="0.95" stroke-linejoin="round"/>`;
+    [0,tracePoints.length-1].forEach(i=>{
+      const px=toPx(tracePoints[i].lat(),tracePoints[i].lng());
+      tracePath+=`<circle cx="${px.x.toFixed(1)}" cy="${px.y.toFixed(1)}" r="4.5" fill="${i===0?'#2e7d32':'#c62828'}" stroke="#fff" stroke-width="1.5"/>`;
+    });
+  }
+
+  // Logo (tenta capturar do DOM via canvas)
+  let logoSrc='';
+  try{
+    const li=document.querySelector('.hdr-logo img');
+    if(li&&li.complete&&li.naturalWidth>0){
+      const c=document.createElement('canvas');
+      c.width=li.naturalWidth;c.height=li.naturalHeight;
+      c.getContext('2d').drawImage(li,0,0);
+      logoSrc=c.toDataURL();
+    }
+  }catch(e){}
+  const logoHtml=logoSrc
+    ?`<img src="${logoSrc}" style="height:52px;width:52px;object-fit:contain;background:#003d5c;border-radius:10px;padding:6px;flex-shrink:0">`
+    :`<div style="width:52px;height:52px;background:linear-gradient(135deg,#003d5c,#0077b6);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:900;flex-shrink:0">BI</div>`;
+
+  // Estatísticas do mapa
   const dLat=ne.lat-sw.lat,dLng=ne.lng-sw.lng;
   const areaKm2=(dLat*111.32)*(dLng*111.32*Math.cos((ne.lat+sw.lat)/2*Math.PI/180));
   const interval=$('contourInt').value;
+  const cLat=(sw.lat+ne.lat)/2,cLng=(sw.lng+ne.lng)/2;
+  const LSTOPS='#228B22,#6BBF00,#FFD700,#D2691E,#8B4513,#800000';
 
-  // Estatísticas do card de info
-  const statsHtml=`
-    <div class="sr">
-      <div class="st"><div class="sv">${areaKm2.toFixed(2)} km²</div><div class="sl">&Aacute;rea</div></div>
-      <div class="st"><div class="sv">${minElev.toFixed(1)} m</div><div class="sl">Alt. m&iacute;nima</div></div>
-      <div class="st"><div class="sv">${maxElev.toFixed(1)} m</div><div class="sl">Alt. m&aacute;xima</div></div>
-      <div class="st"><div class="sv">${(maxElev-minElev).toFixed(1)} m</div><div class="sl">Amplitude</div></div>
-      <div class="st"><div class="sv">${interval} m</div><div class="sl">Intervalo</div></div>
-      <div class="st"><div class="sv">${contoursData.length}</div><div class="sl">Curvas</div></div>
-      <div class="st"><div class="sv">${cLat.toFixed(5)}°</div><div class="sl">Latitude</div></div>
-      <div class="st"><div class="sv">${cLng.toFixed(5)}°</div><div class="sl">Longitude</div></div>
-    </div>`;
-
-  // Seção perfil (opcional)
+  // Seção perfil
   let profHtml='';
   if(perfilSamples){
     const elevs=perfilSamples.map(s=>s.elevation);
@@ -831,10 +848,9 @@ function exportarRelatorio(){
     }
     const avgSl=totalDist>0?Math.abs((elevs[elevs.length-1]-elevs[0])/totalDist)*100:0;
     const desn=elevs[elevs.length-1]-elevs[0];
-    profHtml=`
-    <div class="section">
+    profHtml=`<div class="section">
       <h2>Perfil de Eleva&ccedil;&atilde;o &mdash; Adutora</h2>
-      <div class="sr" style="margin-bottom:.5rem">
+      <div class="sr" style="margin-bottom:.4rem">
         <div class="st"><div class="sv">${fmtDist(totalDist)}</div><div class="sl">Comprimento</div></div>
         <div class="st"><div class="sv">${elevs[0].toFixed(1)} m</div><div class="sl">Cota inicial</div></div>
         <div class="st"><div class="sv">${elevs[elevs.length-1].toFixed(1)} m</div><div class="sl">Cota final</div></div>
@@ -844,39 +860,39 @@ function exportarRelatorio(){
         <div class="st"><div class="sv">${avgSl.toFixed(2)}%</div><div class="sl">Incl. m&eacute;dia</div></div>
         <div class="st"><div class="sv">${maxSl.toFixed(2)}%</div><div class="sl">Incl. m&aacute;x</div></div>
       </div>
-      ${svgPerfilStr(perfilSamples,560,170)}
+      ${svgPerfilStr(perfilSamples,700,175)}
     </div>`;
   }
 
-  const LSTOPS='#228B22,#6BBF00,#FFD700,#D2691E,#8B4513,#800000';
   const html=`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
 <title>Curvas de N&iacute;vel &mdash; Bolsa Irriga</title>
 <style>
+@page{size:A4 portrait;margin:.7cm}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Segoe UI',system-ui,sans-serif;background:#fff;color:#1a2535;padding:1cm;font-size:11px}
-h1{font-size:15px;font-weight:900;color:#003d5c}
-h2{font-size:11px;font-weight:800;color:#0077b6;margin-bottom:.5rem;padding-bottom:.25rem;border-bottom:1.5px solid #b8dcf0;text-transform:uppercase;letter-spacing:.05em}
-.hdr{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.8rem;padding-bottom:.55rem;border-bottom:2.5px solid #003d5c}
-.hdr-r{text-align:right;color:#607080;font-size:9.5px;line-height:1.7}
-.hdr-r b{color:#003d5c;font-size:11px;display:block}
-.section{margin-bottom:.9rem}
-.map-wrap{position:relative;width:${MW}px;height:${MH}px;margin:0 auto .5rem;border:1px solid #d0e4f0;border-radius:4px;overflow:hidden}
-.map-wrap img{width:${MW}px;height:${MH}px;display:block}
-.map-wrap svg{position:absolute;top:0;left:0;width:${MW}px;height:${MH}px}
-.sr{display:flex;flex-wrap:wrap;gap:.35rem}
-.st{background:#f0f7ff;border:1px solid #d0e4f0;border-radius:5px;padding:.28rem .55rem;min-width:75px}
-.sv{font-size:11.5px;font-weight:800;color:#003d5c}
-.sl{font-size:8.5px;color:#607080;text-transform:uppercase;letter-spacing:.04em}
-.leg{display:flex;align-items:center;gap:.45rem;margin-top:.4rem}
-.leg-bar{flex:1;height:9px;border-radius:3px;background:linear-gradient(to right,${LSTOPS})}
-.leg-lbl{font-size:8.5px;color:#607080;white-space:nowrap}
-.footer{margin-top:1rem;padding-top:.45rem;border-top:1px solid #d0e4f0;color:#aaa;font-size:8.5px;text-align:center;line-height:1.8}
-@media print{body{padding:0}@page{margin:1cm}}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#fff;color:#1a2535;font-size:10.5px}
+.hdr{display:flex;align-items:center;gap:.75rem;margin-bottom:.55rem;padding-bottom:.5rem;border-bottom:2.5px solid #003d5c}
+.hdr-info{flex:1}
+h1{font-size:15px;font-weight:900;color:#003d5c;line-height:1.2}
+.hdr-sub{font-size:9px;color:#607080;margin-top:.1rem}
+.hdr-r{text-align:right;color:#607080;font-size:9px;line-height:1.7;flex-shrink:0}
+.hdr-r b{color:#003d5c;font-size:11.5px;display:block;font-weight:900}
+.section{margin-bottom:.6rem}
+h2{font-size:9.5px;font-weight:800;color:#0077b6;margin-bottom:.35rem;padding-bottom:.18rem;border-bottom:1.5px solid #b8dcf0;text-transform:uppercase;letter-spacing:.06em}
+svg.mapa{display:block;width:100%;border:1px solid #b0b0b0;border-radius:3px}
+.sr{display:flex;flex-wrap:wrap;gap:.28rem;margin:.32rem 0}
+.st{background:#f0f7ff;border:1px solid #d0e4f0;border-radius:4px;padding:.2rem .45rem;min-width:66px}
+.sv{font-size:10.5px;font-weight:800;color:#003d5c}
+.sl{font-size:7.5px;color:#607080;text-transform:uppercase;letter-spacing:.04em}
+.leg{display:flex;align-items:center;gap:.4rem;margin-top:.3rem}
+.leg-bar{flex:1;height:8px;border-radius:3px;background:linear-gradient(to right,${LSTOPS})}
+.leg-lbl{font-size:7.5px;color:#607080;white-space:nowrap}
+.footer{margin-top:.6rem;padding-top:.4rem;border-top:1px solid #d0e4f0;color:#aaa;font-size:8px;text-align:center;line-height:1.7}
 </style></head><body>
 <div class="hdr">
-  <div>
+  ${logoHtml}
+  <div class="hdr-info">
     <h1>Curvas de N&iacute;vel &amp; Perfil de Adutora</h1>
-    <p style="color:#607080;font-size:9.5px;margin-top:.2rem">Nivelamento via Google Elevation API &middot; Bolsa Irriga</p>
+    <div class="hdr-sub">Nivelamento via Google Elevation API &middot; Bolsa Irriga</div>
   </div>
   <div class="hdr-r">
     <b>Jo&atilde;o Paulo de Oliveira</b>
@@ -885,12 +901,30 @@ h2{font-size:11px;font-weight:800;color:#0077b6;margin-bottom:.5rem;padding-bott
   </div>
 </div>
 <div class="section">
-  <h2>Mapa com Curvas de N&iacute;vel</h2>
-  <div class="map-wrap">
-    <img id="smap" src="${staticUrl}" onerror="this.style.background='#e8edf2'">
-    <svg xmlns="http://www.w3.org/2000/svg">${paths}</svg>
+  <h2>Mapa Topogr&aacute;fico &mdash; Curvas de N&iacute;vel</h2>
+  <svg class="mapa" viewBox="0 0 ${MW} ${MH}" xmlns="http://www.w3.org/2000/svg">
+    <rect width="${MW}" height="${MH}" fill="#f0ede8"/>
+    ${paths}
+    ${tracePath}
+    <g transform="translate(${MW-24},24)">
+      <circle r="16" fill="rgba(255,255,255,.85)" stroke="#999" stroke-width=".6"/>
+      <text y="4" text-anchor="middle" font-size="11" font-weight="bold" fill="#003d5c">N</text>
+      <path d="M0,-13 L3.5,-5 L0,-8 L-3.5,-5 Z" fill="#003d5c"/>
+    </g>
+    <text x="${MW/2}" y="${MH-4}" text-anchor="middle" font-size="7.5" fill="#888">
+      ${sw.lat.toFixed(4)}°, ${sw.lng.toFixed(4)}° &rarr; ${ne.lat.toFixed(4)}°, ${ne.lng.toFixed(4)}°
+    </text>
+  </svg>
+  <div class="sr">
+    <div class="st"><div class="sv">${areaKm2.toFixed(2)} km&sup2;</div><div class="sl">&Aacute;rea</div></div>
+    <div class="st"><div class="sv">${minElev.toFixed(1)} m</div><div class="sl">Alt. m&iacute;n</div></div>
+    <div class="st"><div class="sv">${maxElev.toFixed(1)} m</div><div class="sl">Alt. m&aacute;x</div></div>
+    <div class="st"><div class="sv">${(maxElev-minElev).toFixed(1)} m</div><div class="sl">Amplitude</div></div>
+    <div class="st"><div class="sv">${interval} m</div><div class="sl">Intervalo</div></div>
+    <div class="st"><div class="sv">${contoursData.length}</div><div class="sl">Curvas</div></div>
+    <div class="st"><div class="sv">${cLat.toFixed(4)}°</div><div class="sl">Lat. centro</div></div>
+    <div class="st"><div class="sv">${cLng.toFixed(4)}°</div><div class="sl">Lng. centro</div></div>
   </div>
-  ${statsHtml}
   <div class="leg">
     <span class="leg-lbl">${minElev.toFixed(0)} m</span>
     <div class="leg-bar"></div>
@@ -902,16 +936,11 @@ ${profHtml}
   Bolsa Irriga&reg; &mdash; Av. Elias Abr&atilde;o, n&ordm; 140 &middot; Franca &ndash; SP &middot; (16) 3702-6571 &middot; bolsairriga.com.br<br>
   &copy; 2025 Jo&atilde;o Paulo de Oliveira &middot; Gerado em ${date}
 </div>
-<script>
-window.onload=function(){
-  var img=document.getElementById('smap');
-  var go=function(){setTimeout(function(){window.print();},600);};
-  if(!img||img.complete)go();else{img.onload=go;img.onerror=go;}
-};
-<\/script>
+<script>setTimeout(()=>window.print(),500)<\/script>
 </body></html>`;
 
   const win=window.open('','_blank');
+  if(!win){setStatus('Popup bloqueado. Permita pop-ups para este site.','err');return;}
   win.document.write(html);
   win.document.close();
 }
