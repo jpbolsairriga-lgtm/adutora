@@ -441,27 +441,62 @@ async function gerar() {
   $('btnGerar').disabled=true;
   limparCurvas();
 
-  const BATCH=512;
-  let results=[];
-  const batches=Math.ceil(allPts.length/BATCH);
+  const BATCH = 512;
+  let results = [];
+  const batches = Math.ceil(allPts.length / BATCH);
 
-  for(let b=0;b<batches;b++) {
-    setProgress((b+0.5)/batches);
-    const slice=allPts.slice(b*BATCH,(b+1)*BATCH);
+  for (let b = 0; b < batches; b++) {
+    setProgress((b + 0.5) / batches);
+    const done = Math.min((b + 1) * BATCH, allPts.length);
+    setStatus(`Buscando elevação... lote ${b+1}/${batches} (${done}/${allPts.length} pontos)`, 'info');
+
+    const slice = allPts.slice(b * BATCH, (b + 1) * BATCH);
+
+    // Wrapper com timeout de 20s para não travar em silêncio
+    let batchRes;
     try {
-      const res=await new Promise((ok,fail)=>{
-        elevService.getElevationForLocations({locations:slice},(r,s)=>{
-          if(s==='OK') ok(r); else fail(s);
-        });
-      });
-      results=results.concat(res);
-    } catch(e) {
-      setStatus('Erro na Elevation API: '+e+'. Verifique a chave e as APIs habilitadas.','err');
-      $('btnGerar').disabled=false;
-      setProgress(0);
-      return;
+      batchRes = await Promise.race([
+        // Tenta API moderna (v3.55+ retorna Promise)
+        elevService.getElevationForLocations({locations: slice})
+          .then(r => r.results ?? r),
+
+        // Timeout
+        new Promise((_, rej) => setTimeout(() =>
+          rej(new Error('TIMEOUT')), 20000))
+      ]);
+    } catch (e1) {
+      // Fallback: callback clássico (compatível com todas as versões)
+      try {
+        batchRes = await Promise.race([
+          new Promise((res, rej) => {
+            elevService.getElevationForLocations({locations: slice}, (r, s) => {
+              if (s === 'OK') res(r);
+              else rej(new Error(s));
+            });
+          }),
+          new Promise((_, rej) => setTimeout(() =>
+            rej(new Error('TIMEOUT')), 20000))
+        ]);
+      } catch (e2) {
+        const code = e2.message;
+        let msg = '⚠ Erro Elevation API: ' + code;
+        if (code === 'TIMEOUT')
+          msg = '⚠ Timeout: Elevation API não respondeu em 20s.\nVerifique: 1) Elevation API habilitada no Console Google  2) Billing ativado  3) Chave sem restrição de domínio que bloqueie este site.';
+        else if (code === 'REQUEST_DENIED')
+          msg = '⚠ REQUEST_DENIED: Elevation API não está habilitada ou billing não foi ativado.\nConsole → APIs e serviços → Ativar APIs → "Elevation API".';
+        else if (code === 'OVER_QUERY_LIMIT')
+          msg = '⚠ OVER_QUERY_LIMIT: Cota da API excedida. Aguarde ou verifique o billing.';
+        else if (code === 'INVALID_REQUEST')
+          msg = '⚠ INVALID_REQUEST: Parâmetros inválidos. Tente uma área menor ou menos pontos.';
+        setStatus(msg, 'err');
+        $('btnGerar').disabled = false;
+        setProgress(0);
+        return;
+      }
     }
-    if(b<batches-1) await new Promise(r=>setTimeout(r,200));
+
+    results = results.concat(batchRes);
+    if (b < batches - 1) await new Promise(r => setTimeout(r, 300));
   }
 
   setProgress(1);
