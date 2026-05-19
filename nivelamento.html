@@ -425,6 +425,7 @@ async function gerar() {
   if(!pt1||!pt2){setStatus('Defina a área primeiro.','err');return;}
 
   const n  = parseInt($('gridRes').value);
+  const apiKey = $('apiKey').value.trim() || localStorage.getItem('gmaps_key');
   const sw = {lat:Math.min(pt1.lat(),pt2.lat()), lng:Math.min(pt1.lng(),pt2.lng())};
   const ne = {lat:Math.max(pt1.lat(),pt2.lat()), lng:Math.max(pt1.lng(),pt2.lng())};
 
@@ -436,7 +437,6 @@ async function gerar() {
   const allPts=[];
   for(let r=0;r<n;r++) for(let c=0;c<n;c++) allPts.push({lat:lats[r],lng:lngs[c]});
 
-  // Busca elevação em lotes de 512
   setStatus(`Buscando elevação de ${allPts.length} pontos...`,'info');
   $('btnGerar').disabled=true;
   limparCurvas();
@@ -448,54 +448,43 @@ async function gerar() {
   for (let b = 0; b < batches; b++) {
     setProgress((b + 0.5) / batches);
     const done = Math.min((b + 1) * BATCH, allPts.length);
-    setStatus(`Buscando elevação... lote ${b+1}/${batches} (${done}/${allPts.length} pontos)`, 'info');
+    setStatus(`Buscando elevação... ${done}/${allPts.length} pontos`, 'info');
 
     const slice = allPts.slice(b * BATCH, (b + 1) * BATCH);
+    const locStr = slice.map(p => `${p.lat},${p.lng}`).join('|');
 
-    // Wrapper com timeout de 20s para não travar em silêncio
-    let batchRes;
+    let resp;
     try {
-      batchRes = await Promise.race([
-        // Tenta API moderna (v3.55+ retorna Promise)
-        elevService.getElevationForLocations({locations: slice})
-          .then(r => r.results ?? r),
-
-        // Timeout
-        new Promise((_, rej) => setTimeout(() =>
-          rej(new Error('TIMEOUT')), 20000))
+      const raw = await Promise.race([
+        fetch(`https://maps.googleapis.com/maps/api/elevation/json?locations=${locStr}&key=${apiKey}`),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('TIMEOUT')), 20000))
       ]);
-    } catch (e1) {
-      // Fallback: callback clássico (compatível com todas as versões)
-      try {
-        batchRes = await Promise.race([
-          new Promise((res, rej) => {
-            elevService.getElevationForLocations({locations: slice}, (r, s) => {
-              if (s === 'OK') res(r);
-              else rej(new Error(s));
-            });
-          }),
-          new Promise((_, rej) => setTimeout(() =>
-            rej(new Error('TIMEOUT')), 20000))
-        ]);
-      } catch (e2) {
-        const code = e2.message;
-        let msg = '⚠ Erro Elevation API: ' + code;
-        if (code === 'TIMEOUT')
-          msg = '⚠ Timeout: Elevation API não respondeu em 20s.\nVerifique: 1) Elevation API habilitada no Console Google  2) Billing ativado  3) Chave sem restrição de domínio que bloqueie este site.';
-        else if (code === 'REQUEST_DENIED')
-          msg = '⚠ REQUEST_DENIED: Elevation API não está habilitada ou billing não foi ativado.\nConsole → APIs e serviços → Ativar APIs → "Elevation API".';
-        else if (code === 'OVER_QUERY_LIMIT')
-          msg = '⚠ OVER_QUERY_LIMIT: Cota da API excedida. Aguarde ou verifique o billing.';
-        else if (code === 'INVALID_REQUEST')
-          msg = '⚠ INVALID_REQUEST: Parâmetros inválidos. Tente uma área menor ou menos pontos.';
-        setStatus(msg, 'err');
-        $('btnGerar').disabled = false;
-        setProgress(0);
-        return;
-      }
+      if (!raw.ok) throw new Error(`HTTP_${raw.status}`);
+      resp = await raw.json();
+    } catch (e) {
+      let msg = `⚠ Erro de rede: ${e.message}`;
+      if (e.message === 'TIMEOUT') msg = '⚠ Timeout: API não respondeu em 20s. Verifique sua conexão.';
+      setStatus(msg, 'err');
+      $('btnGerar').disabled = false;
+      setProgress(0);
+      return;
     }
 
-    results = results.concat(batchRes);
+    if (resp.status !== 'OK') {
+      let msg = `⚠ Elevation API: ${resp.status}`;
+      if (resp.status === 'REQUEST_DENIED')
+        msg = '⚠ REQUEST_DENIED: Chave API não autoriza a Elevation API. Verifique: 1) Elevation API ativada no Console  2) Restrição da chave inclui "Maps Elevation API"  3) Billing ativo.';
+      else if (resp.status === 'OVER_QUERY_LIMIT')
+        msg = '⚠ OVER_QUERY_LIMIT: Cota excedida. Aguarde ou verifique o billing.';
+      else if (resp.status === 'INVALID_REQUEST')
+        msg = '⚠ INVALID_REQUEST: Área inválida. Tente menos pontos.';
+      setStatus(msg, 'err');
+      $('btnGerar').disabled = false;
+      setProgress(0);
+      return;
+    }
+
+    results = results.concat(resp.results);
     if (b < batches - 1) await new Promise(r => setTimeout(r, 300));
   }
 
