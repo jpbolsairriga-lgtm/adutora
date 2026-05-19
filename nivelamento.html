@@ -71,6 +71,19 @@ input:focus,select:focus{border-color:#0077b6;box-shadow:0 0 0 3px rgba(0,119,18
 
 /* Progress bar */
 #progress{position:absolute;top:0;left:0;right:0;height:3px;background:#0077b6;transform:scaleX(0);transform-origin:left;transition:transform .3s;z-index:20}
+
+/* Adutora / Perfil */
+#map-wrap.draw-mode{cursor:crosshair}
+.pstat{display:flex;flex-direction:column;min-width:72px}
+.pstat-v{font-size:.88rem;font-weight:800;color:#003d5c}
+.pstat-l{font-size:.6rem;color:#607080;text-transform:uppercase;letter-spacing:.04em}
+#perfilPanel{position:fixed;bottom:0;left:312px;right:0;background:#fff;border-top:2px solid #0077b6;box-shadow:0 -4px 24px rgba(0,0,0,.2);z-index:50;flex-direction:column;max-height:48vh}
+#perfilHdr{display:flex;align-items:center;padding:.38rem .9rem;background:#003d5c;color:#fff;gap:.8rem;flex-shrink:0}
+#perfilHdr span{font-size:.88rem;font-weight:800;flex:1}
+#perfilHdr button{background:none;border:none;color:#fff;font-size:1.1rem;cursor:pointer;padding:0 .3rem;line-height:1}
+#perfilStats{display:flex;gap:1.1rem;padding:.4rem .9rem;background:#f0f7ff;border-bottom:1px solid #d0e4f0;flex-wrap:wrap;flex-shrink:0}
+#perfilSvg{width:100%;flex:1;display:block;min-height:130px}
+#perfilTooltip{pointer-events:none}
 </style>
 </head>
 <body>
@@ -167,6 +180,18 @@ input:focus,select:focus{border-color:#0077b6;box-shadow:0 0 0 3px rgba(0,119,18
     <div id="infoContent" style="font-size:.75rem;color:#1a2535;line-height:1.8"></div>
   </div>
 
+  <!-- Perfil de Adutora -->
+  <div class="sb-section">
+    <div class="sb-title">Perfil de Adutora</div>
+    <div id="statusDesenho" class="status"></div>
+    <button class="btn" id="btnDesenhar" onclick="toggleDesenho()" style="background:#2e7d32;color:#fff;margin-bottom:.4rem">&#9998; Traçar Adutora</button>
+    <div id="traceInfoDiv" style="display:none;font-size:.72rem;color:#607080;padding:.2rem 0;margin-bottom:.35rem">
+      <span id="traceInfo"></span>
+    </div>
+    <button class="btn btn-blue" id="btnGerarPerfil" onclick="gerarPerfil()" disabled>&#9650; Gerar Perfil</button>
+    <button class="btn btn-out" id="btnLimparTrace" onclick="limparTrace()" disabled>&#10005; Limpar Traçado</button>
+  </div>
+
   <!-- Legenda -->
   <div class="legend" id="legendBox" style="display:none">
     <div class="leg-title">Legenda de Altitude</div>
@@ -194,6 +219,25 @@ input:focus,select:focus{border-color:#0077b6;box-shadow:0 0 0 3px rgba(0,119,18
 </div>
 
 </div><!-- /body -->
+
+<!-- Painel de Perfil -->
+<div id="perfilPanel" style="display:none">
+  <div id="perfilHdr">
+    <span>&#128200; Perfil de Eleva&ccedil;&atilde;o — Adutora</span>
+    <button onclick="$('perfilPanel').style.display='none'" title="Fechar">&#10005;</button>
+  </div>
+  <div id="perfilStats">
+    <div class="pstat"><span class="pstat-v" id="pDist">—</span><span class="pstat-l">Comprimento</span></div>
+    <div class="pstat"><span class="pstat-v" id="pCotaIni">—</span><span class="pstat-l">Cota inicial</span></div>
+    <div class="pstat"><span class="pstat-v" id="pCotaFim">—</span><span class="pstat-l">Cota final</span></div>
+    <div class="pstat"><span class="pstat-v" id="pDesnivel">—</span><span class="pstat-l">Desn&iacute;vel</span></div>
+    <div class="pstat"><span class="pstat-v" id="pGanho">—</span><span class="pstat-l">Ganho acum.</span></div>
+    <div class="pstat"><span class="pstat-v" id="pPerda">—</span><span class="pstat-l">Perda acum.</span></div>
+    <div class="pstat"><span class="pstat-v" id="pSlopeAvg">—</span><span class="pstat-l">Incl. m&eacute;dia</span></div>
+    <div class="pstat"><span class="pstat-v" id="pSlopeMax">—</span><span class="pstat-l">Incl. m&aacute;x</span></div>
+  </div>
+  <svg id="perfilSvg"></svg>
+</div>
 
 <script>
 // ── Estado global ──────────────────────────────────────────────────────
@@ -375,6 +419,7 @@ window.initMap = function() {
 
 // ── Seleção de área ────────────────────────────────────────────────────
 function onMapClick(latLng) {
+  if(modoDesenho) { addTracePoint(latLng); return; }
   if(!pt1) {
     pt1 = latLng;
     addMarker(latLng,'SW');
@@ -657,6 +702,240 @@ function exportarKML() {
   a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),60000);
   setStatus('KML exportado com sucesso.','ok');
+}
+
+// ── Adutora / Perfil ───────────────────────────────────────────────────
+let tracePolyline=null, traceMarkers=[], tracePoints=[], modoDesenho=false;
+
+function setStatusDesenho(msg,type='info'){
+  const el=$('statusDesenho');
+  if(!msg){el.style.display='none';return;}
+  el.textContent=msg; el.className='status '+type; el.style.display='block';
+}
+
+function toggleDesenho(){
+  if(!map){setStatus('Carregue o mapa primeiro.','err');return;}
+  modoDesenho=!modoDesenho;
+  const btn=$('btnDesenhar');
+  if(modoDesenho){
+    btn.textContent='⏹ Encerrar Traçado';
+    btn.style.background='#c62828';
+    $('map-wrap').classList.add('draw-mode');
+    setStatusDesenho('Clique no mapa para adicionar pontos da adutora.','info');
+  } else {
+    btn.textContent='✎ Traçar Adutora';
+    btn.style.background='#2e7d32';
+    $('map-wrap').classList.remove('draw-mode');
+    setStatusDesenho(tracePoints.length>0?`${tracePoints.length} pontos · ${fmtDist(calcDist())} — clique em Gerar Perfil`:null);
+  }
+}
+
+function haversine(p1,p2){
+  const R=6371000;
+  const la1=typeof p1.lat==='function'?p1.lat():p1.lat;
+  const lo1=typeof p1.lng==='function'?p1.lng():p1.lng;
+  const la2=typeof p2.lat==='function'?p2.lat():p2.lat;
+  const lo2=typeof p2.lng==='function'?p2.lng():p2.lng;
+  const φ1=la1*Math.PI/180,φ2=la2*Math.PI/180;
+  const Δφ=(la2-la1)*Math.PI/180,Δλ=(lo2-lo1)*Math.PI/180;
+  const a=Math.sin(Δφ/2)**2+Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+
+function calcDist(){
+  let t=0;
+  for(let i=1;i<tracePoints.length;i++) t+=haversine(tracePoints[i-1],tracePoints[i]);
+  return t;
+}
+
+function fmtDist(d){return d>=1000?(d/1000).toFixed(2)+' km':Math.round(d)+' m';}
+
+function addTracePoint(latLng){
+  tracePoints.push(latLng);
+  const m=new google.maps.Marker({
+    position:latLng,map,
+    icon:{path:google.maps.SymbolPath.CIRCLE,scale:5,fillColor:'#ff6b00',fillOpacity:1,strokeColor:'#fff',strokeWeight:1.5},
+    zIndex:10
+  });
+  traceMarkers.push(m);
+  if(tracePolyline){
+    tracePolyline.getPath().push(latLng);
+  } else {
+    tracePolyline=new google.maps.Polyline({
+      path:[latLng],map,
+      strokeColor:'#ff6b00',strokeWeight:3,strokeOpacity:.9,zIndex:5
+    });
+  }
+  $('traceInfoDiv').style.display='block';
+  $('traceInfo').textContent=`${tracePoints.length} ponto${tracePoints.length>1?'s':''} · ${fmtDist(calcDist())}`;
+  $('btnGerarPerfil').disabled=tracePoints.length<2;
+  $('btnLimparTrace').disabled=false;
+}
+
+function limparTrace(){
+  tracePoints=[];
+  traceMarkers.forEach(m=>m.setMap(null)); traceMarkers=[];
+  if(tracePolyline){tracePolyline.setMap(null);tracePolyline=null;}
+  $('traceInfoDiv').style.display='none';
+  $('btnGerarPerfil').disabled=true;
+  $('btnLimparTrace').disabled=true;
+  $('perfilPanel').style.display='none';
+  if(modoDesenho) toggleDesenho();
+  setStatusDesenho(null);
+}
+
+async function gerarPerfil(){
+  if(tracePoints.length<2) return;
+  const nSamples=Math.min(512,Math.max(100,tracePoints.length*30));
+  setStatusDesenho('Buscando elevação do traçado...','info');
+  $('btnGerarPerfil').disabled=true;
+  try{
+    const results=await Promise.race([
+      new Promise((res,rej)=>{
+        elevService.getElevationAlongPath({path:tracePoints,samples:nSamples},(r,s)=>{
+          if(s==='OK'&&r) res(r); else rej(new Error(s||'UNKNOWN'));
+        });
+      }),
+      new Promise((_,rej)=>setTimeout(()=>rej(new Error('TIMEOUT')),25000))
+    ]);
+    desenharPerfil(results);
+    setStatusDesenho(`Perfil gerado com ${results.length} amostras.`,'ok');
+  } catch(e){
+    const c=e.message;
+    let msg='⚠ Erro: '+c;
+    if(c==='TIMEOUT') msg='⚠ Timeout. Tente menos pontos no traçado.';
+    else if(c==='REQUEST_DENIED') msg='⚠ REQUEST_DENIED: Elevation API não autorizada na chave.';
+    setStatusDesenho(msg,'err');
+  } finally{$('btnGerarPerfil').disabled=false;}
+}
+
+function desenharPerfil(samples){
+  const elevs=samples.map(s=>s.elevation);
+  // distâncias acumuladas
+  const dists=[0];
+  for(let i=1;i<samples.length;i++)
+    dists.push(dists[i-1]+haversine(samples[i-1].location,samples[i].location));
+  const totalDist=dists[dists.length-1];
+  const minE=Math.min(...elevs),maxE=Math.max(...elevs);
+  const elevRange=maxE-minE||1;
+
+  // métricas
+  let gain=0,loss=0;
+  for(let i=1;i<elevs.length;i++){
+    const d=elevs[i]-elevs[i-1]; if(d>0) gain+=d; else loss+=Math.abs(d);
+  }
+  let maxSlope=0;
+  for(let i=1;i<samples.length;i++){
+    const dd=dists[i]-dists[i-1];
+    if(dd>0) maxSlope=Math.max(maxSlope,Math.abs((elevs[i]-elevs[i-1])/dd)*100);
+  }
+  const avgSlope=totalDist>0?Math.abs((elevs[elevs.length-1]-elevs[0])/totalDist)*100:0;
+  const desnivel=elevs[elevs.length-1]-elevs[0];
+
+  $('pDist').textContent=fmtDist(totalDist);
+  $('pCotaIni').textContent=elevs[0].toFixed(1)+' m';
+  $('pCotaFim').textContent=elevs[elevs.length-1].toFixed(1)+' m';
+  $('pDesnivel').textContent=(desnivel>=0?'+':'')+desnivel.toFixed(1)+' m';
+  $('pGanho').textContent='+'+gain.toFixed(1)+' m';
+  $('pPerda').textContent='-'+loss.toFixed(1)+' m';
+  $('pSlopeAvg').textContent=avgSlope.toFixed(2)+'%';
+  $('pSlopeMax').textContent=maxSlope.toFixed(2)+'%';
+
+  // mostrar painel antes de medir o SVG
+  const panel=$('perfilPanel');
+  panel.style.display='flex';
+
+  // aguarda render para obter dimensões reais
+  requestAnimationFrame(()=>{
+    const svg=$('perfilSvg');
+    const W=svg.clientWidth||700, H=svg.clientHeight||150;
+    const pad={top:14,right:18,bot:32,left:52};
+    const cw=W-pad.left-pad.right, ch=H-pad.top-pad.bot;
+    const xS=d=>pad.left+(d/totalDist)*cw;
+    const yS=e=>pad.top+ch-((e-minE)/elevRange)*ch;
+
+    // grid + ticks
+    const nX=6, nY=4;
+    let grid='';
+    for(let i=0;i<=nX;i++){
+      const x=xS((totalDist/nX)*i);
+      const lbl=(totalDist/nX*i)>=1000?((totalDist/nX*i)/1000).toFixed(1)+'k':Math.round(totalDist/nX*i)+'';
+      grid+=`<line x1="${x}" y1="${pad.top}" x2="${x}" y2="${pad.top+ch}" stroke="#e8edf2"/>`;
+      grid+=`<text x="${x}" y="${pad.top+ch+14}" text-anchor="middle" font-size="9" fill="#90a4b4">${lbl}</text>`;
+    }
+    for(let i=0;i<=nY;i++){
+      const e=minE+(elevRange/nY)*i, y=yS(e);
+      grid+=`<line x1="${pad.left}" y1="${y}" x2="${pad.left+cw}" y2="${y}" stroke="#e8edf2"/>`;
+      grid+=`<text x="${pad.left-5}" y="${y+4}" text-anchor="end" font-size="9" fill="#90a4b4">${Math.round(e)}</text>`;
+    }
+
+    // área e linha
+    let path='', area='';
+    samples.forEach((s,i)=>{
+      const x=xS(dists[i]),y=yS(s.elevation);
+      if(i===0){path=`M${x},${y}`;area=`M${x},${pad.top+ch} L${x},${y}`;}
+      else{path+=` L${x},${y}`;area+=` L${x},${y}`;}
+    });
+    area+=` L${xS(totalDist)},${pad.top+ch} Z`;
+
+    // linha de referência (cota inicial)
+    const yRef=yS(elevs[0]);
+    const refLine=`<line x1="${pad.left}" y1="${yRef}" x2="${pad.left+cw}" y2="${yRef}" stroke="#2e7d32" stroke-width="1" stroke-dasharray="4,3" opacity=".6"/>`;
+
+    svg.innerHTML=`
+      <defs>
+        <linearGradient id="pg" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#0077b6" stop-opacity=".35"/>
+          <stop offset="100%" stop-color="#0077b6" stop-opacity=".04"/>
+        </linearGradient>
+      </defs>
+      ${grid}${refLine}
+      <path d="${area}" fill="url(#pg)"/>
+      <path d="${path}" fill="none" stroke="#0077b6" stroke-width="2"/>
+      <circle cx="${xS(0)}" cy="${yS(elevs[0])}" r="4" fill="#2e7d32" stroke="#fff" stroke-width="1.5"/>
+      <circle cx="${xS(totalDist)}" cy="${yS(elevs[elevs.length-1])}" r="4" fill="#c62828" stroke="#fff" stroke-width="1.5"/>
+      <text x="${pad.left+cw/2}" y="${H-1}" text-anchor="middle" font-size="9" fill="#90a4b4">Dist&#226;ncia (m)</text>
+      <text x="10" y="${pad.top+ch/2}" text-anchor="middle" font-size="9" fill="#90a4b4" transform="rotate(-90,10,${pad.top+ch/2})">Cota (m)</text>
+      <g id="perfilTooltip" style="display:none">
+        <line id="ttLine" stroke="#003d5c" stroke-width="1" stroke-dasharray="3,2"/>
+        <circle id="ttDot" r="4" fill="#003d5c" stroke="#fff" stroke-width="1.5"/>
+        <rect id="ttBox" rx="4" fill="#003d5c"/>
+        <text id="ttTxt" fill="#fff" font-size="10" font-weight="bold"></text>
+      </g>`;
+
+    // tooltip interativo
+    svg.onmousemove=ev=>{
+      const rect=svg.getBoundingClientRect();
+      const mx=ev.clientX-rect.left;
+      if(mx<pad.left||mx>pad.left+cw){svg.onmouseleave();return;}
+      const frac=(mx-pad.left)/cw;
+      const dist=frac*totalDist;
+      // interpolação
+      let idx=dists.findIndex(d=>d>=dist);
+      if(idx<0) idx=dists.length-1;
+      if(idx>0){
+        const t=(dist-dists[idx-1])/(dists[idx]-dists[idx-1]||1);
+        const e=elevs[idx-1]+(elevs[idx]-elevs[idx-1])*t;
+        const x=xS(dist), y=yS(e);
+        const lbl=`${fmtDist(dist)}  |  ${e.toFixed(1)} m`;
+        const g=$('perfilTooltip'),
+              ln=$('ttLine'),dot=$('ttDot'),
+              box=$('ttBox'),txt=$('ttTxt');
+        g.style.display='';
+        ln.setAttribute('x1',x);ln.setAttribute('y1',pad.top);
+        ln.setAttribute('x2',x);ln.setAttribute('y2',pad.top+ch);
+        dot.setAttribute('cx',x);dot.setAttribute('cy',y);
+        txt.setAttribute('x',x+6);txt.setAttribute('y',pad.top+14);
+        txt.textContent=lbl;
+        const tw=lbl.length*6.5;
+        const bx=x+6+tw>W-4?x-tw-10:x+4;
+        box.setAttribute('x',bx);box.setAttribute('y',pad.top+4);
+        box.setAttribute('width',tw+4);box.setAttribute('height',14);
+        txt.setAttribute('x',bx+2);
+      }
+    };
+    svg.onmouseleave=()=>{ const g=$('perfilTooltip'); if(g) g.style.display='none'; };
+  });
 }
 
 // ── Init ───────────────────────────────────────────────────────────────
