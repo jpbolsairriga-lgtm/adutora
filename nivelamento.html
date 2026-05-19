@@ -427,7 +427,6 @@ async function gerar() {
   if(!pt1||!pt2){setStatus('Defina a área primeiro.','err');return;}
 
   const n  = parseInt($('gridRes').value);
-  const apiKey = $('apiKey').value.trim() || localStorage.getItem('gmaps_key');
   const sw = {lat:Math.min(pt1.lat(),pt2.lat()), lng:Math.min(pt1.lng(),pt2.lng())};
   const ne = {lat:Math.max(pt1.lat(),pt2.lat()), lng:Math.max(pt1.lng(),pt2.lng())};
 
@@ -451,42 +450,37 @@ async function gerar() {
     setProgress((b + 0.5) / batches);
     const done = Math.min((b + 1) * BATCH, allPts.length);
     setStatus(`Buscando elevação... ${done}/${allPts.length} pontos`, 'info');
+    await new Promise(r => setTimeout(r, 0));
 
     const slice = allPts.slice(b * BATCH, (b + 1) * BATCH);
-    const locStr = slice.map(p => `${p.lat},${p.lng}`).join('|');
 
-    let resp;
+    let batchRes;
     try {
-      const raw = await Promise.race([
-        fetch(`https://maps.googleapis.com/maps/api/elevation/json?locations=${locStr}&key=${apiKey}`),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('TIMEOUT')), 20000))
+      batchRes = await Promise.race([
+        new Promise((resolve, reject) => {
+          elevService.getElevationForLocations({locations: slice}, (r, s) => {
+            if (s === 'OK' && r) resolve(r);
+            else reject(new Error(s || 'UNKNOWN'));
+          });
+        }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('TIMEOUT')), 25000))
       ]);
-      if (!raw.ok) throw new Error(`HTTP_${raw.status}`);
-      resp = await raw.json();
-    } catch (e) {
-      let msg = `⚠ Erro de rede: ${e.message}`;
-      if (e.message === 'TIMEOUT') msg = '⚠ Timeout: API não respondeu em 20s. Verifique sua conexão.';
-      setStatus(msg, 'err');
-      $('btnGerar').disabled = false;
-      setProgress(0);
-      return;
-    }
-
-    if (resp.status !== 'OK') {
-      let msg = `⚠ Elevation API: ${resp.status}`;
-      if (resp.status === 'REQUEST_DENIED')
-        msg = '⚠ REQUEST_DENIED: Chave API não autoriza a Elevation API. Verifique: 1) Elevation API ativada no Console  2) Restrição da chave inclui "Maps Elevation API"  3) Billing ativo.';
-      else if (resp.status === 'OVER_QUERY_LIMIT')
+    } catch(e) {
+      const code = e.message;
+      let msg = '⚠ Erro Elevation API: ' + code;
+      if (code === 'TIMEOUT')
+        msg = '⚠ Timeout (25s): Elevation API não respondeu. Tente uma grade menor (10×10).';
+      else if (code === 'REQUEST_DENIED')
+        msg = '⚠ REQUEST_DENIED: Chave não autoriza Elevation API. No Google Cloud Console, na restrição da chave, confirme que "Maps Elevation API" está selecionada e salva.';
+      else if (code === 'OVER_QUERY_LIMIT')
         msg = '⚠ OVER_QUERY_LIMIT: Cota excedida. Aguarde ou verifique o billing.';
-      else if (resp.status === 'INVALID_REQUEST')
-        msg = '⚠ INVALID_REQUEST: Área inválida. Tente menos pontos.';
       setStatus(msg, 'err');
-      $('btnGerar').disabled = false;
+      $('btnGerar').disabled=false;
       setProgress(0);
       return;
     }
 
-    results = results.concat(resp.results);
+    results = results.concat(batchRes);
     if (b < batches - 1) await new Promise(r => setTimeout(r, 300));
   }
 
