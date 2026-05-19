@@ -155,7 +155,7 @@ input:focus,select:focus{border-color:#0077b6;box-shadow:0 0 0 3px rgba(0,119,18
   <div class="sb-section">
     <div class="sb-title">A&ccedil;&otilde;es</div>
     <div id="statusBox" class="status"></div>
-    <button class="btn btn-blue" id="btnGerar" onclick="gerar()" disabled>&#9650; Gerar Curvas de N&iacute;vel</button>
+    <button class="btn btn-blue" id="btnGerar" onclick="gerar().catch(e=>{setStatus('⚠ Erro interno: '+(e.message||e),'err');$('btnGerar').disabled=false;setProgress(0);})" disabled>&#9650; Gerar Curvas de N&iacute;vel</button>
     <button class="btn btn-green" id="btnKML" onclick="exportarKML()" disabled>&#128462; Exportar KML</button>
     <button class="btn btn-out" id="btnLimpar" onclick="limparCurvas()" disabled>&#10005; Limpar Curvas</button>
   </div>
@@ -489,23 +489,40 @@ async function gerar() {
   }
 
   setProgress(1);
+  setStatus('Processando dados de elevação...','info');
 
   // Reorganiza em grade 2D
+  if (results.length < n*n) {
+    setStatus(`⚠ Dados insuficientes: recebeu ${results.length} pontos, esperava ${n*n}.`,'err');
+    $('btnGerar').disabled=false; setProgress(0); return;
+  }
+
   elevGrid=[];
   for(let r=0;r<n;r++) {
     elevGrid.push([]);
-    for(let c=0;c<n;c++) elevGrid[r].push(results[r*n+c].elevation);
+    for(let c=0;c<n;c++) {
+      const item = results[r*n+c];
+      elevGrid[r].push(item && item.elevation != null ? item.elevation : 0);
+    }
   }
 
   // Min/max
   minElev=Infinity; maxElev=-Infinity;
   elevGrid.flat().forEach(v=>{if(v<minElev)minElev=v;if(v>maxElev)maxElev=v;});
 
+  if (maxElev - minElev < 0.1) {
+    setStatus('⚠ Amplitude de elevação muito pequena (< 0,1 m). Tente uma área com mais relevo.','warn');
+    $('btnGerar').disabled=false; setProgress(0); return;
+  }
+
   // Gera curvas
   const interval=parseInt($('contourInt').value);
   const masterEvery=parseInt($('masterEvery').value);
   const first=Math.ceil(minElev/interval)*interval;
   contoursData=[];
+  setStatus('Gerando curvas de nível...','info');
+  // yield para o browser renderizar o status antes do loop pesado
+  await new Promise(r=>setTimeout(r,0));
 
   let lineCount=0;
   for(let lv=first;lv<=maxElev;lv+=interval) {
@@ -524,10 +541,7 @@ async function gerar() {
         strokeOpacity:isMaster?0.95:0.75,
         zIndex:isMaster?2:1
       });
-      // Tooltip
-      poly.addListener('mouseover', e=>{
-        showFixedInfo(lv, isMaster);
-      });
+      poly.addListener('mouseover', ()=>{ showFixedInfo(lv, isMaster); });
       poly.addListener('mouseout', ()=>{$('elev-info').style.display='none';});
       contourLines.push(poly);
       lineCount+=chain.length;
