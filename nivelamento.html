@@ -709,39 +709,26 @@ function exportarKML() {
 }
 
 // ── Relatório PDF ──────────────────────────────────────────────────────
-// Captura tiles de satélite ESRI World Imagery e retorna data URL
-async function captureSatelliteBg(sw,ne,W,H){
-  function mX(lng){return(lng+180)/360;}
-  function mY(lat){const s=Math.sin(lat*Math.PI/180);return(1-Math.log((1+s)/(1-s))/(2*Math.PI))/2;}
-  const swX=mX(sw.lng),swY=mY(sw.lat),neX=mX(ne.lng),neY=mY(ne.lat);
-  const xSpan=neX-swX,ySpan=swY-neY;
-  const T=256;
-  const zX=Math.floor(Math.log(W/T/xSpan)/Math.LN2);
-  const zY=Math.floor(Math.log(H/T/ySpan)/Math.LN2);
-  const zoom=Math.min(Math.min(zX,zY),16);
-  const n=Math.pow(2,zoom);
-  const txMin=Math.floor(swX*n),txMax=Math.floor(neX*n);
-  const tyMin=Math.floor(neY*n),tyMax=Math.floor(swY*n);
-  const tileW=(1/n)/xSpan*W,tileH=(1/n)/ySpan*H;
-  const canvas=document.createElement('canvas');
-  canvas.width=W;canvas.height=H;
-  const ctx=canvas.getContext('2d');
-  const load=(tx,ty)=>new Promise(res=>{
-    fetch(`https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${zoom}/${ty}/${tx}`,{mode:'cors'})
-      .then(r=>r.blob()).then(blob=>{
-        const img=new Image(),bu=URL.createObjectURL(blob);
-        img.onload=()=>{
-          ctx.drawImage(img,Math.round((tx/n-swX)/xSpan*W),Math.round((ty/n-neY)/ySpan*H),Math.ceil(tileW+1),Math.ceil(tileH+1));
-          URL.revokeObjectURL(bu);res();
-        };
-        img.onerror=()=>{URL.revokeObjectURL(bu);res();};
-        img.src=bu;
-      }).catch(()=>res());
-  });
-  const tasks=[];
-  for(let tx=txMin;tx<=txMax;tx++) for(let ty=tyMin;ty<=tyMax;ty++) tasks.push(load(tx,ty));
-  await Promise.all(tasks);
-  return canvas.toDataURL('image/jpeg',0.88);
+// Calcula zoom e URL do Google Maps Static API
+function staticMapParams(sw,ne,W,H){
+  const T=256,LN2=Math.LN2;
+  const latRad=lat=>Math.log((1+Math.sin(lat*Math.PI/180))/(1-Math.sin(lat*Math.PI/180)))/2;
+  const latF=Math.abs(latRad(ne.lat)-latRad(sw.lat))/Math.PI;
+  const lngF=Math.abs(ne.lng-sw.lng)/360;
+  const zL=Math.floor(Math.log(H/T/latF)/LN2);
+  const zG=Math.floor(Math.log(W/T/lngF)/LN2);
+  const zoom=Math.min(zL,zG,21);
+  const cLat=(sw.lat+ne.lat)/2, cLng=(sw.lng+ne.lng)/2;
+  return {zoom,cLat,cLng};
+}
+
+// Converte lat/lng para pixel no mapa estático (Mercator centrado)
+function mkStaticToPx(cLat,cLng,zoom,W,H){
+  const S=256*Math.pow(2,zoom);
+  const wx=lng=>(lng+180)/360*S;
+  const wy=lat=>{const s=Math.sin(lat*Math.PI/180);return(0.5-Math.log((1+s)/(1-s))/(4*Math.PI))*S;};
+  const cx=wx(cLng),cy=wy(cLat);
+  return(lat,lng)=>({x:wx(lng)-cx+W/2, y:wy(lat)-cy+H/2});
 }
 
 function svgPerfilStr(samples,W,H){
@@ -791,29 +778,19 @@ function svgPerfilStr(samples,W,H){
   </svg>`;
 }
 
-async function exportarRelatorio(){
+function exportarRelatorio(){
   if(!contoursData.length||!mapBounds){setStatus('Gere as curvas primeiro.','err');return;}
   const date=new Date().toLocaleDateString('pt-BR');
   const {sw,ne}=mapBounds;
+  const key=$('apiKey').value.trim()||localStorage.getItem('gmaps_key');
   const MW=700,MH=430;
 
-  // Projeção Mercator (mesma dos tiles ESRI) — alinhamento perfeito
-  function mX(lng){return(lng+180)/360;}
-  function mY(lat){const s=Math.sin(lat*Math.PI/180);return(1-Math.log((1+s)/(1-s))/(2*Math.PI))/2;}
-  const swX=mX(sw.lng),swY=mY(sw.lat),neX=mX(ne.lng),neY=mY(ne.lat);
-  const xSpan=neX-swX,ySpan=swY-neY;
-  const toPx=(lat,lng)=>({
-    x:(mX(lng)-swX)/xSpan*MW,
-    y:(mY(lat)-neY)/ySpan*MH
-  });
+  // Parâmetros do mapa estático Google (zoom correto, sem -1)
+  const {zoom,cLat,cLng}=staticMapParams(sw,ne,MW,MH);
+  const staticUrl=`https://maps.googleapis.com/maps/api/staticmap?center=${cLat},${cLng}&zoom=${zoom}&size=${MW}x${MH}&maptype=satellite&key=${key}`;
 
-  // Captura satélite ESRI
-  setStatus('Capturando imagem de satélite...','info');
-  $('btnRelatorio').disabled=true;
-  let bgDataUrl='';
-  try{ bgDataUrl=await captureSatelliteBg(sw,ne,MW,MH); }catch(e){}
-  $('btnRelatorio').disabled=false;
-  setStatus('','info');
+  // Projeção Mercator — mesma do Static Maps → alinhamento perfeito
+  const toPx=mkStaticToPx(cLat,cLng,zoom,MW,MH);
 
   // Curvas
   let paths='';
@@ -906,7 +883,7 @@ h1{font-size:15px;font-weight:900;color:#003d5c;line-height:1.2}
 .hdr-r b{color:#003d5c;font-size:11.5px;display:block;font-weight:900}
 .section{margin-bottom:.6rem}
 h2{font-size:9.5px;font-weight:800;color:#0077b6;margin-bottom:.35rem;padding-bottom:.18rem;border-bottom:1.5px solid #b8dcf0;text-transform:uppercase;letter-spacing:.06em}
-svg.mapa{display:block;width:100%;border:1px solid #b0b0b0;border-radius:3px}
+svg.mapa{display:block;width:100%}
 .sr{display:flex;flex-wrap:wrap;gap:.28rem;margin:.32rem 0}
 .st{background:#f0f7ff;border:1px solid #d0e4f0;border-radius:4px;padding:.2rem .45rem;min-width:66px}
 .sv{font-size:10.5px;font-weight:800;color:#003d5c}
@@ -930,19 +907,21 @@ svg.mapa{display:block;width:100%;border:1px solid #b0b0b0;border-radius:3px}
 </div>
 <div class="section">
   <h2>Mapa Topogr&aacute;fico &mdash; Curvas de N&iacute;vel</h2>
-  <svg class="mapa" viewBox="0 0 ${MW} ${MH}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-    ${bgDataUrl?`<image href="${bgDataUrl}" width="${MW}" height="${MH}"/>`:`<rect width="${MW}" height="${MH}" fill="#f0ede8"/>`}
-    ${paths}
-    ${tracePath}
-    <g transform="translate(${MW-24},24)">
-      <circle r="16" fill="rgba(255,255,255,.85)" stroke="#999" stroke-width=".6"/>
-      <text y="4" text-anchor="middle" font-size="11" font-weight="bold" fill="#003d5c">N</text>
-      <path d="M0,-13 L3.5,-5 L0,-8 L-3.5,-5 Z" fill="#003d5c"/>
-    </g>
-    <text x="${MW/2}" y="${MH-4}" text-anchor="middle" font-size="7" fill="${bgDataUrl?'rgba(255,255,255,0.8)':'#888'}">
-      ${sw.lat.toFixed(4)}°, ${sw.lng.toFixed(4)}° → ${ne.lat.toFixed(4)}°, ${ne.lng.toFixed(4)}° ${bgDataUrl?'· © Esri':''}
-    </text>
-  </svg>
+  <div style="position:relative;width:${MW}px;height:${MH}px;border:1px solid #b0b0b0;border-radius:3px;overflow:hidden;margin:0 auto">
+    <img id="smap" src="${staticUrl}" width="${MW}" height="${MH}" style="display:block" onerror="this.style.background='#f0ede8'">
+    <svg style="position:absolute;top:0;left:0;width:${MW}px;height:${MH}px;overflow:visible" viewBox="0 0 ${MW} ${MH}" xmlns="http://www.w3.org/2000/svg">
+      ${paths}
+      ${tracePath}
+      <g transform="translate(${MW-24},24)">
+        <circle r="16" fill="rgba(255,255,255,.85)" stroke="#999" stroke-width=".6"/>
+        <text y="4" text-anchor="middle" font-size="11" font-weight="bold" fill="#003d5c">N</text>
+        <path d="M0,-13 L3.5,-5 L0,-8 L-3.5,-5 Z" fill="#003d5c"/>
+      </g>
+      <text x="${MW/2}" y="${MH-4}" text-anchor="middle" font-size="7" fill="rgba(255,255,255,.8)">
+        ${sw.lat.toFixed(4)}°, ${sw.lng.toFixed(4)}° → ${ne.lat.toFixed(4)}°, ${ne.lng.toFixed(4)}°
+      </text>
+    </svg>
+  </div>
   <div class="sr">
     <div class="st"><div class="sv">${areaKm2.toFixed(2)} km&sup2;</div><div class="sl">&Aacute;rea</div></div>
     <div class="st"><div class="sv">${minElev.toFixed(1)} m</div><div class="sl">Alt. m&iacute;n</div></div>
@@ -964,7 +943,13 @@ ${profHtml}
   Bolsa Irriga&reg; &mdash; Av. Elias Abr&atilde;o, n&ordm; 140 &middot; Franca &ndash; SP &middot; (16) 3702-6571 &middot; bolsairriga.com.br<br>
   &copy; 2025 Jo&atilde;o Paulo de Oliveira &middot; Gerado em ${date}
 </div>
-<script>setTimeout(()=>window.print(),500)<\/script>
+<script>
+window.onload=function(){
+  var img=document.getElementById('smap');
+  var go=function(){setTimeout(function(){window.print();},500);};
+  if(!img||img.complete)go();else{img.onload=go;img.onerror=go;}
+};
+<\/script>
 </body></html>`;
 
   const win=window.open('','_blank');
