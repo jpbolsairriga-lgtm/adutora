@@ -181,6 +181,7 @@ input:focus,select:focus{border-color:var(--bl3);box-shadow:0 0 0 3px rgba(0,180
         <button class="btn btn-full" id="btnExportKml" style="display:none;background:#2e7d32;color:#fff" onclick="exportarKML()">&#128462; Exportar KML (Google Earth)</button>
         <button class="btn btn-full" id="btnClassificar" style="display:none;background:#37474f;color:#fff" onclick="classificarDeclividade()">&#9968; Classificar Declividade</button>
         <button class="btn btn-out btn-full" id="btnLimparClassif" style="display:none;font-size:.78rem" onclick="limparClassificacao()">&#10005; Limpar Classifica&ccedil;&atilde;o</button>
+        <button class="btn btn-full" id="btnRelatorio" style="display:none;background:#4a148c;color:#fff" onclick="abrirModalRelatorio()">&#128196; Gerar Relat&oacute;rio PDF</button>
         <button class="btn btn-full" id="btnNovaArea" style="display:none;background:#1a237e;color:#fff" onclick="novaArea()">&#10010; Nova &Aacute;rea</button>
         <button class="btn btn-out btn-full" id="btnLimparTudo" style="display:none;color:#b71c1c;border-color:#b71c1c" onclick="limparTudo()">&#128465; Limpar Tudo</button>
         <div id="offsetInfo" class="cap-box" style="display:none">
@@ -210,6 +211,21 @@ input:focus,select:focus{border-color:var(--bl3);box-shadow:0 0 0 3px rgba(0,180
 
   </div><!-- /map-body -->
 </div><!-- /card mapa -->
+
+<!-- Modal Relatório -->
+<div id="modalRel" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:300;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:14px;padding:1.6rem 1.8rem;width:100%;max-width:400px;box-shadow:0 8px 40px rgba(0,0,0,.3)">
+    <div style="font-size:.9rem;font-weight:800;color:#003d5c;margin-bottom:1rem">&#128196; Dados do Relat&oacute;rio</div>
+    <div class="fg" style="margin-bottom:.6rem"><label>Produtor / Cliente</label><input type="text" id="relCliente" placeholder="Nome do produtor"></div>
+    <div class="fg" style="margin-bottom:.6rem"><label>Propriedade / Fazenda</label><input type="text" id="relFazenda" placeholder="Nome da propriedade"></div>
+    <div class="fg" style="margin-bottom:.6rem"><label>Consultor Respons&aacute;vel</label><input type="text" id="relConsultor" placeholder="Nome do consultor"></div>
+    <div class="fg" style="margin-bottom:1rem"><label>Data</label><input type="date" id="relData"></div>
+    <div style="display:flex;gap:.6rem">
+      <button class="btn btn-green" style="flex:1" onclick="gerarRelatorio()">&#128196; Gerar PDF</button>
+      <button class="btn btn-out" style="flex:1" onclick="$('modalRel').style.display='none'">Cancelar</button>
+    </div>
+  </div>
+</div>
 
 </div><!-- /page -->
 
@@ -484,25 +500,22 @@ function desenharPerfilElevacao(samples){
 function clipCurveToPolygon(coords,turfPoly,polyBound){
   if(coords.length<2)return null;
   const extLine=turf.lineString(coords);
-  // Intersecções geométricas puras — não depende de winding order
-  const ixs=turf.lineIntersect(extLine,polyBound);
-  if(ixs.features.length===0)return null;
-  const origin=turf.point(coords[0]);
-  const ixPts=ixs.features
-    .map(f=>f.geometry.coordinates)
-    .sort((a,b)=>turf.distance(origin,turf.point(a))-turf.distance(origin,turf.point(b)));
-  const entry=ixPts[0];
-  const exit=ixPts[ixPts.length-1];
-  const dEntry=turf.distance(origin,turf.point(entry));
-  const dExit=turf.distance(origin,turf.point(exit));
-  if(dEntry>=dExit)return null;
-  const result=[entry];
-  coords.forEach(c=>{
-    const d=turf.distance(origin,turf.point(c));
-    if(d>dEntry&&d<dExit)result.push(c);
-  });
-  result.push(exit);
-  return result.length>=2?result:null;
+  try{
+    // lineSplit parte a linha em cada cruzamento da borda do polígono
+    const split=turf.lineSplit(extLine,polyBound);
+    if(!split||!split.features||split.features.length===0)return null;
+    // Mantém apenas segmentos cujo ponto médio está dentro do polígono
+    const inside=split.features.filter(seg=>{
+      const c=seg.geometry.coordinates;
+      const mid=c[Math.floor(c.length/2)];
+      return turf.booleanPointInPolygon(turf.point(mid),turfPoly);
+    });
+    if(inside.length===0)return null;
+    // Mescla segmentos consecutivos (remove duplicata entre eles)
+    const result=[...inside[0].geometry.coordinates];
+    for(let i=1;i<inside.length;i++)result.push(...inside[i].geometry.coordinates.slice(1));
+    return result.length>=2?result:null;
+  }catch(e){return null;}
 }
 
 // ── Offset / Linhas de Plantio ────────────────────────────────────
@@ -578,6 +591,7 @@ function gerarOffset(){
   $('btnLimparOffset').style.display='';
   $('btnExportKml').style.display='';
   $('btnClassificar').style.display='';
+  $('btnRelatorio').style.display='';
   $('btnNovaArea').style.display='';
   $('btnLimparTudo').style.display='';
   setStatus('stOffset',count+' linhas geradas. Exporte em KML ou adicione nova área.','ok');
@@ -587,7 +601,7 @@ function limparOffset(){
   offsetLines.forEach(l=>l.setMap(null));offsetLines=[];
   classifiedSegs.forEach(s=>s.setMap(null));classifiedSegs=[];
   if(drawLine) drawLine.setMap(map);
-  ['offsetInfo','btnLimparOffset','btnExportKml','btnClassificar',
+  ['offsetInfo','btnLimparOffset','btnExportKml','btnClassificar','btnRelatorio',
    'btnLimparClassif','secDeclividade'].forEach(id=>{const e=$(id);if(e)e.style.display='none';});
   setStatus('stOffset','','');
 }
@@ -798,6 +812,119 @@ function exportarKML(){
   a.download=`estudo-plantio-${date.replace(/\//g,'-')}.kml`;
   a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),60000);
+}
+
+// ── Relatório PDF ─────────────────────────────────────────────────
+function abrirModalRelatorio(){
+  const hoje=new Date();
+  $('relData').value=hoje.toISOString().slice(0,10);
+  $('modalRel').style.display='flex';
+}
+
+function gerarRelatorio(){
+  $('modalRel').style.display='none';
+  const cliente=$('relCliente').value||'—';
+  const fazenda=$('relFazenda').value||'—';
+  const consultor=$('relConsultor').value||'—';
+  const dataVal=$('relData').value;
+  const dataFmt=dataVal?new Date(dataVal+'T12:00').toLocaleDateString('pt-BR'):new Date().toLocaleDateString('pt-BR');
+  const key=localStorage.getItem('mapskey_pl')||$('apiKey').value;
+  const area=$('areaVal').textContent||'—';
+  const nLin=$('nLinhas').textContent||'—';
+  const espac=$('espacamento').value||'—';
+  const cor=$('corLinhas').value||'#FFD600';
+
+  // Monta URL do mapa estático com polígono
+  let staticUrl='';
+  if(drawPoly&&key){
+    const pts=drawPoly.getPath().getArray();
+    const pathStr=pts.map(p=>p.lat().toFixed(6)+','+p.lng().toFixed(6)).join('|');
+    const center=pts.reduce((a,p)=>({lat:a.lat+p.lat()/pts.length,lng:a.lng+p.lng()/pts.length}),{lat:0,lng:0});
+    staticUrl=`https://maps.googleapis.com/maps/api/staticmap?size=640x400&maptype=satellite`+
+      `&path=color:0x0077b6ff|weight:2|fillcolor:0x0077b611|${pathStr}`+
+      `&center=${center.lat.toFixed(6)},${center.lng.toFixed(6)}&zoom=15&key=${key}`;
+  }
+
+  // Tabela de declividade
+  let declivHtml='';
+  if(classifiedSegs.length>0){
+    const tbl=$('tabelaDeclividade').innerHTML;
+    declivHtml=`<div class="section"><div class="stitle">Classificação de Declividade</div>${tbl}</div>`;
+  }
+
+  const html=`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
+<title>Estudo de Plantio — Bolsa Irriga</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',Arial,sans-serif;font-size:11pt;color:#1a2535;background:#fff;padding:20mm 18mm}
+.header{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #0077b6;padding-bottom:10px;margin-bottom:14px}
+.brand{display:flex;align-items:center;gap:12px}
+.brand h1{font-size:16pt;font-weight:900;color:#003d5c}
+.brand p{font-size:8pt;color:#607080}
+.hdr-right{text-align:right;font-size:8pt;color:#607080;line-height:1.7}
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;background:#f0f7ff;padding:10px 12px;border-radius:8px;border:1px solid #d0e4f0}
+.info-item label{font-size:7pt;font-weight:800;color:#607080;text-transform:uppercase;letter-spacing:.05em;display:block}
+.info-item span{font-size:10pt;font-weight:700;color:#003d5c}
+.section{margin-bottom:14px}
+.stitle{font-size:9pt;font-weight:800;color:#0077b6;text-transform:uppercase;letter-spacing:.06em;border-left:4px solid #00b4d8;padding-left:8px;margin-bottom:8px}
+.stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stat-box{background:#f0f7ff;border:1px solid #d0e4f0;border-radius:7px;padding:8px 10px;text-align:center}
+.stat-box .v{font-size:14pt;font-weight:900;color:#003d5c}
+.stat-box .l{font-size:7pt;color:#607080;text-transform:uppercase;letter-spacing:.04em}
+.map-img{width:100%;border-radius:8px;border:1px solid #d0e4f0;display:block;margin-bottom:4px}
+.map-cap{font-size:7.5pt;color:#607080;text-align:center;margin-bottom:12px}
+table{width:100%;border-collapse:collapse;font-size:9pt}
+th{background:#0077b6;color:#fff;padding:5px 8px;text-align:left;font-size:8pt}
+td{padding:4px 8px;border-bottom:1px solid #e8edf2}
+tr:nth-child(even) td{background:#f8fbff}
+.footer{margin-top:16px;border-top:1px solid #d0e4f0;padding-top:8px;font-size:7.5pt;color:#607080;text-align:center;line-height:1.8}
+.decliv-sw{display:inline-block;width:12px;height:8px;border-radius:2px;vertical-align:middle}
+@media print{body{padding:10mm 12mm}.no-print{display:none}}
+</style></head><body>
+<div class="header">
+  <div class="brand">
+    <div><h1>Bolsa Irriga</h1><p>Estudo de Plantio — Laudo Técnico</p></div>
+  </div>
+  <div class="hdr-right">
+    João Paulo de Oliveira · Eng. Agrônomo<br>
+    CREA/CFE · Especialista em Irrigação<br>
+    <b>${dataFmt}</b>
+  </div>
+</div>
+
+<div class="info-grid">
+  <div class="info-item"><label>Produtor / Cliente</label><span>${cliente}</span></div>
+  <div class="info-item"><label>Propriedade / Fazenda</label><span>${fazenda}</span></div>
+  <div class="info-item"><label>Consultor Responsável</label><span>${consultor}</span></div>
+  <div class="info-item"><label>Data do Laudo</label><span>${dataFmt}</span></div>
+</div>
+
+${staticUrl?`<div class="section"><div class="stitle">Imagem de Satélite — Talhão</div>
+  <img class="map-img" src="${staticUrl}" onerror="this.style.display='none'">
+  <div class="map-cap">Imagem Google Maps Satellite · Contorno do talhão em azul</div>
+</div>`:''}
+
+<div class="section"><div class="stitle">Resumo do Talhão</div>
+<div class="stat-grid">
+  <div class="stat-box"><div class="v">${area}</div><div class="l">Área do talhão</div></div>
+  <div class="stat-box"><div class="v">${nLin}</div><div class="l">Linhas de plantio</div></div>
+  <div class="stat-box"><div class="v">${espac} m</div><div class="l">Espaçamento</div></div>
+</div></div>
+
+${declivHtml}
+
+<div class="footer">
+  Bolsa Irriga® — Av. Elias Abrão, nº 140 · Franca – SP · (16) 3702-6571 · bolsairriga.com.br<br>
+  © ${new Date().getFullYear()} João Paulo de Oliveira · Laudo gerado automaticamente — conferir dados em campo
+</div>
+<div class="no-print" style="text-align:center;margin-top:20px">
+  <button onclick="window.print()" style="padding:10px 28px;background:#0077b6;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">🖨 Imprimir / Salvar PDF</button>
+</div>
+</body></html>`;
+
+  const win=window.open('','_blank');
+  win.document.write(html);
+  win.document.close();
 }
 
 // ── Init ──────────────────────────────────────────────────────────
