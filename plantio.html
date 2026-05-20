@@ -492,31 +492,33 @@ function gerarOffset(){
 
   let count=0;
 
+  // Direção da linha base (corda: primeiro → último ponto)
+  const rowBrg=turf.bearing(turf.point(linePts[0]),turf.point(linePts[linePts.length-1]));
+
   for(const side of[-1,1]){
+    // Translada rigidamente na direção perpendicular à corda — preserva a forma exata da curva
+    const perpBrg=rowBrg+side*90;
     let misses=0;
     for(let n=1;n<5000;n++){
-      const distKm=side*n*spacing/1000;
+      const distKm=n*spacing/1000;
 
-      // turf.lineOffset preserva a curvatura exata da polyline
-      let offLine;
-      try{offLine=turf.lineOffset(baseLine,distKm,{units:'kilometers'});}
-      catch(e){misses++;if(misses>=3&&n>2)break;continue;}
-
-      const coords=offLine.geometry.coordinates;
-      if(coords.length<2){misses++;if(misses>=3&&n>2)break;continue;}
+      // Move todos os pontos o mesmo vetor — sem convergência
+      const shifted=linePts.map(pt=>
+        turf.destination(turf.point(pt),distKm,perpBrg,{units:'kilometers'}).geometry.coordinates
+      );
 
       // Estende nos dois extremos seguindo a direção local da curva
-      const brgS=turf.bearing(turf.point(coords[0]),turf.point(coords[1]));
-      const brgE=turf.bearing(turf.point(coords[coords.length-2]),turf.point(coords[coords.length-1]));
-      const extS=turf.destination(turf.point(coords[0]),ext,brgS+180,{units:'kilometers'}).geometry.coordinates;
-      const extE=turf.destination(turf.point(coords[coords.length-1]),ext,brgE,{units:'kilometers'}).geometry.coordinates;
-      const extLine=turf.lineString([extS,...coords,extE]);
+      const brgS=turf.bearing(turf.point(shifted[0]),turf.point(shifted[1]));
+      const brgE=turf.bearing(turf.point(shifted[shifted.length-2]),turf.point(shifted[shifted.length-1]));
+      const extS=turf.destination(turf.point(shifted[0]),ext,brgS+180,{units:'kilometers'}).geometry.coordinates;
+      const extE=turf.destination(turf.point(shifted[shifted.length-1]),ext,brgE,{units:'kilometers'}).geometry.coordinates;
+      const extended=[extS,...shifted,extE];
 
+      const extLine=turf.lineString(extended);
       if(!turf.booleanIntersects(extLine,turfPoly)){misses++;if(misses>=3&&n>2)break;continue;}
       misses=0;
 
-      // Clipping curvo — mantém a forma da curva dentro do polígono
-      const clipped=clipCurveToPolygon(extLine.geometry.coordinates,turfPoly,polyBound);
+      const clipped=clipCurveToPolygon(extended,turfPoly,polyBound);
       if(!clipped||clipped.length<2)continue;
 
       const pl=new google.maps.Polyline({
