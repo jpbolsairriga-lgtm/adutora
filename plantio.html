@@ -160,6 +160,16 @@ input:focus,select:focus{border-color:var(--bl3);box-shadow:0 0 0 3px rgba(0,180
           <label>Espa&ccedil;amento entre linhas</label>
           <div class="iu"><input type="number" id="espacamento" value="12" min="0.5" step="0.5"><span class="u">m</span></div>
         </div>
+        <div style="display:flex;gap:.5rem;margin-bottom:.45rem">
+          <div class="fg" style="flex:1;margin:0">
+            <label>Cor das linhas</label>
+            <input type="color" id="corLinhas" value="#FFD600" style="width:100%;height:32px;border:1px solid #ccd6e0;border-radius:6px;padding:2px;cursor:pointer">
+          </div>
+          <div class="fg" style="flex:1;margin:0">
+            <label>Espessura (px)</label>
+            <input type="number" id="espessuraLinhas" value="1.5" min="0.5" max="10" step="0.5" style="width:100%">
+          </div>
+        </div>
         <button class="btn btn-green btn-full" onclick="gerarOffset()">&#10038; Gerar Linhas de Plantio</button>
         <button class="btn btn-out btn-full" id="btnLimparOffset" style="display:none" onclick="limparOffset()">&#10005; Limpar Linhas</button>
         <button class="btn btn-full" id="btnExportKml" style="display:none;background:#2e7d32;color:#fff" onclick="exportarKML()">&#128462; Exportar KML (Google Earth)</button>
@@ -474,6 +484,8 @@ function gerarOffset(){
   if(!drawPoly){setStatus('stOffset','Desenhe o contorno do talhão primeiro.','err');return;}
   if(!drawLine){setStatus('stOffset','Desenhe a linha base primeiro.','err');return;}
   const spacing=parseFloat($('espacamento').value)||12;
+  const corLinha=$('corLinhas').value||'#FFD600';
+  const espessura=parseFloat($('espessuraLinhas').value)||1.5;
 
   const polyPts=drawPoly.getPath().getArray().map(p=>[p.lng(),p.lat()]);
   polyPts.push([...polyPts[0]]);
@@ -481,57 +493,55 @@ function gerarOffset(){
 
   const turfPoly=turf.polygon([polyPts]);
   const polyBound=turf.polygonToLine(turfPoly);
-  const baseLine=turf.lineString(linePts);
 
-  // Extensão para além do polígono (diagonal do bbox × 2)
   const bbox=turf.bbox(turfPoly);
   const ext=turf.distance(turf.point([bbox[0],bbox[1]]),turf.point([bbox[2],bbox[3]]))*2+1;
 
   limparOffset();
-  setStatus('stOffset','Gerando linhas curvas...','info');
+  setStatus('stOffset','Gerando linhas...','info');
 
   let count=0;
 
   // Direção da linha base (corda: primeiro → último ponto)
   const rowBrg=turf.bearing(turf.point(linePts[0]),turf.point(linePts[linePts.length-1]));
 
+  function addShifted(shifted){
+    if(shifted.length<2)return false;
+    const brgS=turf.bearing(turf.point(shifted[0]),turf.point(shifted[1]));
+    const brgE=turf.bearing(turf.point(shifted[shifted.length-2]),turf.point(shifted[shifted.length-1]));
+    const extS=turf.destination(turf.point(shifted[0]),ext,brgS+180,{units:'kilometers'}).geometry.coordinates;
+    const extE=turf.destination(turf.point(shifted[shifted.length-1]),ext,brgE,{units:'kilometers'}).geometry.coordinates;
+    const extended=[extS,...shifted,extE];
+    if(!turf.booleanIntersects(turf.lineString(extended),turfPoly))return false;
+    const clipped=clipCurveToPolygon(extended,turfPoly,polyBound);
+    if(!clipped||clipped.length<2)return false;
+    offsetLines.push(new google.maps.Polyline({
+      path:clipped.map(c=>({lat:c[1],lng:c[0]})),
+      map,strokeColor:corLinha,strokeWeight:espessura,strokeOpacity:.9,zIndex:3
+    }));
+    count++;
+    return true;
+  }
+
+  // n=0: posição da linha guia (vira fileira de plantio)
+  addShifted([...linePts]);
+
+  // Offsets para ambos os lados
   for(const side of[-1,1]){
-    // Translada rigidamente na direção perpendicular à corda — preserva a forma exata da curva
     const perpBrg=rowBrg+side*90;
     let misses=0;
     for(let n=1;n<5000;n++){
       const distKm=n*spacing/1000;
-
-      // Move todos os pontos o mesmo vetor — sem convergência
       const shifted=linePts.map(pt=>
         turf.destination(turf.point(pt),distKm,perpBrg,{units:'kilometers'}).geometry.coordinates
       );
-
-      // Estende nos dois extremos seguindo a direção local da curva
-      const brgS=turf.bearing(turf.point(shifted[0]),turf.point(shifted[1]));
-      const brgE=turf.bearing(turf.point(shifted[shifted.length-2]),turf.point(shifted[shifted.length-1]));
-      const extS=turf.destination(turf.point(shifted[0]),ext,brgS+180,{units:'kilometers'}).geometry.coordinates;
-      const extE=turf.destination(turf.point(shifted[shifted.length-1]),ext,brgE,{units:'kilometers'}).geometry.coordinates;
-      const extended=[extS,...shifted,extE];
-
-      const extLine=turf.lineString(extended);
-      if(!turf.booleanIntersects(extLine,turfPoly)){misses++;if(misses>=3&&n>2)break;continue;}
-      misses=0;
-
-      const clipped=clipCurveToPolygon(extended,turfPoly,polyBound);
-      if(!clipped||clipped.length<2)continue;
-
-      const pl=new google.maps.Polyline({
-        path:clipped.map(c=>({lat:c[1],lng:c[0]})),
-        map,strokeColor:'#1565C0',strokeWeight:1.5,strokeOpacity:.85,zIndex:3
-      });
-      offsetLines.push(pl);
-      count++;
+      if(addShifted(shifted)){misses=0;}
+      else{misses++;if(misses>=3&&n>2)break;}
     }
   }
 
-  // Deixa a linha base como tracejada de referência
-  if(drawLine) drawLine.setOptions({strokeColor:'#ff6b00',strokeWeight:2,strokeOpacity:.5,strokeDashArray:'8,5'});
+  // Oculta a linha guia — substituída pelas linhas de plantio
+  if(drawLine) drawLine.setMap(null);
 
   $('nLinhas').textContent=count+' linhas';
   $('offsetInfo').style.display='';
@@ -542,8 +552,8 @@ function gerarOffset(){
 
 function limparOffset(){
   offsetLines.forEach(l=>l.setMap(null));offsetLines=[];
-  // Restaura estilo da linha base
-  if(drawLine) drawLine.setOptions({strokeColor:'#ff6b00',strokeWeight:3,strokeOpacity:.9,strokeDashArray:null});
+  // Reexibe a linha guia ao limpar
+  if(drawLine) drawLine.setMap(map);
   $('offsetInfo').style.display='none';$('btnLimparOffset').style.display='none';
   $('btnExportKml').style.display='none';
   setStatus('stOffset','','');
