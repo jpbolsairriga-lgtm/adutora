@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Estudo de Plantio — Bolsa Irriga</title>
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+<style>
+:root{--bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;--gn:#1b6e3a;--gn2:#2d9e5a;--gn3:#d4edda;--rd:#c62828;--am:#e07b00;--am2:#fff8e1;--bg:#f4f7fb;--bdr:#d0e4f0;--tx:#1a2535;--mu:#607080;--sh:0 2px 16px rgba(0,80,160,.10)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--tx);font-size:14px}
+header{background:linear-gradient(135deg,#003d5c,var(--bl2),var(--bl3));color:#fff;box-shadow:0 3px 20px rgba(0,0,0,.2)}
+.hdr{max-width:1360px;margin:0 auto;padding:.9rem 1.5rem;display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap}
+.hdr-logo{display:flex;align-items:center;gap:.9rem}
+.hdr-logo img{height:60px;width:60px;object-fit:contain;background:#fff;border-radius:10px;padding:6px;box-shadow:0 2px 10px rgba(0,0,0,.18)}
+.hdr-brand h1{font-size:1.3rem;font-weight:800}.hdr-brand p{opacity:.82;font-size:.78rem;margin-top:.1rem}
+.hdr-dev{text-align:right;font-size:.74rem;line-height:1.7;opacity:.92;border-left:2px solid rgba(255,255,255,.25);padding-left:1.1rem}
+.hdr-dev .dn{font-size:.9rem;font-weight:800}
+.page{max-width:1360px;margin:1.2rem auto;padding:0 1rem}
+.card{background:#fff;border-radius:12px;padding:1.1rem 1.3rem;margin-bottom:1rem;box-shadow:var(--sh);border:1px solid var(--bdr)}
+.ct{font-size:.74rem;font-weight:800;color:var(--bl2);text-transform:uppercase;letter-spacing:.08em;margin-bottom:.75rem;padding-bottom:.42rem;border-bottom:2px solid var(--bl4);display:flex;align-items:center;gap:.45rem}
+.ct::before{content:'';width:4px;height:1.1em;background:var(--bl3);border-radius:2px;flex-shrink:0}
+.fg{display:flex;flex-direction:column;gap:.18rem}
+label{font-size:.7rem;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.05em}
+.fg small{font-size:.65rem;color:var(--mu)}
+.iu{display:flex}
+.iu input{flex:1;border-radius:8px 0 0 8px}
+.iu .u{background:var(--bdr);border:1.5px solid var(--bdr);border-left:none;padding:.45rem .5rem;font-size:.75rem;color:var(--mu);border-radius:0 8px 8px 0;white-space:nowrap;display:flex;align-items:center}
+input[type=number],input[type=text],select{padding:.45rem .65rem;border:1.5px solid var(--bdr);border-radius:8px;font-size:.88rem;color:var(--tx);background:#fafeff;outline:none;transition:border-color .18s;width:100%}
+input:focus,select:focus{border-color:var(--bl3);box-shadow:0 0 0 3px rgba(0,180,216,.13)}
+.btn{padding:.55rem 1.1rem;border:none;border-radius:8px;font-size:.84rem;font-weight:800;cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;gap:.35rem}
+.btn-blue{background:var(--bl2);color:#fff}.btn-blue:hover{background:#005f94}
+.btn-green{background:var(--gn);color:#fff}.btn-green:hover{background:#145530}
+.btn-red{background:#c62828;color:#fff}.btn-red:hover{background:#8e1c1c}
+.btn-out{background:#fff;color:var(--bl2);border:2px solid var(--bl2)}.btn-out:hover{background:#e3f2fd}
+.btn-full{width:100%;justify-content:center;margin-bottom:.38rem}
+.btn:disabled{opacity:.4;cursor:default}
+/* Map layout */
+.map-body{display:flex;min-height:580px}
+.map-sb{width:270px;flex-shrink:0;border-right:1px solid var(--bdr);overflow-y:auto;display:flex;flex-direction:column}
+.map-main{flex:1;display:flex;flex-direction:column;min-width:0}
+#map-div{flex:1;min-height:440px;background:#e8edf2;position:relative}
+#elev-canvas{width:100%;height:155px;display:block;background:#f8fbff;border-top:1px solid var(--bdr)}
+/* Sidebar sections */
+.sb-sec{padding:.65rem .8rem;border-bottom:1px solid #f0f0f0}
+.sb-title{font-size:.68rem;font-weight:800;color:var(--bl2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.45rem;display:flex;align-items:center;gap:.3rem}
+.sb-title::before{content:'';width:3px;height:.9em;background:var(--bl3);border-radius:2px}
+.sb-status{font-size:.72rem;padding:.35rem .55rem;border-radius:6px;display:none;margin-bottom:.35rem;line-height:1.45}
+.sb-status.info{background:#e3f2fd;color:#003d5c;border-left:3px solid var(--bl2);display:block}
+.sb-status.ok{background:var(--gn3);color:#1b4d2e;border-left:3px solid var(--gn2);display:block}
+.sb-status.err{background:#ffebee;color:#c62828;border-left:3px solid #c62828;display:block}
+.sb-status.warn{background:var(--am2);color:#7c4d00;border-left:3px solid #f59e0b;display:block}
+.cap-box{background:#f0f7ff;border:1px solid var(--bdr);border-radius:7px;padding:.35rem .6rem;margin:.3rem 0}
+.cap-v{font-size:.95rem;font-weight:800;color:#003d5c}
+.cap-l{font-size:.62rem;color:var(--mu);text-transform:uppercase;letter-spacing:.04em}
+/* Legenda cores */
+.leg-line{display:flex;align-items:center;gap:.45rem;font-size:.72rem;color:var(--mu);margin:.2rem 0}
+.leg-sw{width:24px;height:3px;border-radius:2px;flex-shrink:0}
+/* Tutorial modal */
+#tutModal{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:200;display:none;align-items:center;justify-content:center}
+#tutModal.open{display:flex}
+#tutBox{background:#fff;border-radius:14px;width:min(600px,96vw);max-height:90vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,.3)}
+.tut-hdr{background:linear-gradient(135deg,#003d5c,#0077b6);color:#fff;padding:1rem 1.3rem;border-radius:14px 14px 0 0;display:flex;align-items:center;gap:.7rem}
+.tut-hdr h2{font-size:.95rem;font-weight:900;flex:1}
+.tut-step{display:flex;gap:.8rem;margin:.9rem 1.3rem;align-items:flex-start}
+.tut-num{width:26px;height:26px;border-radius:50%;background:var(--bl2);color:#fff;font-size:.75rem;font-weight:900;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:.1rem}
+.tut-content h3{font-size:.8rem;font-weight:800;color:#003d5c;margin-bottom:.15rem}
+.tut-content p{font-size:.76rem;color:#3a4a5a;line-height:1.55}
+.tut-api{display:flex;align-items:center;gap:.4rem;font-size:.74rem;background:#f0f7ff;border:1px solid var(--bdr);border-radius:6px;padding:.22rem .5rem;margin:.15rem 0}
+.tut-warn{background:#fff8e1;border:1px solid #ffe082;border-radius:7px;padding:.4rem .7rem;font-size:.74rem;color:#7a5500;line-height:1.5;margin:.4rem 1.3rem}
+.tut-link{display:inline-flex;align-items:center;gap:.3rem;background:var(--bl2);color:#fff;border-radius:6px;padding:.22rem .6rem;font-size:.73rem;font-weight:700;text-decoration:none;margin:.2rem 0}
+.tut-footer{background:#f0f7ff;border-top:1px solid var(--bdr);padding:.65rem 1.3rem;border-radius:0 0 14px 14px;font-size:.72rem;color:var(--mu);text-align:center}
+@media(max-width:700px){.map-body{flex-direction:column}.map-sb{width:100%;border-right:none;border-bottom:1px solid var(--bdr)}}
+</style>
+</head>
+<body>
+<header>
+<div class="hdr">
+  <div class="hdr-logo">
+    <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
+    <div class="hdr-brand">
+      <h1>Estudo de Plantio</h1>
+      <p>Contorno do talhão &middot; Perfil de eleva&ccedil;&atilde;o &middot; Linhas de plantio com offset</p>
+    </div>
+  </div>
+  <div class="hdr-dev"><div class="dn">Jo&atilde;o Paulo de Oliveira</div>Eng. Agr&ocirc;nomo &middot; Especialista em Irriga&ccedil;&atilde;o<br>bolsairriga.com.br &middot; (16) 3702-6571</div>
+</div>
+</header>
+
+<div class="page">
+
+<!-- API Key -->
+<div class="card">
+  <div class="ct">&#128273; Chave API Google</div>
+  <div style="display:flex;gap:.7rem;align-items:flex-end;flex-wrap:wrap">
+    <div class="fg" style="flex:1;min-width:200px">
+      <label>Google Maps API Key</label>
+      <div class="iu">
+        <input type="password" id="apiKey" placeholder="AIzaSy...">
+        <span class="u" onclick="salvarKey()" style="cursor:pointer;background:#0077b6;color:#fff;border-color:#0077b6;font-weight:700">OK</span>
+      </div>
+    </div>
+    <button class="btn btn-blue" onclick="initMaps()">&#128506; Carregar Mapa</button>
+    <button class="btn btn-out" id="btnTut">&#10067; Tutorial API</button>
+  </div>
+</div>
+
+<!-- Mapa -->
+<div class="card" style="padding:0;overflow:hidden">
+  <div class="map-body">
+
+    <!-- Sidebar -->
+    <div class="map-sb">
+
+      <!-- Status global -->
+      <div class="sb-sec">
+        <div id="mstatus" class="sb-status"></div>
+        <!-- Legenda -->
+        <div class="leg-line"><div class="leg-sw" style="background:#0077b6;height:2px;border:1px dashed #0077b6"></div>Contorno do talh&atilde;o</div>
+        <div class="leg-line"><div class="leg-sw" style="background:#ff6b00"></div>Linha base / perfil</div>
+        <div class="leg-line"><div class="leg-sw" style="background:#1565C0"></div>Linhas de plantio</div>
+      </div>
+
+      <!-- Polígono -->
+      <div class="sb-sec">
+        <div class="sb-title">&#9654; &Aacute;rea do Talh&atilde;o</div>
+        <div id="stPoly" class="sb-status"></div>
+        <button class="btn btn-blue btn-full" id="btnPoly" onclick="setMode('POLYGON')">&#9726; Desenhar Contorno</button>
+        <button class="btn btn-out btn-full" id="btnFecharPoly" style="display:none" onclick="fecharPoligono()">&#10003; Fechar Pol&iacute;gono</button>
+        <button class="btn btn-out btn-full" id="btnLimparPoly" style="display:none" onclick="limparPoligono()">&#10005; Limpar Contorno</button>
+        <div id="areaBox" class="cap-box" style="display:none">
+          <div class="cap-v" id="areaVal">—</div>
+          <div class="cap-l">&#193;rea do talh&atilde;o</div>
+        </div>
+      </div>
+
+      <!-- Linha Base -->
+      <div class="sb-sec">
+        <div class="sb-title">&#9654; Linha Base</div>
+        <div id="stLinha" class="sb-status"></div>
+        <button class="btn btn-green btn-full" id="btnLinha" onclick="setMode('POLYLINE')">&#9998; Desenhar Linha Base</button>
+        <button class="btn btn-out btn-full" id="btnFinLinha" style="display:none" onclick="finalizarLinha()">&#10003; Finalizar Linha</button>
+        <button class="btn btn-out btn-full" id="btnLimparLinha" style="display:none" onclick="limparLinha()">&#10005; Limpar e Redesenhar</button>
+        <div id="linhaInfo" style="display:none;font-size:.72rem;color:var(--mu);margin:.3rem 0">Arraste os pontos para ajustar</div>
+      </div>
+
+      <!-- Perfil de Elevação -->
+      <div class="sb-sec" id="secPerfil" style="display:none">
+        <div class="sb-title">&#9654; Perfil de Eleva&ccedil;&atilde;o</div>
+        <div id="stPerfil" class="sb-status"></div>
+        <button class="btn btn-blue btn-full" id="btnPerfil" onclick="gerarPerfil()">&#9650; Gerar Perfil</button>
+      </div>
+
+      <!-- Offset / Linhas de Plantio -->
+      <div class="sb-sec" id="secOffset" style="display:none">
+        <div class="sb-title">&#9654; Linhas de Plantio</div>
+        <div id="stOffset" class="sb-status"></div>
+        <div class="fg" style="margin-bottom:.45rem">
+          <label>Espa&ccedil;amento entre linhas</label>
+          <div class="iu"><input type="number" id="espacamento" value="12" min="0.5" step="0.5"><span class="u">m</span></div>
+        </div>
+        <button class="btn btn-green btn-full" onclick="gerarOffset()">&#10038; Gerar Linhas de Plantio</button>
+        <button class="btn btn-out btn-full" id="btnLimparOffset" style="display:none" onclick="limparOffset()">&#10005; Limpar Linhas</button>
+        <div id="offsetInfo" class="cap-box" style="display:none">
+          <div class="cap-v" id="nLinhas">—</div>
+          <div class="cap-l">Linhas geradas</div>
+        </div>
+      </div>
+
+    </div><!-- /sidebar -->
+
+    <!-- Map + Profile -->
+    <div class="map-main">
+      <div id="map-div">
+        <div id="map-placeholder" style="display:flex;align-items:center;justify-content:center;height:100%;flex-direction:column;gap:.8rem;color:var(--mu)">
+          <span style="font-size:2.5rem">&#127758;</span>
+          <p style="font-size:.9rem">Insira a chave API e clique em <b>Carregar Mapa</b></p>
+        </div>
+      </div>
+      <canvas id="elev-canvas" style="display:none"></canvas>
+    </div>
+
+  </div><!-- /map-body -->
+</div><!-- /card mapa -->
+
+</div><!-- /page -->
+
+<!-- Tutorial -->
+<div id="tutModal" onclick="if(event.target===this)fecharTut()">
+<div id="tutBox">
+  <div class="tut-hdr"><span style="font-size:1.2rem">&#128273;</span><h2>Como configurar a Chave API do Google Maps</h2><button onclick="fecharTut()" style="background:none;border:none;color:#fff;font-size:1.2rem;cursor:pointer">&#10005;</button></div>
+  <div class="tut-warn"><b>Aten&ccedil;&atilde;o:</b> O Google oferece <b>US$ 200 de cr&eacute;dito gratuito por m&ecirc;s</b> — suficiente para uso profissional sem custo.</div>
+  <div class="tut-step"><div class="tut-num">1</div><div class="tut-content"><h3>Acessar o Google Cloud Console</h3><p>Acesse com sua conta Google e crie um projeto.</p><a class="tut-link" href="https://console.cloud.google.com" target="_blank">&#8599; Abrir Console</a></div></div>
+  <div class="tut-step"><div class="tut-num">2</div><div class="tut-content"><h3>Ativar faturamento</h3><p>V&aacute; em <b>Faturamento</b> e vincule um cart&atilde;o. N&atilde;o ser&aacute; cobrado dentro do cr&eacute;dito mensal.</p></div></div>
+  <div class="tut-step"><div class="tut-num">3</div><div class="tut-content"><h3>Ativar as APIs</h3>
+    <div class="tut-api"><span style="color:#2e7d32">&#10003;</span> <b>Maps JavaScript API</b></div>
+    <div class="tut-api"><span style="color:#2e7d32">&#10003;</span> <b>Maps Elevation API</b></div>
+    <a class="tut-link" href="https://console.cloud.google.com/apis/library" target="_blank">&#8599; Biblioteca de APIs</a></div></div>
+  <div class="tut-step"><div class="tut-num">4</div><div class="tut-content"><h3>Criar e restringir a chave</h3><p>APIs &amp; Servi&ccedil;os → Credenciais → Criar Chave. Restrinja selecionando as APIs acima.</p><a class="tut-link" href="https://console.cloud.google.com/apis/credentials" target="_blank">&#8599; Credenciais</a></div></div>
+  <div class="tut-footer">D&uacute;vidas: <b>bolsairriga.com.br</b> &middot; (16) 3702-6571</div>
+</div>
+</div>
+
+<script>
+// ── Utilitários ──────────────────────────────────────────────────
+const $=id=>document.getElementById(id);
+function setStatus(id,msg,type='info'){const el=$(id);if(!msg){el.style.display='none';return;}el.textContent=msg;el.className='sb-status '+type;el.style.display='block';}
+function setMStatus(msg,type){setStatus('mstatus',msg,type);}
+
+// ── Tutorial ─────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded',()=>{
+  $('btnTut').addEventListener('click',()=>$('tutModal').classList.add('open'));
+});
+function fecharTut(){$('tutModal').classList.remove('open');}
+function salvarKey(){const k=$('apiKey').value.trim();if(k){localStorage.setItem('mapskey_pl',k);setMStatus('Chave salva.','ok');}}
+
+// ── Estado ───────────────────────────────────────────────────────
+let map, elevService;
+let mode = 'IDLE';           // 'POLYGON' | 'POLYLINE' | 'IDLE'
+let drawPoly = null;         // google.maps.Polygon
+let polyTempPts = [];        // pontos em desenho
+let polyTempLine = null;     // linha guia em desenho
+let drawLine = null;         // google.maps.Polyline (editável)
+let lineTempPts = [];
+let offsetLines = [];
+let perfilSamples = null;
+
+// ── Google Maps ───────────────────────────────────────────────────
+function initMaps(){
+  const key=$('apiKey').value.trim()||localStorage.getItem('mapskey_pl');
+  if(!key){setMStatus('Insira a chave API.','err');return;}
+  $('apiKey').value=key;localStorage.setItem('mapskey_pl',key);
+  if(window.google&&window.google.maps){initMap();return;}
+  setMStatus('Carregando Google Maps...','info');
+  const s=document.createElement('script');
+  s.src=`https://maps.googleapis.com/maps/api/js?key=${key}&callback=initMap&v=weekly`;
+  s.async=true;s.onerror=()=>setMStatus('Erro ao carregar Maps. Verifique a chave.','err');
+  document.head.appendChild(s);
+}
+window.initMap=function(){
+  $('map-placeholder').style.display='none';
+  map=new google.maps.Map($('map-div'),{
+    center:{lat:-15.8,lng:-47.9},zoom:5,
+    mapTypeId:'hybrid',streetViewControl:false,
+    gestureHandling:'greedy',disableDoubleClickZoom:true
+  });
+  elevService=new google.maps.ElevationService();
+  map.addListener('click',e=>onMapClick(e.latLng));
+  map.addListener('dblclick',e=>onMapDblClick(e.latLng));
+  setMStatus('Mapa carregado. Inicie desenhando o contorno do talhão.','ok');
+};
+
+// ── Modo de desenho ───────────────────────────────────────────────
+function setMode(m){
+  mode=m;
+  if(m==='POLYGON'){
+    $('map-div').style.cursor='crosshair';
+    setMStatus('Clique para adicionar vértices. Duplo clique ou botão para fechar.','info');
+    setStatus('stPoly','Clique no mapa para iniciar o contorno...','info');
+  } else if(m==='POLYLINE'){
+    $('map-div').style.cursor='crosshair';
+    setMStatus('Clique para adicionar pontos da linha base. Duplo clique ou botão para finalizar.','info');
+    setStatus('stLinha','Clique no mapa para iniciar a linha...','info');
+  } else {
+    $('map-div').style.cursor='';
+  }
+}
+
+function onMapClick(latLng){
+  if(mode==='POLYGON') addPolyPt(latLng);
+  else if(mode==='POLYLINE') addLinePt(latLng);
+}
+function onMapDblClick(latLng){
+  if(mode==='POLYGON'&&polyTempPts.length>=3) fecharPoligono();
+  else if(mode==='POLYLINE'&&lineTempPts.length>=2) finalizarLinha();
+}
+
+// ── Polígono ──────────────────────────────────────────────────────
+function addPolyPt(latLng){
+  polyTempPts.push(latLng);
+  // Linha guia
+  if(polyTempLine) polyTempLine.setMap(null);
+  polyTempLine=new google.maps.Polyline({
+    path:[...polyTempPts,polyTempPts[0]],map,
+    strokeColor:'#0077b6',strokeWeight:2,strokeOpacity:.7,strokeDashArray:'5,5'
+  });
+  if(polyTempPts.length>=3) $('btnFecharPoly').style.display='';
+  setStatus('stPoly',polyTempPts.length+' ponto(s) — duplo clique ou botão para fechar','info');
+}
+
+function fecharPoligono(){
+  if(polyTempPts.length<3){setStatus('stPoly','Mínimo 3 pontos.','err');return;}
+  if(polyTempLine){polyTempLine.setMap(null);polyTempLine=null;}
+  if(drawPoly) drawPoly.setMap(null);
+  drawPoly=new google.maps.Polygon({
+    paths:polyTempPts,map,
+    strokeColor:'#0077b6',strokeWeight:2.5,strokeOpacity:.9,
+    fillColor:'#0077b6',fillOpacity:.07,
+    editable:true,zIndex:2
+  });
+  const area=computeAreaHa(polyTempPts);
+  polyTempPts=[];
+  mode='IDLE';$('map-div').style.cursor='';
+  $('btnFecharPoly').style.display='none';
+  $('btnLimparPoly').style.display='';
+  $('areaBox').style.display='';
+  $('areaVal').textContent=area.toFixed(2)+' ha';
+  setStatus('stPoly','Contorno fechado — '+area.toFixed(2)+' ha. Arraste para ajustar.','ok');
+  setMStatus('Contorno definido. Agora desenhe a linha base.','info');
+}
+
+function limparPoligono(){
+  if(drawPoly){drawPoly.setMap(null);drawPoly=null;}
+  if(polyTempLine){polyTempLine.setMap(null);polyTempLine=null;}
+  polyTempPts=[];
+  $('btnFecharPoly').style.display='none';$('btnLimparPoly').style.display='none';
+  $('areaBox').style.display='none';
+  setStatus('stPoly','','');limparOffset();
+}
+
+function computeAreaHa(pts){
+  const coords=pts.map(p=>[p.lng(),p.lat()]);
+  coords.push(coords[0]);
+  const poly=turf.polygon([coords]);
+  return turf.area(poly)/10000;
+}
+
+// ── Linha Base ────────────────────────────────────────────────────
+function addLinePt(latLng){
+  lineTempPts.push(latLng);
+  if(drawLine){drawLine.setMap(null);drawLine=null;}
+  drawLine=new google.maps.Polyline({
+    path:lineTempPts,map,
+    strokeColor:'#ff6b00',strokeWeight:3,strokeOpacity:.9,zIndex:5
+  });
+  if(lineTempPts.length>=2){
+    $('btnFinLinha').style.display='';
+    setStatus('stLinha',lineTempPts.length+' pontos — duplo clique ou botão para finalizar','info');
+  }
+}
+
+function finalizarLinha(){
+  if(!drawLine||lineTempPts.length<2)return;
+  mode='IDLE';$('map-div').style.cursor='';
+  drawLine.setEditable(true);
+  $('btnFinLinha').style.display='none';
+  $('btnLimparLinha').style.display='';
+  $('linhaInfo').style.display='block';
+  $('secPerfil').style.display='';
+  $('secOffset').style.display='';
+  setStatus('stLinha','Linha definida — arraste os pontos para ajustar','ok');
+  setMStatus('Linha base definida. Gere o perfil de elevação ou as linhas de plantio.','ok');
+}
+
+function limparLinha(){
+  if(drawLine){drawLine.setMap(null);drawLine=null;}
+  lineTempPts=[];
+  $('btnFinLinha').style.display='none';$('btnLimparLinha').style.display='none';
+  $('linhaInfo').style.display='none';$('secPerfil').style.display='none';
+  $('secOffset').style.display='none';
+  $('elev-canvas').style.display='none';
+  setStatus('stLinha','','');limparOffset();
+  perfilSamples=null;
+  setMStatus('Linha limpa. Desenhe uma nova linha base.','info');
+}
+
+// ── Perfil de Elevação ────────────────────────────────────────────
+function haversine(p1,p2){
+  const R=6371000;
+  const la1=(typeof p1.lat==='function'?p1.lat():p1.lat)*Math.PI/180;
+  const la2=(typeof p2.lat==='function'?p2.lat():p2.lat)*Math.PI/180;
+  const lo1=(typeof p1.lng==='function'?p1.lng():p1.lng)*Math.PI/180;
+  const lo2=(typeof p2.lng==='function'?p2.lng():p2.lng)*Math.PI/180;
+  const a=Math.sin((la2-la1)/2)**2+Math.cos(la1)*Math.cos(la2)*Math.sin((lo2-lo1)/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+function fmtDist(d){return d>=1000?(d/1000).toFixed(2)+' km':Math.round(d)+' m';}
+
+async function gerarPerfil(){
+  if(!drawLine){setStatus('stPerfil','Desenhe a linha base primeiro.','err');return;}
+  const pts=drawLine.getPath().getArray();
+  if(pts.length<2){setStatus('stPerfil','A linha precisa de pelo menos 2 pontos.','err');return;}
+  const nSamples=Math.min(512,Math.max(100,pts.length*25));
+  setStatus('stPerfil','Buscando elevações...','info');
+  $('btnPerfil').disabled=true;
+  try{
+    const results=await Promise.race([
+      new Promise((res,rej)=>{
+        elevService.getElevationAlongPath({path:pts,samples:nSamples},(r,s)=>{
+          if(s==='OK'&&r)res(r);else rej(new Error(s||'UNKNOWN'));
+        });
+      }),
+      new Promise((_,rej)=>setTimeout(()=>rej(new Error('TIMEOUT')),25000))
+    ]);
+    perfilSamples=results;
+    desenharPerfilElevacao(results);
+    const dists=[0];
+    for(let i=1;i<results.length;i++)dists.push(dists[i-1]+haversine(results[i-1].location,results[i].location));
+    const elevs=results.map(s=>s.elevation);
+    const totalDist=dists[dists.length-1];
+    setStatus('stPerfil',`Perfil gerado: ${fmtDist(totalDist)}, ${Math.min(...elevs).toFixed(1)}–${Math.max(...elevs).toFixed(1)} m`,'ok');
+  }catch(e){
+    setStatus('stPerfil','⚠ Erro: '+e.message,'err');
+  }finally{$('btnPerfil').disabled=false;}
+}
+
+function desenharPerfilElevacao(samples){
+  const cv=$('elev-canvas');cv.style.display='block';
+  cv.width=cv.offsetWidth||700;cv.height=155;
+  const W=cv.width,H=cv.height;
+  const ctx=cv.getContext('2d');
+  const elevs=samples.map(s=>s.elevation);
+  const dists=[0];
+  for(let i=1;i<samples.length;i++)dists.push(dists[i-1]+haversine(samples[i-1].location,samples[i].location));
+  const totalDist=dists[dists.length-1];
+  const minE=Math.min(...elevs),maxE=Math.max(...elevs),eR=maxE-minE||1;
+  const pad={t:12,r:14,b:26,l:48};const cw=W-pad.l-pad.r,ch=H-pad.t-pad.b;
+  const xS=d=>pad.l+(d/totalDist)*cw,yS=e=>pad.t+ch-((e-minE)/eR)*ch;
+  ctx.fillStyle='#f8fbff';ctx.fillRect(0,0,W,H);
+  for(let i=0;i<=4;i++){const e=minE+(eR/4)*i,y=yS(e);ctx.strokeStyle='#e8edf2';ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+cw,y);ctx.stroke();ctx.fillStyle='#90a4b4';ctx.font='9px Segoe UI';ctx.textAlign='right';ctx.fillText(Math.round(e),pad.l-4,y+3);}
+  for(let i=0;i<=5;i++){const d=totalDist/5*i;ctx.strokeStyle='#e8edf2';ctx.beginPath();ctx.moveTo(xS(d),pad.t);ctx.lineTo(xS(d),pad.t+ch);ctx.stroke();ctx.fillStyle='#90a4b4';ctx.font='9px Segoe UI';ctx.textAlign='center';ctx.fillText(d>=1000?(d/1000).toFixed(1)+'k':Math.round(d)+'',xS(d),pad.t+ch+14);}
+  // Gradiente terreno
+  const tg=ctx.createLinearGradient(0,yS(maxE),0,yS(minE));
+  tg.addColorStop(0,'rgba(139,69,19,.7)');tg.addColorStop(0.5,'rgba(107,191,0,.6)');tg.addColorStop(1,'rgba(34,139,34,.5)');
+  let area='',path='';
+  samples.forEach((s,i)=>{const x=xS(dists[i]),y=yS(s.elevation);if(i===0){path=`M${x},${y}`;area=`M${x},${pad.t+ch} L${x},${y}`;}else{path+=` L${x},${y}`;area+=` L${x},${y}`;}});
+  area+=` L${xS(totalDist)},${pad.t+ch} Z`;
+  const a=new Path2D(area);ctx.fillStyle=tg;ctx.fill(a);
+  ctx.beginPath();let first=true;
+  samples.forEach((s,i)=>{const x=xS(dists[i]),y=yS(s.elevation);if(first){ctx.moveTo(x,y);first=false;}else ctx.lineTo(x,y);});
+  ctx.strokeStyle='#ff6b00';ctx.lineWidth=2;ctx.stroke();
+  ctx.fillStyle='#2e7d32';ctx.beginPath();ctx.arc(xS(0),yS(elevs[0]),4,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#c62828';ctx.beginPath();ctx.arc(xS(totalDist),yS(elevs[elevs.length-1]),4,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#607080';ctx.font='9px Segoe UI';ctx.textAlign='center';ctx.fillText('Distância (m)',pad.l+cw/2,H-2);
+}
+
+// ── Offset / Linhas de Plantio ────────────────────────────────────
+function gerarOffset(){
+  if(!drawPoly){setStatus('stOffset','Desenhe o contorno do talhão primeiro.','err');return;}
+  if(!drawLine){setStatus('stOffset','Desenhe a linha base primeiro.','err');return;}
+  const spacing=parseFloat($('espacamento').value)||12;
+
+  // Coordenadas atuais (pós-edição)
+  const polyPts=drawPoly.getPath().getArray().map(p=>[p.lng(),p.lat()]);
+  polyPts.push([...polyPts[0]]);
+  const linePts=drawLine.getPath().getArray().map(p=>[p.lng(),p.lat()]);
+
+  const turfPoly=turf.polygon([polyPts]);
+  const polyBound=turf.polygonToLine(turfPoly);
+
+  // Bearing da linha base (do 1º ao último ponto)
+  const brg=turf.bearing(turf.point(linePts[0]),turf.point(linePts[linePts.length-1]));
+
+  // Extensão para além do polígono
+  const bbox=turf.bbox(turfPoly);
+  const ext=turf.distance(turf.point([bbox[0],bbox[1]]),turf.point([bbox[2],bbox[3]]))*2+1;
+
+  limparOffset();
+  setStatus('stOffset','Gerando linhas...','info');
+
+  let count=0;
+  // Gera nas duas direções perpendiculares
+  for(let side of[-1,1]){
+    let misses=0;
+    for(let n=(side<0?1:0);n<5000;n++){
+      const distKm=side*n*spacing/1000;
+
+      // Desloca cada ponto da polyline perpendicular ao bearing
+      const offPts=linePts.map(c=>{
+        const moved=turf.destination(turf.point(c),Math.abs(distKm),distKm>=0?brg+90:brg-90,{units:'kilometers'});
+        return moved.geometry.coordinates;
+      });
+
+      // Estende em ambos os sentidos do bearing
+      const extS=turf.destination(turf.point(offPts[0]),ext,brg+180,{units:'kilometers'}).geometry.coordinates;
+      const extE=turf.destination(turf.point(offPts[offPts.length-1]),ext,brg,{units:'kilometers'}).geometry.coordinates;
+      const tLine=turf.lineString([extS,...offPts,extE]);
+
+      if(!turf.booleanIntersects(tLine,turfPoly)){misses++;if(misses>=3&&n>2)break;continue;}
+      misses=0;
+
+      // Interseção com o contorno do polígono
+      const ixs=turf.lineIntersect(tLine,polyBound);
+      if(ixs.features.length<2)continue;
+
+      const sorted=ixs.features
+        .map(f=>f.geometry.coordinates)
+        .sort((a,b)=>turf.distance(turf.point(extS),turf.point(a))-turf.distance(turf.point(extS),turf.point(b)));
+
+      const ptA=sorted[0],ptB=sorted[sorted.length-1];
+      const mid=[(ptA[0]+ptB[0])/2,(ptA[1]+ptB[1])/2];
+      if(!turf.booleanContains(turfPoly,turf.point(mid)))continue;
+
+      const pl=new google.maps.Polyline({
+        path:[{lat:ptA[1],lng:ptA[0]},{lat:ptB[1],lng:ptB[0]}],
+        map,strokeColor:'#1565C0',strokeWeight:1.5,strokeOpacity:.85,zIndex:3
+      });
+      offsetLines.push(pl);
+      count++;
+    }
+  }
+
+  $('nLinhas').textContent=count+' linhas';
+  $('offsetInfo').style.display='';
+  $('btnLimparOffset').style.display='';
+  setStatus('stOffset',count+' linhas de plantio geradas.','ok');
+}
+
+function limparOffset(){
+  offsetLines.forEach(l=>l.setMap(null));offsetLines=[];
+  $('offsetInfo').style.display='none';$('btnLimparOffset').style.display='none';
+  setStatus('stOffset','','');
+}
+
+// ── Init ──────────────────────────────────────────────────────────
+const savedKey=localStorage.getItem('mapskey_pl');
+if(savedKey)$('apiKey').value=savedKey;
+</script>
+</body>
+</html>
