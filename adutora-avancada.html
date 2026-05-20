@@ -650,10 +650,10 @@ function drawPressao(multi,Q_calc,Hg,L,lim,cotaS_,cotaR_,pRes){
     ctx.lineTo(px(combined[combined.length-1].x),py(yMin));
     ctx.closePath();
     ctx.fillStyle=tGrad;ctx.fill();
-    // Contorno do terreno
+    // Borda sutil do terreno
     ctx.beginPath();
     combined.forEach((p,i)=>i===0?ctx.moveTo(px(p.x),py(p.z)):ctx.lineTo(px(p.x),py(p.z)));
-    ctx.strokeStyle='rgba(93,64,55,.6)';ctx.lineWidth=1.2;ctx.stroke();
+    ctx.strokeStyle='rgba(93,64,55,.3)';ctx.lineWidth=0.8;ctx.stroke();
 
     // Piezométrico por segmento PN — área e linha
     for(const seg of multi.segs){
@@ -669,11 +669,13 @@ function drawPressao(multi,Q_calc,Hg,L,lim,cotaS_,cotaR_,pRes){
       ctx.beginPath();
       sp.forEach((p,i)=>i===0?ctx.moveTo(px(p.x),py(p.piezo)):ctx.lineTo(px(p.x),py(p.piezo)));
       ctx.strokeStyle=PN_COLOR[seg.pn];ctx.lineWidth=2.5;ctx.stroke();
-      // Rótulo PN
+      // Rótulo PN no meio do segmento
       const mid=sp[Math.floor(sp.length/2)];
       if(mid){
+        const lx=px(mid.x),ly=py(mid.piezo)-8;
+        ctx.fillStyle='rgba(255,255,255,.75)';ctx.fillRect(lx-14,ly-10,28,13);
         ctx.fillStyle=PN_COLOR[seg.pn];ctx.font='bold 9px Segoe UI';ctx.textAlign='center';
-        ctx.fillText('PN '+seg.pn,px(mid.x),py(mid.piezo)-6);
+        ctx.fillText('PN '+seg.pn,lx,ly);
       }
     }
 
@@ -686,19 +688,24 @@ function drawPressao(multi,Q_calc,Hg,L,lim,cotaS_,cotaR_,pRes){
       ctx.setLineDash([]);
       ctx.fillStyle='#e07b00';ctx.beginPath();ctx.arc(cpX,py(critPt.piezo),5,0,Math.PI*2);ctx.fill();
       ctx.fillStyle='#e07b00';ctx.font='bold 9px Segoe UI';ctx.textAlign='center';
-      ctx.fillText(`▲ Pto.crítico ${fmt(multi.criticalDist,0)}m · P=${fmt(critPt.P,1)} mca`,cpX,mg.t-6);
-      // Seta de pressão no ponto crítico
-      const midY=(py(critPt.z)+py(critPt.piezo))/2;
-      ctx.fillStyle='rgba(0,0,0,.55)';ctx.font='8px Segoe UI';ctx.textAlign='left';
-      if(py(critPt.piezo)+14<midY)ctx.fillText(fmt(critPt.P,1)+' mca',cpX+5,midY);
+      ctx.fillText('▲ Pto.crítico '+fmt(multi.criticalDist,0)+'m',cpX,mg.t-6);
     }
 
-    // Cotas inicial e final
+    // Pressão início e fim (único texto de pressão no gráfico)
     const c0=combined[0],cf=combined[combined.length-1];
-    ctx.font='bold 9px Segoe UI';
-    ctx.fillStyle='#2e7d32';ctx.textAlign='left';
+    // Início: círculo verde + pressão
+    ctx.fillStyle='#2e7d32';ctx.beginPath();ctx.arc(px(0),py(c0.piezo),5,0,Math.PI*2);ctx.fill();
+    ctx.font='bold 9.5px Segoe UI';ctx.textAlign='left';
+    ctx.fillText('P₀ = '+fmt(c0.P,1)+' mca',px(0)+8,py(c0.piezo)+4);
+    // Final: círculo vermelho + pressão
+    ctx.fillStyle='#c62828';ctx.beginPath();ctx.arc(px(L),py(cf.piezo),5,0,Math.PI*2);ctx.fill();
+    ctx.font='bold 9.5px Segoe UI';ctx.textAlign='right';
+    ctx.fillText('Pf = '+fmt(cf.P,1)+' mca',px(L)-8,py(cf.piezo)+4);
+    // Cotas do terreno
+    ctx.font='9px Segoe UI';
+    ctx.fillStyle='rgba(93,64,55,.8)';ctx.textAlign='left';
     ctx.fillText('z₀='+fmt(c0.z,1)+'m',px(0)+3,py(c0.z)-4);
-    ctx.fillStyle='#c62828';ctx.textAlign='right';
+    ctx.fillStyle='rgba(93,64,55,.8)';ctx.textAlign='right';
     ctx.fillText('zf='+fmt(cf.z,1)+'m',px(L)-3,py(cf.z)-4);
 
   } else {
@@ -736,7 +743,7 @@ function initMaps(){
 }
 window.initMap=function(){
   $('map-placeholder').style.display='none';
-  map=new google.maps.Map($('map-div'),{center:{lat:-15.8,lng:-47.9},zoom:5,mapTypeId:'hybrid',streetViewControl:false});
+  map=new google.maps.Map($('map-div'),{center:{lat:-15.8,lng:-47.9},zoom:5,mapTypeId:'hybrid',streetViewControl:false,gestureHandling:'greedy'});
   elevService=new google.maps.ElevationService();
   map.addListener('click',e=>{if(modoDesenho)addTracePoint(e.latLng);});
   setMStatus('Mapa carregado. Clique em Iniciar Traçado.','ok');
