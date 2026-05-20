@@ -121,10 +121,18 @@ input:focus,select:focus{border-color:var(--bl3);box-shadow:0 0 0 3px rgba(0,180
       <!-- Status global -->
       <div class="sb-sec">
         <div id="mstatus" class="sb-status"></div>
-        <!-- Legenda -->
         <div class="leg-line"><div class="leg-sw" style="background:#0077b6;height:2px;border:1px dashed #0077b6"></div>Contorno do talh&atilde;o</div>
         <div class="leg-line"><div class="leg-sw" style="background:#ff6b00"></div>Linha base / perfil</div>
         <div class="leg-line"><div class="leg-sw" style="background:#1565C0"></div>Linhas de plantio</div>
+      </div>
+
+      <!-- Importar KML -->
+      <div class="sb-sec">
+        <div class="sb-title">&#9654; Importar KML</div>
+        <div id="stImport" class="sb-status"></div>
+        <input type="file" id="fileKml" accept=".kml,.kmz" style="display:none" onchange="importarKML(this)">
+        <button class="btn btn-out btn-full" onclick="$('fileKml').click()">&#128194; Importar arquivo KML</button>
+        <button class="btn btn-out btn-full" id="btnLimparImport" style="display:none;font-size:.78rem" onclick="limparImport()">&#10005; Limpar importa&ccedil;&atilde;o</button>
       </div>
 
       <!-- Polígono -->
@@ -187,6 +195,17 @@ input:focus,select:focus{border-color:var(--bl3);box-shadow:0 0 0 3px rgba(0,180
         <div id="offsetInfo" class="cap-box" style="display:none">
           <div class="cap-v" id="nLinhas">—</div>
           <div class="cap-l">Linhas geradas</div>
+        </div>
+        <!-- Divisão / Carreador -->
+        <div style="border-top:1px solid #eef2f8;margin-top:.5rem;padding-top:.5rem">
+          <div class="sb-title" style="margin-bottom:.35rem">&#9654; Divis&atilde;o / Carreador</div>
+          <div class="fg" style="margin-bottom:.45rem">
+            <label>Largura do carreador</label>
+            <div class="iu"><input type="number" id="larguraCarreador" value="12" min="1" step="0.5"><span class="u">m</span></div>
+          </div>
+          <div id="stCarreador" class="sb-status"></div>
+          <button class="btn btn-blue btn-full" onclick="criarCarreador()">&#9632; Criar Divis&atilde;o / Carreador</button>
+          <button class="btn btn-out btn-full" id="btnLimparCarreador" style="display:none;font-size:.78rem" onclick="limparCarreador()">&#10005; Limpar Divis&atilde;o</button>
         </div>
         <!-- Legenda de declividade -->
         <div id="secDeclividade" style="display:none;margin-top:.4rem">
@@ -269,6 +288,8 @@ let lineTempPts = [];
 let offsetLines = [];
 let areas = [];          // áreas arquivadas [{poly, offsets, cor, esp}]
 let classifiedSegs = []; // segmentos coloridos por declividade
+let importedOverlays = []; // features importadas de KML
+let carreadorPolys = [];   // polígonos resultantes do carreador
 let perfilSamples = null;
 
 const SLOPE_CLASSES=[
@@ -752,6 +773,8 @@ function limparTudo(){
   if(drawLine){drawLine.setMap(null);drawLine=null;}
   if(polyTempLine){polyTempLine.setMap(null);polyTempLine=null;}
   offsetLines.forEach(l=>l.setMap(null)); offsetLines=[];
+  classifiedSegs.forEach(s=>s.pl.setMap(null)); classifiedSegs=[];
+  carreadorPolys.forEach(p=>p.setMap(null)); carreadorPolys=[];
   areas.forEach(a=>{if(a.poly)a.poly.setMap(null);a.offsets.forEach(l=>l.setMap(null));});
   areas=[];
   polyTempPts=[]; lineTempPts=[]; perfilSamples=null;
@@ -853,6 +876,153 @@ function exportarKML(){
   a.download=`estudo-plantio-${date.replace(/\//g,'-')}.kml`;
   a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),60000);
+}
+
+// ── Importar KML ──────────────────────────────────────────────────
+function parseKMLCoords(text){
+  return text.trim().split(/[\s\n]+/).map(c=>{
+    const p=c.trim().split(',');
+    if(p.length<2)return null;
+    const lng=parseFloat(p[0]),lat=parseFloat(p[1]);
+    return(!isNaN(lat)&&!isNaN(lng))?{lat,lng}:null;
+  }).filter(Boolean);
+}
+
+function kmlAbgrToHex(abgr){
+  if(!abgr||abgr.length<8)return null;
+  return '#'+abgr.slice(6,8)+abgr.slice(4,6)+abgr.slice(2,4);
+}
+
+function importarKML(input){
+  const file=input.files[0];if(!file)return;
+  input.value='';
+  const reader=new FileReader();
+  reader.onload=e=>{
+    try{
+      const xml=new DOMParser().parseFromString(e.target.result,'text/xml');
+      // Parse styles
+      const styles={};
+      Array.from(xml.getElementsByTagName('Style')).forEach(s=>{
+        const id=s.getAttribute('id');if(!id)return;
+        const ls=s.getElementsByTagName('LineStyle')[0];
+        const ps=s.getElementsByTagName('PolyStyle')[0];
+        styles[id]={};
+        if(ls){
+          const c=ls.getElementsByTagName('color')[0];
+          const w=ls.getElementsByTagName('width')[0];
+          if(c)styles[id].lc=kmlAbgrToHex(c.textContent.trim());
+          if(w)styles[id].lw=parseFloat(w.textContent)||1.5;
+        }
+        if(ps){
+          const c=ps.getElementsByTagName('color')[0];
+          if(c)styles[id].fc=kmlAbgrToHex(c.textContent.trim());
+        }
+      });
+      // Parse placemarks
+      let nPoly=0,nLine=0;
+      const bounds=new google.maps.LatLngBounds();
+      Array.from(xml.getElementsByTagName('Placemark')).forEach(pm=>{
+        const su=pm.querySelector('styleUrl');
+        const sid=su?su.textContent.replace('#','').trim():'';
+        const st=styles[sid]||{};
+        // Polygon
+        const polyEl=pm.querySelector('Polygon')||pm.getElementsByTagName('Polygon')[0];
+        if(polyEl){
+          const coordEl=polyEl.querySelector('coordinates')||polyEl.getElementsByTagName('coordinates')[0];
+          if(coordEl){
+            const pts=parseKMLCoords(coordEl.textContent);
+            if(pts.length>=3){
+              const pg=new google.maps.Polygon({
+                paths:pts,map,editable:false,
+                strokeColor:st.lc||'#0077b6',strokeWeight:2,strokeOpacity:.9,
+                fillColor:st.fc||'#0077b6',fillOpacity:.1,zIndex:2
+              });
+              importedOverlays.push(pg);
+              pts.forEach(p=>bounds.extend(p));nPoly++;
+            }
+          }
+        }
+        // LineString
+        const lineEl=pm.querySelector('LineString')||pm.getElementsByTagName('LineString')[0];
+        if(lineEl){
+          const coordEl=lineEl.querySelector('coordinates')||lineEl.getElementsByTagName('coordinates')[0];
+          if(coordEl){
+            const pts=parseKMLCoords(coordEl.textContent);
+            if(pts.length>=2){
+              const pl=new google.maps.Polyline({
+                path:pts,map,
+                strokeColor:st.lc||'#FFD600',strokeWeight:st.lw||1.5,strokeOpacity:.9,zIndex:5
+              });
+              importedOverlays.push(pl);
+              pts.forEach(p=>bounds.extend(p));nLine++;
+            }
+          }
+        }
+      });
+      if(nPoly+nLine===0){setStatus('stImport','Nenhuma geometria encontrada no KML.','err');return;}
+      if(!bounds.isEmpty())map.fitBounds(bounds);
+      $('btnLimparImport').style.display='';
+      setStatus('stImport',`${nPoly} polígono(s), ${nLine} linha(s) importada(s).`,'ok');
+    }catch(err){setStatus('stImport','Erro: '+err.message,'err');}
+  };
+  reader.readAsText(file);
+}
+
+function limparImport(){
+  importedOverlays.forEach(o=>o.setMap(null));importedOverlays=[];
+  $('btnLimparImport').style.display='none';
+  setStatus('stImport','','');
+}
+
+// ── Carreador / Divisão de Polígono ───────────────────────────────
+function criarCarreador(){
+  if(!drawPoly){setStatus('stCarreador','Desenhe o contorno primeiro.','err');return;}
+  if(!drawLine){setStatus('stCarreador','Desenhe a linha do carreador primeiro.','err');return;}
+  const largM=parseFloat($('larguraCarreador').value)||12;
+  const halfKm=largM/2/1000;
+
+  const polyPts=drawPoly.getPath().getArray().map(p=>[p.lng(),p.lat()]);
+  polyPts.push([...polyPts[0]]);
+  const turfPoly=turf.polygon([polyPts]);
+  const linePts2=drawLine.getPath().getArray().map(p=>[p.lng(),p.lat()]);
+  const lineGeo=turf.lineString(linePts2);
+
+  carreadorPolys.forEach(p=>p.setMap(null));carreadorPolys=[];
+
+  try{
+    const buffer=turf.buffer(lineGeo,halfKm,{units:'kilometers'});
+    const carreadorGeo=turf.intersect(turfPoly,buffer);
+    const remaining=turf.difference(turfPoly,buffer);
+
+    function addPoly(geo,opts){
+      if(!geo)return;
+      const coords=geo.geometry.type==='MultiPolygon'?geo.geometry.coordinates:[geo.geometry.coordinates];
+      coords.forEach(rings=>{
+        const paths=rings.map(ring=>ring.map(c=>({lat:c[1],lng:c[0]})));
+        carreadorPolys.push(new google.maps.Polygon({paths,map,...opts}));
+      });
+    }
+
+    addPoly(carreadorGeo,{strokeColor:'#5d4037',strokeWeight:2,strokeOpacity:.9,fillColor:'#795548',fillOpacity:.45,zIndex:4});
+
+    if(remaining){
+      const parts=turf.flatten(remaining);
+      const cores=['#1b6e3a','#0077b6'];
+      parts.features.forEach((f,i)=>{
+        const c=cores[i%2];
+        addPoly(f,{strokeColor:c,strokeWeight:2,strokeOpacity:.9,fillColor:c,fillOpacity:.18,zIndex:3});
+      });
+      const n=parts.features.length;
+      $('btnLimparCarreador').style.display='';
+      setStatus('stCarreador',`${n} área(s) + carreador de ${largM} m criados.`,'ok');
+    }
+  }catch(err){setStatus('stCarreador','Erro: '+err.message,'err');}
+}
+
+function limparCarreador(){
+  carreadorPolys.forEach(p=>p.setMap(null));carreadorPolys=[];
+  $('btnLimparCarreador').style.display='none';
+  setStatus('stCarreador','','');
 }
 
 // ── Relatório PDF ─────────────────────────────────────────────────
