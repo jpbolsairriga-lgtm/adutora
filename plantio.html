@@ -459,26 +459,25 @@ function desenharPerfilElevacao(samples){
 // o contorno e mantém apenas o trecho interno — preserva a curvatura
 function clipCurveToPolygon(coords,turfPoly,polyBound){
   if(coords.length<2)return null;
-  const result=[];
-  let inside=turf.booleanPointInPolygon(turf.point(coords[0]),turfPoly);
-  if(inside)result.push(coords[0]);
-  for(let i=1;i<coords.length;i++){
-    const curr=turf.point(coords[i]);
-    const currIn=turf.booleanPointInPolygon(curr,turfPoly);
-    if(inside!==currIn){
-      // cruzamento de fronteira — acha o ponto exato
-      const seg=turf.lineString([coords[i-1],coords[i]]);
-      const ixs=turf.lineIntersect(seg,polyBound);
-      if(ixs.features.length>0){
-        const px=ixs.features
-          .map(f=>f.geometry.coordinates)
-          .sort((a,b)=>turf.distance(turf.point(coords[i-1]),turf.point(a))-turf.distance(turf.point(coords[i-1]),turf.point(b)));
-        result.push(px[0]);
-      }
-    }
-    if(currIn)result.push(coords[i]);
-    inside=currIn;
-  }
+  const extLine=turf.lineString(coords);
+  // Intersecções geométricas puras — não depende de winding order
+  const ixs=turf.lineIntersect(extLine,polyBound);
+  if(ixs.features.length===0)return null;
+  const origin=turf.point(coords[0]);
+  const ixPts=ixs.features
+    .map(f=>f.geometry.coordinates)
+    .sort((a,b)=>turf.distance(origin,turf.point(a))-turf.distance(origin,turf.point(b)));
+  const entry=ixPts[0];
+  const exit=ixPts[ixPts.length-1];
+  const dEntry=turf.distance(origin,turf.point(entry));
+  const dExit=turf.distance(origin,turf.point(exit));
+  if(dEntry>=dExit)return null;
+  const result=[entry];
+  coords.forEach(c=>{
+    const d=turf.distance(origin,turf.point(c));
+    if(d>dEntry&&d<dExit)result.push(c);
+  });
+  result.push(exit);
   return result.length>=2?result:null;
 }
 
