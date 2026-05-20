@@ -173,6 +173,8 @@ input:focus,select:focus{border-color:var(--bl3);box-shadow:0 0 0 3px rgba(0,180
         <button class="btn btn-green btn-full" onclick="gerarOffset()">&#10038; Gerar Linhas de Plantio</button>
         <button class="btn btn-out btn-full" id="btnLimparOffset" style="display:none" onclick="limparOffset()">&#10005; Limpar Linhas</button>
         <button class="btn btn-full" id="btnExportKml" style="display:none;background:#2e7d32;color:#fff" onclick="exportarKML()">&#128462; Exportar KML (Google Earth)</button>
+        <button class="btn btn-full" id="btnNovaArea" style="display:none;background:#1a237e;color:#fff" onclick="novaArea()">&#10010; Nova &Aacute;rea</button>
+        <button class="btn btn-out btn-full" id="btnLimparTudo" style="display:none;color:#b71c1c;border-color:#b71c1c" onclick="limparTudo()">&#128465; Limpar Tudo</button>
         <div id="offsetInfo" class="cap-box" style="display:none">
           <div class="cap-v" id="nLinhas">—</div>
           <div class="cap-l">Linhas geradas</div>
@@ -235,6 +237,7 @@ let polyTempLine = null;     // linha guia em desenho
 let drawLine = null;         // google.maps.Polyline (editável)
 let lineTempPts = [];
 let offsetLines = [];
+let areas = [];          // áreas arquivadas [{poly, offsets, cor, esp}]
 let perfilSamples = null;
 
 // ── Google Maps ───────────────────────────────────────────────────
@@ -547,7 +550,9 @@ function gerarOffset(){
   $('offsetInfo').style.display='';
   $('btnLimparOffset').style.display='';
   $('btnExportKml').style.display='';
-  setStatus('stOffset',count+' linhas geradas. Exporte em KML para o Google Earth.','ok');
+  $('btnNovaArea').style.display='';
+  $('btnLimparTudo').style.display='';
+  setStatus('stOffset',count+' linhas geradas. Exporte em KML ou adicione nova área.','ok');
 }
 
 function limparOffset(){
@@ -559,50 +564,98 @@ function limparOffset(){
   setStatus('stOffset','','');
 }
 
+// ── Múltiplas Áreas ───────────────────────────────────────────────
+function novaArea(){
+  // Arquiva a área atual
+  if(drawPoly||offsetLines.length>0){
+    areas.push({poly:drawPoly,offsets:[...offsetLines],
+      cor:$('corLinhas').value||'#FFD600',esp:parseFloat($('espessuraLinhas').value)||1.5});
+  }
+  // Zera estado corrente (mantém tudo no mapa)
+  drawPoly=null; drawLine=null; offsetLines=[];
+  polyTempPts=[]; lineTempPts=[];
+  if(polyTempLine){polyTempLine.setMap(null);polyTempLine=null;}
+  perfilSamples=null;
+  // Reset UI
+  ['secPerfil','secOffset','btnLimparOffset','btnExportKml','btnNovaArea',
+   'offsetInfo','elev-canvas','btnLimparPoly','btnKmlContorno','areaBox',
+   'btnLimparLinha','btnFinLinha','linhaInfo'].forEach(id=>{
+    const el=$(id);if(el)el.style.display='none';
+  });
+  $('btnLimparTudo').style.display='';
+  setStatus('stPoly','',''); setStatus('stLinha','',''); setStatus('stOffset','','');
+  setMode('IDLE');
+  setMStatus('Área '+(areas.length)+' salva. Desenhe o contorno do novo talhão.','ok');
+}
+
+function limparTudo(){
+  const total=areas.length+(drawPoly?1:0);
+  if(total>0&&!confirm('Limpar '+(total===1?'a área':'as '+total+' áreas')+' do mapa?'))return;
+  if(drawPoly){drawPoly.setMap(null);drawPoly=null;}
+  if(drawLine){drawLine.setMap(null);drawLine=null;}
+  if(polyTempLine){polyTempLine.setMap(null);polyTempLine=null;}
+  offsetLines.forEach(l=>l.setMap(null)); offsetLines=[];
+  areas.forEach(a=>{if(a.poly)a.poly.setMap(null);a.offsets.forEach(l=>l.setMap(null));});
+  areas=[];
+  polyTempPts=[]; lineTempPts=[]; perfilSamples=null;
+  ['secPerfil','secOffset','btnLimparOffset','btnExportKml','btnNovaArea','btnLimparTudo',
+   'offsetInfo','elev-canvas','btnLimparPoly','btnKmlContorno','areaBox',
+   'btnLimparLinha','btnFinLinha','linhaInfo'].forEach(id=>{
+    const el=$(id);if(el)el.style.display='none';
+  });
+  setStatus('stPoly','',''); setStatus('stLinha','',''); setStatus('stOffset','','');
+  setMode('IDLE');
+  setMStatus('Mapa limpo. Desenhe o contorno do talhão.','info');
+}
+
 // ── Exportar KML ──────────────────────────────────────────────────
 function exportarKML(){
   const date=new Date().toLocaleDateString('pt-BR');
   let kml=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n<name>Estudo de Plantio — Bolsa Irriga</name>\n<description>Gerado em ${date}</description>\n`;
-
-  // Estilos
   kml+=`<Style id="sContorno"><LineStyle><color>ffb67700</color><width>2.5</width></LineStyle><PolyStyle><color>110077b6</color></PolyStyle></Style>\n`;
-  kml+=`<Style id="sLinha"><LineStyle><color>ff006bff</color><width>2</width></LineStyle></Style>\n`;
-  kml+=`<Style id="sPlantio"><LineStyle><color>ffC06515</color><width>1.5</width></LineStyle></Style>\n`;
 
-  // Polígono do talhão
-  if(drawPoly){
-    const pts=drawPoly.getPath().getArray();
-    const coords=pts.map(p=>`${p.lng().toFixed(7)},${p.lat().toFixed(7)},0`).join(' ');
-    const first=pts[0];
-    kml+=`<Placemark><name>Contorno do Talh&#227;o</name><styleUrl>#sContorno</styleUrl>`;
-    kml+=`<Polygon><outerBoundaryIs><LinearRing><tessellate>1</tessellate><coordinates>${coords} ${first.lng().toFixed(7)},${first.lat().toFixed(7)},0</coordinates></LinearRing></outerBoundaryIs></Polygon>`;
-    kml+=`</Placemark>\n`;
+  function hexToKml(hex){
+    const h=hex.replace('#','');
+    return 'ff'+h.slice(4,6)+h.slice(2,4)+h.slice(0,2);
+  }
+  function polyCoords(poly){
+    const pts=poly.getPath().getArray();
+    const c=pts.map(p=>`${p.lng().toFixed(7)},${p.lat().toFixed(7)},0`).join(' ');
+    return c+' '+`${pts[0].lng().toFixed(7)},${pts[0].lat().toFixed(7)},0`;
+  }
+  function lineCoords(l){
+    return l.getPath().getArray().map(p=>`${p.lng().toFixed(7)},${p.lat().toFixed(7)},0`).join(' ');
   }
 
-  // Linha base
-  if(drawLine){
-    const pts=drawLine.getPath().getArray();
-    const coords=pts.map(p=>`${p.lng().toFixed(7)},${p.lat().toFixed(7)},0`).join(' ');
-    kml+=`<Placemark><name>Linha Base</name><styleUrl>#sLinha</styleUrl>`;
-    kml+=`<LineString><tessellate>1</tessellate><coordinates>${coords}</coordinates></LineString>`;
-    kml+=`</Placemark>\n`;
-  }
+  // Monta lista de todas as áreas (arquivadas + atual)
+  const todas=[
+    ...areas,
+    ...(drawPoly||offsetLines.length>0?[{poly:drawPoly,offsets:[...offsetLines],
+      cor:$('corLinhas').value||'#FFD600',esp:parseFloat($('espessuraLinhas').value)||1.5}]:[])
+  ];
 
-  // Linhas de plantio
-  if(offsetLines.length>0){
-    kml+=`<Folder><name>Linhas de Plantio (${offsetLines.length})</name>\n`;
-    offsetLines.forEach((l,i)=>{
-      const pts=l.getPath().getArray();
-      const coords=pts.map(p=>`${p.lng().toFixed(7)},${p.lat().toFixed(7)},0`).join(' ');
-      kml+=`<Placemark><name>Linha ${i+1}</name><styleUrl>#sPlantio</styleUrl>`;
-      kml+=`<LineString><tessellate>1</tessellate><coordinates>${coords}</coordinates></LineString>`;
+  todas.forEach((a,idx)=>{
+    const n=todas.length>1?` ${idx+1}`:'';
+    kml+=`<Style id="sP${idx}"><LineStyle><color>${hexToKml(a.cor)}</color><width>${a.esp}</width></LineStyle></Style>\n`;
+    kml+=`<Folder><name>Talh&#227;o${n}</name>\n`;
+    if(a.poly){
+      kml+=`<Placemark><name>Contorno${n}</name><styleUrl>#sContorno</styleUrl>`;
+      kml+=`<Polygon><outerBoundaryIs><LinearRing><tessellate>1</tessellate><coordinates>${polyCoords(a.poly)}</coordinates></LinearRing></outerBoundaryIs></Polygon>`;
       kml+=`</Placemark>\n`;
-    });
+    }
+    if(a.offsets.length>0){
+      kml+=`<Folder><name>Linhas de Plantio (${a.offsets.length})${n}</name>\n`;
+      a.offsets.forEach((l,i)=>{
+        kml+=`<Placemark><name>Linha ${i+1}</name><styleUrl>#sP${idx}</styleUrl>`;
+        kml+=`<LineString><tessellate>1</tessellate><coordinates>${lineCoords(l)}</coordinates></LineString>`;
+        kml+=`</Placemark>\n`;
+      });
+      kml+=`</Folder>\n`;
+    }
     kml+=`</Folder>\n`;
-  }
+  });
 
   kml+=`</Document></kml>`;
-
   const blob=new Blob([kml],{type:'application/vnd.google-earth.kml+xml'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
