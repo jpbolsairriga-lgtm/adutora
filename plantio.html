@@ -179,9 +179,9 @@ input:focus,select:focus{border-color:var(--bl3);box-shadow:0 0 0 3px rgba(0,180
         <button class="btn btn-green btn-full" onclick="gerarOffset()">&#10038; Gerar Linhas de Plantio</button>
         <button class="btn btn-out btn-full" id="btnLimparOffset" style="display:none" onclick="limparOffset()">&#10005; Limpar Linhas</button>
         <button class="btn btn-full" id="btnExportKml" style="display:none;background:#2e7d32;color:#fff" onclick="exportarKML()">&#128462; Exportar KML (Google Earth)</button>
+        <button class="btn btn-full" id="btnRelatorio" style="display:none;background:#4a148c;color:#fff" onclick="abrirModalRelatorio()">&#128196; Gerar Relat&oacute;rio PDF</button>
         <button class="btn btn-full" id="btnClassificar" style="display:none;background:#37474f;color:#fff" onclick="classificarDeclividade()">&#9968; Classificar Declividade</button>
         <button class="btn btn-out btn-full" id="btnLimparClassif" style="display:none;font-size:.78rem" onclick="limparClassificacao()">&#10005; Limpar Classifica&ccedil;&atilde;o</button>
-        <button class="btn btn-full" id="btnRelatorio" style="display:none;background:#4a148c;color:#fff" onclick="abrirModalRelatorio()">&#128196; Gerar Relat&oacute;rio PDF</button>
         <button class="btn btn-full" id="btnNovaArea" style="display:none;background:#1a237e;color:#fff" onclick="novaArea()">&#10010; Nova &Aacute;rea</button>
         <button class="btn btn-out btn-full" id="btnLimparTudo" style="display:none;color:#b71c1c;border-color:#b71c1c" onclick="limparTudo()">&#128465; Limpar Tudo</button>
         <div id="offsetInfo" class="cap-box" style="display:none">
@@ -599,7 +599,7 @@ function gerarOffset(){
 
 function limparOffset(){
   offsetLines.forEach(l=>l.setMap(null));offsetLines=[];
-  classifiedSegs.forEach(s=>s.setMap(null));classifiedSegs=[];
+  classifiedSegs.forEach(s=>s.pl.setMap(null));classifiedSegs=[];
   if(drawLine) drawLine.setMap(map);
   ['offsetInfo','btnLimparOffset','btnExportKml','btnClassificar','btnRelatorio',
    'btnLimparClassif','secDeclividade'].forEach(id=>{const e=$(id);if(e)e.style.display='none';});
@@ -607,8 +607,8 @@ function limparOffset(){
 }
 
 function limparClassificacao(){
-  classifiedSegs.forEach(s=>s.setMap(null));classifiedSegs=[];
-  offsetLines.forEach(l=>l.setMap(map)); // restaura linhas originais
+  classifiedSegs.forEach(s=>s.pl.setMap(null));classifiedSegs=[];
+  offsetLines.forEach(l=>l.setMap(map));
   $('btnLimparClassif').style.display='none';
   $('secDeclividade').style.display='none';
   $('btnClassificar').style.display='';
@@ -665,7 +665,7 @@ async function classificarDeclividade(){
     const elevs=await getElevsForPoints(allPts);
 
     // Remove classificação anterior
-    classifiedSegs.forEach(s=>s.setMap(null));classifiedSegs=[];
+    classifiedSegs.forEach(s=>s.pl.setMap(null));classifiedSegs=[];
     // Oculta linhas originais
     offsetLines.forEach(l=>l.setMap(null));
 
@@ -681,10 +681,11 @@ async function classificarDeclividade(){
         const cls=slopeClass(pct);
         const ci=SLOPE_CLASSES.indexOf(cls);
         if(ci>=0)counts[ci]++;
-        classifiedSegs.push(new google.maps.Polyline({
+        const pl=new google.maps.Polyline({
           path:[samps[s],samps[s+1]],map,
           strokeColor:cls.color,strokeWeight:2.5,strokeOpacity:.95,zIndex:11
-        }));
+        });
+        classifiedSegs.push({pl,ci:ci>=0?ci:SLOPE_CLASSES.length-1});
       }
     });
 
@@ -793,7 +794,24 @@ function exportarKML(){
       kml+=`<Polygon><outerBoundaryIs><LinearRing><tessellate>1</tessellate><coordinates>${polyCoords(a.poly)}</coordinates></LinearRing></outerBoundaryIs></Polygon>`;
       kml+=`</Placemark>\n`;
     }
-    if(a.offsets.length>0){
+    // Linhas de plantio: usa classificação de declividade se disponível
+    const isCurrentArea=(idx===todas.length-1);
+    const hasClassif=isCurrentArea&&classifiedSegs.length>0;
+    if(hasClassif){
+      // Exporta segmentos classificados agrupados por classe
+      SLOPE_CLASSES.forEach((cls,ci)=>{
+        const segs=classifiedSegs.filter(s=>s.ci===ci);
+        if(segs.length===0)return;
+        kml+=`<Style id="sDcl${ci}"><LineStyle><color>${hexToKml(cls.color)}</color><width>2</width></LineStyle></Style>\n`;
+        kml+=`<Folder><name>${cls.label} — ${cls.desc}</name>\n`;
+        segs.forEach((s,i)=>{
+          kml+=`<Placemark><name>Seg ${i+1}</name><styleUrl>#sDcl${ci}</styleUrl>`;
+          kml+=`<LineString><tessellate>1</tessellate><coordinates>${lineCoords(s.pl)}</coordinates></LineString>`;
+          kml+=`</Placemark>\n`;
+        });
+        kml+=`</Folder>\n`;
+      });
+    } else if(a.offsets.length>0){
       kml+=`<Folder><name>Linhas de Plantio (${a.offsets.length})${n}</name>\n`;
       a.offsets.forEach((l,i)=>{
         kml+=`<Placemark><name>Linha ${i+1}</name><styleUrl>#sP${idx}</styleUrl>`;
