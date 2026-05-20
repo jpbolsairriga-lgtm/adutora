@@ -56,6 +56,12 @@ input:focus,select:focus{border-color:var(--bl3);box-shadow:0 0 0 3px rgba(0,180
 /* Legenda cores */
 .leg-line{display:flex;align-items:center;gap:.45rem;font-size:.72rem;color:var(--mu);margin:.2rem 0}
 .leg-sw{width:24px;height:3px;border-radius:2px;flex-shrink:0}
+/* Tabela de declividade */
+.decliv-tbl{width:100%;border-collapse:collapse;font-size:.7rem;margin-top:.4rem}
+.decliv-tbl th{background:#f0f4f8;color:var(--mu);font-size:.62rem;text-transform:uppercase;padding:.22rem .3rem;border:1px solid var(--bdr);letter-spacing:.04em}
+.decliv-tbl td{padding:.2rem .3rem;border:1px solid #e8edf2;vertical-align:middle}
+.decliv-sw{display:inline-block;width:14px;height:10px;border-radius:2px;vertical-align:middle}
+.decliv-bar{height:6px;border-radius:3px;margin-top:2px}
 /* Tutorial modal */
 #tutModal{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:200;display:none;align-items:center;justify-content:center}
 #tutModal.open{display:flex}
@@ -173,11 +179,19 @@ input:focus,select:focus{border-color:var(--bl3);box-shadow:0 0 0 3px rgba(0,180
         <button class="btn btn-green btn-full" onclick="gerarOffset()">&#10038; Gerar Linhas de Plantio</button>
         <button class="btn btn-out btn-full" id="btnLimparOffset" style="display:none" onclick="limparOffset()">&#10005; Limpar Linhas</button>
         <button class="btn btn-full" id="btnExportKml" style="display:none;background:#2e7d32;color:#fff" onclick="exportarKML()">&#128462; Exportar KML (Google Earth)</button>
+        <button class="btn btn-full" id="btnClassificar" style="display:none;background:#37474f;color:#fff" onclick="classificarDeclividade()">&#9968; Classificar Declividade</button>
+        <button class="btn btn-out btn-full" id="btnLimparClassif" style="display:none;font-size:.78rem" onclick="limparClassificacao()">&#10005; Limpar Classifica&ccedil;&atilde;o</button>
         <button class="btn btn-full" id="btnNovaArea" style="display:none;background:#1a237e;color:#fff" onclick="novaArea()">&#10010; Nova &Aacute;rea</button>
         <button class="btn btn-out btn-full" id="btnLimparTudo" style="display:none;color:#b71c1c;border-color:#b71c1c" onclick="limparTudo()">&#128465; Limpar Tudo</button>
         <div id="offsetInfo" class="cap-box" style="display:none">
           <div class="cap-v" id="nLinhas">—</div>
           <div class="cap-l">Linhas geradas</div>
+        </div>
+        <!-- Legenda de declividade -->
+        <div id="secDeclividade" style="display:none;margin-top:.4rem">
+          <div class="sb-title">&#9654; Declividade</div>
+          <div id="stDeclividade" class="sb-status"></div>
+          <div id="tabelaDeclividade"></div>
         </div>
       </div>
 
@@ -238,7 +252,17 @@ let drawLine = null;         // google.maps.Polyline (editável)
 let lineTempPts = [];
 let offsetLines = [];
 let areas = [];          // áreas arquivadas [{poly, offsets, cor, esp}]
+let classifiedSegs = []; // segmentos coloridos por declividade
 let perfilSamples = null;
+
+const SLOPE_CLASSES=[
+  {max:3,  color:'#00C853',label:'0–3%',  desc:'Plano / Drenagem'},
+  {max:5,  color:'#AEEA00',label:'3–5%',  desc:'Suave / Mecanizável'},
+  {max:8,  color:'#FFD600',label:'5–8%',  desc:'Moderado / Erosão'},
+  {max:15, color:'#FF6D00',label:'8–15%', desc:'Crítico / Nível'},
+  {max:20, color:'#FF3D00',label:'15–20%',desc:'Risco / Terraceamento'},
+  {max:1e9,color:'#D50000',label:'>20%',  desc:'Manual / Conservação'},
+];
 
 // ── Google Maps ───────────────────────────────────────────────────
 function initMaps(){
@@ -553,6 +577,7 @@ function gerarOffset(){
   $('offsetInfo').style.display='';
   $('btnLimparOffset').style.display='';
   $('btnExportKml').style.display='';
+  $('btnClassificar').style.display='';
   $('btnNovaArea').style.display='';
   $('btnLimparTudo').style.display='';
   setStatus('stOffset',count+' linhas geradas. Exporte em KML ou adicione nova área.','ok');
@@ -560,11 +585,119 @@ function gerarOffset(){
 
 function limparOffset(){
   offsetLines.forEach(l=>l.setMap(null));offsetLines=[];
-  // Reexibe a linha guia ao limpar
+  classifiedSegs.forEach(s=>s.setMap(null));classifiedSegs=[];
   if(drawLine) drawLine.setMap(map);
-  $('offsetInfo').style.display='none';$('btnLimparOffset').style.display='none';
-  $('btnExportKml').style.display='none';
+  ['offsetInfo','btnLimparOffset','btnExportKml','btnClassificar',
+   'btnLimparClassif','secDeclividade'].forEach(id=>{const e=$(id);if(e)e.style.display='none';});
   setStatus('stOffset','','');
+}
+
+function limparClassificacao(){
+  classifiedSegs.forEach(s=>s.setMap(null));classifiedSegs=[];
+  offsetLines.forEach(l=>l.setMap(map)); // restaura linhas originais
+  $('btnLimparClassif').style.display='none';
+  $('secDeclividade').style.display='none';
+  $('btnClassificar').style.display='';
+  setStatus('stDeclividade','','');
+}
+
+// ── Classificação de Declividade ──────────────────────────────────
+function slopeClass(pct){return SLOPE_CLASSES.find(c=>pct<=c.max)||SLOPE_CLASSES[5];}
+
+function sampleLineEvenly(gmPath,n){
+  const pts=gmPath.getArray();
+  if(pts.length<2)return [{lat:pts[0].lat(),lng:pts[0].lng()},{lat:pts[0].lat(),lng:pts[0].lng()}];
+  const dists=[0];
+  for(let i=1;i<pts.length;i++)dists.push(dists[i-1]+haversine(pts[i-1],pts[i]));
+  const total=dists[dists.length-1];
+  const result=[];
+  for(let s=0;s<n;s++){
+    const tgt=total*s/(n-1);
+    let j=0;
+    while(j<dists.length-2&&dists[j+1]<tgt)j++;
+    const seg=dists[j+1]-dists[j];
+    const t=seg>0?(tgt-dists[j])/seg:0;
+    const p0=pts[j],p1=pts[Math.min(j+1,pts.length-1)];
+    result.push({lat:p0.lat()+(p1.lat()-p0.lat())*t,lng:p0.lng()+(p1.lng()-p0.lng())*t});
+  }
+  return result;
+}
+
+async function getElevsForPoints(latlngs){
+  const BATCH=512;const results=[];
+  for(let i=0;i<latlngs.length;i+=BATCH){
+    const r=await new Promise((res,rej)=>
+      elevService.getElevationForLocations({locations:latlngs.slice(i,i+BATCH)},(r,s)=>
+        s==='OK'&&r?res(r):rej(new Error(s||'ERR'))
+      )
+    );
+    results.push(...r);
+  }
+  return results;
+}
+
+async function classificarDeclividade(){
+  if(offsetLines.length===0){setStatus('stDeclividade','Gere as linhas primeiro.','err');return;}
+  const N=8; // amostras por linha
+  $('btnClassificar').disabled=true;
+  setStatus('stDeclividade','Buscando elevações…','info');
+  $('secDeclividade').style.display='';
+
+  // Coleta amostras de todas as linhas
+  const linesSamples=offsetLines.map(pl=>sampleLineEvenly(pl.getPath(),N));
+  const allPts=linesSamples.flat();
+
+  try{
+    const elevs=await getElevsForPoints(allPts);
+
+    // Remove classificação anterior
+    classifiedSegs.forEach(s=>s.setMap(null));classifiedSegs=[];
+    // Oculta linhas originais
+    offsetLines.forEach(l=>l.setMap(null));
+
+    const counts=SLOPE_CLASSES.map(()=>0);
+    let idx=0;
+    offsetLines.forEach((_,li)=>{
+      const samps=linesSamples[li];
+      const ev=elevs.slice(idx,idx+N);idx+=N;
+      for(let s=0;s<samps.length-1;s++){
+        const dH=Math.abs(ev[s+1].elevation-ev[s].elevation);
+        const dX=haversine(samps[s],samps[s+1]); // metros
+        const pct=dX>0?(dH/dX)*100:0;
+        const cls=slopeClass(pct);
+        const ci=SLOPE_CLASSES.indexOf(cls);
+        if(ci>=0)counts[ci]++;
+        classifiedSegs.push(new google.maps.Polyline({
+          path:[samps[s],samps[s+1]],map,
+          strokeColor:cls.color,strokeWeight:2.5,strokeOpacity:.95,zIndex:11
+        }));
+      }
+    });
+
+    // Monta tabela
+    const total=counts.reduce((a,b)=>a+b,0)||1;
+    let html='<table class="decliv-tbl"><tr><th>Cor</th><th>Decliv.</th><th>Recomendação</th><th>%</th></tr>';
+    SLOPE_CLASSES.forEach((c,i)=>{
+      const pct=((counts[i]/total)*100).toFixed(0);
+      if(counts[i]===0)return;
+      html+=`<tr>
+        <td><span class="decliv-sw" style="background:${c.color}"></span></td>
+        <td style="font-weight:700">${c.label}</td>
+        <td>${c.desc}</td>
+        <td style="font-weight:700">${pct}%</td>
+      </tr>`;
+    });
+    html+='</table>';
+    $('tabelaDeclividade').innerHTML=html;
+
+    $('btnLimparClassif').style.display='';
+    $('btnClassificar').style.display='none';
+    setStatus('stDeclividade','Declividade classificada — '+SLOPE_CLASSES.filter((_,i)=>counts[i]>0).length+' classes.','ok');
+  }catch(e){
+    setStatus('stDeclividade','Erro ao buscar elevações: '+e.message,'err');
+  }finally{
+    $('btnClassificar').disabled=false;
+  }
 }
 
 // ── Múltiplas Áreas ───────────────────────────────────────────────
