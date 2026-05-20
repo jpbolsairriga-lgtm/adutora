@@ -565,21 +565,27 @@ function gerarOffset(){
   addShifted([...linePts]);
 
   // Offsets para ambos os lados
+  // sideCount: só quebra por misses DEPOIS de já ter gerado alguma linha no lado
+  // (enquanto ainda não chegou ao polígono, deixa avançar sem penalidade)
   for(const side of[-1,1]){
     const perpBrg=rowBrg+side*90;
     let misses=0;
+    let sideCount=0;
     for(let n=1;n<5000;n++){
       const distKm=n*spacing/1000;
       const shifted=linePts.map(pt=>
         turf.destination(turf.point(pt),distKm,perpBrg,{units:'kilometers'}).geometry.coordinates
       );
-      if(addShifted(shifted)){misses=0;}
-      else{misses++;if(misses>=3&&n>2)break;}
+      if(addShifted(shifted)){misses=0;sideCount++;}
+      else{
+        if(sideCount>0){misses++;if(misses>=3)break;} // já passou pelo polígono → para
+        else if(n>800)break; // segurança: guia muito longe do polígono
+      }
     }
   }
 
   if(count===0){
-    setStatus('stOffset','Nenhuma linha gerada — a linha guia precisa estar dentro do contorno.','err');
+    setStatus('stOffset','Nenhuma linha gerada — verifique se a linha guia aponta para o talhão.','err');
     return;
   }
 
@@ -785,43 +791,60 @@ function exportarKML(){
       cor:$('corLinhas').value||'#FFD600',esp:parseFloat($('espessuraLinhas').value)||1.5}]:[])
   ];
 
+  // Styles para cada área
   todas.forEach((a,idx)=>{
-    const n=todas.length>1?` ${idx+1}`:'';
     kml+=`<Style id="sP${idx}"><LineStyle><color>${hexToKml(a.cor)}</color><width>${a.esp}</width></LineStyle></Style>\n`;
-    kml+=`<Folder><name>Talh&#227;o${n}</name>\n`;
-    if(a.poly){
-      kml+=`<Placemark><name>Contorno${n}</name><styleUrl>#sContorno</styleUrl>`;
-      kml+=`<Polygon><outerBoundaryIs><LinearRing><tessellate>1</tessellate><coordinates>${polyCoords(a.poly)}</coordinates></LinearRing></outerBoundaryIs></Polygon>`;
-      kml+=`</Placemark>\n`;
-    }
-    // Linhas de plantio: usa classificação de declividade se disponível
-    const isCurrentArea=(idx===todas.length-1);
-    const hasClassif=isCurrentArea&&classifiedSegs.length>0;
-    if(hasClassif){
-      // Exporta segmentos classificados agrupados por classe
-      SLOPE_CLASSES.forEach((cls,ci)=>{
-        const segs=classifiedSegs.filter(s=>s.ci===ci);
-        if(segs.length===0)return;
-        kml+=`<Style id="sDcl${ci}"><LineStyle><color>${hexToKml(cls.color)}</color><width>2</width></LineStyle></Style>\n`;
-        kml+=`<Folder><name>${cls.label} — ${cls.desc}</name>\n`;
-        segs.forEach((s,i)=>{
-          kml+=`<Placemark><name>Seg ${i+1}</name><styleUrl>#sDcl${ci}</styleUrl>`;
-          kml+=`<LineString><tessellate>1</tessellate><coordinates>${lineCoords(s.pl)}</coordinates></LineString>`;
-          kml+=`</Placemark>\n`;
-        });
-        kml+=`</Folder>\n`;
-      });
-    } else if(a.offsets.length>0){
-      kml+=`<Folder><name>Linhas de Plantio (${a.offsets.length})${n}</name>\n`;
+  });
+  SLOPE_CLASSES.forEach((cls,ci)=>{
+    kml+=`<Style id="sDcl${ci}"><LineStyle><color>${hexToKml(cls.color)}</color><width>2</width></LineStyle></Style>\n`;
+  });
+
+  // Camada 1: Contornos
+  kml+=`<Folder><name>Contornos dos Talh&#245;es</name>\n`;
+  todas.forEach((a,idx)=>{
+    if(!a.poly)return;
+    const n=todas.length>1?` ${idx+1}`:'';
+    kml+=`<Placemark><name>Talh&#227;o${n}</name><styleUrl>#sContorno</styleUrl>`;
+    kml+=`<Polygon><outerBoundaryIs><LinearRing><tessellate>1</tessellate><coordinates>${polyCoords(a.poly)}</coordinates></LinearRing></outerBoundaryIs></Polygon>`;
+    kml+=`</Placemark>\n`;
+  });
+  kml+=`</Folder>\n`;
+
+  // Camada 2: Linhas de Plantio (sem classificação)
+  const temLinhas=todas.some(a=>a.offsets.length>0);
+  const isCurrentClassif=classifiedSegs.length>0;
+  if(temLinhas){
+    kml+=`<Folder><name>Linhas de Plantio</name>\n`;
+    todas.forEach((a,idx)=>{
+      if(a.offsets.length===0)return;
+      const n=todas.length>1?` Talh&#227;o ${idx+1}`:'';
+      kml+=`<Folder><name>Linhas${n} (${a.offsets.length})</name>\n`;
       a.offsets.forEach((l,i)=>{
         kml+=`<Placemark><name>Linha ${i+1}</name><styleUrl>#sP${idx}</styleUrl>`;
         kml+=`<LineString><tessellate>1</tessellate><coordinates>${lineCoords(l)}</coordinates></LineString>`;
         kml+=`</Placemark>\n`;
       });
       kml+=`</Folder>\n`;
-    }
+    });
     kml+=`</Folder>\n`;
-  });
+  }
+
+  // Camada 3: Declividade (se classificado)
+  if(isCurrentClassif){
+    kml+=`<Folder><name>Declividade — Talh&#227;o Atual</name>\n`;
+    SLOPE_CLASSES.forEach((cls,ci)=>{
+      const segs=classifiedSegs.filter(s=>s.ci===ci);
+      if(segs.length===0)return;
+      kml+=`<Folder><name>${cls.label} — ${cls.desc}</name>\n`;
+      segs.forEach((s,i)=>{
+        kml+=`<Placemark><name>Seg ${i+1}</name><styleUrl>#sDcl${ci}</styleUrl>`;
+        kml+=`<LineString><tessellate>1</tessellate><coordinates>${lineCoords(s.pl)}</coordinates></LineString>`;
+        kml+=`</Placemark>\n`;
+      });
+      kml+=`</Folder>\n`;
+    });
+    kml+=`</Folder>\n`;
+  }
 
   kml+=`</Document></kml>`;
   const blob=new Blob([kml],{type:'application/vnd.google-earth.kml+xml'});
