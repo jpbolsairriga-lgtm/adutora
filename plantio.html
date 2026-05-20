@@ -132,6 +132,7 @@ input:focus,select:focus{border-color:var(--bl3);box-shadow:0 0 0 3px rgba(0,180
         <div id="stImport" class="sb-status"></div>
         <input type="file" id="fileKml" accept=".kml,.kmz" style="display:none" onchange="importarKML(this)">
         <button class="btn btn-out btn-full" onclick="$('fileKml').click()">&#128194; Importar arquivo KML</button>
+        <button class="btn btn-full" id="btnUsarImport" style="display:none;background:#1b6e3a;color:#fff" onclick="usarPoligonosImportados()">&#10003; Usar pol&iacute;gono(s) como talh&atilde;o</button>
         <button class="btn btn-out btn-full" id="btnLimparImport" style="display:none;font-size:.78rem" onclick="limparImport()">&#10005; Limpar importa&ccedil;&atilde;o</button>
       </div>
 
@@ -962,6 +963,7 @@ function importarKML(input){
       if(nPoly+nLine===0){setStatus('stImport','Nenhuma geometria encontrada no KML.','err');return;}
       if(!bounds.isEmpty())map.fitBounds(bounds);
       $('btnLimparImport').style.display='';
+      if(nPoly>0)$('btnUsarImport').style.display='';
       setStatus('stImport',`${nPoly} polígono(s), ${nLine} linha(s) importada(s).`,'ok');
     }catch(err){setStatus('stImport','Erro: '+err.message,'err');}
   };
@@ -971,7 +973,60 @@ function importarKML(input){
 function limparImport(){
   importedOverlays.forEach(o=>o.setMap(null));importedOverlays=[];
   $('btnLimparImport').style.display='none';
+  $('btnUsarImport').style.display='none';
   setStatus('stImport','','');
+}
+
+function usarPoligonosImportados(){
+  const polys=importedOverlays.filter(o=>o instanceof google.maps.Polygon);
+  if(polys.length===0){setStatus('stImport','Nenhum polígono no arquivo importado.','err');return;}
+
+  // Limpa estado atual de trabalho
+  if(drawPoly){drawPoly.setMap(null);drawPoly=null;}
+  if(drawLine){drawLine.setMap(null);drawLine=null;}
+  if(polyTempLine){polyTempLine.setMap(null);polyTempLine=null;}
+  offsetLines.forEach(l=>l.setMap(null));offsetLines=[];
+  classifiedSegs.forEach(s=>s.pl.setMap(null));classifiedSegs=[];
+  carreadorPolys.forEach(p=>p.setMap(null));carreadorPolys=[];
+  polyTempPts=[];lineTempPts=[];perfilSamples=null;
+
+  polys.forEach((imp,i)=>{
+    const path=imp.getPath().getArray();
+    imp.setMap(null); // remove overlay read-only
+    importedOverlays=importedOverlays.filter(o=>o!==imp);
+
+    const poly=new google.maps.Polygon({
+      paths:path,map,
+      strokeColor:'#0077b6',strokeWeight:2.5,strokeOpacity:.9,
+      fillColor:'#0077b6',fillOpacity:.07,
+      editable:i===0, // só o primeiro é editável como drawPoly ativo
+      zIndex:2
+    });
+
+    if(i===0){
+      drawPoly=poly;
+      const area=computeAreaHa(path);
+      $('areaVal').textContent=area.toFixed(2)+' ha';
+      $('areaBox').style.display='';
+      $('btnLimparPoly').style.display='';
+      $('btnKmlContorno').style.display='';
+      setStatus('stPoly','Contorno importado — '+area.toFixed(2)+' ha. Desenhe a linha base.','ok');
+      setMStatus('Contorno importado. Agora desenhe a linha base.','ok');
+    } else {
+      // Polígonos adicionais → arquiva como áreas sem linhas
+      areas.push({poly,offsets:[],cor:$('corLinhas').value||'#FFD600',esp:parseFloat($('espessuraLinhas').value)||1.5});
+    }
+  });
+
+  // Reset UI sections
+  ['secPerfil','secOffset','btnLimparOffset','btnExportKml','btnNovaArea',
+   'offsetInfo','elev-canvas','btnLimparLinha','btnFinLinha','linhaInfo',
+   'secDeclividade','btnClassificar','btnRelatorio','btnLimparClassif'].forEach(id=>{
+    const e=$(id);if(e)e.style.display='none';
+  });
+  if(polys.length>1)$('btnLimparTudo').style.display='';
+  $('btnUsarImport').style.display='none';
+  setStatus('stImport',polys.length+' talhão(ões) configurado(s) a partir do KML.','ok');
 }
 
 // ── Carreador / Divisão de Polígono ───────────────────────────────
