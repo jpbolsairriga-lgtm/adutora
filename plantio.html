@@ -441,65 +441,86 @@ function desenharPerfilElevacao(samples){
   ctx.fillStyle='#607080';ctx.font='9px Segoe UI';ctx.textAlign='center';ctx.fillText('Distância (m)',pad.l+cw/2,H-2);
 }
 
+// ── Clipping curvo ao polígono ────────────────────────────────────
+// Percorre coordenada a coordenada, detecta cruzamentos exatos com
+// o contorno e mantém apenas o trecho interno — preserva a curvatura
+function clipCurveToPolygon(coords,turfPoly,polyBound){
+  if(coords.length<2)return null;
+  const result=[];
+  let inside=turf.booleanContains(turfPoly,turf.point(coords[0]));
+  if(inside)result.push(coords[0]);
+  for(let i=1;i<coords.length;i++){
+    const curr=turf.point(coords[i]);
+    const currIn=turf.booleanContains(turfPoly,curr);
+    if(inside!==currIn){
+      // cruzamento de fronteira — acha o ponto exato
+      const seg=turf.lineString([coords[i-1],coords[i]]);
+      const ixs=turf.lineIntersect(seg,polyBound);
+      if(ixs.features.length>0){
+        const px=ixs.features
+          .map(f=>f.geometry.coordinates)
+          .sort((a,b)=>turf.distance(turf.point(coords[i-1]),turf.point(a))-turf.distance(turf.point(coords[i-1]),turf.point(b)));
+        result.push(px[0]);
+      }
+    }
+    if(currIn)result.push(coords[i]);
+    inside=currIn;
+  }
+  return result.length>=2?result:null;
+}
+
 // ── Offset / Linhas de Plantio ────────────────────────────────────
 function gerarOffset(){
   if(!drawPoly){setStatus('stOffset','Desenhe o contorno do talhão primeiro.','err');return;}
   if(!drawLine){setStatus('stOffset','Desenhe a linha base primeiro.','err');return;}
   const spacing=parseFloat($('espacamento').value)||12;
 
-  // Coordenadas atuais (pós-edição)
   const polyPts=drawPoly.getPath().getArray().map(p=>[p.lng(),p.lat()]);
   polyPts.push([...polyPts[0]]);
   const linePts=drawLine.getPath().getArray().map(p=>[p.lng(),p.lat()]);
 
   const turfPoly=turf.polygon([polyPts]);
   const polyBound=turf.polygonToLine(turfPoly);
+  const baseLine=turf.lineString(linePts);
 
-  // Bearing da linha base (do 1º ao último ponto)
-  const brg=turf.bearing(turf.point(linePts[0]),turf.point(linePts[linePts.length-1]));
-
-  // Extensão para além do polígono
+  // Extensão para além do polígono (diagonal do bbox × 2)
   const bbox=turf.bbox(turfPoly);
   const ext=turf.distance(turf.point([bbox[0],bbox[1]]),turf.point([bbox[2],bbox[3]]))*2+1;
 
   limparOffset();
-  setStatus('stOffset','Gerando linhas...','info');
+  setStatus('stOffset','Gerando linhas curvas...','info');
 
   let count=0;
-  // Gera nas duas direções perpendiculares
-  for(let side of[-1,1]){
+
+  for(const side of[-1,1]){
     let misses=0;
     for(let n=(side<0?1:0);n<5000;n++){
       const distKm=side*n*spacing/1000;
 
-      // Desloca cada ponto da polyline perpendicular ao bearing
-      const offPts=linePts.map(c=>{
-        const moved=turf.destination(turf.point(c),Math.abs(distKm),distKm>=0?brg+90:brg-90,{units:'kilometers'});
-        return moved.geometry.coordinates;
-      });
+      // turf.lineOffset preserva a curvatura exata da polyline
+      let offLine;
+      try{offLine=turf.lineOffset(baseLine,distKm,{units:'kilometers'});}
+      catch(e){misses++;if(misses>=3&&n>2)break;continue;}
 
-      // Estende em ambos os sentidos do bearing
-      const extS=turf.destination(turf.point(offPts[0]),ext,brg+180,{units:'kilometers'}).geometry.coordinates;
-      const extE=turf.destination(turf.point(offPts[offPts.length-1]),ext,brg,{units:'kilometers'}).geometry.coordinates;
-      const tLine=turf.lineString([extS,...offPts,extE]);
+      const coords=offLine.geometry.coordinates;
+      if(coords.length<2){misses++;if(misses>=3&&n>2)break;continue;}
 
-      if(!turf.booleanIntersects(tLine,turfPoly)){misses++;if(misses>=3&&n>2)break;continue;}
+      // Estende nos dois extremos seguindo a direção local da curva
+      const brgS=turf.bearing(turf.point(coords[0]),turf.point(coords[1]));
+      const brgE=turf.bearing(turf.point(coords[coords.length-2]),turf.point(coords[coords.length-1]));
+      const extS=turf.destination(turf.point(coords[0]),ext,brgS+180,{units:'kilometers'}).geometry.coordinates;
+      const extE=turf.destination(turf.point(coords[coords.length-1]),ext,brgE,{units:'kilometers'}).geometry.coordinates;
+      const extLine=turf.lineString([extS,...coords,extE]);
+
+      if(!turf.booleanIntersects(extLine,turfPoly)){misses++;if(misses>=3&&n>2)break;continue;}
       misses=0;
 
-      // Interseção com o contorno do polígono
-      const ixs=turf.lineIntersect(tLine,polyBound);
-      if(ixs.features.length<2)continue;
-
-      const sorted=ixs.features
-        .map(f=>f.geometry.coordinates)
-        .sort((a,b)=>turf.distance(turf.point(extS),turf.point(a))-turf.distance(turf.point(extS),turf.point(b)));
-
-      const ptA=sorted[0],ptB=sorted[sorted.length-1];
-      const mid=[(ptA[0]+ptB[0])/2,(ptA[1]+ptB[1])/2];
-      if(!turf.booleanContains(turfPoly,turf.point(mid)))continue;
+      // Clipping curvo — mantém a forma da curva dentro do polígono
+      const clipped=clipCurveToPolygon(extLine.geometry.coordinates,turfPoly,polyBound);
+      if(!clipped||clipped.length<2)continue;
 
       const pl=new google.maps.Polyline({
-        path:[{lat:ptA[1],lng:ptA[0]},{lat:ptB[1],lng:ptB[0]}],
+        path:clipped.map(c=>({lat:c[1],lng:c[0]})),
         map,strokeColor:'#1565C0',strokeWeight:1.5,strokeOpacity:.85,zIndex:3
       });
       offsetLines.push(pl);
