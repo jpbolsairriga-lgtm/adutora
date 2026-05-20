@@ -421,48 +421,117 @@ function pressurePoints(multi,L,Hg){
 }
 function energyInfo(Pkw){const h=gv('horasDia')||8,tar=gv('tarifa')||0.80;return{kwh_dia:Pkw*h,kwh_mes:Pkw*h*30,r_dia:Pkw*h*tar,r_mes:Pkw*h*30*tar};}
 
+// ── Cálculo Multi-PN com perfil real (ponto a ponto) ─────────────
+function calcMultiPNProfile(Q_calc,profile,CHW,nom,kLoc,filtro,pRes,slackP,lim){
+  const pipeByPN={},jByPN={};
+  for(const pn of PN_CLASSES){
+    pipeByPN[pn]=getPipeByNominal(nom,pn);
+    if(pipeByPN[pn])jByPN[pn]=hfPerMeter(Q_calc,CHW,pipeByPN[pn][3])*(1+kLoc);
+  }
+  const n=profile.length,z0=profile[0].elev,L=profile[n-1].dist;
+  const maxGain=Math.max(...profile.map(p=>p.elev-z0));
+  let AMT_hid=maxGain+pRes+filtro+30,segs=[],totalHf=0,criticalIdx=n-1;
+
+  for(let iter=0;iter<20;iter++){
+    const AMT_d=AMT_hid*(1+slackP);
+    let P=AMT_d,hfAcc=0,maxReq=0;
+    const s_=[];
+    let sPN=pnForPressure(P,lim),sFrom=0,sPstart=P;
+
+    for(let i=1;i<n;i++){
+      const dx=profile[i].dist-profile[i-1].dist;
+      const dz=profile[i].elev-profile[i-1].elev;
+      const pn=pnForPressure(P,lim);
+      if(pn!==sPN){s_.push({pn:sPN,from:sFrom,to:profile[i-1].dist,len:profile[i-1].dist-sFrom,P_start:sPstart,P_end:P});sPN=pn;sFrom=profile[i-1].dist;sPstart=P;}
+      const j=jByPN[pn]??jByPN[125]??jByPN[80]??jByPN[60]??0;
+      hfAcc+=j*dx;
+      P-=j*dx+dz;
+      // ponto crítico: onde é necessário maior AMT para manter pressão >= pRes
+      const req=hfAcc+(profile[i].elev-z0)+pRes+filtro;
+      if(req>maxReq){maxReq=req;criticalIdx=i;}
+    }
+    s_.push({pn:sPN,from:sFrom,to:L,len:L-sFrom,P_start:sPstart,P_end:P});
+    segs=[];
+    for(const s of s_){if(segs.length&&segs[segs.length-1].pn===s.pn){segs[segs.length-1].len+=s.len;segs[segs.length-1].to=s.to;segs[segs.length-1].P_end=s.P_end;}else segs.push({...s});}
+    totalHf=hfAcc;
+    if(Math.abs(maxReq-AMT_hid)<0.05){AMT_hid=maxReq;break;}
+    AMT_hid=maxReq;
+  }
+  return{AMT_hid,AMT_design:AMT_hid*(1+slackP),totalHf,segs,pipeByPN,jByPN,
+    pnsUsados:new Set(segs.map(s=>s.pn)),L,
+    criticalDist:profile[criticalIdx].dist,criticalElev:profile[criticalIdx].elev};
+}
+
+// Pressão ao longo do perfil real (ponto a ponto)
+function pressurePointsProfile(multi,profile){
+  const pts=[{x:0,P:multi.AMT_design}];
+  let P=multi.AMT_design,sIdx=0;
+  for(let i=1;i<profile.length;i++){
+    const dx=profile[i].dist-profile[i-1].dist;
+    const dz=profile[i].elev-profile[i-1].elev;
+    while(sIdx<multi.segs.length-1&&profile[i].dist>multi.segs[sIdx].to)sIdx++;
+    const pn=multi.segs[sIdx]?.pn??125;
+    P=Math.max(0,P-(multi.jByPN[pn]??0)*dx-dz);
+    pts.push({x:profile[i].dist,P});
+  }
+  return pts;
+}
+
 // ── Estado global ─────────────────────────────────────────────────
-let _multi=null,_nominal=null,_cotaMax=null,_perfilSamples=null;
+let _multi=null,_nominal=null,_cotaMax=null,_perfilSamples=null,_profileData=null;
 
 // ── Cálculo principal ────────────────────────────────────────────
 function calc(){
-  const Q=gv('Q'),L=gv('L'),cotaS=gv('cotaS'),cotaR=gv('cotaR');
+  const Q=gv('Q'),L=gv('L'),cotaS_=gv('cotaS'),cotaR_=gv('cotaR');
   const slackQ=gv('slackQ')||0,slackP=gv('slackP')||0;
   const Q_calc=Q*(1+slackQ/100);
   const eff=gv('eff')||70,kLoc=gv('kLoc')/100,filtro=gv('filtro')||5,pRes=gv('pRes')||10;
-  const Vmax=gv('Vmax')||1.5,CHW=getCHW(),Hg=cotaR-cotaS,lim=getLimits();
-
-  // Aviso cota máxima
-  if(_cotaMax!==null&&_cotaMax>cotaR){
-    $('cotaMaxInfo').style.display='block';
-    $('cotaMaxInfo').textContent=`⚠ Cota máxima no percurso: ${_cotaMax.toFixed(1)} m — considere usar esse valor em vez de ${cotaR.toFixed(1)} m`;
-  } else {$('cotaMaxInfo').style.display='none';}
+  const Vmax=gv('Vmax')||1.5,CHW=getCHW(),lim=getLimits();
+  $('cotaMaxInfo').style.display='none';
 
   if(!Q||!L){
-    $('quick-results').innerHTML='<div class="card"><div class="sbox warn">Preencha Q, L, cotaS e cotaR para calcular.</div></div>';
+    $('quick-results').innerHTML='<div class="card"><div class="sbox warn">Preencha Q e gere o perfil de elevação (ou informe L, cotaS e cotaR manualmente).</div></div>';
     $('card-diam').style.display='none';$('card-multi').style.display='none';
     $('bomba-results').innerHTML='';$('card-pressao').style.display='none';return;
   }
   const nominal=findBestNominal(Q_calc,Vmax);_nominal=nominal;
-  const multi=calcMultiPN(Q_calc,L,Hg,CHW,nominal,kLoc,filtro,pRes,slackP/100,lim);_multi=multi;
+
+  let multi;
+  if(_profileData&&_profileData.length>=4){
+    // Cálculo preciso ponto a ponto com perfil real
+    multi=calcMultiPNProfile(Q_calc,_profileData,CHW,nominal,kLoc,filtro,pRes,slackP/100,lim);
+  } else {
+    // Fallback: inclinação linear (sem perfil)
+    const Hg=cotaR_-cotaS_;
+    multi=calcMultiPN(Q_calc,L,Hg,CHW,nominal,kLoc,filtro,pRes,slackP/100,lim);
+  }
+  _multi=multi;
+
   const Pkw=(Q_calc/3600)*multi.AMT_design*9.81/(eff/100);
   const Pcv=Pkw/0.7355;
   buildDiamCard(nominal,Q_calc,CHW,kLoc,L,multi);
   buildMultiCard(multi,Q_calc,L,eff,slackP,Pkw,Pcv,lim);
-  buildQuick(multi,Q_calc,Vmax,L,Hg,nominal,CHW);
+  buildQuick(multi,Q_calc,Vmax,L,cotaR_-cotaS_,nominal,CHW);
   buildBomba(multi,Q_calc,eff,Pkw,Pcv);
-  drawPressao(multi,Q_calc,Hg,L,lim,cotaS,cotaR,pRes);
+  drawPressao(multi,Q_calc,cotaR_-cotaS_,L,lim,cotaS_,cotaR_,pRes);
 }
 
 function buildQuick(multi,Q_calc,Vmax,L,Hg,nom,CHW){
   const pnsA=[...multi.pnsUsados].sort((a,b)=>b-a);
   const badges=pnsA.map(pn=>`<span class="pn-badge ${PN_CSS[pn]}">PN ${pn}</span>`).join(' ');
+  const usaPerfil=_profileData&&_profileData.length>=4;
+  const critico=usaPerfil&&multi.criticalDist!=null
+    ?`<div class="tile to"><div class="tl">&#9888; Ponto Cr&#237;tico</div><div class="tv">${fmt(multi.criticalDist,0)} <small>m</small></div><div style="font-size:.7rem;color:var(--mu)">Cota ${fmt(multi.criticalElev,1)} m</div></div>`
+    :`<div class="tile to"><div class="tl">Desnível Estático</div><div class="tv lg">${fmt(Hg)} <small>m</small></div></div>`;
+  const modoTag=usaPerfil
+    ?`<div class="sbox ok" style="margin-top:.6rem;font-size:.78rem">&#10003; C&#225;lculo com perfil real — ponto cr&#237;tico a <b>${fmt(multi.criticalDist,0)} m</b> (cota ${fmt(multi.criticalElev,1)} m)</div>`
+    :`<div class="sbox info" style="margin-top:.6rem;font-size:.78rem">&#8505; C&#225;lculo com inclina&#231;&#227;o linear. Gere o perfil para c&#225;lculo preciso.</div>`;
   $('quick-results').innerHTML=`<div class="card"><div class="ct">&#9889; Resumo R&#225;pido</div><div class="g4">
     <div class="tile tb2"><div class="tl">AMH Hidr&#225;ulica</div><div class="tv lg">${fmt(multi.AMT_hid)} <small>mca</small></div></div>
     <div class="tile tg"><div class="tl">AMH Projeto (c/ margem)</div><div class="tv lg">${fmt(multi.AMT_design)} <small>mca</small></div></div>
-    <div class="tile to"><div class="tl">Desnível Est&#225;tico</div><div class="tv lg">${fmt(Hg)} <small>m</small></div></div>
+    ${critico}
     <div class="tile tt"><div class="tl">Classes PN Utilizadas</div><div class="tv" style="font-size:.9rem">${badges}</div></div>
-  </div></div>`;
+  </div>${modoTag}</div>`;
 }
 
 function buildDiamCard(nom,Q_calc,CHW,kLoc,L,multi){
@@ -533,7 +602,9 @@ function drawPressao(multi,Q_calc,Hg,L,lim,cotaS,cotaR,pRes){
   const W=cv.width,H=cv.height;
   ctx.clearRect(0,0,W,H);ctx.fillStyle='#f8fbff';ctx.fillRect(0,0,W,H);
   if(!multi||!L){return;}
-  const pts=pressurePoints(multi,L,Hg||0);
+  const pts=(_profileData&&_profileData.length>=4)
+    ?pressurePointsProfile(multi,_profileData)
+    :pressurePoints(multi,L,Hg||0);
   const P_max=multi.AMT_design;
   const yMax=Math.ceil(P_max*1.08/10)*10;
   const mg={t:44,b:58,l:72,r:48};
@@ -556,11 +627,43 @@ function drawPressao(multi,Q_calc,Hg,L,lim,cotaS,cotaR,pRes){
     ctx.beginPath();ctx.moveTo(mg.l,y);ctx.lineTo(mg.l+cW,y);ctx.stroke();ctx.setLineDash([]);
     ctx.fillStyle=PN_COLOR[pn];ctx.font='bold 9px Segoe UI';ctx.textAlign='left';ctx.fillText(`Limite PN ${pn} (${fmt(p1,0)} mca)`,mg.l+4,y-3);
   }
-  for(let i=0;i<multi.segs.length;i++){
-    const s=multi.segs[i];const p0=pts[i],p1=pts[i+1]??{x:L,P:0};
-    ctx.beginPath();ctx.moveTo(px(p0.x),py(p0.P));ctx.lineTo(px(p1.x),py(p1.P));ctx.lineTo(px(p1.x),py(0));ctx.lineTo(px(p0.x),py(0));ctx.closePath();
-    ctx.fillStyle=PN_COLOR[s.pn]+'28';ctx.fill();
-    ctx.beginPath();ctx.moveTo(px(p0.x),py(p0.P));ctx.lineTo(px(p1.x),py(p1.P));ctx.strokeStyle=PN_COLOR[s.pn];ctx.lineWidth=3;ctx.stroke();
+  // Desenha a curva de pressão usando todos os pontos do perfil
+  if(_profileData&&_profileData.length>=4){
+    // Curva colorida por segmento PN usando pts completos do perfil
+    let sIdx=0;
+    ctx.beginPath();ctx.moveTo(px(pts[0].x),py(pts[0].P));
+    for(let i=1;i<pts.length;i++){ctx.lineTo(px(pts[i].x),py(pts[i].P));}
+    ctx.strokeStyle='rgba(0,80,160,.15)';ctx.lineWidth=1;ctx.stroke();
+    // Área colorida por PN
+    for(const s of multi.segs){
+      const segPts=pts.filter(p=>p.x>=s.from&&p.x<=s.to);
+      if(segPts.length<2)continue;
+      ctx.beginPath();ctx.moveTo(px(segPts[0].x),py(0));
+      segPts.forEach(p=>ctx.lineTo(px(p.x),py(p.P)));
+      ctx.lineTo(px(segPts[segPts.length-1].x),py(0));ctx.closePath();
+      ctx.fillStyle=PN_COLOR[s.pn]+'28';ctx.fill();
+      ctx.beginPath();segPts.forEach((p,i)=>i===0?ctx.moveTo(px(p.x),py(p.P)):ctx.lineTo(px(p.x),py(p.P)));
+      ctx.strokeStyle=PN_COLOR[s.pn];ctx.lineWidth=2.5;ctx.stroke();
+    }
+  } else {
+    for(let i=0;i<multi.segs.length;i++){
+      const s=multi.segs[i];const p0=pts[i],p1=pts[i+1]??{x:L,P:0};
+      ctx.beginPath();ctx.moveTo(px(p0.x),py(p0.P));ctx.lineTo(px(p1.x),py(p1.P));ctx.lineTo(px(p1.x),py(0));ctx.lineTo(px(p0.x),py(0));ctx.closePath();
+      ctx.fillStyle=PN_COLOR[s.pn]+'28';ctx.fill();
+      ctx.beginPath();ctx.moveTo(px(p0.x),py(p0.P));ctx.lineTo(px(p1.x),py(p1.P));ctx.strokeStyle=PN_COLOR[s.pn];ctx.lineWidth=3;ctx.stroke();
+    }
+  }
+  // Marca o ponto crítico
+  if(multi.criticalDist!=null){
+    const cpX=px(multi.criticalDist);
+    const cpPt=pts.find(p=>Math.abs(p.x-multi.criticalDist)<(L/pts.length*1.5))??{P:pRes};
+    const cpY=py(cpPt.P);
+    ctx.setLineDash([4,3]);ctx.strokeStyle='#e07b00';ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.moveTo(cpX,mg.t);ctx.lineTo(cpX,mg.t+cH);ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle='#e07b00';ctx.beginPath();ctx.arc(cpX,cpY,5,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#e07b00';ctx.font='bold 9px Segoe UI';ctx.textAlign='center';
+    ctx.fillText(`Pto. crítico ${fmt(multi.criticalDist,0)}m`,cpX,mg.t-5);
   }
 }
 
@@ -633,7 +736,7 @@ function limparTrace(){
   if(tracePolyline){tracePolyline.setMap(null);tracePolyline=null;}
   $('traceInfo').style.display='none';$('btnPerfil').disabled=true;$('btnLimpar').disabled=true;
   $('capDiv').style.display='none';$('elev-canvas').style.display='none';
-  _perfilSamples=null;_cotaMax=null;
+  _perfilSamples=null;_cotaMax=null;_profileData=null;
   if(modoDesenho)toggleDesenho();setMStatus('Traçado limpo.','info');
 }
 
@@ -663,6 +766,8 @@ function preencherDaAdutora(samples){
   const cotaS=elevs[0];
   const cotaR=elevs[elevs.length-1];
   const cotaMax=Math.max(...elevs);_cotaMax=cotaMax;
+  // Salva perfil completo para cálculo preciso ponto a ponto
+  _profileData=samples.map((s,i)=>({dist:dists[i],elev:s.elevation}));
   // Preenche campos
   $('L').value=L;$('cotaS').value=cotaS.toFixed(1);$('cotaR').value=cotaR.toFixed(1);
   // Mostra captura
