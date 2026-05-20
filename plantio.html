@@ -128,6 +128,7 @@ input:focus,select:focus{border-color:var(--bl3);box-shadow:0 0 0 3px rgba(0,180
         <button class="btn btn-blue btn-full" id="btnPoly" onclick="setMode('POLYGON')">&#9726; Desenhar Contorno</button>
         <button class="btn btn-out btn-full" id="btnFecharPoly" style="display:none" onclick="fecharPoligono()">&#10003; Fechar Pol&iacute;gono</button>
         <button class="btn btn-out btn-full" id="btnLimparPoly" style="display:none" onclick="limparPoligono()">&#10005; Limpar Contorno</button>
+        <button class="btn btn-full" id="btnKmlContorno" style="display:none;background:#607080;color:#fff;font-size:.78rem" onclick="exportarKML()">&#128462; Exportar contorno KML</button>
         <div id="areaBox" class="cap-box" style="display:none">
           <div class="cap-v" id="areaVal">—</div>
           <div class="cap-l">&#193;rea do talh&atilde;o</div>
@@ -161,6 +162,7 @@ input:focus,select:focus{border-color:var(--bl3);box-shadow:0 0 0 3px rgba(0,180
         </div>
         <button class="btn btn-green btn-full" onclick="gerarOffset()">&#10038; Gerar Linhas de Plantio</button>
         <button class="btn btn-out btn-full" id="btnLimparOffset" style="display:none" onclick="limparOffset()">&#10005; Limpar Linhas</button>
+        <button class="btn btn-full" id="btnExportKml" style="display:none;background:#2e7d32;color:#fff" onclick="exportarKML()">&#128462; Exportar KML (Google Earth)</button>
         <div id="offsetInfo" class="cap-box" style="display:none">
           <div class="cap-v" id="nLinhas">—</div>
           <div class="cap-l">Linhas geradas</div>
@@ -253,16 +255,19 @@ window.initMap=function(){
 // ── Modo de desenho ───────────────────────────────────────────────
 function setMode(m){
   mode=m;
+  // Desativa cliques no polígono ao traçar a linha (permite clicar dentro do contorno)
+  if(drawPoly) drawPoly.setOptions({clickable: m!=='POLYLINE', editable: m!=='POLYLINE'});
   if(m==='POLYGON'){
     $('map-div').style.cursor='crosshair';
     setMStatus('Clique para adicionar vértices. Duplo clique ou botão para fechar.','info');
     setStatus('stPoly','Clique no mapa para iniciar o contorno...','info');
   } else if(m==='POLYLINE'){
     $('map-div').style.cursor='crosshair';
-    setMStatus('Clique para adicionar pontos da linha base. Duplo clique ou botão para finalizar.','info');
+    setMStatus('Clique para adicionar pontos — pode clicar dentro ou fora do contorno. Duplo clique para finalizar.','info');
     setStatus('stLinha','Clique no mapa para iniciar a linha...','info');
   } else {
     $('map-div').style.cursor='';
+    if(drawPoly) drawPoly.setOptions({clickable:true, editable:true});
   }
 }
 
@@ -303,6 +308,7 @@ function fecharPoligono(){
   mode='IDLE';$('map-div').style.cursor='';
   $('btnFecharPoly').style.display='none';
   $('btnLimparPoly').style.display='';
+  $('btnKmlContorno').style.display='';
   $('areaBox').style.display='';
   $('areaVal').textContent=area.toFixed(2)+' ha';
   setStatus('stPoly','Contorno fechado — '+area.toFixed(2)+' ha. Arraste para ajustar.','ok');
@@ -314,7 +320,7 @@ function limparPoligono(){
   if(polyTempLine){polyTempLine.setMap(null);polyTempLine=null;}
   polyTempPts=[];
   $('btnFecharPoly').style.display='none';$('btnLimparPoly').style.display='none';
-  $('areaBox').style.display='none';
+  $('btnKmlContorno').style.display='none';$('areaBox').style.display='none';
   setStatus('stPoly','','');limparOffset();
 }
 
@@ -341,7 +347,7 @@ function addLinePt(latLng){
 
 function finalizarLinha(){
   if(!drawLine||lineTempPts.length<2)return;
-  mode='IDLE';$('map-div').style.cursor='';
+  setMode('IDLE');
   drawLine.setEditable(true);
   $('btnFinLinha').style.display='none';
   $('btnLimparLinha').style.display='';
@@ -349,12 +355,13 @@ function finalizarLinha(){
   $('secPerfil').style.display='';
   $('secOffset').style.display='';
   setStatus('stLinha','Linha definida — arraste os pontos para ajustar','ok');
-  setMStatus('Linha base definida. Gere o perfil de elevação ou as linhas de plantio.','ok');
+  setMStatus('Linha base definida. Arraste os pontos para ajustar. Gere o perfil ou as linhas de plantio.','ok');
 }
 
 function limparLinha(){
   if(drawLine){drawLine.setMap(null);drawLine=null;}
   lineTempPts=[];
+  setMode('IDLE');
   $('btnFinLinha').style.display='none';$('btnLimparLinha').style.display='none';
   $('linhaInfo').style.display='none';$('secPerfil').style.display='none';
   $('secOffset').style.display='none';
@@ -500,16 +507,75 @@ function gerarOffset(){
     }
   }
 
+  // Deixa a linha base como tracejada de referência
+  if(drawLine) drawLine.setOptions({strokeColor:'#ff6b00',strokeWeight:2,strokeOpacity:.5,strokeDashArray:'8,5'});
+
   $('nLinhas').textContent=count+' linhas';
   $('offsetInfo').style.display='';
   $('btnLimparOffset').style.display='';
-  setStatus('stOffset',count+' linhas de plantio geradas.','ok');
+  $('btnExportKml').style.display='';
+  setStatus('stOffset',count+' linhas geradas. Exporte em KML para o Google Earth.','ok');
 }
 
 function limparOffset(){
   offsetLines.forEach(l=>l.setMap(null));offsetLines=[];
+  // Restaura estilo da linha base
+  if(drawLine) drawLine.setOptions({strokeColor:'#ff6b00',strokeWeight:3,strokeOpacity:.9,strokeDashArray:null});
   $('offsetInfo').style.display='none';$('btnLimparOffset').style.display='none';
+  $('btnExportKml').style.display='none';
   setStatus('stOffset','','');
+}
+
+// ── Exportar KML ──────────────────────────────────────────────────
+function exportarKML(){
+  const date=new Date().toLocaleDateString('pt-BR');
+  let kml=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n<name>Estudo de Plantio — Bolsa Irriga</name>\n<description>Gerado em ${date}</description>\n`;
+
+  // Estilos
+  kml+=`<Style id="sContorno"><LineStyle><color>ffb67700</color><width>2.5</width></LineStyle><PolyStyle><color>110077b6</color></PolyStyle></Style>\n`;
+  kml+=`<Style id="sLinha"><LineStyle><color>ff006bff</color><width>2</width></LineStyle></Style>\n`;
+  kml+=`<Style id="sPlantio"><LineStyle><color>ffC06515</color><width>1.5</width></LineStyle></Style>\n`;
+
+  // Polígono do talhão
+  if(drawPoly){
+    const pts=drawPoly.getPath().getArray();
+    const coords=pts.map(p=>`${p.lng().toFixed(7)},${p.lat().toFixed(7)},0`).join(' ');
+    const first=pts[0];
+    kml+=`<Placemark><name>Contorno do Talh&#227;o</name><styleUrl>#sContorno</styleUrl>`;
+    kml+=`<Polygon><outerBoundaryIs><LinearRing><tessellate>1</tessellate><coordinates>${coords} ${first.lng().toFixed(7)},${first.lat().toFixed(7)},0</coordinates></LinearRing></outerBoundaryIs></Polygon>`;
+    kml+=`</Placemark>\n`;
+  }
+
+  // Linha base
+  if(drawLine){
+    const pts=drawLine.getPath().getArray();
+    const coords=pts.map(p=>`${p.lng().toFixed(7)},${p.lat().toFixed(7)},0`).join(' ');
+    kml+=`<Placemark><name>Linha Base</name><styleUrl>#sLinha</styleUrl>`;
+    kml+=`<LineString><tessellate>1</tessellate><coordinates>${coords}</coordinates></LineString>`;
+    kml+=`</Placemark>\n`;
+  }
+
+  // Linhas de plantio
+  if(offsetLines.length>0){
+    kml+=`<Folder><name>Linhas de Plantio (${offsetLines.length})</name>\n`;
+    offsetLines.forEach((l,i)=>{
+      const pts=l.getPath().getArray();
+      const coords=pts.map(p=>`${p.lng().toFixed(7)},${p.lat().toFixed(7)},0`).join(' ');
+      kml+=`<Placemark><name>Linha ${i+1}</name><styleUrl>#sPlantio</styleUrl>`;
+      kml+=`<LineString><tessellate>1</tessellate><coordinates>${coords}</coordinates></LineString>`;
+      kml+=`</Placemark>\n`;
+    });
+    kml+=`</Folder>\n`;
+  }
+
+  kml+=`</Document></kml>`;
+
+  const blob=new Blob([kml],{type:'application/vnd.google-earth.kml+xml'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=`estudo-plantio-${date.replace(/\//g,'-')}.kml`;
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),60000);
 }
 
 // ── Init ──────────────────────────────────────────────────────────
