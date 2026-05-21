@@ -479,8 +479,9 @@ function limparLinha(){
   $('linhaInfo').style.display='none';$('secPerfil').style.display='none';
   $('secOffset').style.display='none';
   $('elev-canvas').style.display='none';
-  setStatus('stLinha','','');limparOffset();
+  setStatus('stLinha','','');
   perfilSamples=null;
+  // NÃO chama limparOffset — linhas de plantio geradas ficam no mapa
   setMStatus('Linha limpa. Desenhe uma nova linha base.','info');
 }
 
@@ -661,7 +662,12 @@ function gerarOffset(){
     return;
   }
 
-  // Linha guia permanece visível e editável (arraste para ajustar e regere)
+  // Linha base some automaticamente — pronta para nova
+  if(drawLine){drawLine.setMap(null);drawLine=null;}
+  lineTempPts=[];
+  $('btnLimparLinha').style.display='none';
+  $('linhaInfo').style.display='none';
+  setStatus('stLinha','','');
 
   $('nLinhas').textContent=count+' linhas';
   $('offsetInfo').style.display='';
@@ -1129,8 +1135,17 @@ function criarCarreador(){
       });
     });
 
+    // Linha base some após divisão — pronta para nova
+    if(drawLine){drawLine.setMap(null);drawLine=null;}
+    lineTempPts=[];
+    $('btnLimparLinha').style.display='none';
+    $('linhaInfo').style.display='none';
+    $('secOffset').style.display='none';
+    $('secPerfil').style.display='none';
+    setStatus('stLinha','','');
+
     $('btnLimparCarreador').style.display='';
-    setStatus('stCarreador',parts.features.length+' área(s) criada(s). Clique em uma para usá-la como talhão.','ok');
+    setStatus('stCarreador',parts.features.length+' área(s). Clique em uma para ativá-la como talhão.','ok');
   }catch(err){setStatus('stCarreador','Erro: '+err.message,'err');}
 }
 
@@ -1148,6 +1163,25 @@ function ativarAreaCarreador(pg){
       google.maps.event.addListener(oldPg,'click',()=>ativarAreaCarreador(oldPg));
     }
   }
+
+  // Arquiva linhas de plantio do talhão anterior (ficam no mapa via areas[])
+  if(offsetLines.length>0){
+    areas.push({poly:drawPoly,offsets:[...offsetLines],
+      cor:$('corLinhas').value||'#FFD600',esp:parseFloat($('espessuraLinhas').value)||1.5});
+    offsetLines=[];
+    ['btnLimparOffset','btnExportKml','btnRelatorio','btnClassificar',
+     'btnLimparClassif','offsetInfo','secDeclividade','btnNovaArea'].forEach(id=>{
+      const e=$(id);if(e)e.style.display='none';
+    });
+  }
+  // Limpa linha base do talhão anterior
+  if(drawLine){drawLine.setMap(null);drawLine=null;}
+  lineTempPts=[];
+  $('btnLimparLinha').style.display='none';
+  $('linhaInfo').style.display='none';
+  $('secOffset').style.display='none';
+  $('secPerfil').style.display='none';
+  setStatus('stLinha','','');
 
   // Remove pg de carreadorPolys e ativa como drawPoly
   carreadorPolys=carreadorPolys.filter(p=>p!==pg);
