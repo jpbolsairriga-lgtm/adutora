@@ -808,7 +808,9 @@ function novaArea(){
       cor:$('corLinhas').value||'#FFD600',esp:parseFloat($('espessuraLinhas').value)||1.5});
   }
   // Zera estado corrente (mantém tudo no mapa)
-  drawPoly=null; drawLine=null; offsetLines=[];
+  drawPoly=null;
+  if(drawLine){drawLine.setEditable(false);drawLine=null;} // remove handles, mantém linha visível
+  offsetLines=[];
   polyTempPts=[]; lineTempPts=[];
   if(polyTempLine){polyTempLine.setMap(null);polyTempLine=null;}
   perfilSamples=null;
@@ -1099,7 +1101,9 @@ function criarCarreador(){
   const linePts2=drawLine.getPath().getArray().map(p=>[p.lng(),p.lat()]);
   const lineGeo=turf.lineString(linePts2);
 
-  carreadorPolys.forEach(p=>p.setMap(null));carreadorPolys=[];
+  // Não limpa carreadorPolys anteriores (divisões passadas ficam no mapa)
+  // Apenas remove o drawPoly que está sendo dividido agora
+  if(drawPoly){drawPoly.setMap(null);drawPoly=null;}
 
   try{
     const buffer=turf.buffer(lineGeo,halfKm,{units:'kilometers'});
@@ -1119,8 +1123,8 @@ function criarCarreador(){
           strokeColor:c,strokeWeight:2.5,strokeOpacity:.9,
           fillColor:c,fillOpacity:.22,zIndex:4
         });
-        // Clique na área → vira talhão ativo para plantio
-        google.maps.event.addListener(pg,'click',()=>ativarAreaCarreador(pg,feat,c,cores[i%2]));
+        pg._carCor=c; // guarda cor para restaurar ao sair do ativo
+        google.maps.event.addListener(pg,'click',()=>ativarAreaCarreador(pg));
         carreadorPolys.push(pg);
       });
     });
@@ -1130,25 +1134,28 @@ function criarCarreador(){
   }catch(err){setStatus('stCarreador','Erro: '+err.message,'err');}
 }
 
-function ativarAreaCarreador(pg,feat,cor,corOriginal){
-  // Talhão ativo → azul (estilo padrão drawPoly), editável
+function ativarAreaCarreador(pg){
+  // Se já havia um drawPoly de carreador ativo, devolve ele para carreadorPolys
+  if(drawPoly&&drawPoly!==pg&&drawPoly._carCor){
+    const oldPg=drawPoly;
+    const oldCor=oldPg._carCor;
+    oldPg.setOptions({
+      strokeColor:oldCor,fillColor:oldCor,fillOpacity:.18,
+      strokeOpacity:.9,editable:true,clickable:true,zIndex:4
+    });
+    if(!carreadorPolys.includes(oldPg)){
+      carreadorPolys.push(oldPg);
+      google.maps.event.addListener(oldPg,'click',()=>ativarAreaCarreador(oldPg));
+    }
+  }
+
+  // Remove pg de carreadorPolys e ativa como drawPoly
+  carreadorPolys=carreadorPolys.filter(p=>p!==pg);
   pg.setOptions({
     strokeColor:'#0077b6',strokeWeight:2.5,strokeOpacity:.9,
     fillColor:'#0077b6',fillOpacity:.07,
     editable:true,clickable:false,zIndex:2
   });
-
-  // Outros sub-talhões: mantêm cor original, editáveis e clicáveis para trocar
-  carreadorPolys.filter(p=>p!==pg).forEach(p=>{
-    p.setOptions({editable:true,clickable:true,fillOpacity:.18,strokeOpacity:.9});
-  });
-  carreadorPolys=carreadorPolys.filter(p=>p!==pg);
-
-  // Restaura drawPoly anterior se for diferente do pg
-  if(drawPoly&&drawPoly!==pg){
-    // Se era um polígono do carreador, restaura para clicável
-    drawPoly.setOptions({clickable:true,strokeColor:'#0077b6',fillOpacity:.18});
-  }
   drawPoly=pg;
 
   const area=computeAreaHa(pg.getPath().getArray());
@@ -1156,8 +1163,8 @@ function ativarAreaCarreador(pg,feat,cor,corOriginal){
   $('areaBox').style.display='';
   $('btnLimparPoly').style.display='';
   $('btnKmlContorno').style.display='';
-  setStatus('stCarreador','Talhão ativado: '+area.toFixed(2)+' ha. Agora desenhe a linha base.','ok');
-  setMStatus('Talhão selecionado (azul). Outros talhões clicáveis para trocar.','ok');
+  setStatus('stCarreador','Talhão ativado: '+area.toFixed(2)+' ha. Desenhe a linha base e gere as linhas.','ok');
+  setMStatus('Talhão ativo (azul). Clique em outro talhão para trocar.','ok');
 }
 
 function limparCarreador(){
