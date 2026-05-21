@@ -672,7 +672,8 @@ function gerarOffset(){
   const polyBound=turf.polygonToLine(turfPoly);
 
   const bbox=turf.bbox(turfPoly);
-  const ext=turf.distance(turf.point([bbox[0],bbox[1]]),turf.point([bbox[2],bbox[3]]))*3+1;
+  // Extensão conservadora: diagonal do bbox é suficiente para cruzar qualquer fronteira
+  const ext=turf.distance(turf.point([bbox[0],bbox[1]]),turf.point([bbox[2],bbox[3]])) * 1.5;
 
   limparOffset();
   setStatus('stOffset','Gerando linhas...','info');
@@ -740,24 +741,46 @@ function gerarOffset(){
     return 0;
   }
 
-  function addLine(distKm, perpDir){
-    // Translação rígida de basePts → preserva curva do spline
-    const shifted=distKm===0?[...basePts]:basePts.map(pt=>
-      turf.destination(turf.point(pt),distKm,perpDir,{units:'kilometers'}).geometry.coordinates
-    );
-    const extS=turf.destination(turf.point(shifted[0]),ext,rowBrg+180,{units:'kilometers'}).geometry.coordinates;
-    const extE=turf.destination(turf.point(shifted[shifted.length-1]),ext,rowBrg,{units:'kilometers'}).geometry.coordinates;
+  // Offset com normal local (equidistante ponto a ponto, como AutoCAD).
+  // Para cada ponto de basePts calcula a normal pela tangente local.
+  function normalOffset(distKm, sign){
+    return basePts.map((pt,i)=>{
+      const prev=basePts[Math.max(0,i-1)];
+      const next=basePts[Math.min(basePts.length-1,i+1)];
+      // Tangente pelo vizinho anterior e posterior
+      const bF=turf.bearing(turf.point(pt),turf.point(next));
+      const bB=turf.bearing(turf.point(prev),turf.point(pt));
+      // Média vetorial para suavizar a tangente
+      const dx=Math.sin(bF*Math.PI/180)+Math.sin(bB*Math.PI/180);
+      const dy=Math.cos(bF*Math.PI/180)+Math.cos(bB*Math.PI/180);
+      const tangBrg=Math.atan2(dx,dy)*180/Math.PI;
+      const normBrg=tangBrg+90*sign;
+      return turf.destination(turf.point(pt),distKm,normBrg,{units:'kilometers'}).geometry.coordinates;
+    });
+  }
+
+  function addLine(distKm, sign){
+    // Offset com normal local → curvas paralelas equidistantes
+    const shifted=distKm===0?[...basePts]:normalOffset(distKm,sign);
+    // Extensão usa tangente local nos extremos para não divergir
+    const n=shifted.length;
+    const brgS=n>=2?turf.bearing(turf.point(shifted[1]),turf.point(shifted[0])):rowBrg+180;
+    const brgE=n>=2?turf.bearing(turf.point(shifted[n-2]),turf.point(shifted[n-1])):rowBrg;
+    const extS=turf.destination(turf.point(shifted[0]),ext,brgS,{units:'kilometers'}).geometry.coordinates;
+    const extE=turf.destination(turf.point(shifted[n-1]),ext,brgE,{units:'kilometers'}).geometry.coordinates;
     if(addSegments([extS,...shifted,extE])>0)return true;
-    // Fallback: linha reta fresca (polígonos côncavos onde translação falha)
-    const refPt=turf.destination(midPt,distKm,perpDir,{units:'kilometers'}).geometry.coordinates;
+    // Fallback: linha reta fresca pelo ponto de referência
+    const perpDir=sign>0?perpBrg1:rowBrg-90;
+    const refPt=distKm===0?midPt.geometry.coordinates
+      :turf.destination(midPt,distKm,perpDir,{units:'kilometers'}).geometry.coordinates;
     const p1=turf.destination(turf.point(refPt),ext,rowBrg,{units:'kilometers'}).geometry.coordinates;
     const p2=turf.destination(turf.point(refPt),ext,rowBrg+180,{units:'kilometers'}).geometry.coordinates;
     return addSegments([p2,refPt,p1])>0;
   }
 
-  addLine(0,perpBrg1);
-  for(let n=1;n<=nPos;n++) addLine(n*spacing/1000,perpBrg1);
-  for(let n=1;n<=nNeg;n++) addLine(n*spacing/1000,rowBrg-90);
+  addLine(0,1);
+  for(let n=1;n<=nPos;n++) addLine(n*spacing/1000,1);
+  for(let n=1;n<=nNeg;n++) addLine(n*spacing/1000,-1);
 
   if(count===0){
     setStatus('stOffset','Nenhuma linha gerada — desenhe a linha guia cruzando o talhão ativo (amarelo).','err');
