@@ -559,15 +559,15 @@ function desenharPerfilElevacao(samples){
 // Percorre coordenada a coordenada, detecta cruzamentos exatos com
 // o contorno e mantém apenas o trecho interno — preserva a curvatura
 function clipCurveToPolygon(coords,turfPoly,polyBound){
-  // Percorre ponto a ponto; turf.rewind garante CCW → booleanPointInPolygon confiável
   if(coords.length<2)return null;
+
+  // Abordagem 1: ponto a ponto com booleanPointInPolygon
   const result=[];
   let inside=turf.booleanPointInPolygon(turf.point(coords[0]),turfPoly);
   if(inside)result.push(coords[0]);
   for(let i=1;i<coords.length;i++){
     const currIn=turf.booleanPointInPolygon(turf.point(coords[i]),turfPoly);
     if(inside!==currIn){
-      // Cruzamento de fronteira — acha o ponto exato
       try{
         const seg=turf.lineString([coords[i-1],coords[i]]);
         const ixs=turf.lineIntersect(seg,polyBound);
@@ -582,7 +582,21 @@ function clipCurveToPolygon(coords,turfPoly,polyBound){
     if(currIn)result.push(coords[i]);
     inside=currIn;
   }
-  return result.length>=2?result:null;
+  if(result.length>=2)return result;
+
+  // Abordagem 2: lineSplit como fallback (quando booleanPointInPolygon falha)
+  try{
+    const split=turf.lineSplit(turf.lineString(coords),polyBound);
+    if(!split||!split.features||split.features.length===0)return null;
+    const ins=split.features.filter(seg=>{
+      const c=seg.geometry.coordinates;
+      return turf.booleanPointInPolygon(turf.point(c[Math.floor(c.length/2)]),turfPoly);
+    });
+    if(ins.length===0)return null;
+    const r=[...ins[0].geometry.coordinates];
+    for(let i=1;i<ins.length;i++)r.push(...ins[i].geometry.coordinates.slice(1));
+    return r.length>=2?r:null;
+  }catch(e){return null;}
 }
 
 // ── Offset / Linhas de Plantio ────────────────────────────────────
@@ -1117,7 +1131,7 @@ function criarCarreador(){
     if(!remaining){setStatus('stCarreador','A linha não divide o polígono.','err');return;}
 
     const parts=turf.flatten(remaining);
-    const cores=['#1b6e3a','#0077b6'];
+    const cores=['#EF6C00','#7B1FA2','#00695C','#C62828','#37474F','#1565C0'];
 
     parts.features.forEach((feat,i)=>{
       const c=cores[i%2];
@@ -1186,8 +1200,8 @@ function ativarAreaCarreador(pg){
   // Remove pg de carreadorPolys e ativa como drawPoly
   carreadorPolys=carreadorPolys.filter(p=>p!==pg);
   pg.setOptions({
-    strokeColor:'#0077b6',strokeWeight:2.5,strokeOpacity:.9,
-    fillColor:'#0077b6',fillOpacity:.07,
+    strokeColor:'#F9A825',strokeWeight:2.5,strokeOpacity:.95,
+    fillColor:'#FFF9C4',fillOpacity:.20,
     editable:true,clickable:false,zIndex:2
   });
   drawPoly=pg;
@@ -1198,7 +1212,7 @@ function ativarAreaCarreador(pg){
   $('btnLimparPoly').style.display='';
   $('btnKmlContorno').style.display='';
   setStatus('stCarreador','Talhão ativado: '+area.toFixed(2)+' ha. Desenhe a linha base e gere as linhas.','ok');
-  setMStatus('Talhão ativo (azul). Clique em outro talhão para trocar.','ok');
+  setMStatus('Talhão ativo (amarelo). Clique em outro talhão para trocar.','ok');
 }
 
 function limparCarreador(){
