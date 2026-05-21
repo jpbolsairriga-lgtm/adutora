@@ -633,6 +633,13 @@ function gerarOffset(){
   const gExtE=turf.destination(turf.point(linePts[linePts.length-1]),ext,brgEn,{units:'kilometers'}).geometry.coordinates;
   const basePts=clipCurveToPolygon([gExtS,...linePts,gExtE],turfPoly,polyBound)||linePts;
 
+  // Verifica antecipadamente se a linha guia realmente toca o polígono
+  const guideInside=basePts.some(pt=>turf.booleanPointInPolygon(turf.point(pt),turfPoly));
+  if(!guideInside){
+    setStatus('stOffset','Linha guia está fora do talhão ativo (amarelo). Desenhe a linha dentro ou cruzando o talhão.','err');
+    return;
+  }
+
   function addShifted(shifted){
     if(shifted.length<2)return false;
     const brgS=turf.bearing(turf.point(shifted[0]),turf.point(shifted[1]));
@@ -641,7 +648,17 @@ function gerarOffset(){
     const extE=turf.destination(turf.point(shifted[shifted.length-1]),ext,brgE,{units:'kilometers'}).geometry.coordinates;
     const extended=[extS,...shifted,extE];
     const clipped=clipCurveToPolygon(extended,turfPoly,polyBound);
-    if(!clipped||clipped.length<2)return false;
+    if(!clipped||clipped.length<2){
+      // Fallback: tenta clipar sem re-extensão
+      const clipped2=clipCurveToPolygon(shifted,turfPoly,polyBound);
+      if(!clipped2||clipped2.length<2)return false;
+      offsetLines.push(new google.maps.Polyline({
+        path:clipped2.map(c=>({lat:c[1],lng:c[0]})),
+        map,strokeColor:corLinha,strokeWeight:espessura,strokeOpacity:.95,zIndex:10
+      }));
+      count++;
+      return true;
+    }
     offsetLines.push(new google.maps.Polyline({
       path:clipped.map(c=>({lat:c[1],lng:c[0]})),
       map,strokeColor:corLinha,strokeWeight:espessura,strokeOpacity:.95,zIndex:10
@@ -650,25 +667,38 @@ function gerarOffset(){
     return true;
   }
 
+  // Calcula extensão perpendicular total do polígono a partir do meio de basePts
+  // Isso garante cobertura completa independente de onde a linha guia foi desenhada
+  const midPt=turf.point(basePts[Math.floor(basePts.length/2)]);
+  const perpBrg1=rowBrg+90;
+  const polyVertsArr=drawPoly.getPath().getArray().map(p=>[p.lng(),p.lat()]);
+  let minD=0,maxD=0;
+  polyVertsArr.forEach(v=>{
+    const d=turf.distance(midPt,turf.point(v),{units:'kilometers'});
+    const b=turf.bearing(midPt,turf.point(v));
+    const signed=d*Math.cos((b-perpBrg1)*Math.PI/180);
+    minD=Math.min(minD,signed);
+    maxD=Math.max(maxD,signed);
+  });
+  const nPos=Math.ceil(maxD/(spacing/1000))+1;
+  const nNeg=Math.ceil(-minD/(spacing/1000))+1;
+
   // n=0: posição da linha guia (clipped to polygon)
   addShifted([...basePts]);
 
-  // Offsets — usa basePts (já na largura total do polígono) como base
-  for(const side of[-1,1]){
-    const perpBrg=rowBrg+side*90;
-    let misses=0;
-    let sideCount=0;
-    for(let n=1;n<5000;n++){
-      const distKm=n*spacing/1000;
-      const shifted=basePts.map(pt=>
-        turf.destination(turf.point(pt),distKm,perpBrg,{units:'kilometers'}).geometry.coordinates
-      );
-      if(addShifted(shifted)){misses=0;sideCount++;}
-      else{
-        if(sideCount>0){misses++;if(misses>=3)break;}
-        else if(n>800)break;
-      }
-    }
+  // Offsets positivos (perpBrg1) — cobre até o extremo do polígono
+  for(let n=1;n<=nPos;n++){
+    const shifted=basePts.map(pt=>
+      turf.destination(turf.point(pt),n*spacing/1000,perpBrg1,{units:'kilometers'}).geometry.coordinates
+    );
+    addShifted(shifted);
+  }
+  // Offsets negativos (direção oposta) — cobre o outro extremo
+  for(let n=1;n<=nNeg;n++){
+    const shifted=basePts.map(pt=>
+      turf.destination(turf.point(pt),n*spacing/1000,rowBrg-90,{units:'kilometers'}).geometry.coordinates
+    );
+    addShifted(shifted);
   }
 
   if(count===0){
@@ -705,7 +735,9 @@ function limparOffset(){
 
 function limparClassificacao(){
   classifiedSegs.forEach(s=>s.pl.setMap(null));classifiedSegs=[];
+  // Restaura todas as linhas: talhão atual + arquivadas
   offsetLines.forEach(l=>l.setMap(map));
+  areas.forEach(a=>a.offsets.forEach(l=>l.setMap(map)));
   $('btnLimparClassif').style.display='none';
   $('secDeclividade').style.display='none';
   $('btnClassificar').style.display='';
@@ -748,37 +780,37 @@ async function getElevsForPoints(latlngs){
 }
 
 async function classificarDeclividade(){
-  if(offsetLines.length===0){setStatus('stDeclividade','Gere as linhas primeiro.','err');return;}
-  const resM=parseFloat($('resolucaoDeclividade').value)||20; // resolução em metros
+  // Classifica TODAS as linhas: talhão atual + talhões arquivados
+  const todasLinhas=[...offsetLines,...areas.flatMap(a=>a.offsets)];
+  if(todasLinhas.length===0){setStatus('stDeclividade','Gere as linhas primeiro.','err');return;}
+  const resM=parseFloat($('resolucaoDeclividade').value)||20;
   $('btnClassificar').disabled=true;
   setStatus('stDeclividade','Buscando elevações…','info');
   $('secDeclividade').style.display='';
 
-  // Calcula N amostras de acordo com a resolução e o comprimento de cada linha
   function nSamples(gmPath){
     const pts=gmPath.getArray();
     let dist=0;
     for(let i=1;i<pts.length;i++)dist+=haversine(pts[i-1],pts[i]);
     return Math.max(2,Math.round(dist/resM)+1);
   }
-  const linesSamples=offsetLines.map(pl=>sampleLineEvenly(pl.getPath(),nSamples(pl.getPath())));
+  const linesSamples=todasLinhas.map(pl=>sampleLineEvenly(pl.getPath(),nSamples(pl.getPath())));
   const allPts=linesSamples.flat();
 
   try{
     const elevs=await getElevsForPoints(allPts);
 
-    // Remove classificação anterior
     classifiedSegs.forEach(s=>s.pl.setMap(null));classifiedSegs=[];
 
     const counts=SLOPE_CLASSES.map(()=>0);
     let idx=0;
     const N_each=linesSamples.map(s=>s.length);
-    offsetLines.forEach((_,li)=>{
+    todasLinhas.forEach((_,li)=>{
       const samps=linesSamples[li];
       const ev=elevs.slice(idx,idx+N_each[li]);idx+=N_each[li];
       for(let s=0;s<samps.length-1;s++){
         const dH=Math.abs(ev[s+1].elevation-ev[s].elevation);
-        const dX=haversine(samps[s],samps[s+1]); // metros
+        const dX=haversine(samps[s],samps[s+1]);
         const pct=dX>0?(dH/dX)*100:0;
         const cls=slopeClass(pct);
         const ci=SLOPE_CLASSES.indexOf(cls);
@@ -791,7 +823,6 @@ async function classificarDeclividade(){
       }
     });
 
-    // Monta tabela
     const total=counts.reduce((a,b)=>a+b,0)||1;
     let html='<table class="decliv-tbl"><tr><th>Cor</th><th>Decliv.</th><th>Recomendação</th><th>%</th></tr>';
     SLOPE_CLASSES.forEach((c,i)=>{
@@ -807,12 +838,14 @@ async function classificarDeclividade(){
     html+='</table>';
     $('tabelaDeclividade').innerHTML=html;
 
-    // Só oculta as linhas originais DEPOIS de criar segmentos com sucesso
-    if(classifiedSegs.length>0) offsetLines.forEach(l=>l.setMap(null));
+    // Oculta todas as linhas originais (atual + arquivadas)
+    if(classifiedSegs.length>0){
+      todasLinhas.forEach(l=>l.setMap(null));
+    }
 
     $('btnLimparClassif').style.display='';
     $('btnClassificar').style.display='none';
-    setStatus('stDeclividade','Declividade classificada — '+SLOPE_CLASSES.filter((_,i)=>counts[i]>0).length+' classes.','ok');
+    setStatus('stDeclividade','Declividade classificada — '+todasLinhas.length+' linhas, '+SLOPE_CLASSES.filter((_,i)=>counts[i]>0).length+' classes.','ok');
   }catch(e){
     setStatus('stDeclividade','Erro: '+e.message+'. Linhas originais mantidas.','err');
   }finally{
@@ -1183,10 +1216,13 @@ function ativarAreaCarreador(pg){
     areas.push({poly:drawPoly,offsets:[...offsetLines],
       cor:$('corLinhas').value||'#FFD600',esp:parseFloat($('espessuraLinhas').value)||1.5});
     offsetLines=[];
-    ['btnLimparOffset','btnExportKml','btnRelatorio','btnClassificar',
+    ['btnLimparOffset','btnExportKml','btnRelatorio',
      'btnLimparClassif','offsetInfo','secDeclividade','btnNovaArea'].forEach(id=>{
       const e=$(id);if(e)e.style.display='none';
     });
+    // Mantém btnClassificar visível — há linhas arquivadas para classificar
+    $('btnClassificar').style.display='';
+    $('secDeclividade').style.display='';
   }
   // Limpa linha base do talhão anterior
   if(drawLine){drawLine.setMap(null);drawLine=null;}
