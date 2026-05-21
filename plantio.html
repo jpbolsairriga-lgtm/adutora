@@ -1126,25 +1126,29 @@ function criarCarreador(){
 }
 
 function ativarAreaCarreador(pg,feat,cor){
-  // Remove o polígono clicado dos carreadorPolys e converte em drawPoly ativo
-  pg.setMap(null);
+  // Não remove pg — muda o estilo e usa ele diretamente como drawPoly
   carreadorPolys=carreadorPolys.filter(p=>p!==pg);
 
-  if(drawPoly){drawPoly.setMap(null);drawPoly=null;}
-  const rings=feat.geometry.type==='MultiPolygon'?feat.geometry.coordinates[0]:feat.geometry.coordinates;
-  const paths=rings.map(ring=>ring.map(c=>({lat:c[1],lng:c[0]})));
-  drawPoly=new google.maps.Polygon({
-    paths,map,editable:true,
+  // Outros polígonos do carreador ficam visíveis mas não clicáveis (referência)
+  carreadorPolys.forEach(p=>p.setOptions({clickable:false,fillOpacity:.08,strokeOpacity:.4}));
+
+  // Transforma o polígono clicado no talhão ativo (azul, editável)
+  pg.setOptions({
     strokeColor:'#0077b6',strokeWeight:2.5,strokeOpacity:.9,
-    fillColor:'#0077b6',fillOpacity:.07,zIndex:2
+    fillColor:'#0077b6',fillOpacity:.07,
+    editable:true,clickable:false,zIndex:2
   });
-  const area=turf.area(feat)/10000;
+
+  if(drawPoly&&drawPoly!==pg){drawPoly.setMap(null);}
+  drawPoly=pg;
+
+  const area=computeAreaHa(pg.getPath().getArray());
   $('areaVal').textContent=area.toFixed(2)+' ha';
   $('areaBox').style.display='';
   $('btnLimparPoly').style.display='';
   $('btnKmlContorno').style.display='';
-  setStatus('stCarreador','Área ativada: '+area.toFixed(2)+' ha. Gere as linhas de plantio.','ok');
-  setMStatus('Área selecionada como talhão. Gere as linhas de plantio.','ok');
+  setStatus('stCarreador','Talhão ativado: '+area.toFixed(2)+' ha. Desenhe a linha base e gere as linhas.','ok');
+  setMStatus('Talhão selecionado. Desenhe a linha base e gere as linhas de plantio.','ok');
 }
 
 function limparCarreador(){
