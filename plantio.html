@@ -397,8 +397,7 @@ function fecharPoligono(){
   $('areaBox').style.display='';
   $('areaVal').textContent=area.toFixed(2)+' ha';
   setStatus('stPoly','Contorno fechado — '+area.toFixed(2)+' ha. Arraste para ajustar.','ok');
-  setMStatus('Contorno definido. Configure o espaçamento e gere as linhas de plantio. A linha base é opcional (só para perfil de elevação).','info');
-  $('secOffset').style.display='';
+  setMStatus('Contorno definido. Desenhe a linha guia (define a direção das linhas de plantio).','info');
 }
 
 function limparPoligono(){
@@ -657,62 +656,116 @@ function clipCurveToPolygon(coords,turfPoly,polyBound){
 }
 
 // ── Offset / Linhas de Plantio ────────────────────────────────────
-// Gera linhas de plantio como offsets internos sucessivos do contorno do polígono.
-// Abordagem idêntica ao AutoCAD: cada linha é o contorno do polígono reduzido n × espaçamento.
-async function gerarOffset(){
+function gerarOffset(){
   if(!drawPoly){setStatus('stOffset','Desenhe o contorno do talhão primeiro.','err');return;}
+  if(!drawLine){setStatus('stOffset','Desenhe a linha guia primeiro (define a direção das linhas).','err');return;}
   const spacing=parseFloat($('espacamento').value)||12;
   const corLinha=$('corLinhas').value||'#FFD600';
   const espessura=parseFloat($('espessuraLinhas').value)||1.5;
-  const spacingKm=spacing/1000;
 
   const polyPts=drawPoly.getPath().getArray().map(p=>[p.lng(),p.lat()]);
   polyPts.push([...polyPts[0]]);
+  const linePts=drawLine.getPath().getArray().map(p=>[p.lng(),p.lat()]);
   const turfPoly=turf.polygon([polyPts]);
   turf.rewind(turfPoly,{mutate:true});
+  const polyBound=turf.polygonToLine(turfPoly);
+
+  const bbox=turf.bbox(turfPoly);
+  const ext=turf.distance(turf.point([bbox[0],bbox[1]]),turf.point([bbox[2],bbox[3]]))*1.5;
 
   limparOffset();
   setStatus('stOffset','Gerando linhas...','info');
-
   let count=0;
-  let lastGeo=turfPoly; // polígono atual (vai encolhendo a cada iteração)
 
-  for(let n=1;n<=5000;n++){
-    if(n%5===0){
-      setStatus('stOffset','Gerando linhas... ('+count+')','info');
-      await new Promise(r=>setTimeout(r,0)); // cede ao thread da UI
-    }
+  // Direção geral da guia (corda: primeiro → último ponto)
+  const rowBrg=turf.bearing(turf.point(linePts[0]),turf.point(linePts[linePts.length-1]));
+  const perpBrg1=rowBrg+90;
+
+  // Estende a guia até as bordas do polígono
+  const brgS0=turf.bearing(turf.point(linePts[0]),turf.point(linePts[Math.min(1,linePts.length-1)]));
+  const brgEn=turf.bearing(turf.point(linePts[linePts.length-(linePts.length>1?2:1)]),turf.point(linePts[linePts.length-1]));
+  const gExtS=turf.destination(turf.point(linePts[0]),ext,brgS0+180,{units:'kilometers'}).geometry.coordinates;
+  const gExtE=turf.destination(turf.point(linePts[linePts.length-1]),ext,brgEn,{units:'kilometers'}).geometry.coordinates;
+  const basePts=clipCurveToPolygon([gExtS,...linePts,gExtE],turfPoly,polyBound)||linePts;
+
+  // Simplifica basePts — evita instabilidade em splines com muitos pontos interpolados
+  let offsetBase=basePts;
+  try{
+    const simp=turf.simplify(turf.lineString(basePts),{tolerance:0.00005,highQuality:true});
+    if(simp.geometry.coordinates.length>=2) offsetBase=simp.geometry.coordinates;
+  }catch(e){}
+
+  const midPt=turf.point(offsetBase[Math.floor(offsetBase.length/2)]);
+
+  // Extensão perpendicular total do polígono a partir do midPt
+  const polyVertsArr=drawPoly.getPath().getArray().map(p=>[p.lng(),p.lat()]);
+  let minD=0,maxD=0;
+  polyVertsArr.forEach(v=>{
+    const d=turf.distance(midPt,turf.point(v),{units:'kilometers'});
+    const b=turf.bearing(midPt,turf.point(v));
+    const signed=d*Math.cos((b-perpBrg1)*Math.PI/180);
+    minD=Math.min(minD,signed);maxD=Math.max(maxD,signed);
+  });
+  const nPos=Math.ceil(maxD/(spacing/1000))+1;
+  const nNeg=Math.ceil(-minD/(spacing/1000))+1;
+
+  // Clipa coordenadas ao polígono — lineSplit cria segmento por região interna (correto para côncavos)
+  function addSegments(coords){
+    if(coords.length<2)return 0;
+    let added=0;
     try{
-      const buf=turf.buffer(turfPoly,-n*spacingKm,{units:'kilometers'});
-      if(!buf||!buf.geometry)break;
-      const polys=buf.geometry.type==='MultiPolygon'
-        ?buf.geometry.coordinates:[buf.geometry.coordinates];
-      let added=0;
-      polys.forEach(rings=>{
-        const ring=rings[0]; // só anel externo
-        if(ring&&ring.length>=2){
-          offsetLines.push(new google.maps.Polyline({
-            path:ring.map(c=>({lat:c[1],lng:c[0]})),
-            map,strokeColor:corLinha,strokeWeight:espessura,
-            strokeOpacity:.95,zIndex:10,clickable:false
-          }));
-          count++;added++;
-        }
-      });
-      if(added===0)break;
-    }catch(e){break;}
+      const split=turf.lineSplit(turf.lineString(coords),polyBound);
+      if(split&&split.features&&split.features.length>0){
+        split.features.forEach(seg=>{
+          const c=seg.geometry.coordinates;
+          if(c.length>=2&&turf.booleanPointInPolygon(turf.point(c[Math.floor(c.length/2)]),turfPoly)){
+            offsetLines.push(new google.maps.Polyline({
+              path:c.map(p=>({lat:p[1],lng:p[0]})),
+              map,strokeColor:corLinha,strokeWeight:espessura,strokeOpacity:.95,zIndex:10,clickable:false
+            }));
+            count++;added++;
+          }
+        });
+        if(added>0)return added;
+      }
+    }catch(e){}
+    const cl=clipCurveToPolygon(coords,turfPoly,polyBound);
+    if(cl&&cl.length>=2){
+      offsetLines.push(new google.maps.Polyline({
+        path:cl.map(p=>({lat:p[1],lng:p[0]})),
+        map,strokeColor:corLinha,strokeWeight:espessura,strokeOpacity:.95,zIndex:10,clickable:false
+      }));
+      count++;return 1;
+    }
+    return 0;
   }
 
-  // Limpa linha base se existir (opcional — estava lá apenas para perfil)
-  limparSplineMarkers();
-  if(drawLine){drawLine.setMap(null);drawLine=null;}
-  lineTempPts=[];
-  $('btnLimparLinha').style.display='none';
-  $('linhaInfo').style.display='none';
-  setStatus('stLinha','','');
+  // Translação rígida da guia simplificada → linhas paralelas na direção da guia
+  function addLine(distKm,sign){
+    const perpDir=sign>0?perpBrg1:rowBrg-90;
+    const shifted=distKm===0?[...offsetBase]:offsetBase.map(pt=>
+      turf.destination(turf.point(pt),distKm,perpDir,{units:'kilometers'}).geometry.coordinates
+    );
+    const n=shifted.length;
+    const brgS=n>=2?turf.bearing(turf.point(shifted[1]),turf.point(shifted[0])):rowBrg+180;
+    const brgE=n>=2?turf.bearing(turf.point(shifted[n-2]),turf.point(shifted[n-1])):rowBrg;
+    const extS=turf.destination(turf.point(shifted[0]),ext,brgS,{units:'kilometers'}).geometry.coordinates;
+    const extE=turf.destination(turf.point(shifted[n-1]),ext,brgE,{units:'kilometers'}).geometry.coordinates;
+    if(addSegments([extS,...shifted,extE])>0)return true;
+    // Fallback: linha reta fresca
+    const refPt=distKm===0?midPt.geometry.coordinates
+      :turf.destination(midPt,distKm,perpDir,{units:'kilometers'}).geometry.coordinates;
+    const p1=turf.destination(turf.point(refPt),ext,rowBrg,{units:'kilometers'}).geometry.coordinates;
+    const p2=turf.destination(turf.point(refPt),ext,rowBrg+180,{units:'kilometers'}).geometry.coordinates;
+    return addSegments([p2,refPt,p1])>0;
+  }
+
+  addLine(0,1);
+  for(let n=1;n<=nPos;n++) addLine(n*spacing/1000,1);
+  for(let n=1;n<=nNeg;n++) addLine(n*spacing/1000,-1);
 
   if(count===0){
-    setStatus('stOffset','Nenhuma linha gerada — o espaçamento pode ser maior que o talhão.','err');
+    setStatus('stOffset','Nenhuma linha gerada — verifique se a guia cruza o talhão.','err');
     return;
   }
 
