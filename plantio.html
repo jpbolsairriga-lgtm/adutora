@@ -641,11 +641,17 @@ function gerarOffset(){
   const rowBrg=turf.bearing(turf.point(linePts[0]),turf.point(linePts[linePts.length-1]));
   const perpBrg1=rowBrg+90;
 
-  // Ponto de referência central = ponto médio da linha guia
-  const midLatLng=linePts[Math.floor(linePts.length/2)];
-  const midPt=turf.point(midLatLng);
+  // Estende a linha guia até as bordas do polígono (preserva curva do spline)
+  const brgS0=turf.bearing(turf.point(linePts[0]),turf.point(linePts[Math.min(1,linePts.length-1)]));
+  const brgEn=turf.bearing(turf.point(linePts[linePts.length-(linePts.length>1?2:1)]),turf.point(linePts[linePts.length-1]));
+  const gExtS=turf.destination(turf.point(linePts[0]),ext,brgS0+180,{units:'kilometers'}).geometry.coordinates;
+  const gExtE=turf.destination(turf.point(linePts[linePts.length-1]),ext,brgEn,{units:'kilometers'}).geometry.coordinates;
+  const basePts=clipCurveToPolygon([gExtS,...linePts,gExtE],turfPoly,polyBound)||linePts;
 
-  // Calcula extensão perpendicular total projetando TODOS os vértices do polígono
+  // Ponto médio da guia — âncora para calcular extensão perpendicular
+  const midPt=turf.point(basePts[Math.floor(basePts.length/2)]);
+
+  // Calcula extensão perpendicular total projetando todos os vértices do polígono
   const polyVertsArr=drawPoly.getPath().getArray().map(p=>[p.lng(),p.lat()]);
   let minD=0,maxD=0;
   polyVertsArr.forEach(v=>{
@@ -658,28 +664,41 @@ function gerarOffset(){
   const nPos=Math.ceil(maxD/(spacing/1000))+1;
   const nNeg=Math.ceil(-minD/(spacing/1000))+1;
 
-  // Gera linha reta fresca para cada posição perpendicular e clipa ao polígono.
-  // Usar linhas frescas (não translação de basePts) garante cobertura total em
-  // polígonos côncavos/irregulares onde a translação falha.
-  function addAtDist(perpDistKm, perpDir){
-    const refPt=perpDistKm===0
-      ? midLatLng
-      : turf.destination(midPt,perpDistKm,perpDir,{units:'kilometers'}).geometry.coordinates;
+  // Tenta primeiro translação de basePts (preserva curva do spline).
+  // Se falhar (polígono côncavo), usa linha reta fresca como fallback.
+  function addLine(distKm, perpDir){
+    // Abordagem 1: translação rígida de basePts → linhas paralelas curvas
+    const shifted=basePts.map(pt=>
+      turf.destination(turf.point(pt),distKm,perpDir,{units:'kilometers'}).geometry.coordinates
+    );
+    const extS=turf.destination(turf.point(shifted[0]),ext,rowBrg+180,{units:'kilometers'}).geometry.coordinates;
+    const extE=turf.destination(turf.point(shifted[shifted.length-1]),ext,rowBrg,{units:'kilometers'}).geometry.coordinates;
+    const clipped=clipCurveToPolygon([extS,...shifted,extE],turfPoly,polyBound);
+    if(clipped&&clipped.length>=2){
+      offsetLines.push(new google.maps.Polyline({
+        path:clipped.map(c=>({lat:c[1],lng:c[0]})),
+        map,strokeColor:corLinha,strokeWeight:espessura,strokeOpacity:.95,zIndex:10,clickable:false
+      }));
+      count++;return true;
+    }
+    // Abordagem 2: linha reta fresca pelo ponto de referência (fallback para côncavos)
+    const refPt=turf.destination(midPt,distKm,perpDir,{units:'kilometers'}).geometry.coordinates;
     const p1=turf.destination(turf.point(refPt),ext,rowBrg,{units:'kilometers'}).geometry.coordinates;
     const p2=turf.destination(turf.point(refPt),ext,rowBrg+180,{units:'kilometers'}).geometry.coordinates;
-    const clipped=clipCurveToPolygon([p2,refPt,p1],turfPoly,polyBound);
-    if(!clipped||clipped.length<2)return false;
-    offsetLines.push(new google.maps.Polyline({
-      path:clipped.map(c=>({lat:c[1],lng:c[0]})),
-      map,strokeColor:corLinha,strokeWeight:espessura,strokeOpacity:.95,zIndex:10,clickable:false
-    }));
-    count++;
-    return true;
+    const clipped2=clipCurveToPolygon([p2,refPt,p1],turfPoly,polyBound);
+    if(clipped2&&clipped2.length>=2){
+      offsetLines.push(new google.maps.Polyline({
+        path:clipped2.map(c=>({lat:c[1],lng:c[0]})),
+        map,strokeColor:corLinha,strokeWeight:espessura,strokeOpacity:.95,zIndex:10,clickable:false
+      }));
+      count++;return true;
+    }
+    return false;
   }
 
-  addAtDist(0,perpBrg1);
-  for(let n=1;n<=nPos;n++) addAtDist(n*spacing/1000,perpBrg1);
-  for(let n=1;n<=nNeg;n++) addAtDist(n*spacing/1000,rowBrg-90);
+  addLine(0,perpBrg1);
+  for(let n=1;n<=nPos;n++) addLine(n*spacing/1000,perpBrg1);
+  for(let n=1;n<=nNeg;n++) addLine(n*spacing/1000,rowBrg-90);
 
   if(count===0){
     setStatus('stOffset','Nenhuma linha gerada — desenhe a linha guia cruzando o talhão ativo (amarelo).','err');
