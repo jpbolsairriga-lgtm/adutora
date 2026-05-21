@@ -688,9 +688,11 @@ function gerarOffset(){
   const gExtE=turf.destination(turf.point(linePts[linePts.length-1]),ext,brgEn,{units:'kilometers'}).geometry.coordinates;
   const basePts=clipCurveToPolygon([gExtS,...linePts,gExtE],turfPoly,polyBound)||linePts;
 
-  const midPt=turf.point(basePts[Math.floor(basePts.length/2)]);
+  // Usa o centróide do polígono como âncora — estável mesmo quando a guia vai para fora
+  const centroid=turf.centroid(turfPoly);
+  const midPt=centroid;
 
-  // Extensão perpendicular total do polígono a partir do midPt
+  // Extensão perpendicular total do polígono a partir do centróide
   const polyVertsArr=drawPoly.getPath().getArray().map(p=>[p.lng(),p.lat()]);
   let minD=0,maxD=0;
   polyVertsArr.forEach(v=>{
@@ -702,13 +704,14 @@ function gerarOffset(){
   const nPos=Math.ceil(maxD/(spacing/1000))+1;
   const nNeg=Math.ceil(-minD/(spacing/1000))+1;
 
-  // Clipa via lineSplit — um segmento por região interna, sem fallback que pode gerar fora.
+  // Clipa via lineSplit; fallback para clipCurveToPolygon se lineSplit falhar.
+  // EXTRIM pós-geração remove qualquer linha com midpoint fora.
   function addSegments(coords){
     if(coords.length<2)return 0;
     let added=0;
     try{
       const split=turf.lineSplit(turf.lineString(coords),polyBound);
-      if(split&&split.features){
+      if(split&&split.features&&split.features.length>0){
         split.features.forEach(seg=>{
           const c=seg.geometry.coordinates;
           if(c.length>=2&&turf.booleanPointInPolygon(turf.point(c[Math.floor(c.length/2)]),turfPoly)){
@@ -719,9 +722,19 @@ function gerarOffset(){
             count++;added++;
           }
         });
+        if(added>0)return added;
       }
     }catch(e){}
-    return added;
+    // Fallback: clipCurveToPolygon (EXTRIM remove se for fora)
+    const cl=clipCurveToPolygon(coords,turfPoly,polyBound);
+    if(cl&&cl.length>=2){
+      offsetLines.push(new google.maps.Polyline({
+        path:cl.map(p=>({lat:p[1],lng:p[0]})),
+        map,strokeColor:corLinha,strokeWeight:espessura,strokeOpacity:.95,zIndex:10,clickable:false
+      }));
+      count++;return 1;
+    }
+    return 0;
   }
 
   // Translação rígida da guia → linhas paralelas preservando a curva da guia
