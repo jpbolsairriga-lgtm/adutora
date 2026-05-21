@@ -301,6 +301,7 @@ let lineMode = 'straight'; // 'straight' | 'spline'
 let importedOverlays = []; // features importadas de KML
 let carreadorPolys = [];   // polígonos resultantes do carreador
 let perfilSamples = null;
+let splineMarkers = [];    // marcadores arrastáveis dos pontos de controle do spline
 
 const SLOPE_CLASSES=[
   {max:3,  color:'#00C853',label:'0–3%',  desc:'Plano / Drenagem'},
@@ -443,7 +444,22 @@ function catmullRomSpline(pts,segs=20){
 }
 
 // ── Linha Base ────────────────────────────────────────────────────
+function limparSplineMarkers(){
+  splineMarkers.forEach(m=>m.setMap(null));
+  splineMarkers=[];
+}
+
+function redrawSpline(){
+  if(drawLine){drawLine.setMap(null);drawLine=null;}
+  if(lineTempPts.length<2)return;
+  drawLine=new google.maps.Polyline({
+    path:catmullRomSpline(lineTempPts),
+    map,strokeColor:'#ff6b00',strokeWeight:3,strokeOpacity:.9,zIndex:5
+  });
+}
+
 function addLinePt(latLng){
+  limparSplineMarkers();
   lineTempPts.push(latLng);
   if(drawLine){drawLine.setMap(null);drawLine=null;}
   const path=(lineMode==='spline'&&lineTempPts.length>=2)?catmullRomSpline(lineTempPts):lineTempPts;
@@ -460,11 +476,29 @@ function addLinePt(latLng){
 function finalizarLinha(){
   if(!drawLine||lineTempPts.length<2)return;
   setMode('IDLE');
-  if(lineMode==='straight')drawLine.setEditable(true); // spline tem muitos pontos, não editável
+  if(lineMode==='straight'){
+    drawLine.setEditable(true);
+  } else {
+    // Spline: cria marcadores arrastáveis nos pontos de controle
+    limparSplineMarkers();
+    lineTempPts.forEach((pt,i)=>{
+      const mk=new google.maps.Marker({
+        position:pt,map,draggable:true,
+        icon:{path:google.maps.SymbolPath.CIRCLE,scale:7,
+          fillColor:'#ff6b00',fillOpacity:1,strokeColor:'#fff',strokeWeight:2},
+        zIndex:20
+      });
+      google.maps.event.addListener(mk,'drag',()=>{
+        lineTempPts[i]=mk.getPosition();
+        redrawSpline();
+      });
+      splineMarkers.push(mk);
+    });
+  }
   $('btnFinLinha').style.display='none';
   $('btnLimparLinha').style.display='';
   $('linhaInfo').style.display='block';
-  $('linhaInfo').textContent=lineMode==='spline'?'Linha suave — Limpar e Redesenhar para editar':'Arraste os pontos para ajustar';
+  $('linhaInfo').textContent=lineMode==='spline'?'Arraste os pontos laranja para ajustar a curva':'Arraste os pontos para ajustar';
   $('secPerfil').style.display='';
   $('secOffset').style.display='';
   setStatus('stLinha','Linha '+(lineMode==='spline'?'suave':'reta')+' definida.','ok');
@@ -472,6 +506,7 @@ function finalizarLinha(){
 }
 
 function limparLinha(){
+  limparSplineMarkers();
   if(drawLine){drawLine.setMap(null);drawLine=null;}
   lineTempPts=[];
   setMode('IDLE');
@@ -499,9 +534,16 @@ function fmtDist(d){return d>=1000?(d/1000).toFixed(2)+' km':Math.round(d)+' m';
 
 async function gerarPerfil(){
   if(!drawLine){setStatus('stPerfil','Desenhe a linha base primeiro.','err');return;}
-  const pts=drawLine.getPath().getArray();
-  if(pts.length<2){setStatus('stPerfil','A linha precisa de pelo menos 2 pontos.','err');return;}
-  const nSamples=Math.min(512,Math.max(100,pts.length*25));
+  const ptsAll=drawLine.getPath().getArray();
+  if(ptsAll.length<2){setStatus('stPerfil','A linha precisa de pelo menos 2 pontos.','err');return;}
+  // API aceita até ~512 pontos no path; reduz splines longas mantendo forma
+  const MAX_PATH=100;
+  let pts=ptsAll;
+  if(ptsAll.length>MAX_PATH){
+    const step=Math.ceil(ptsAll.length/MAX_PATH);
+    pts=ptsAll.filter((_,i)=>i%step===0||i===ptsAll.length-1);
+  }
+  const nSamples=Math.min(512,Math.max(50,pts.length*5));
   setStatus('stPerfil','Buscando elevações...','info');
   $('btnPerfil').disabled=true;
   try{
@@ -664,36 +706,53 @@ function gerarOffset(){
   const nPos=Math.ceil(maxD/(spacing/1000))+1;
   const nNeg=Math.ceil(-minD/(spacing/1000))+1;
 
-  // Tenta primeiro translação de basePts (preserva curva do spline).
-  // Se falhar (polígono côncavo), usa linha reta fresca como fallback.
+  // Clipa uma lista de coordenadas ao polígono usando lineSplit.
+  // Cria uma Polyline por segmento interno (correto para côncavos/baías).
+  // Fallback: clipCurveToPolygon.
+  function addSegments(coords){
+    if(coords.length<2)return 0;
+    let added=0;
+    try{
+      const split=turf.lineSplit(turf.lineString(coords),polyBound);
+      if(split&&split.features&&split.features.length>0){
+        split.features.forEach(seg=>{
+          const c=seg.geometry.coordinates;
+          if(c.length>=2&&turf.booleanPointInPolygon(turf.point(c[Math.floor(c.length/2)]),turfPoly)){
+            offsetLines.push(new google.maps.Polyline({
+              path:c.map(p=>({lat:p[1],lng:p[0]})),
+              map,strokeColor:corLinha,strokeWeight:espessura,strokeOpacity:.95,zIndex:10,clickable:false
+            }));
+            count++;added++;
+          }
+        });
+        if(added>0)return added;
+      }
+    }catch(e){}
+    // Fallback: clipCurveToPolygon
+    const cl=clipCurveToPolygon(coords,turfPoly,polyBound);
+    if(cl&&cl.length>=2){
+      offsetLines.push(new google.maps.Polyline({
+        path:cl.map(p=>({lat:p[1],lng:p[0]})),
+        map,strokeColor:corLinha,strokeWeight:espessura,strokeOpacity:.95,zIndex:10,clickable:false
+      }));
+      count++;return 1;
+    }
+    return 0;
+  }
+
   function addLine(distKm, perpDir){
-    // Abordagem 1: translação rígida de basePts → linhas paralelas curvas
-    const shifted=basePts.map(pt=>
+    // Translação rígida de basePts → preserva curva do spline
+    const shifted=distKm===0?[...basePts]:basePts.map(pt=>
       turf.destination(turf.point(pt),distKm,perpDir,{units:'kilometers'}).geometry.coordinates
     );
     const extS=turf.destination(turf.point(shifted[0]),ext,rowBrg+180,{units:'kilometers'}).geometry.coordinates;
     const extE=turf.destination(turf.point(shifted[shifted.length-1]),ext,rowBrg,{units:'kilometers'}).geometry.coordinates;
-    const clipped=clipCurveToPolygon([extS,...shifted,extE],turfPoly,polyBound);
-    if(clipped&&clipped.length>=2){
-      offsetLines.push(new google.maps.Polyline({
-        path:clipped.map(c=>({lat:c[1],lng:c[0]})),
-        map,strokeColor:corLinha,strokeWeight:espessura,strokeOpacity:.95,zIndex:10,clickable:false
-      }));
-      count++;return true;
-    }
-    // Abordagem 2: linha reta fresca pelo ponto de referência (fallback para côncavos)
+    if(addSegments([extS,...shifted,extE])>0)return true;
+    // Fallback: linha reta fresca (polígonos côncavos onde translação falha)
     const refPt=turf.destination(midPt,distKm,perpDir,{units:'kilometers'}).geometry.coordinates;
     const p1=turf.destination(turf.point(refPt),ext,rowBrg,{units:'kilometers'}).geometry.coordinates;
     const p2=turf.destination(turf.point(refPt),ext,rowBrg+180,{units:'kilometers'}).geometry.coordinates;
-    const clipped2=clipCurveToPolygon([p2,refPt,p1],turfPoly,polyBound);
-    if(clipped2&&clipped2.length>=2){
-      offsetLines.push(new google.maps.Polyline({
-        path:clipped2.map(c=>({lat:c[1],lng:c[0]})),
-        map,strokeColor:corLinha,strokeWeight:espessura,strokeOpacity:.95,zIndex:10,clickable:false
-      }));
-      count++;return true;
-    }
-    return false;
+    return addSegments([p2,refPt,p1])>0;
   }
 
   addLine(0,perpBrg1);
@@ -706,6 +765,7 @@ function gerarOffset(){
   }
 
   // Linha base some automaticamente — pronta para nova
+  limparSplineMarkers();
   if(drawLine){drawLine.setMap(null);drawLine=null;}
   lineTempPts=[];
   $('btnLimparLinha').style.display='none';
@@ -881,6 +941,7 @@ function novaArea(){
 function limparTudo(){
   const total=areas.length+(drawPoly?1:0);
   if(total>0&&!confirm('Limpar '+(total===1?'a área':'as '+total+' áreas')+' do mapa?'))return;
+  limparSplineMarkers();
   if(drawPoly){drawPoly.setMap(null);drawPoly=null;}
   if(drawLine){drawLine.setMap(null);drawLine=null;}
   if(polyTempLine){polyTempLine.setMap(null);polyTempLine=null;}
@@ -1182,6 +1243,7 @@ function criarCarreador(){
     });
 
     // Linha base some após divisão — pronta para nova
+    limparSplineMarkers();
     if(drawLine){drawLine.setMap(null);drawLine=null;}
     lineTempPts=[];
     $('btnLimparLinha').style.display='none';
@@ -1224,6 +1286,7 @@ function ativarAreaCarreador(pg){
     $('secDeclividade').style.display='';
   }
   // Limpa linha base do talhão anterior
+  limparSplineMarkers();
   if(drawLine){drawLine.setMap(null);drawLine=null;}
   lineTempPts=[];
   $('btnLimparLinha').style.display='none';
