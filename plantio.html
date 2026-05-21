@@ -154,6 +154,10 @@ input:focus,select:focus{border-color:var(--bl3);box-shadow:0 0 0 3px rgba(0,180
       <div class="sb-sec">
         <div class="sb-title">&#9654; Linha Base</div>
         <div id="stLinha" class="sb-status"></div>
+        <div style="display:flex;gap:.4rem;margin-bottom:.4rem">
+          <button id="btnModeReta" class="btn btn-blue" style="flex:1;padding:.32rem;font-size:.75rem" onclick="setLineMode('straight')">&#9135; Reta</button>
+          <button id="btnModeSpline" class="btn btn-out" style="flex:1;padding:.32rem;font-size:.75rem" onclick="setLineMode('spline')">&#12316; Suave (Spline)</button>
+        </div>
         <button class="btn btn-green btn-full" id="btnLinha" onclick="setMode('POLYLINE')">&#9998; Desenhar Linha Base</button>
         <button class="btn btn-out btn-full" id="btnFinLinha" style="display:none" onclick="finalizarLinha()">&#10003; Finalizar Linha</button>
         <button class="btn btn-out btn-full" id="btnLimparLinha" style="display:none" onclick="limparLinha()">&#10005; Limpar e Redesenhar</button>
@@ -189,6 +193,10 @@ input:focus,select:focus{border-color:var(--bl3);box-shadow:0 0 0 3px rgba(0,180
         <button class="btn btn-out btn-full" id="btnLimparOffset" style="display:none" onclick="limparOffset()">&#10005; Limpar Linhas</button>
         <button class="btn btn-full" id="btnExportKml" style="display:none;background:#2e7d32;color:#fff" onclick="exportarKML()">&#128462; Exportar KML (Google Earth)</button>
         <button class="btn btn-full" id="btnRelatorio" style="display:none;background:#4a148c;color:#fff" onclick="abrirModalRelatorio()">&#128196; Gerar Relat&oacute;rio PDF</button>
+        <div class="fg" style="margin-bottom:.35rem">
+          <label>Resolu&ccedil;&atilde;o da declividade</label>
+          <div class="iu"><input type="number" id="resolucaoDeclividade" value="20" min="5" max="500" step="5"><span class="u">m</span></div>
+        </div>
         <button class="btn btn-full" id="btnClassificar" style="display:none;background:#37474f;color:#fff" onclick="classificarDeclividade()">&#9968; Classificar Declividade</button>
         <button class="btn btn-out btn-full" id="btnLimparClassif" style="display:none;font-size:.78rem" onclick="limparClassificacao()">&#10005; Limpar Classifica&ccedil;&atilde;o</button>
         <button class="btn btn-full" id="btnNovaArea" style="display:none;background:#1a237e;color:#fff" onclick="novaArea()">&#10010; Nova &Aacute;rea</button>
@@ -289,6 +297,7 @@ let lineTempPts = [];
 let offsetLines = [];
 let areas = [];          // áreas arquivadas [{poly, offsets, cor, esp}]
 let classifiedSegs = []; // segmentos coloridos por declividade
+let lineMode = 'straight'; // 'straight' | 'spline'
 let importedOverlays = []; // features importadas de KML
 let carreadorPolys = [];   // polígonos resultantes do carreador
 let perfilSamples = null;
@@ -406,31 +415,60 @@ function computeAreaHa(pts){
   return turf.area(poly)/10000;
 }
 
+// ── Spline / Linha Suave ──────────────────────────────────────────
+function setLineMode(m){
+  lineMode=m;
+  $('btnModeReta').className='btn '+(m==='straight'?'btn-blue':'btn-out');
+  $('btnModeSpline').className='btn '+(m==='spline'?'btn-blue':'btn-out');
+}
+
+function catmullRomSpline(pts,segs=20){
+  // Catmull-Rom passa por todos os pontos de controle com transição suave
+  if(pts.length<2)return pts;
+  const n=pts.length;const res=[];
+  for(let i=0;i<n-1;i++){
+    const p0=pts[Math.max(0,i-1)];
+    const p1=pts[i];
+    const p2=pts[Math.min(n-1,i+1)];
+    const p3=pts[Math.min(n-1,i+2)];
+    const lim=i===n-2?segs:segs-1;
+    for(let j=0;j<=lim;j++){
+      const t=j/segs,t2=t*t,t3=t2*t;
+      const lat=.5*((2*p1.lat())+(-p0.lat()+p2.lat())*t+(2*p0.lat()-5*p1.lat()+4*p2.lat()-p3.lat())*t2+(-p0.lat()+3*p1.lat()-3*p2.lat()+p3.lat())*t3);
+      const lng=.5*((2*p1.lng())+(-p0.lng()+p2.lng())*t+(2*p0.lng()-5*p1.lng()+4*p2.lng()-p3.lng())*t2+(-p0.lng()+3*p1.lng()-3*p2.lng()+p3.lng())*t3);
+      res.push({lat,lng});
+    }
+  }
+  return res;
+}
+
 // ── Linha Base ────────────────────────────────────────────────────
 function addLinePt(latLng){
   lineTempPts.push(latLng);
   if(drawLine){drawLine.setMap(null);drawLine=null;}
+  const path=(lineMode==='spline'&&lineTempPts.length>=2)?catmullRomSpline(lineTempPts):lineTempPts;
   drawLine=new google.maps.Polyline({
-    path:lineTempPts,map,
-    strokeColor:'#ff6b00',strokeWeight:3,strokeOpacity:.9,zIndex:5
+    path,map,strokeColor:'#ff6b00',strokeWeight:3,strokeOpacity:.9,zIndex:5
   });
   if(lineTempPts.length>=2){
     $('btnFinLinha').style.display='';
-    setStatus('stLinha',lineTempPts.length+' pontos — duplo clique ou botão para finalizar','info');
+    const modo=lineMode==='spline'?'suave':'reta';
+    setStatus('stLinha',lineTempPts.length+' pontos ('+modo+') — duplo clique ou botão para finalizar','info');
   }
 }
 
 function finalizarLinha(){
   if(!drawLine||lineTempPts.length<2)return;
   setMode('IDLE');
-  drawLine.setEditable(true);
+  if(lineMode==='straight')drawLine.setEditable(true); // spline tem muitos pontos, não editável
   $('btnFinLinha').style.display='none';
   $('btnLimparLinha').style.display='';
   $('linhaInfo').style.display='block';
+  $('linhaInfo').textContent=lineMode==='spline'?'Linha suave — Limpar e Redesenhar para editar':'Arraste os pontos para ajustar';
   $('secPerfil').style.display='';
   $('secOffset').style.display='';
-  setStatus('stLinha','Linha definida — arraste os pontos para ajustar','ok');
-  setMStatus('Linha base definida. Arraste os pontos para ajustar. Gere o perfil ou as linhas de plantio.','ok');
+  setStatus('stLinha','Linha '+(lineMode==='spline'?'suave':'reta')+' definida.','ok');
+  setMStatus('Linha base definida. Gere o perfil ou as linhas de plantio.','ok');
 }
 
 function limparLinha(){
@@ -680,13 +718,19 @@ async function getElevsForPoints(latlngs){
 
 async function classificarDeclividade(){
   if(offsetLines.length===0){setStatus('stDeclividade','Gere as linhas primeiro.','err');return;}
-  const N=8; // amostras por linha
+  const resM=parseFloat($('resolucaoDeclividade').value)||20; // resolução em metros
   $('btnClassificar').disabled=true;
   setStatus('stDeclividade','Buscando elevações…','info');
   $('secDeclividade').style.display='';
 
-  // Coleta amostras de todas as linhas
-  const linesSamples=offsetLines.map(pl=>sampleLineEvenly(pl.getPath(),N));
+  // Calcula N amostras de acordo com a resolução e o comprimento de cada linha
+  function nSamples(gmPath){
+    const pts=gmPath.getArray();
+    let dist=0;
+    for(let i=1;i<pts.length;i++)dist+=haversine(pts[i-1],pts[i]);
+    return Math.max(2,Math.round(dist/resM)+1);
+  }
+  const linesSamples=offsetLines.map(pl=>sampleLineEvenly(pl.getPath(),nSamples(pl.getPath())));
   const allPts=linesSamples.flat();
 
   try{
@@ -1046,32 +1090,53 @@ function criarCarreador(){
 
   try{
     const buffer=turf.buffer(lineGeo,halfKm,{units:'kilometers'});
-    const carreadorGeo=turf.intersect(turfPoly,buffer);
     const remaining=turf.difference(turfPoly,buffer);
+    if(!remaining){setStatus('stCarreador','A linha não divide o polígono.','err');return;}
 
-    function addPoly(geo,opts){
-      if(!geo)return;
-      const coords=geo.geometry.type==='MultiPolygon'?geo.geometry.coordinates:[geo.geometry.coordinates];
+    const parts=turf.flatten(remaining);
+    const cores=['#1b6e3a','#0077b6'];
+
+    parts.features.forEach((feat,i)=>{
+      const c=cores[i%2];
+      const coords=feat.geometry.type==='MultiPolygon'?feat.geometry.coordinates:[feat.geometry.coordinates];
       coords.forEach(rings=>{
-        const paths=rings.map(ring=>ring.map(c=>({lat:c[1],lng:c[0]})));
-        carreadorPolys.push(new google.maps.Polygon({paths,map,...opts}));
+        const paths=rings.map(ring=>ring.map(co=>({lat:co[1],lng:co[0]})));
+        const pg=new google.maps.Polygon({
+          paths,map,clickable:true,
+          strokeColor:c,strokeWeight:2.5,strokeOpacity:.9,
+          fillColor:c,fillOpacity:.22,zIndex:4
+        });
+        // Clique na área → vira talhão ativo para plantio
+        google.maps.event.addListener(pg,'click',()=>ativarAreaCarreador(pg,feat,c));
+        carreadorPolys.push(pg);
       });
-    }
+    });
 
-    addPoly(carreadorGeo,{strokeColor:'#5d4037',strokeWeight:2,strokeOpacity:.9,fillColor:'#795548',fillOpacity:.45,zIndex:4});
-
-    if(remaining){
-      const parts=turf.flatten(remaining);
-      const cores=['#1b6e3a','#0077b6'];
-      parts.features.forEach((f,i)=>{
-        const c=cores[i%2];
-        addPoly(f,{strokeColor:c,strokeWeight:2,strokeOpacity:.9,fillColor:c,fillOpacity:.18,zIndex:3});
-      });
-      const n=parts.features.length;
-      $('btnLimparCarreador').style.display='';
-      setStatus('stCarreador',`${n} área(s) + carreador de ${largM} m criados.`,'ok');
-    }
+    $('btnLimparCarreador').style.display='';
+    setStatus('stCarreador',parts.features.length+' área(s) criada(s). Clique em uma para usá-la como talhão.','ok');
   }catch(err){setStatus('stCarreador','Erro: '+err.message,'err');}
+}
+
+function ativarAreaCarreador(pg,feat,cor){
+  // Remove o polígono clicado dos carreadorPolys e converte em drawPoly ativo
+  pg.setMap(null);
+  carreadorPolys=carreadorPolys.filter(p=>p!==pg);
+
+  if(drawPoly){drawPoly.setMap(null);drawPoly=null;}
+  const rings=feat.geometry.type==='MultiPolygon'?feat.geometry.coordinates[0]:feat.geometry.coordinates;
+  const paths=rings.map(ring=>ring.map(c=>({lat:c[1],lng:c[0]})));
+  drawPoly=new google.maps.Polygon({
+    paths,map,editable:true,
+    strokeColor:'#0077b6',strokeWeight:2.5,strokeOpacity:.9,
+    fillColor:'#0077b6',fillOpacity:.07,zIndex:2
+  });
+  const area=turf.area(feat)/10000;
+  $('areaVal').textContent=area.toFixed(2)+' ha';
+  $('areaBox').style.display='';
+  $('btnLimparPoly').style.display='';
+  $('btnKmlContorno').style.display='';
+  setStatus('stCarreador','Área ativada: '+area.toFixed(2)+' ha. Gere as linhas de plantio.','ok');
+  setMStatus('Área selecionada como talhão. Gere as linhas de plantio.','ok');
 }
 
 function limparCarreador(){
