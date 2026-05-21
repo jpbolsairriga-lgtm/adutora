@@ -558,24 +558,30 @@ function desenharPerfilElevacao(samples){
 // Percorre coordenada a coordenada, detecta cruzamentos exatos com
 // o contorno e mantém apenas o trecho interno — preserva a curvatura
 function clipCurveToPolygon(coords,turfPoly,polyBound){
+  // Percorre ponto a ponto; turf.rewind garante CCW → booleanPointInPolygon confiável
   if(coords.length<2)return null;
-  const extLine=turf.lineString(coords);
-  try{
-    // lineSplit parte a linha em cada cruzamento da borda do polígono
-    const split=turf.lineSplit(extLine,polyBound);
-    if(!split||!split.features||split.features.length===0)return null;
-    // Mantém apenas segmentos cujo ponto médio está dentro do polígono
-    const inside=split.features.filter(seg=>{
-      const c=seg.geometry.coordinates;
-      const mid=c[Math.floor(c.length/2)];
-      return turf.booleanPointInPolygon(turf.point(mid),turfPoly);
-    });
-    if(inside.length===0)return null;
-    // Mescla segmentos consecutivos (remove duplicata entre eles)
-    const result=[...inside[0].geometry.coordinates];
-    for(let i=1;i<inside.length;i++)result.push(...inside[i].geometry.coordinates.slice(1));
-    return result.length>=2?result:null;
-  }catch(e){return null;}
+  const result=[];
+  let inside=turf.booleanPointInPolygon(turf.point(coords[0]),turfPoly);
+  if(inside)result.push(coords[0]);
+  for(let i=1;i<coords.length;i++){
+    const currIn=turf.booleanPointInPolygon(turf.point(coords[i]),turfPoly);
+    if(inside!==currIn){
+      // Cruzamento de fronteira — acha o ponto exato
+      try{
+        const seg=turf.lineString([coords[i-1],coords[i]]);
+        const ixs=turf.lineIntersect(seg,polyBound);
+        if(ixs.features.length>0){
+          const sorted=ixs.features
+            .map(f=>f.geometry.coordinates)
+            .sort((a,b)=>turf.distance(turf.point(coords[i-1]),turf.point(a))-turf.distance(turf.point(coords[i-1]),turf.point(b)));
+          result.push(sorted[0]);
+        }
+      }catch(e){}
+    }
+    if(currIn)result.push(coords[i]);
+    inside=currIn;
+  }
+  return result.length>=2?result:null;
 }
 
 // ── Offset / Linhas de Plantio ────────────────────────────────────
@@ -655,8 +661,7 @@ function gerarOffset(){
     return;
   }
 
-  // Oculta a linha guia — substituída pelas linhas de plantio
-  if(drawLine) drawLine.setMap(null);
+  // Linha guia permanece visível e editável (arraste para ajustar e regere)
 
   $('nLinhas').textContent=count+' linhas';
   $('offsetInfo').style.display='';
@@ -1110,12 +1115,12 @@ function criarCarreador(){
       coords.forEach(rings=>{
         const paths=rings.map(ring=>ring.map(co=>({lat:co[1],lng:co[0]})));
         const pg=new google.maps.Polygon({
-          paths,map,clickable:true,
+          paths,map,clickable:true,editable:true,
           strokeColor:c,strokeWeight:2.5,strokeOpacity:.9,
           fillColor:c,fillOpacity:.22,zIndex:4
         });
         // Clique na área → vira talhão ativo para plantio
-        google.maps.event.addListener(pg,'click',()=>ativarAreaCarreador(pg,feat,c));
+        google.maps.event.addListener(pg,'click',()=>ativarAreaCarreador(pg,feat,c,cores[i%2]));
         carreadorPolys.push(pg);
       });
     });
@@ -1125,21 +1130,25 @@ function criarCarreador(){
   }catch(err){setStatus('stCarreador','Erro: '+err.message,'err');}
 }
 
-function ativarAreaCarreador(pg,feat,cor){
-  // Não remove pg — muda o estilo e usa ele diretamente como drawPoly
-  carreadorPolys=carreadorPolys.filter(p=>p!==pg);
-
-  // Outros polígonos do carreador ficam visíveis mas não clicáveis (referência)
-  carreadorPolys.forEach(p=>p.setOptions({clickable:false,fillOpacity:.08,strokeOpacity:.4}));
-
-  // Transforma o polígono clicado no talhão ativo (azul, editável)
+function ativarAreaCarreador(pg,feat,cor,corOriginal){
+  // Talhão ativo → azul (estilo padrão drawPoly), editável
   pg.setOptions({
     strokeColor:'#0077b6',strokeWeight:2.5,strokeOpacity:.9,
     fillColor:'#0077b6',fillOpacity:.07,
     editable:true,clickable:false,zIndex:2
   });
 
-  if(drawPoly&&drawPoly!==pg){drawPoly.setMap(null);}
+  // Outros sub-talhões: mantêm cor original, editáveis e clicáveis para trocar
+  carreadorPolys.filter(p=>p!==pg).forEach(p=>{
+    p.setOptions({editable:true,clickable:true,fillOpacity:.18,strokeOpacity:.9});
+  });
+  carreadorPolys=carreadorPolys.filter(p=>p!==pg);
+
+  // Restaura drawPoly anterior se for diferente do pg
+  if(drawPoly&&drawPoly!==pg){
+    // Se era um polígono do carreador, restaura para clicável
+    drawPoly.setOptions({clickable:true,strokeColor:'#0077b6',fillOpacity:.18});
+  }
   drawPoly=pg;
 
   const area=computeAreaHa(pg.getPath().getArray());
@@ -1147,8 +1156,8 @@ function ativarAreaCarreador(pg,feat,cor){
   $('areaBox').style.display='';
   $('btnLimparPoly').style.display='';
   $('btnKmlContorno').style.display='';
-  setStatus('stCarreador','Talhão ativado: '+area.toFixed(2)+' ha. Desenhe a linha base e gere as linhas.','ok');
-  setMStatus('Talhão selecionado. Desenhe a linha base e gere as linhas de plantio.','ok');
+  setStatus('stCarreador','Talhão ativado: '+area.toFixed(2)+' ha. Agora desenhe a linha base.','ok');
+  setMStatus('Talhão selecionado (azul). Outros talhões clicáveis para trocar.','ok');
 }
 
 function limparCarreador(){
