@@ -562,29 +562,35 @@ function clipCurveToPolygon(coords,turfPoly,polyBound){
   if(coords.length<2)return null;
 
   // Abordagem 1: ponto a ponto com booleanPointInPolygon
+  // Também detecta quando um segmento longo atravessa o polígono com ambos os extremos fora
   const result=[];
   let inside=turf.booleanPointInPolygon(turf.point(coords[0]),turfPoly);
   if(inside)result.push(coords[0]);
   for(let i=1;i<coords.length;i++){
     const currIn=turf.booleanPointInPolygon(turf.point(coords[i]),turfPoly);
-    if(inside!==currIn){
-      try{
-        const seg=turf.lineString([coords[i-1],coords[i]]);
-        const ixs=turf.lineIntersect(seg,polyBound);
-        if(ixs.features.length>0){
-          const sorted=ixs.features
-            .map(f=>f.geometry.coordinates)
-            .sort((a,b)=>turf.distance(turf.point(coords[i-1]),turf.point(a))-turf.distance(turf.point(coords[i-1]),turf.point(b)));
+    try{
+      const seg=turf.lineString([coords[i-1],coords[i]]);
+      const ixs=turf.lineIntersect(seg,polyBound);
+      if(ixs.features.length>0){
+        const sorted=ixs.features
+          .map(f=>f.geometry.coordinates)
+          .sort((a,b)=>turf.distance(turf.point(coords[i-1]),turf.point(a))-turf.distance(turf.point(coords[i-1]),turf.point(b)));
+        if(inside!==currIn){
+          // Transição normal: adiciona primeiro cruzamento
           result.push(sorted[0]);
+        } else if(!inside&&!currIn&&sorted.length>=2){
+          // Ambos fora mas segmento cruza o polígono (entra e sai no mesmo segmento)
+          result.push(sorted[0]);
+          result.push(sorted[sorted.length-1]);
         }
-      }catch(e){}
-    }
+      }
+    }catch(e){}
     if(currIn)result.push(coords[i]);
     inside=currIn;
   }
   if(result.length>=2)return result;
 
-  // Abordagem 2: lineSplit como fallback (quando booleanPointInPolygon falha)
+  // Abordagem 2: lineSplit como fallback
   try{
     const split=turf.lineSplit(turf.lineString(coords),polyBound);
     if(!split||!split.features||split.features.length===0)return null;
@@ -592,7 +598,15 @@ function clipCurveToPolygon(coords,turfPoly,polyBound){
       const c=seg.geometry.coordinates;
       return turf.booleanPointInPolygon(turf.point(c[Math.floor(c.length/2)]),turfPoly);
     });
-    if(ins.length===0)return null;
+    if(ins.length===0){
+      // Último recurso: usa lineIntersect na linha completa
+      try{
+        const allIxs=turf.lineIntersect(turf.lineString(coords),polyBound);
+        const pts=allIxs.features.map(f=>f.geometry.coordinates)
+          .sort((a,b)=>turf.distance(turf.point(coords[0]),turf.point(a))-turf.distance(turf.point(coords[0]),turf.point(b)));
+        return pts.length>=2?[pts[0],pts[pts.length-1]]:null;
+      }catch(e){return null;}
+    }
     const r=[...ins[0].geometry.coordinates];
     for(let i=1;i<ins.length;i++)r.push(...ins[i].geometry.coordinates.slice(1));
     return r.length>=2?r:null;
@@ -632,13 +646,6 @@ function gerarOffset(){
   const gExtS=turf.destination(turf.point(linePts[0]),ext,brgS0+180,{units:'kilometers'}).geometry.coordinates;
   const gExtE=turf.destination(turf.point(linePts[linePts.length-1]),ext,brgEn,{units:'kilometers'}).geometry.coordinates;
   const basePts=clipCurveToPolygon([gExtS,...linePts,gExtE],turfPoly,polyBound)||linePts;
-
-  // Verifica antecipadamente se a linha guia realmente toca o polígono
-  const guideInside=basePts.some(pt=>turf.booleanPointInPolygon(turf.point(pt),turfPoly));
-  if(!guideInside){
-    setStatus('stOffset','Linha guia está fora do talhão ativo (amarelo). Desenhe a linha dentro ou cruzando o talhão.','err');
-    return;
-  }
 
   function addShifted(shifted){
     if(shifted.length<2)return false;
@@ -702,7 +709,7 @@ function gerarOffset(){
   }
 
   if(count===0){
-    setStatus('stOffset','Nenhuma linha gerada — verifique se a linha guia aponta para o talhão.','err');
+    setStatus('stOffset','Nenhuma linha gerada — desenhe a linha guia cruzando o talhão ativo (amarelo).','err');
     return;
   }
 
