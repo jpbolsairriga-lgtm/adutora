@@ -741,22 +741,37 @@ function gerarOffset(){
     return 0;
   }
 
-  // Gera linhas retas paralelas à direção da guia (rowBrg).
-  // A guia define a direção e posição inicial — todas as linhas são retas.
-  // lineSplit garante clip correto em polígonos côncavos.
-  function addRow(distKm, sign){
+  // Simplifica basePts para evitar instabilidade numérica em guias muito curvas.
+  // Usa os pontos de controle originais (lineTempPts) se disponíveis, senão simplifica.
+  let offsetBase=basePts;
+  try{
+    const simp=turf.simplify(turf.lineString(basePts),{tolerance:0.00005,highQuality:true});
+    if(simp.geometry.coordinates.length>=2) offsetBase=simp.geometry.coordinates;
+  }catch(e){}
+
+  function addLine(distKm, sign){
     const perpDir=sign>0?perpBrg1:rowBrg-90;
-    const refPt=distKm===0
-      ? midPt.geometry.coordinates
-      : turf.destination(midPt,distKm,perpDir,{units:'kilometers'}).geometry.coordinates;
+    // Translação rígida da guia simplificada → curvas paralelas sem cruzamento
+    const shifted=distKm===0?[...offsetBase]:offsetBase.map(pt=>
+      turf.destination(turf.point(pt),distKm,perpDir,{units:'kilometers'}).geometry.coordinates
+    );
+    const n=shifted.length;
+    const brgS=n>=2?turf.bearing(turf.point(shifted[1]),turf.point(shifted[0])):rowBrg+180;
+    const brgE=n>=2?turf.bearing(turf.point(shifted[n-2]),turf.point(shifted[n-1])):rowBrg;
+    const extS=turf.destination(turf.point(shifted[0]),ext,brgS,{units:'kilometers'}).geometry.coordinates;
+    const extE=turf.destination(turf.point(shifted[n-1]),ext,brgE,{units:'kilometers'}).geometry.coordinates;
+    if(addSegments([extS,...shifted,extE])>0)return true;
+    // Fallback: linha reta fresca
+    const refPt=distKm===0?midPt.geometry.coordinates
+      :turf.destination(midPt,distKm,perpDir,{units:'kilometers'}).geometry.coordinates;
     const p1=turf.destination(turf.point(refPt),ext,rowBrg,{units:'kilometers'}).geometry.coordinates;
     const p2=turf.destination(turf.point(refPt),ext,rowBrg+180,{units:'kilometers'}).geometry.coordinates;
     return addSegments([p2,refPt,p1])>0;
   }
 
-  addRow(0,1);
-  for(let n=1;n<=nPos;n++) addRow(n*spacing/1000,1);
-  for(let n=1;n<=nNeg;n++) addRow(n*spacing/1000,-1);
+  addLine(0,1);
+  for(let n=1;n<=nPos;n++) addLine(n*spacing/1000,1);
+  for(let n=1;n<=nNeg;n++) addLine(n*spacing/1000,-1);
 
   if(count===0){
     setStatus('stOffset','Nenhuma linha gerada — desenhe a linha guia cruzando o talhão ativo (amarelo).','err');
