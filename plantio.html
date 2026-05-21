@@ -702,13 +702,13 @@ function gerarOffset(){
   const nPos=Math.ceil(maxD/(spacing/1000))+1;
   const nNeg=Math.ceil(-minD/(spacing/1000))+1;
 
-  // Clipa coordenadas ao polígono — lineSplit cria segmento por região interna (correto para côncavos)
+  // Clipa via lineSplit — um segmento por região interna, sem fallback que pode gerar fora.
   function addSegments(coords){
     if(coords.length<2)return 0;
     let added=0;
     try{
       const split=turf.lineSplit(turf.lineString(coords),polyBound);
-      if(split&&split.features&&split.features.length>0){
+      if(split&&split.features){
         split.features.forEach(seg=>{
           const c=seg.geometry.coordinates;
           if(c.length>=2&&turf.booleanPointInPolygon(turf.point(c[Math.floor(c.length/2)]),turfPoly)){
@@ -719,18 +719,9 @@ function gerarOffset(){
             count++;added++;
           }
         });
-        if(added>0)return added;
       }
     }catch(e){}
-    const cl=clipCurveToPolygon(coords,turfPoly,polyBound);
-    if(cl&&cl.length>=2){
-      offsetLines.push(new google.maps.Polyline({
-        path:cl.map(p=>({lat:p[1],lng:p[0]})),
-        map,strokeColor:corLinha,strokeWeight:espessura,strokeOpacity:.95,zIndex:10,clickable:false
-      }));
-      count++;return 1;
-    }
-    return 0;
+    return added;
   }
 
   // Translação rígida da guia → linhas paralelas preservando a curva da guia
@@ -756,6 +747,17 @@ function gerarOffset(){
   addLine(0,1);
   for(let n=1;n<=nPos;n++) addLine(n*spacing/1000,1);
   for(let n=1;n<=nNeg;n++) addLine(n*spacing/1000,-1);
+
+  // EXTRIM: remove qualquer linha cujo ponto médio esteja fora do polígono
+  offsetLines=offsetLines.filter(pl=>{
+    const path=pl.getPath().getArray();
+    if(path.length<1){pl.setMap(null);return false;}
+    const mid=path[Math.floor(path.length/2)];
+    const inside=turf.booleanPointInPolygon(turf.point([mid.lng(),mid.lat()]),turfPoly);
+    if(!inside)pl.setMap(null);
+    return inside;
+  });
+  count=offsetLines.length;
 
   if(count===0){
     setStatus('stOffset','Nenhuma linha gerada — verifique se a guia cruza o talhão.','err');
