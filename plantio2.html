@@ -56,6 +56,10 @@ input[type=color]{height:32px;padding:2px 4px;cursor:pointer;}
 .search-item:last-child{border-bottom:none;}
 .search-item:hover{background:#1565c0;color:#fff;}
 .search-item strong{display:block;font-size:12px;color:#e2b96e;}
+/* Slider */
+input[type=range]{-webkit-appearance:none;height:4px;background:#1e4a7a;border-radius:2px;border:none;padding:0;cursor:pointer;}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;background:#42a5f5;border-radius:50%;cursor:pointer;}
+input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;border-radius:50%;border:none;cursor:pointer;}
 /* Legenda do polígono */
 .poly-label{width:168px;background:rgba(10,20,45,.88);border:1.5px solid rgba(66,165,245,.6);border-radius:10px;font-family:'Segoe UI',sans-serif;pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,.6);overflow:hidden;}
 .poly-label-head{background:rgba(21,101,192,.85);padding:6px 10px;font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#e3f2fd;}
@@ -155,6 +159,13 @@ input[type=color]{height:32px;padding:2px 4px;cursor:pointer;}
       <div class="info-row"><span class="info-label">Área:</span><span class="info-val" id="iArea">—</span></div>
       <div class="info-row"><span class="info-label">Linhas:</span><span class="info-val" id="iLinhas">—</span></div>
       <div class="info-row"><span class="info-label">Espaçamento:</span><span class="info-val" id="iEspac">—</span></div>
+    </div>
+    <div id="divLabelScale" style="display:none;margin-top:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+        <span style="font-size:10px;color:#78909c;text-transform:uppercase;letter-spacing:.08em;">Escala da legenda</span>
+        <span id="labelScaleVal" style="font-size:12px;color:#e2b96e;font-weight:700;">50%</span>
+      </div>
+      <input type="range" id="labelScale" min="5" max="100" value="50" step="5" style="width:100%;" oninput="atualizarEscalaLabel()">
     </div>
   </div>
 
@@ -481,20 +492,28 @@ function mostrarLabel(ha, spacing, nLinhas, metrosLin) {
     </div>
   </div>`;
   baseLabelZoom = map.getZoom();
+  $('divLabelScale').style.display = '';
+  $('labelScaleVal').textContent = $('labelScale').value + '%';
   infoMarker = L.marker([c[1], c[0]], {
     icon: L.divIcon({html, className:'', iconAnchor:[84, 58]}),
     interactive: false, zIndexOffset: 500
   }).addTo(map);
+  _updateLabelScale();
 }
 
-// Escala a legenda proporcionalmente ao zoom — 1 nível = ×2 no tamanho
+// Escala a legenda: zoom geográfico × fator do slider do usuário
 function _updateLabelScale() {
   if(!infoMarker) return;
   const lbl = infoMarker.getElement()?.querySelector('.poly-label');
   if(!lbl) return;
-  const s = Math.pow(2, map.getZoom() - baseLabelZoom);
-  lbl.style.transform = `scale(${s})`;
-  lbl.style.transformOrigin = '84px 58px'; // ponto de âncora = centro da caixa
+  const zoomFactor = Math.pow(2, map.getZoom() - baseLabelZoom);
+  const userFactor = (parseInt($('labelScale')?.value) || 50) / 100;
+  lbl.style.transform = `scale(${zoomFactor * userFactor})`;
+  lbl.style.transformOrigin = '84px 58px';
+}
+function atualizarEscalaLabel() {
+  $('labelScaleVal').textContent = $('labelScale').value + '%';
+  _updateLabelScale();
 }
 map.on('zoomend', _updateLabelScale);
 
@@ -759,6 +778,7 @@ function limparLinhas() {
   $('secLegenda').style.display='none';
   linhasDecl.forEach(l=>l.remove()); linhasDecl=[];
   if(infoMarker){infoMarker.remove();infoMarker=null;}
+  $('divLabelScale').style.display='none';
 }
 function limparGuia() {
   guideMarkers.forEach(m=>m.remove()); guideMarkers=[];
