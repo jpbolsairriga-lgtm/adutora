@@ -186,10 +186,12 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="sec">
     <div class="sec-title">Informações</div>
     <div class="info-box">
-      <div class="info-row"><span class="info-label">Área:</span><span class="info-val" id="iArea">—</span></div>
+      <div class="info-row"><span class="info-label">Talhões:</span><span class="info-val" id="iTalhoes">0</span></div>
+      <div class="info-row"><span class="info-label">Área ativo:</span><span class="info-val" id="iArea">—</span></div>
       <div class="info-row"><span class="info-label">Linhas:</span><span class="info-val" id="iLinhas">—</span></div>
       <div class="info-row"><span class="info-label">Espaçamento:</span><span class="info-val" id="iEspac">—</span></div>
     </div>
+    <button class="btn btn-clr" id="btnLimparArquivados" onclick="limparTalhoesArquivados()" style="display:none;margin-top:6px;font-size:11px;">&#128465; Limpar talhões bloqueados</button>
     <div id="divLabelScale" style="display:none;margin-top:10px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
         <span style="font-size:10px;color:#78909c;text-transform:uppercase;letter-spacing:.08em;">Escala da legenda</span>
@@ -274,14 +276,19 @@ if(savedKey) {
 }
 
 // ── Estado ───────────────────────────────────────────────────────────────────
-let modo = 'idle'; // 'poly' | 'guide' | 'idle'
+let modo = 'idle'; // 'poly' | 'guide' | 'idle' | 'curvapoly'
 let modoGuia = 'reta'; // 'reta' | 'spline'
 let polyPts = [], polyMarkers = [], polyLayer = null, polyTempLine = null;
 let guidePts = [], guideMarkers = [], guideLayer = null;
-let linhas = [];
+let linhas = [], linhasDecl = [];
 let turfPoly = null, turfBound = null;
 let infoMarker = null;
 let baseLabelZoom = 14;
+
+// Talhões bloqueados (múltiplos)
+let talhoesArquivados = [];
+// Paleta de cores para contorno de cada talhão
+const CORES_TALHAO = ['#42a5f5','#ef5350','#66bb6a','#ffa726','#ab47bc','#26c6da','#ff7043','#8d6e63'];
 
 // ── Utilitários ───────────────────────────────────────────────────────────────
 function mkIcon(cls) {
@@ -510,6 +517,65 @@ function finalizarGuia() {
   setStatus('Guia definida. Configure o espaçamento e gere as linhas.', 'ok');
 }
 
+// ── Múltiplos Talhões ─────────────────────────────────────────────────────────
+function arquivarTalhaoAtual() {
+  const idx = talhoesArquivados.length; // índice 0-based
+  const cor = CORES_TALHAO[idx % CORES_TALHAO.length];
+
+  // Bloqueia: remove marcadores de edição, reestiliza contorno com cor do talhão
+  polyMarkers.forEach(m => m.remove());
+  if(polyLayer) polyLayer.setStyle({color: cor, fillColor: cor, fillOpacity:.06, weight:2});
+
+  // Arquiva
+  talhoesArquivados.push({
+    idx: idx + 1,
+    cor,
+    polyLayer,
+    polyPts: [...polyPts],
+    linhas: [...linhas],
+    linhasDecl: [...linhasDecl],
+    infoMarker,
+    turfPoly
+  });
+
+  // Reseta estado ativo sem remover as layers do mapa
+  polyMarkers = []; polyPts = [];
+  polyLayer = null; polyTempLine = null;
+  turfPoly = null; turfBound = null;
+  linhas = []; linhasDecl = [];
+  infoMarker = null;
+
+  // Reset UI do talhão ativo
+  $('iArea').textContent = '—';
+  $('iLinhas').textContent = '—';
+  $('iEspac').textContent = '—';
+  $('btnKml').style.display = 'flex'; // mantém KML disponível
+  $('divDecliv').style.display = 'none';
+  $('secLegenda').style.display = 'none';
+  $('divLabelScale').style.display = 'none';
+
+  // Atualiza contador
+  $('iTalhoes').textContent = talhoesArquivados.length;
+  $('btnLimparArquivados').style.display = '';
+  if(!turfCurvaPoly) $('btnCurvas').disabled = true;
+
+  setStatus(`Talhão ${talhoesArquivados.length} bloqueado ✓  Desenhe o próximo contorno.`, 'ok');
+}
+
+function limparTalhoesArquivados() {
+  talhoesArquivados.forEach(t => {
+    if(t.polyLayer) t.polyLayer.remove();
+    t.linhas.forEach(l => l.remove());
+    t.linhasDecl.forEach(l => l.remove());
+    if(t.infoMarker) t.infoMarker.remove();
+  });
+  talhoesArquivados = [];
+  $('iTalhoes').textContent = '0';
+  $('btnLimparArquivados').style.display = 'none';
+  // Só esconde KML se também não há talhão ativo com linhas
+  if(!linhas.length) $('btnKml').style.display = 'none';
+}
+
 // ── Legenda do polígono ───────────────────────────────────────────────────────
 function mostrarLabel(ha, spacing, nLinhas, metrosLin) {
   if(infoMarker) { infoMarker.remove(); infoMarker = null; }
@@ -668,7 +734,8 @@ function gerarLinhas() {
   });
   const ha = areaHa(polyPts);
   mostrarLabel(ha, spacing, count, metrosLin);
-  setStatus(count + ' linhas · ' + Math.round(metrosLin).toLocaleString('pt-BR') + ' m lineares.', 'ok');
+  // Bloqueia o talhão e prepara para o próximo
+  arquivarTalhaoAtual();
 }
 
 // ── Declividade ───────────────────────────────────────────────────────────────
@@ -704,7 +771,7 @@ function resampleLine(latlngs, spacingM) {
   return pts;
 }
 
-let linhasDecl = []; // sub-segmentos coloridos da classificação
+// linhasDecl declarado no bloco de estado principal
 
 function classificarDeclividade() {
   if(!linhas.length) { setStatus('Gere as linhas primeiro.', 'err'); return; }
@@ -1040,15 +1107,60 @@ function exportarKML() {
   kml += `<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n`;
   kml += `<name>Traçado de Plantio — Bolsa Irriga</name>\n`;
 
-  // ── 1. Contorno do talhão ──────────────────────────────────────────────────
-  if(polyPts.length >= 3) {
-    kml += `<Folder><name>Contorno do Talhão</name>\n`;
-    kml += `<Placemark><name>Talhão</name>`;
-    kml += `${kmlLine('#42a5f5', 2)}`;
-    kml += `<Polygon><outerBoundaryIs><LinearRing><coordinates>`;
-    kml += kmlPolygonCoords(polyPts);
-    kml += `</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>\n`;
-    kml += `</Folder>\n`;
+  // Helper: exporta um talhão (arquivado ou ativo) como Folder KML
+  function kmlTalhao(label, cor, pts, lnhs, lnhsDecl) {
+    if(pts.length < 3 && !lnhs.length) return '';
+    let f = `<Folder><name>${label}</name>\n`;
+    // Contorno
+    if(pts.length >= 3) {
+      f += `<Placemark><name>Contorno</name>${kmlLine(cor, 2)}`;
+      f += `<Polygon><outerBoundaryIs><LinearRing><coordinates>`;
+      f += kmlPolygonCoords(pts);
+      f += `</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>\n`;
+    }
+    // Linhas de plantio
+    if(lnhs.length) {
+      const corL = $('corLinha').value || '#FFD600';
+      f += `<Folder><name>Linhas de Plantio</name>\n`;
+      lnhs.forEach(pl => {
+        const p = pl.getLatLngs().flat();
+        if(p.length < 2) return;
+        f += `<Placemark>${kmlLine(corL, 1.5)}<LineString><coordinates>${kmlCoords([p])}</coordinates></LineString></Placemark>\n`;
+      });
+      f += `</Folder>\n`;
+    }
+    // Classificação de declividade
+    if(lnhsDecl.length) {
+      const grupos = {};
+      lnhsDecl.forEach(pl => {
+        const c = pl.options.color.toUpperCase();
+        if(!grupos[c]) grupos[c] = [];
+        grupos[c].push(pl);
+      });
+      const nomesDecliv = {'#4CAF50':'0–3%','#FFEB3B':'3–8%','#FF9800':'8–12%','#F44336':'12–20%','#9C27B0':'&gt;20%'};
+      f += `<Folder><name>Classificação de Declividade</name>\n`;
+      Object.entries(grupos).forEach(([c, pls]) => {
+        f += `<Folder><name>${nomesDecliv[c]||c}</name>\n`;
+        pls.forEach(pl => {
+          const p = pl.getLatLngs().flat();
+          if(p.length < 2) return;
+          f += `<Placemark>${kmlLine(c.toLowerCase(),2)}<LineString><coordinates>${kmlCoords([p])}</coordinates></LineString></Placemark>\n`;
+        });
+        f += `</Folder>\n`;
+      });
+      f += `</Folder>\n`;
+    }
+    return f + `</Folder>\n`;
+  }
+
+  // ── 1. Talhões (arquivados + ativo) ──────────────────────────────────────
+  talhoesArquivados.forEach(t => {
+    kml += kmlTalhao(`Talhão ${t.idx}`, t.cor, t.polyPts, t.linhas, t.linhasDecl);
+  });
+  // Talhão ativo (se tiver linhas)
+  if(polyPts.length >= 3 || linhas.length) {
+    const idxAtivo = talhoesArquivados.length + 1;
+    kml += kmlTalhao(`Talhão ${idxAtivo}`, '#42a5f5', polyPts, linhas, linhasDecl);
   }
 
   // ── 2. Área de curvas de nível (se desenhada) ─────────────────────────────
@@ -1062,47 +1174,7 @@ function exportarKML() {
     kml += `</Folder>\n`;
   }
 
-  // ── 3. Linhas de plantio ───────────────────────────────────────────────────
-  if(linhas.length) {
-    const cor = $('corLinha').value || '#FFD600';
-    kml += `<Folder><name>Linhas de Plantio</name>\n`;
-    linhas.forEach(pl => {
-      const pts = pl.getLatLngs().flat();
-      if(pts.length < 2) return;
-      kml += `<Placemark>${kmlLine(cor, 1.5)}<LineString><coordinates>${kmlCoords([pts])}</coordinates></LineString></Placemark>\n`;
-    });
-    kml += `</Folder>\n`;
-  }
-
-  // ── 4. Classificação de declividade ───────────────────────────────────────
-  if(linhasDecl.length) {
-    kml += `<Folder><name>Classificação de Declividade</name>\n`;
-    kml += `<Folder><name>0–3% (verde)</name>\n`;
-    const declFolders = {'#4CAF50':'0–3%','#FFEB3B':'3–8%','#FF9800':'8–12%','#F44336':'12–20%','#9C27B0':'&gt;20%'};
-    // Agrupa por cor
-    const grupos = {};
-    linhasDecl.forEach(pl => {
-      const cor = pl.options.color.toUpperCase();
-      if(!grupos[cor]) grupos[cor] = [];
-      grupos[cor].push(pl);
-    });
-    // Fecha a pasta verde vazia aberta acima
-    kml = kml.replace('<Folder><name>0–3% (verde)</name>\n', '');
-    const nomesDecliv = {'#4CAF50':'0 – 3% — Mecanização total','#FFEB3B':'3 – 8% — Terraços recomendados','#FF9800':'8 – 12% — Terraços obrigatórios','#F44336':'12 – 20% — Mecanização limitada','#9C27B0':'&gt; 20% — Preservação'};
-    Object.entries(grupos).forEach(([cor, pls]) => {
-      const nome = nomesDecliv[cor] || cor;
-      kml += `<Folder><name>${nome}</name>\n`;
-      pls.forEach(pl => {
-        const pts = pl.getLatLngs().flat();
-        if(pts.length < 2) return;
-        kml += `<Placemark>${kmlLine(cor.toLowerCase(), 2)}<LineString><coordinates>${kmlCoords([pts])}</coordinates></LineString></Placemark>\n`;
-      });
-      kml += `</Folder>\n`;
-    });
-    kml += `</Folder>\n`;
-  }
-
-  // ── 5. Curvas de nível (com cota Z para AutoCAD) ─────────────────────────
+  // ── 3. Curvas de nível (com cota Z para AutoCAD) ─────────────────────────
   if(curvaLayers.length) {
     kml += `<Folder><name>Curvas de Nível</name>\n`;
     kml += `<description>Alt. mín: ${curvaMinElev.toFixed(1)} m  Alt. máx: ${curvaMaxElev.toFixed(1)} m</description>\n`;
@@ -1176,6 +1248,7 @@ function limparPoligono() {
 }
 function limparTudo() {
   limparLinhas(); limparGuia(); limparPoligono(); limparPoligonoCurva();
+  limparTalhoesArquivados();
   modo='idle'; map.getContainer().style.cursor='';
   $('btnPoly').classList.remove('active');
   $('btnGuia').classList.remove('active');
