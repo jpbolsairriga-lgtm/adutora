@@ -51,6 +51,11 @@ input[type=color]{height:32px;padding:2px 4px;cursor:pointer;}
 .leaflet-container{background:#111;}
 .vertex-marker{width:10px;height:10px;background:#fff;border:2px solid #1565c0;border-radius:50%;cursor:grab;margin:-5px 0 0 -5px;}
 .vertex-marker.guide{border-color:#e65100;}
+/* Busca */
+.search-item{padding:6px 8px;font-size:11px;color:#cfd8dc;cursor:pointer;border-bottom:1px solid #1e4a7a;line-height:1.4;}
+.search-item:last-child{border-bottom:none;}
+.search-item:hover{background:#1565c0;color:#fff;}
+.search-item strong{display:block;font-size:12px;color:#e2b96e;}
 </style>
 </head>
 <body>
@@ -59,6 +64,17 @@ input[type=color]{height:32px;padding:2px 4px;cursor:pointer;}
   <div class="logo">
     <h1>&#9874; Traçado de Plantio</h1>
     <p>Bolsa Irriga · João Paulo de Oliveira</p>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title">Buscar Local</div>
+    <div style="display:flex;gap:6px;">
+      <input type="text" id="searchInput" placeholder="Cidade, fazenda, endereço…"
+        style="flex:1;background:#0f3460;color:#e0e0e0;border:1px solid #1e4a7a;border-radius:5px;padding:6px 8px;font-size:12px;"
+        onkeydown="if(event.key==='Enter') buscarLocal()">
+      <button onclick="buscarLocal()" style="background:#1565c0;color:#fff;border:none;border-radius:5px;padding:6px 10px;cursor:pointer;font-size:13px;font-weight:700;">&#128269;</button>
+    </div>
+    <div id="searchResults" style="display:none;margin-top:4px;background:#0f3460;border-radius:5px;max-height:140px;overflow-y:auto;"></div>
   </div>
 
   <div class="sec">
@@ -117,6 +133,10 @@ const map = L.map('map', {zoomControl: true, doubleClickZoom: false}).setView([-
 L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
   attribution: 'Tiles © Esri — Source: Esri, Maxar, GeoEye, Earthstar Geographics',
   maxZoom: 21
+}).addTo(map);
+// Nomes de cidades, rodovias e lugares sobre o satélite
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+  maxZoom: 21, opacity: 0.85, pane: 'overlayPane'
 }).addTo(map);
 
 // ── Estado ───────────────────────────────────────────────────────────────────
@@ -244,6 +264,45 @@ function buildTurfPoly() {
     turfBound = turf.polygonToLine(turfPoly);
   } catch(e) { turfPoly = null; turfBound = null; }
 }
+
+// ── Busca de Local ────────────────────────────────────────────────────────────
+async function buscarLocal() {
+  const q = $('searchInput').value.trim();
+  if(!q) return;
+  const box = $('searchResults');
+  box.style.display = 'block';
+  box.innerHTML = '<div class="search-item" style="color:#78909c;">Buscando…</div>';
+  try {
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=5&q=${encodeURIComponent(q)}`, {
+      headers: {'Accept-Language': 'pt-BR,pt;q=0.9'}
+    });
+    const data = await res.json();
+    if(!data.length) { box.innerHTML = '<div class="search-item" style="color:#ef9a9a;">Nenhum resultado.</div>'; return; }
+    box.innerHTML = '';
+    data.forEach(r => {
+      const el = document.createElement('div');
+      el.className = 'search-item';
+      const nome = r.display_name.split(',').slice(0,2).join(',');
+      const resto = r.display_name.split(',').slice(2).join(',').trim();
+      el.innerHTML = `<strong>${nome}</strong>${resto}`;
+      el.onclick = () => {
+        map.setView([parseFloat(r.lat), parseFloat(r.lon)], 14);
+        box.style.display = 'none';
+        $('searchInput').value = nome;
+      };
+      box.appendChild(el);
+    });
+  } catch(e) {
+    box.innerHTML = '<div class="search-item" style="color:#ef9a9a;">Erro na busca.</div>';
+  }
+}
+// Fechar resultados ao clicar fora
+document.addEventListener('click', e => {
+  if(!e.target.closest('#searchResults') && !e.target.closest('#searchInput') && e.target.id !== 'searchInput') {
+    const box = $('searchResults');
+    if(box) box.style.display = 'none';
+  }
+});
 
 // ── Linha Guia ────────────────────────────────────────────────────────────────
 function setModoGuia(m) {
