@@ -987,9 +987,12 @@ async function gerarCurvas() {
       let seg = [];
       const flush = () => {
         if(seg.length >= 2) {
-          curvaLayers.push(L.polyline(seg.map(p=>[p.lat,p.lng]), {
+          const pl = L.polyline(seg.map(p=>[p.lat,p.lng]), {
             color:cor, weight:isMaster?2.5:1.2, opacity:isMaster?0.95:0.75
-          }).addTo(map));
+          }).addTo(map);
+          pl._level = lv;        // cota de altimetria em metros
+          pl._isMaster = isMaster;
+          curvaLayers.push(pl);
           lineCount++;
         }
         seg = [];
@@ -1099,19 +1102,38 @@ function exportarKML() {
     kml += `</Folder>\n`;
   }
 
-  // ── 5. Curvas de nível ────────────────────────────────────────────────────
+  // ── 5. Curvas de nível (com cota Z para AutoCAD) ─────────────────────────
   if(curvaLayers.length) {
     kml += `<Folder><name>Curvas de Nível</name>\n`;
-    if(curvaMinElev !== curvaMaxElev) {
-      kml += `<description>Alt. mín: ${curvaMinElev.toFixed(1)} m  Alt. máx: ${curvaMaxElev.toFixed(1)} m</description>\n`;
-    }
-    curvaLayers.forEach(pl => {
+    kml += `<description>Alt. mín: ${curvaMinElev.toFixed(1)} m  Alt. máx: ${curvaMaxElev.toFixed(1)} m</description>\n`;
+
+    const kmlCurvaLine = (pl) => {
       const pts = pl.getLatLngs().flat();
-      if(pts.length < 2) return;
+      if(pts.length < 2) return '';
+      const lv   = pl._level ?? 0;
       const cor  = pl.options.color;
       const peso = pl.options.weight;
-      kml += `<Placemark>${kmlLine(cor, peso)}<LineString><coordinates>${kmlCoords([pts])}</coordinates></LineString></Placemark>\n`;
-    });
+      // Coordenadas com Z = cota real (lng,lat,altitude)
+      const coords = pts.map(p => `${p.lng.toFixed(7)},${p.lat.toFixed(7)},${lv.toFixed(2)}`).join(' ');
+      return `<Placemark><name>${lv.toFixed(1)} m</name>${kmlLine(cor, peso)}` +
+        `<LineString><tessellate>1</tessellate><altitudeMode>absolute</altitudeMode>` +
+        `<coordinates>${coords}</coordinates></LineString></Placemark>\n`;
+    };
+
+    // Sub-pasta: Curvas Mestras
+    const mestras = curvaLayers.filter(pl => pl._isMaster);
+    if(mestras.length) {
+      kml += `<Folder><name>Curvas Mestras</name>\n`;
+      mestras.forEach(pl => { kml += kmlCurvaLine(pl); });
+      kml += `</Folder>\n`;
+    }
+    // Sub-pasta: Curvas Intermediárias
+    const intermediarias = curvaLayers.filter(pl => !pl._isMaster);
+    if(intermediarias.length) {
+      kml += `<Folder><name>Curvas Intermediárias</name>\n`;
+      intermediarias.forEach(pl => { kml += kmlCurvaLine(pl); });
+      kml += `</Folder>\n`;
+    }
     kml += `</Folder>\n`;
   }
 
