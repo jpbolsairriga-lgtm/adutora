@@ -67,6 +67,17 @@ input[type=color]{height:32px;padding:2px 4px;cursor:pointer;}
   </div>
 
   <div class="sec">
+    <div class="sec-title">Google Maps</div>
+    <div style="display:flex;gap:6px;">
+      <input type="password" id="gmKey" placeholder="Cole sua chave AIzaSy…"
+        style="flex:1;background:#0f3460;color:#e0e0e0;border:1px solid #1e4a7a;border-radius:5px;padding:6px 8px;font-size:11px;"
+        onkeydown="if(event.key==='Enter') salvarKey()">
+      <button onclick="salvarKey()" style="background:#1565c0;color:#fff;border:none;border-radius:5px;padding:6px 10px;cursor:pointer;font-size:13px;font-weight:700;">&#10003;</button>
+    </div>
+    <div id="keyStatus" style="font-size:11px;color:#78909c;margin-top:4px;">Usando ESRI (sem chave)</div>
+  </div>
+
+  <div class="sec">
     <div class="sec-title">Buscar Local</div>
     <div style="display:flex;gap:6px;">
       <input type="text" id="searchInput" placeholder="Cidade, fazenda, endereço…"
@@ -126,18 +137,66 @@ input[type=color]{height:32px;padding:2px 4px;cursor:pointer;}
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.gridlayer.googlemutant@latest/dist/Leaflet.GoogleMutant.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
 <script>
 // ── Mapa ──────────────────────────────────────────────────────────────────────
 const map = L.map('map', {zoomControl: true, doubleClickZoom: false}).setView([-21, -52], 13);
-L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-  attribution: 'Tiles © Esri — Source: Esri, Maxar, GeoEye, Earthstar Geographics',
-  maxZoom: 21
-}).addTo(map);
-// Nomes de cidades, rodovias e lugares sobre o satélite
-L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
-  maxZoom: 21, opacity: 0.85, pane: 'overlayPane'
-}).addTo(map);
+
+// Camada base ESRI (fallback sem API key)
+const esriLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  attribution: 'Tiles © Esri', maxZoom: 21
+});
+const esriLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+  maxZoom: 21, opacity: 0.85
+});
+esriLayer.addTo(map);
+esriLabels.addTo(map);
+
+let googleLayer = null;
+
+function ativarGoogleMaps(key) {
+  if(!key) return;
+  // Carrega o Google Maps JS API e ativa o GoogleMutant
+  if(window.google && window.google.maps) {
+    _ativarMutant();
+  } else {
+    const s = document.createElement('script');
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${key}&v=weekly`;
+    s.onload = _ativarMutant;
+    s.onerror = () => setStatus('Chave Google Maps inválida. Usando ESRI.', 'err');
+    document.head.appendChild(s);
+  }
+}
+
+function _ativarMutant() {
+  try {
+    esriLayer.remove();
+    esriLabels.remove();
+    // hybrid = satélite + nomes de cidades/rodovias (igual Google Maps)
+    googleLayer = L.gridLayer.googleMutant({type: 'hybrid', maxZoom: 21}).addTo(map);
+    $('keyStatus').textContent = 'Google Maps ativo';
+    $('keyStatus').style.color = '#a5d6a7';
+  } catch(e) {
+    setStatus('Erro ao ativar Google Maps. Usando ESRI.', 'err');
+  }
+}
+
+function salvarKey() {
+  const k = $('gmKey').value.trim();
+  if(!k) return;
+  localStorage.setItem('mapskey_pl', k);
+  ativarGoogleMaps(k);
+}
+
+// Tenta usar chave já salva automaticamente
+const savedKey = localStorage.getItem('mapskey_pl');
+if(savedKey) {
+  const el = $('gmKey'); if(el) el.value = savedKey;
+  $('keyStatus').textContent = 'Carregando Google Maps…';
+  $('keyStatus').style.color = '#81d4fa';
+  ativarGoogleMaps(savedKey);
+}
 
 // ── Estado ───────────────────────────────────────────────────────────────────
 let modo = 'idle'; // 'poly' | 'guide' | 'idle'
