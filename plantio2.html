@@ -1014,29 +1014,111 @@ function limparCurvas() {
 }
 
 // ── Exportar KML ──────────────────────────────────────────────────────────────
+// Converte cor hex (#RRGGBB) para formato KML (AABBGGRR)
+function hexToKml(hex, alpha=255) {
+  const r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16);
+  return [alpha,b,g,r].map(v=>v.toString(16).padStart(2,'0')).join('');
+}
+function kmlLine(color, width) {
+  return `<Style><LineStyle><color>${hexToKml(color)}</color><width>${width}</width></LineStyle><PolyStyle><fill>0</fill></PolyStyle></Style>`;
+}
+function kmlCoords(latlngs) {
+  return latlngs.flat().map(p=>`${p.lng},${p.lat},0`).join(' ');
+}
+function kmlPolygonCoords(pts) {
+  return [...pts, pts[0]].map(p=>`${p.lng},${p.lat},0`).join(' ');
+}
+
 function exportarKML() {
-  let kml = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document>\n`;
-  kml += `<Style id="sPoly"><LineStyle><color>ffb56a42</color><width>2</width></LineStyle><PolyStyle><color>110000ff</color></PolyStyle></Style>\n`;
-  kml += `<Style id="sLinha"><LineStyle><color>ff00d6ff</color><width>2</width></LineStyle></Style>\n`;
-  // Polígono
-  if(polyPts.length>=3){
-    const coords=polyPts.map(p=>p.lng+','+p.lat+',0').join(' ')+' '+polyPts[0].lng+','+polyPts[0].lat+',0';
-    kml+=`<Placemark><styleUrl>#sPoly</styleUrl><name>Talhão</name><Polygon><outerBoundaryIs><LinearRing><coordinates>${coords}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>\n`;
+  let kml  = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+  kml += `<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n`;
+  kml += `<name>Traçado de Plantio — Bolsa Irriga</name>\n`;
+
+  // ── 1. Contorno do talhão ──────────────────────────────────────────────────
+  if(polyPts.length >= 3) {
+    kml += `<Folder><name>Contorno do Talhão</name>\n`;
+    kml += `<Placemark><name>Talhão</name>`;
+    kml += `${kmlLine('#42a5f5', 2)}`;
+    kml += `<Polygon><outerBoundaryIs><LinearRing><coordinates>`;
+    kml += kmlPolygonCoords(polyPts);
+    kml += `</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>\n`;
+    kml += `</Folder>\n`;
   }
-  // Linhas
-  if(linhas.length){
-    kml+=`<Folder><name>Linhas de Plantio</name>\n`;
-    linhas.forEach((pl,i)=>{
-      const pts=pl.getLatLngs();
-      const coords=pts.map(p=>p.lng+','+p.lat+',0').join(' ');
-      kml+=`<Placemark><styleUrl>#sLinha</styleUrl><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;
+
+  // ── 2. Área de curvas de nível (se desenhada) ─────────────────────────────
+  if(curvaPolyPts.length >= 3) {
+    kml += `<Folder><name>Área de Curvas de Nível</name>\n`;
+    kml += `<Placemark><name>Área</name>`;
+    kml += `${kmlLine('#26a69a', 2)}`;
+    kml += `<Polygon><outerBoundaryIs><LinearRing><coordinates>`;
+    kml += kmlPolygonCoords(curvaPolyPts);
+    kml += `</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>\n`;
+    kml += `</Folder>\n`;
+  }
+
+  // ── 3. Linhas de plantio ───────────────────────────────────────────────────
+  if(linhas.length && !linhasDecl.length) {
+    // Sem classificação: exporta linhas originais com sua cor
+    const cor = $('corLinha').value || '#FFD600';
+    kml += `<Folder><name>Linhas de Plantio</name>\n`;
+    linhas.forEach(pl => {
+      const pts = pl.getLatLngs().flat();
+      if(pts.length < 2) return;
+      kml += `<Placemark>${kmlLine(cor, 1.5)}<LineString><coordinates>${kmlCoords([pts])}</coordinates></LineString></Placemark>\n`;
     });
-    kml+=`</Folder>\n`;
+    kml += `</Folder>\n`;
   }
-  kml+=`</Document></kml>`;
-  const blob=new Blob([kml],{type:'application/vnd.google-earth.kml+xml'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
-  a.download='plantio.kml'; a.click();
+
+  // ── 4. Classificação de declividade ───────────────────────────────────────
+  if(linhasDecl.length) {
+    kml += `<Folder><name>Classificação de Declividade</name>\n`;
+    kml += `<Folder><name>0–3% (verde)</name>\n`;
+    const declFolders = {'#4CAF50':'0–3%','#FFEB3B':'3–8%','#FF9800':'8–12%','#F44336':'12–20%','#9C27B0':'&gt;20%'};
+    // Agrupa por cor
+    const grupos = {};
+    linhasDecl.forEach(pl => {
+      const cor = pl.options.color.toUpperCase();
+      if(!grupos[cor]) grupos[cor] = [];
+      grupos[cor].push(pl);
+    });
+    // Fecha a pasta verde vazia aberta acima
+    kml = kml.replace('<Folder><name>0–3% (verde)</name>\n', '');
+    const nomesDecliv = {'#4CAF50':'0 – 3% — Mecanização total','#FFEB3B':'3 – 8% — Terraços recomendados','#FF9800':'8 – 12% — Terraços obrigatórios','#F44336':'12 – 20% — Mecanização limitada','#9C27B0':'&gt; 20% — Preservação'};
+    Object.entries(grupos).forEach(([cor, pls]) => {
+      const nome = nomesDecliv[cor] || cor;
+      kml += `<Folder><name>${nome}</name>\n`;
+      pls.forEach(pl => {
+        const pts = pl.getLatLngs().flat();
+        if(pts.length < 2) return;
+        kml += `<Placemark>${kmlLine(cor.toLowerCase(), 2)}<LineString><coordinates>${kmlCoords([pts])}</coordinates></LineString></Placemark>\n`;
+      });
+      kml += `</Folder>\n`;
+    });
+    kml += `</Folder>\n`;
+  }
+
+  // ── 5. Curvas de nível ────────────────────────────────────────────────────
+  if(curvaLayers.length) {
+    kml += `<Folder><name>Curvas de Nível</name>\n`;
+    if(curvaMinElev !== curvaMaxElev) {
+      kml += `<description>Alt. mín: ${curvaMinElev.toFixed(1)} m  Alt. máx: ${curvaMaxElev.toFixed(1)} m</description>\n`;
+    }
+    curvaLayers.forEach(pl => {
+      const pts = pl.getLatLngs().flat();
+      if(pts.length < 2) return;
+      const cor  = pl.options.color;
+      const peso = pl.options.weight;
+      kml += `<Placemark>${kmlLine(cor, peso)}<LineString><coordinates>${kmlCoords([pts])}</coordinates></LineString></Placemark>\n`;
+    });
+    kml += `</Folder>\n`;
+  }
+
+  kml += `</Document></kml>`;
+  const blob = new Blob([kml], {type:'application/vnd.google-earth.kml+xml'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'plantio_bolsairriga.kml';
+  a.click();
 }
 
 // ── Limpar ────────────────────────────────────────────────────────────────────
