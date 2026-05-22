@@ -118,7 +118,14 @@ input[type=color]{height:32px;padding:2px 4px;cursor:pointer;}
     <div class="sec-title">4. Gerar</div>
     <button class="btn btn-gen" id="btnGerar" onclick="gerarLinhas()" disabled>&#10038; Gerar Linhas de Plantio</button>
     <button class="btn btn-kml" id="btnKml" onclick="exportarKML()" style="display:none;margin-top:4px;">&#128462; Exportar KML</button>
-    <button class="btn" id="btnDecliv" onclick="classificarDeclividade()" style="background:#4a148c;color:#fff;display:none;margin-top:4px;">&#9650; Classificar Declividade</button>
+    <div id="divDecliv" style="display:none;margin-top:4px;">
+      <label style="margin-top:0;">Espaçamento da análise</label>
+      <div class="row2">
+        <div><input type="number" id="espacDecliv" value="25" min="5" max="200" step="5"></div>
+        <div style="display:flex;align-items:center;padding-left:4px;font-size:12px;color:#78909c;">metros</div>
+      </div>
+      <button class="btn" id="btnDecliv" onclick="classificarDeclividade()" style="background:#4a148c;color:#fff;margin-top:5px;">&#9650; Classificar Declividade</button>
+    </div>
     <button class="btn btn-clr" onclick="limparLinhas()" style="margin-top:4px;">&#10005; Limpar Linhas</button>
     <button class="btn btn-clr" onclick="limparTudo()" style="margin-top:4px;border-color:#37474f;color:#90a4ae;">&#128465; Limpar Tudo</button>
   </div>
@@ -555,7 +562,7 @@ function gerarLinhas() {
   $('iLinhas').textContent = count;
   $('iEspac').textContent = spacing + ' m';
   $('btnKml').style.display = 'flex';
-  $('btnDecliv').style.display = 'flex';
+  $('divDecliv').style.display = '';
   setStatus(count + ' linhas geradas com espaçamento de ' + spacing + ' m.', 'ok');
 }
 
@@ -569,57 +576,100 @@ function slopeColor(pct) {
   return '#9C27B0';
 }
 
+// Interpola pontos ao longo de uma polilinha com espaçamento fixo
+function resampleLine(latlngs, spacingM) {
+  const pts = [latlngs[0]];
+  let pending = spacingM;
+  for(let i = 0; i < latlngs.length - 1; i++) {
+    const segLen = haversineM(latlngs[i], latlngs[i+1]);
+    if(segLen < 0.001) continue;
+    let walked = 0;
+    while(walked + pending <= segLen) {
+      walked += pending;
+      const t = walked / segLen;
+      pts.push({
+        lat: latlngs[i].lat + t * (latlngs[i+1].lat - latlngs[i].lat),
+        lng: latlngs[i].lng + t * (latlngs[i+1].lng - latlngs[i].lng)
+      });
+      pending = spacingM;
+    }
+    pending -= (segLen - walked);
+  }
+  pts.push(latlngs[latlngs.length - 1]);
+  return pts;
+}
+
+let linhasDecl = []; // sub-segmentos coloridos da classificação
+
 function classificarDeclividade() {
   if(!linhas.length) { setStatus('Gere as linhas primeiro.', 'err'); return; }
   if(!window.google || !window.google.maps) {
-    setStatus('Ative o Google Maps (chave API) para usar a classificação de declividade.', 'err'); return;
+    setStatus('Ative o Google Maps (chave API) para classificação de declividade.', 'err'); return;
   }
 
-  setStatus('Buscando elevações…', 'info');
+  const spacingM = Math.max(5, parseFloat($('espacDecliv').value) || 25);
+  setStatus('Amostrando linhas e buscando elevações…', 'info');
   $('btnDecliv').disabled = true;
+
+  // Remove classificação anterior
+  linhasDecl.forEach(l => l.remove()); linhasDecl = [];
 
   const elevator = new google.maps.ElevationService();
 
-  // Coleta início e fim de cada linha
-  const validLines = [];
-  const allPts = [];
-  linhas.forEach((pl, li) => {
-    const pts = pl.getLatLngs().flat();
-    if(pts.length < 2) return;
-    validLines.push({li, p0: pts[0], p1: pts[pts.length-1]});
-    allPts.push(new google.maps.LatLng(pts[0].lat, pts[0].lng));
-    allPts.push(new google.maps.LatLng(pts[pts.length-1].lat, pts[pts.length-1].lng));
+  // Para cada linha: reamostrar → coletar pontos com índice de volta
+  const lineInfo = []; // [{inicio, count}] — onde no allPts está cada linha
+  const allPts   = []; // todos os pontos amostrados, em ordem
+
+  linhas.forEach((pl) => {
+    const raw = pl.getLatLngs().flat();
+    if(raw.length < 2) return;
+    const samples = resampleLine(raw, spacingM);
+    lineInfo.push({samples, inicio: allPts.length});
+    samples.forEach(p => allPts.push(new google.maps.LatLng(p.lat, p.lng)));
   });
 
-  // Processa em batches de 512 pontos
-  const BATCH = 512;
-  const elevs = [];
-  let done = 0;
-  const total = Math.ceil(allPts.length / BATCH);
+  if(!allPts.length) { $('btnDecliv').disabled = false; return; }
 
-  for(let b = 0; b < total; b++) {
-    const slice = allPts.slice(b * BATCH, (b+1) * BATCH);
+  // Oculta linhas originais (ficam sob os segmentos coloridos)
+  linhas.forEach(pl => pl.setStyle({opacity: 0}));
+
+  // Batches de 512 pontos
+  const BATCH = 512;
+  const elevs = new Array(allPts.length);
+  let done = 0;
+  const totalBatches = Math.ceil(allPts.length / BATCH);
+
+  for(let b = 0; b < totalBatches; b++) {
+    const offset = b * BATCH;
+    const slice  = allPts.slice(offset, offset + BATCH);
     elevator.getElevationForLocations({locations: slice}, (res, status) => {
-      if(status === 'OK') res.forEach((r, i) => { elevs[b * BATCH + i] = r.elevation; });
-      if(++done === total) aplicarCoresDeclividade(validLines, elevs);
+      if(status === 'OK') res.forEach((r, i) => { elevs[offset + i] = r.elevation; });
+      if(++done === totalBatches) aplicarCoresDeclividade(lineInfo, elevs);
     });
   }
 }
 
-function aplicarCoresDeclividade(validLines, elevs) {
-  let ok = 0;
-  validLines.forEach(({li, p0, p1}, i) => {
-    const e0 = elevs[i*2], e1 = elevs[i*2+1];
-    if(e0 == null || e1 == null) return;
-    const distM = haversineM(p0, p1);
-    if(distM < 0.5) return;
-    const slope = Math.abs((e1 - e0) / distM) * 100;
-    linhas[li].setStyle({color: slopeColor(slope), weight: 2, opacity: 1});
-    ok++;
+function aplicarCoresDeclividade(lineInfo, elevs) {
+  let totalSegs = 0;
+  lineInfo.forEach(({samples, inicio}) => {
+    for(let i = 0; i < samples.length - 1; i++) {
+      const e0 = elevs[inicio + i], e1 = elevs[inicio + i + 1];
+      if(e0 == null || e1 == null) continue;
+      const p0 = samples[i], p1 = samples[i + 1];
+      const distM = haversineM(p0, p1);
+      if(distM < 0.1) continue;
+      const slope = Math.abs((e1 - e0) / distM) * 100;
+      const pl = L.polyline(
+        [[p0.lat, p0.lng], [p1.lat, p1.lng]],
+        {color: slopeColor(slope), weight: 2.5, opacity: 1}
+      ).addTo(map);
+      linhasDecl.push(pl);
+      totalSegs++;
+    }
   });
   $('secLegenda').style.display = '';
   $('btnDecliv').disabled = false;
-  setStatus(`Declividade classificada em ${ok} linhas.`, 'ok');
+  setStatus(`Declividade classificada em ${totalSegs} segmentos.`, 'ok');
 }
 
 // ── Exportar KML ──────────────────────────────────────────────────────────────
@@ -653,8 +703,9 @@ function limparLinhas() {
   linhas.forEach(l=>l.remove()); linhas=[];
   $('iLinhas').textContent='—'; $('iEspac').textContent='—';
   $('btnKml').style.display='none';
-  $('btnDecliv').style.display='none';
+  $('divDecliv').style.display='none';
   $('secLegenda').style.display='none';
+  linhasDecl.forEach(l=>l.remove()); linhasDecl=[];
 }
 function limparGuia() {
   guideMarkers.forEach(m=>m.remove()); guideMarkers=[];
