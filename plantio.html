@@ -699,15 +699,11 @@ function gerarOffset(){
   setStatus('stOffset','Gerando linhas...','info');
   let count=0;
 
-  // Sampling + intersecção exata na borda.
-  // Funciona igual para linhas retas e curvas (spline).
-  // booleanPointInPolygon por ponto + lineIntersect exato na transição.
-  const N_STR = 400; // amostras para linha reta
-  const N_EXT = 50;  // amostras de extensão além dos extremos do spline
+  const N_EXT=200; // amostras de extensão — resolução ≈7m para pegar cantos estreitos
 
-  // Percorre array de pontos, agrupa os de dentro em segmentos e emite Polylines.
+  // Sampling com lineIntersect exato na transição dentro/fora.
   function emitSegments(pts){
-    let seg=null, added=0;
+    let seg=null,added=0;
     const flush=()=>{
       if(seg&&seg.length>=2){
         offsetLines.push(new google.maps.Polyline({
@@ -737,35 +733,56 @@ function gerarOffset(){
     return added;
   }
 
-  function addRow(distKm, sign){
-    const dir = sign>0 ? perpBrg : rowBrg-90;
+  // Linha reta via lineIntersect direto — 100% preciso, sem amostragem.
+  // Pega qualquer canto do polígono independente da largura.
+  function addStraightRow(distKm,sign){
+    const dir=sign>0?perpBrg:rowBrg-90;
+    const ref=distKm===0?anchor
+      :turf.destination(turf.point(anchor),distKm,dir,{units:'kilometers'}).geometry.coordinates;
+    const p1=turf.destination(turf.point(ref),ext,rowBrg,{units:'kilometers'}).geometry.coordinates;
+    const p2=turf.destination(turf.point(ref),ext,rowBrg+180,{units:'kilometers'}).geometry.coordinates;
+    try{
+      const ixs=turf.lineIntersect(turf.lineString([p2,p1]),polyBound);
+      if(!ixs.features.length)return false;
+      const sorted=ixs.features.map(f=>f.geometry.coordinates)
+        .sort((a,b)=>turf.distance(turf.point(p2),turf.point(a))-turf.distance(turf.point(p2),turf.point(b)));
+      let added=0;
+      for(let i=0;i+1<sorted.length;i+=2){
+        const s=sorted[i],e=sorted[i+1];
+        const mid=[(s[0]+e[0])/2,(s[1]+e[1])/2];
+        if(!turf.booleanPointInPolygon(turf.point(mid),turfPoly))continue;
+        offsetLines.push(new google.maps.Polyline({
+          path:[{lat:s[1],lng:s[0]},{lat:e[1],lng:e[0]}],
+          map,strokeColor:corLinha,strokeWeight:espessura,strokeOpacity:.95,zIndex:10,clickable:false
+        }));
+        count++;added++;
+      }
+      return added>0;
+    }catch(e){return false;}
+  }
 
-    if(lineMode==='spline' && lineTempPts.length>=2){
-      // SPLINE: translada pontos de controle, regera spline
+  function addRow(distKm,sign){
+    const dir=sign>0?perpBrg:rowBrg-90;
+
+    if(lineMode==='spline'&&lineTempPts.length>=2){
+      // SPLINE: translada pontos de controle, regera spline, extensão em rowBrg
       const ctrlOff=lineTempPts.map(pt=>{
         const [lng,lat]=turf.destination(turf.point([pt.lng(),pt.lat()]),distKm,dir,{units:'kilometers'}).geometry.coordinates;
         return {lat:()=>lat,lng:()=>lng};
       });
       const sp=catmullRomSpline(ctrlOff,30);
       const spPts=sp.map(p=>[p.lng,p.lat]);
-      // Extensão em rowBrg para alcançar os cantos do polígono
       const extS=[],extE=[];
       for(let i=N_EXT;i>=1;i--)
         extS.push(turf.destination(turf.point(spPts[0]),(i/N_EXT)*ext,rowBrg+180,{units:'kilometers'}).geometry.coordinates);
       for(let i=1;i<=N_EXT;i++)
         extE.push(turf.destination(turf.point(spPts[spPts.length-1]),(i/N_EXT)*ext,rowBrg,{units:'kilometers'}).geometry.coordinates);
-      if(emitSegments([...extS,...spPts,...extE])>0) return true;
+      // Usa sampling para spline; sem fallback reta (evita mistura de ângulos)
+      return emitSegments([...extS,...spPts,...extE])>0;
     }
 
-    // RETA: fallback ou modo padrão
-    const ref=distKm===0?anchor
-      :turf.destination(turf.point(anchor),distKm,dir,{units:'kilometers'}).geometry.coordinates;
-    const rowPts=[];
-    for(let i=0;i<=N_STR;i++){
-      const t=((i/N_STR)-0.5)*2*ext;
-      rowPts.push(turf.destination(turf.point(ref),t,rowBrg,{units:'kilometers'}).geometry.coordinates);
-    }
-    return emitSegments(rowPts)>0;
+    // RETA: lineIntersect direto — cobre 100% do polígono incluindo cantos estreitos
+    return addStraightRow(distKm,sign);
   }
 
   addRow(0,1);
