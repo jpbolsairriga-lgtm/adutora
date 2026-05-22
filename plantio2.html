@@ -240,6 +240,7 @@ let guidePts = [], guideMarkers = [], guideLayer = null;
 let linhas = [];
 let turfPoly = null, turfBound = null;
 let infoMarker = null;
+let baseLabelZoom = 14;
 
 // ── Utilitários ───────────────────────────────────────────────────────────────
 function mkIcon(cls) {
@@ -479,12 +480,23 @@ function mostrarLabel(ha, spacing, nLinhas, metrosLin) {
       <div class="poly-label-row"><span class="poly-label-lbl">Metros lineares</span><span class="poly-label-val">${fmt(metrosLin)} m</span></div>
     </div>
   </div>`;
-  // 168px wide, ~116px tall → âncora no centro
+  baseLabelZoom = map.getZoom();
   infoMarker = L.marker([c[1], c[0]], {
     icon: L.divIcon({html, className:'', iconAnchor:[84, 58]}),
     interactive: false, zIndexOffset: 500
   }).addTo(map);
 }
+
+// Escala a legenda proporcionalmente ao zoom — 1 nível = ×2 no tamanho
+function _updateLabelScale() {
+  if(!infoMarker) return;
+  const lbl = infoMarker.getElement()?.querySelector('.poly-label');
+  if(!lbl) return;
+  const s = Math.pow(2, map.getZoom() - baseLabelZoom);
+  lbl.style.transform = `scale(${s})`;
+  lbl.style.transformOrigin = '84px 58px'; // ponto de âncora = centro da caixa
+}
+map.on('zoomend', _updateLabelScale);
 
 // ── Geração de Linhas ─────────────────────────────────────────────────────────
 function gerarLinhas() {
