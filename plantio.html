@@ -699,18 +699,19 @@ function gerarOffset(){
   setStatus('stOffset','Gerando linhas...','info');
   let count=0;
 
-  // ── Gera e clipa uma linha reta ───────────────────────────────────
-  // Usa clipCurveToPolygon (approach 1: ponto-a-ponto booleanPointInPolygon + lineIntersect).
-  // Mais confiável que lineSplit para linhas longas e polígonos complexos.
-  function addRow(distKm,sign){
-    const dir=sign>0?perpBrg:rowBrg-90;
-    const ref=distKm===0?anchor
-      :turf.destination(turf.point(anchor),distKm,dir,{units:'kilometers'}).geometry.coordinates;
-    const p1=turf.destination(turf.point(ref),ext,rowBrg,{units:'kilometers'}).geometry.coordinates;
-    const p2=turf.destination(turf.point(ref),ext,rowBrg+180,{units:'kilometers'}).geometry.coordinates;
-    const clipped=clipCurveToPolygon([p2,ref,p1],turfPoly,polyBound);
+  // Se guia for spline com pontos de controle, usa eles para gerar linhas curvas.
+  // Transladar os pontos de controle (poucos, sem ruído) garante curva suave sem cruzamento.
+  const usarSpline = lineMode==='spline' && lineTempPts.length>=2;
+
+  function clipAndAdd(coords){
+    if(coords.length<2)return false;
+    const n=coords.length;
+    const brgS=n>=2?turf.bearing(turf.point(coords[1]),turf.point(coords[0])):rowBrg+180;
+    const brgE=n>=2?turf.bearing(turf.point(coords[n-2]),turf.point(coords[n-1])):rowBrg;
+    const extS=turf.destination(turf.point(coords[0]),ext,brgS,{units:'kilometers'}).geometry.coordinates;
+    const extE=turf.destination(turf.point(coords[n-1]),ext,brgE,{units:'kilometers'}).geometry.coordinates;
+    const clipped=clipCurveToPolygon([extS,...coords,extE],turfPoly,polyBound);
     if(!clipped||clipped.length<2)return false;
-    // Verificação de segurança: midpoint deve estar dentro
     const mid=clipped[Math.floor(clipped.length/2)];
     if(!turf.booleanPointInPolygon(turf.point(mid),turfPoly))return false;
     offsetLines.push(new google.maps.Polyline({
@@ -718,6 +719,27 @@ function gerarOffset(){
       map,strokeColor:corLinha,strokeWeight:espessura,strokeOpacity:.95,zIndex:10,clickable:false
     }));
     count++;return true;
+  }
+
+  function addRow(distKm,sign){
+    const dir=sign>0?perpBrg:rowBrg-90;
+
+    if(usarSpline){
+      // Curva: translada pontos de controle e regera spline
+      const ctrlOff=lineTempPts.map(pt=>{
+        const [lng,lat]=turf.destination(turf.point([pt.lng(),pt.lat()]),distKm,dir,{units:'kilometers'}).geometry.coordinates;
+        return {lat:()=>lat,lng:()=>lng};
+      });
+      const spCoords=catmullRomSpline(ctrlOff).map(p=>[p.lng,p.lat]);
+      if(clipAndAdd(spCoords))return true;
+    }
+
+    // Reta: linha passando pelo ponto de referência no rowBrg
+    const ref=distKm===0?anchor
+      :turf.destination(turf.point(anchor),distKm,dir,{units:'kilometers'}).geometry.coordinates;
+    const p1=turf.destination(turf.point(ref),ext,rowBrg,{units:'kilometers'}).geometry.coordinates;
+    const p2=turf.destination(turf.point(ref),ext,rowBrg+180,{units:'kilometers'}).geometry.coordinates;
+    return clipAndAdd([p2,ref,p1]);
   }
 
   addRow(0,1);
