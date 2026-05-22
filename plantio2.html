@@ -318,16 +318,9 @@ function gerarLinhas() {
   // Âncora: centróide do polígono
   const anchor = turf.centroid(turfPoly).geometry.coordinates;
 
-  // Extensão perpendicular total projetando todos os vértices
-  let minD=0, maxD=0;
-  turfPoly.geometry.coordinates[0].forEach(v => {
-    const d = turf.distance(turf.point(anchor), turf.point(v), {units:'kilometers'});
-    const b = turf.bearing(turf.point(anchor), turf.point(v));
-    const s = d * Math.cos((b - perpBrg) * Math.PI/180);
-    minD = Math.min(minD, s); maxD = Math.max(maxD, s);
-  });
-  const nPos = Math.ceil(maxD/spacingKm)+1;
-  const nNeg = Math.ceil(-minD/spacingKm)+1;
+  // Range = diagonal completa do bbox — garante cobertura total
+  // independente de onde a guia está posicionada no polígono
+  const nBoth = Math.ceil(ext / 2 / spacingKm) + 2;
 
   let count = 0;
 
@@ -363,10 +356,10 @@ function gerarLinhas() {
       const [lng,lat] = turf.destination(turf.point([pt.lng,pt.lat]), distKm, dir, {units:'kilometers'}).geometry.coordinates;
       return {lat,lng};
     });
-    const sp = catmullRom(ctrlOff, 30);
+    const sp = catmullRom(ctrlOff, 50);
     const spPts = sp.map(p=>[p.lng,p.lat]);
     // Extensão em rowBrg (alcança cantos do polígono)
-    const N=150, extS=[], extE=[];
+    const N=200, extS=[], extE=[];
     for(let i=N;i>=1;i--) extS.push(turf.destination(turf.point(spPts[0]),(i/N)*ext,rowBrg+180,{units:'kilometers'}).geometry.coordinates);
     for(let i=1;i<=N;i++) extE.push(turf.destination(turf.point(spPts[spPts.length-1]),(i/N)*ext,rowBrg,{units:'kilometers'}).geometry.coordinates);
     const allPts=[...extS,...spPts,...extE];
@@ -399,8 +392,8 @@ function gerarLinhas() {
   const addRow = modoGuia==='spline' ? addSplineRow : addRetaRow;
 
   addRow(0,1);
-  for(let n=1;n<=nPos;n++) addRow(n*spacingKm,1);
-  for(let n=1;n<=nNeg;n++) addRow(n*spacingKm,-1);
+  for(let n=1;n<=nBoth;n++) addRow(n*spacingKm,1);
+  for(let n=1;n<=nBoth;n++) addRow(n*spacingKm,-1);
 
   if(count===0){ setStatus('Nenhuma linha gerada. Verifique se a guia cruza o talhão.','err'); return; }
   $('iLinhas').textContent = count;
