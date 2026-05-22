@@ -142,6 +142,30 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
     <button class="btn btn-clr" onclick="limparTudo()" style="margin-top:4px;border-color:#37474f;color:#90a4ae;">&#128465; Limpar Tudo</button>
   </div>
 
+  <div class="sec">
+    <div class="sec-title">5. Curvas de Nível</div>
+    <label>Equidistância</label>
+    <select id="curvaInt" style="width:100%;background:#0f3460;color:#e0e0e0;border:1px solid #1e4a7a;border-radius:5px;padding:6px 8px;font-size:13px;">
+      <option value="0.5">0,5 m</option>
+      <option value="1">1 m</option>
+      <option value="2">2 m</option>
+      <option value="5" selected>5 m</option>
+      <option value="10">10 m</option>
+      <option value="25">25 m</option>
+      <option value="50">50 m</option>
+    </select>
+    <label>Resolução da grade</label>
+    <select id="curvaGrid" style="width:100%;background:#0f3460;color:#e0e0e0;border:1px solid #1e4a7a;border-radius:5px;padding:6px 8px;font-size:13px;">
+      <option value="20">20 × 20 (rápido)</option>
+      <option value="30" selected>30 × 30 (padrão)</option>
+      <option value="40">40 × 40 (detalhado)</option>
+      <option value="50">50 × 50 (fino)</option>
+    </select>
+    <button class="btn" id="btnCurvas" onclick="gerarCurvas()" style="background:#00695c;color:#fff;margin-top:8px;" disabled>&#9652; Gerar Curvas de Nível</button>
+    <button class="btn btn-clr" id="btnLimparCurvas" onclick="limparCurvas()" style="margin-top:4px;display:none;">&#10005; Limpar Curvas</button>
+    <div id="curvaInfo" style="display:none;margin-top:8px;background:#0f3460;border-radius:6px;padding:8px 10px;font-size:11px;line-height:1.8;color:#90a4ae;"></div>
+  </div>
+
   <div class="sec" id="secLegenda" style="display:none;">
     <div class="sec-title">Legenda — Declividade</div>
     <div style="font-size:11px;line-height:2;">
@@ -351,6 +375,7 @@ function fecharPoligono() {
   buildTurfPoly();
   const ha = areaHa(polyPts);
   $('iArea').textContent = ha.toFixed(2) + ' ha';
+  $('btnCurvas').disabled = false;
   setStatus('Contorno fechado: ' + ha.toFixed(2) + ' ha. Desenhe a linha guia.', 'ok');
 }
 
@@ -743,6 +768,172 @@ function aplicarCoresDeclividade(lineInfo, elevs) {
   setStatus(`Declividade classificada em ${totalSegs} segmentos.`, 'ok');
 }
 
+// ── Curvas de Nível ───────────────────────────────────────────────────────────
+let curvaLayers = [];
+let curvaMinElev = 0, curvaMaxElev = 0;
+
+function elevColorCurva(level, mn, mx) {
+  const t = mx > mn ? (level - mn) / (mx - mn) : 0;
+  const stops = [[34,139,34],[107,186,52],[255,215,0],[210,105,30],[139,69,19],[128,0,0]];
+  const n = stops.length - 1;
+  const idx = Math.min(Math.floor(t * n), n - 1);
+  const f = t * n - idx;
+  const a = stops[idx], b = stops[Math.min(idx+1,n)];
+  const r = Math.round(a[0]+(b[0]-a[0])*f);
+  const g = Math.round(a[1]+(b[1]-a[1])*f);
+  const bl= Math.round(a[2]+(b[2]-a[2])*f);
+  return `#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${bl.toString(16).padStart(2,'0')}`;
+}
+
+function ptKey(p) { return `${p.lat.toFixed(7)}_${p.lng.toFixed(7)}`; }
+
+function chainSegments(segs) {
+  if(!segs.length) return [];
+  const adj = new Map();
+  segs.forEach((s,i) => {
+    const k0=ptKey(s[0]), k1=ptKey(s[1]);
+    if(!adj.has(k0)) adj.set(k0,[]);
+    if(!adj.has(k1)) adj.set(k1,[]);
+    adj.get(k0).push({i,end:0}); adj.get(k1).push({i,end:1});
+  });
+  const vis = new Uint8Array(segs.length), chains = [];
+  for(let s=0;s<segs.length;s++) {
+    if(vis[s]) continue; vis[s]=1;
+    const chain=[segs[s][0],segs[s][1]];
+    let ext=true;
+    while(ext){ext=false;const nb=adj.get(ptKey(chain[chain.length-1]))||[];for(const{i,end}of nb){if(!vis[i]){vis[i]=1;chain.push(segs[i][1-end]);ext=true;break;}}}
+    ext=true;
+    while(ext){ext=false;const nb=adj.get(ptKey(chain[0]))||[];for(const{i,end}of nb){if(!vis[i]){vis[i]=1;chain.unshift(segs[i][1-end]);ext=true;break;}}}
+    if(chain.length>=2) chains.push(chain);
+  }
+  return chains;
+}
+
+function marchingSquaresCurva(elev, lts, lns, level) {
+  const rows=elev.length, cols=elev[0].length, segs=[];
+  for(let r=0;r<rows-1;r++) {
+    for(let c=0;c<cols-1;c++) {
+      const tl=elev[r][c],tr=elev[r][c+1],br=elev[r+1][c+1],bl=elev[r+1][c];
+      const ci=((tl>=level?1:0)<<3)|((tr>=level?1:0)<<2)|((br>=level?1:0)<<1)|(bl>=level?1:0);
+      if(ci===0||ci===15) continue;
+      const ip=(la,va,lb,vb)=>Math.abs(vb-va)<1e-10?(la+lb)/2:la+(lb-la)*(level-va)/(vb-va);
+      const T={lat:lts[r],  lng:ip(lns[c],tl,lns[c+1],tr)};
+      const R={lat:ip(lts[r],tr,lts[r+1],br),lng:lns[c+1]};
+      const B={lat:lts[r+1],lng:ip(lns[c],bl,lns[c+1],br)};
+      const L={lat:ip(lts[r],tl,lts[r+1],bl),lng:lns[c]};
+      const ctr=(tl+tr+br+bl)/4;
+      switch(ci){
+        case 1:segs.push([B,L]);break; case 2:segs.push([R,B]);break;
+        case 3:segs.push([R,L]);break; case 4:segs.push([T,R]);break;
+        case 5:if(ctr>=level){segs.push([T,L]);segs.push([R,B]);}else{segs.push([T,R]);segs.push([B,L]);}break;
+        case 6:segs.push([T,B]);break; case 7:segs.push([T,L]);break;
+        case 8:segs.push([T,L]);break; case 9:segs.push([T,B]);break;
+        case 10:if(ctr>=level){segs.push([T,R]);segs.push([B,L]);}else{segs.push([T,L]);segs.push([R,B]);}break;
+        case 11:segs.push([T,R]);break; case 12:segs.push([R,L]);break;
+        case 13:segs.push([R,B]);break; case 14:segs.push([B,L]);break;
+      }
+    }
+  }
+  return chainSegments(segs);
+}
+
+async function gerarCurvas() {
+  if(!turfPoly) { setStatus('Desenhe o contorno primeiro.', 'err'); return; }
+  if(!window.google || !window.google.maps) { setStatus('Chave Google Maps necessária para curvas de nível.','err'); return; }
+
+  limparCurvas();
+  $('btnCurvas').disabled = true;
+  setStatus('Buscando elevações para a grade…', 'info');
+
+  const interval  = parseFloat($('curvaInt').value);
+  const n         = parseInt($('curvaGrid').value);
+  const bbox      = turf.bbox(turfPoly);
+  const [minLng, minLat, maxLng, maxLat] = bbox;
+
+  // Grade regular sobre o bbox
+  const lats = Array.from({length:n}, (_,i) => minLat + i*(maxLat-minLat)/(n-1));
+  const lngs = Array.from({length:n}, (_,j) => minLng + j*(maxLng-minLng)/(n-1));
+
+  const allPts = [];
+  for(let r=0;r<n;r++) for(let c=0;c<n;c++)
+    allPts.push(new google.maps.LatLng(lats[r], lngs[c]));
+
+  // Busca elevações em batches de 512
+  const BATCH=512, elevFlat=new Array(allPts.length);
+  let done=0;
+  const totalBatches=Math.ceil(allPts.length/BATCH);
+  const elevator=new google.maps.ElevationService();
+
+  await new Promise(resolve => {
+    for(let b=0;b<totalBatches;b++){
+      const off=b*BATCH, slice=allPts.slice(off,off+BATCH);
+      elevator.getElevationForLocations({locations:slice},(res,status)=>{
+        if(status==='OK') res.forEach((r,i)=>{ elevFlat[off+i]=r.elevation; });
+        if(++done===totalBatches) resolve();
+      });
+    }
+  });
+
+  // Reorganiza em grade 2D: elevGrid[r][c]
+  const elevGrid = Array.from({length:n}, (_,r) =>
+    Array.from({length:n}, (_,c) => elevFlat[r*n+c] ?? 0));
+
+  const validElevs = elevFlat.filter(v=>v!=null);
+  const minElev = Math.min(...validElevs), maxElev = Math.max(...validElevs);
+  curvaMinElev = minElev; curvaMaxElev = maxElev;
+
+  if(maxElev - minElev < 0.1) {
+    setStatus('Amplitude de elevação muito pequena para gerar curvas.', 'err');
+    $('btnCurvas').disabled = false; return;
+  }
+
+  // Gera curvas com Marching Squares
+  const first = Math.ceil(minElev/interval)*interval;
+  let lineCount = 0;
+  const MASTER_EVERY = 5;
+
+  for(let lv=first; lv<=maxElev; lv+=interval) {
+    const chains = marchingSquaresCurva(elevGrid, lats, lngs, lv);
+    if(!chains.length) continue;
+    const isMaster = Math.round(lv/interval) % MASTER_EVERY === 0;
+    const cor = elevColorCurva(lv, minElev, maxElev);
+
+    chains.forEach(chain => {
+      if(chain.length < 2) return;
+      // Filtra pontos fora do polígono (clipping simples por segmento)
+      const inside = chain.map(p => turf.booleanPointInPolygon(turf.point([p.lng,p.lat]), turfPoly));
+      let seg = [];
+      const flush = () => {
+        if(seg.length >= 2) {
+          curvaLayers.push(L.polyline(seg.map(p=>[p.lat,p.lng]), {
+            color:cor, weight:isMaster?2.5:1.2, opacity:isMaster?0.95:0.75
+          }).addTo(map));
+          lineCount++;
+        }
+        seg = [];
+      };
+      chain.forEach((p,i) => { if(inside[i]) seg.push(p); else flush(); });
+      flush();
+    });
+  }
+
+  $('btnCurvas').disabled = false;
+  $('btnLimparCurvas').style.display = '';
+  $('curvaInfo').style.display = '';
+  $('curvaInfo').innerHTML =
+    `<span style="color:#e2b96e;font-weight:700;">Alt. mín:</span> ${minElev.toFixed(1)} m &nbsp;
+     <span style="color:#e2b96e;font-weight:700;">Alt. máx:</span> ${maxElev.toFixed(1)} m<br>
+     <span style="color:#e2b96e;font-weight:700;">Amplitude:</span> ${(maxElev-minElev).toFixed(1)} m &nbsp;
+     <span style="color:#e2b96e;font-weight:700;">Curvas:</span> ${lineCount}`;
+  setStatus(`${lineCount} curvas de nível geradas (${minElev.toFixed(1)}–${maxElev.toFixed(1)} m).`, 'ok');
+}
+
+function limparCurvas() {
+  curvaLayers.forEach(l=>l.remove()); curvaLayers=[];
+  $('btnLimparCurvas').style.display='none';
+  $('curvaInfo').style.display='none';
+}
+
 // ── Exportar KML ──────────────────────────────────────────────────────────────
 function exportarKML() {
   let kml = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document>\n`;
@@ -793,6 +984,8 @@ function limparPoligono() {
   if(polyTempLine){polyTempLine.remove();polyTempLine=null;}
   turfPoly=null; turfBound=null;
   $('iArea').textContent='—';
+  $('btnCurvas').disabled=true;
+  limparCurvas();
 }
 function limparTudo() {
   limparLinhas(); limparGuia(); limparPoligono();
