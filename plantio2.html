@@ -374,11 +374,6 @@ function gerarLinhas() {
   );
   const perpBrg = rowBrgGlobal + 90;
 
-  // Spline da guia densificada — usada para calcular tangente local em modo suave
-  const gSpline = modoGuia === 'spline'
-    ? catmullRom(gp.map(p => ({lat:p.lat, lng:p.lng})), 60)
-    : gp.map(p => ({lat:p.lat, lng:p.lng}));
-
   // Extensão: 2× diagonal do bbox
   const bbox = turf.bbox(turfPoly);
   const ext = turf.distance(turf.point([bbox[0],bbox[1]]), turf.point([bbox[2],bbox[3]])) * 2;
@@ -391,31 +386,13 @@ function gerarLinhas() {
 
   let count = 0;
 
-  // Tangente local da guia no ponto mais próximo ao ref (para modo suave)
-  function localBrg(refPt) {
-    if(modoGuia === 'reta' || gSpline.length < 2) return rowBrgGlobal;
-    let minD = Infinity, best = 0;
-    gSpline.forEach((pt, i) => {
-      const d = turf.distance(turf.point(refPt), turf.point([pt.lng, pt.lat]), {units:'kilometers'});
-      if(d < minD) { minD = d; best = i; }
-    });
-    const i0 = Math.max(0, best - 1);
-    const i1 = Math.min(gSpline.length - 1, best + 1);
-    return turf.bearing(
-      turf.point([gSpline[i0].lng, gSpline[i0].lat]),
-      turf.point([gSpline[i1].lng, gSpline[i1].lat])
-    );
-  }
-
-  // Cada linha é sempre uma reta (lineIntersect exato → sem saída do polígono)
-  // Em modo suave: a direção da reta varia suavemente seguindo a tangente da guia
-  function addRow(projKm) {
+  // MODO RETA — linha reta via lineIntersect, sempre dentro do polígono
+  function addRetaRow(projKm) {
     const dir = projKm >= 0 ? perpBrg : perpBrg + 180;
     const ref = Math.abs(projKm) < 1e-9 ? anchor
       : turf.destination(turf.point(anchor), Math.abs(projKm), dir, {units:'kilometers'}).geometry.coordinates;
-    const brg = localBrg(ref);
-    const p1 = turf.destination(turf.point(ref), ext, brg,       {units:'kilometers'}).geometry.coordinates;
-    const p2 = turf.destination(turf.point(ref), ext, brg + 180, {units:'kilometers'}).geometry.coordinates;
+    const p1 = turf.destination(turf.point(ref), ext, rowBrgGlobal,       {units:'kilometers'}).geometry.coordinates;
+    const p2 = turf.destination(turf.point(ref), ext, rowBrgGlobal + 180, {units:'kilometers'}).geometry.coordinates;
     try {
       const ixs = turf.lineIntersect(turf.lineString([p2, p1]), turfBound);
       if(!ixs.features.length) return false;
@@ -428,12 +405,53 @@ function gerarLinhas() {
         const mid = [(s[0]+e[0])/2, (s[1]+e[1])/2];
         if(!turf.booleanPointInPolygon(turf.point(mid), turfPoly)) continue;
         const pl = L.polyline([[s[1],s[0]], [e[1],e[0]]], {color:cor, weight:esp, opacity:.95}).addTo(map);
-        linhas.push(pl);
-        count++; added++;
+        linhas.push(pl); count++; added++;
       }
       return added > 0;
     } catch(e) { return false; }
   }
+
+  // MODO SUAVE — translada pontos de controle perpendicularmente → catmullRom
+  // Clipping por sampling + lineIntersect exato nas transições
+  function addSplineRow(projKm) {
+    const dir = projKm >= 0 ? perpBrg : perpBrg + 180;
+    const ctrlOff = gp.map(pt => {
+      if(Math.abs(projKm) < 1e-9) return {lat:pt.lat, lng:pt.lng};
+      const [lng,lat] = turf.destination(turf.point([pt.lng,pt.lat]), Math.abs(projKm), dir, {units:'kilometers'}).geometry.coordinates;
+      return {lat, lng};
+    });
+    const sp = catmullRom(ctrlOff, 60);
+    const spPts = sp.map(p => [p.lng, p.lat]);
+    const N = 200, extS = [], extE = [];
+    for(let i = N; i >= 1; i--) extS.push(turf.destination(turf.point(spPts[0]), (i/N)*ext, rowBrgGlobal+180, {units:'kilometers'}).geometry.coordinates);
+    for(let i = 1; i <= N; i++) extE.push(turf.destination(turf.point(spPts[spPts.length-1]), (i/N)*ext, rowBrgGlobal, {units:'kilometers'}).geometry.coordinates);
+    const allPts = [...extS, ...spPts, ...extE];
+    let seg = null, added = 0;
+    const flush = () => {
+      if(seg && seg.length >= 2) {
+        const pl = L.polyline(seg.map(p => [p[1],p[0]]), {color:cor, weight:esp, opacity:.95}).addTo(map);
+        linhas.push(pl); count++; added++;
+      }
+      seg = null;
+    };
+    for(let i = 0; i < allPts.length; i++) {
+      const inside = turf.booleanPointInPolygon(turf.point(allPts[i]), turfPoly);
+      if(inside) {
+        if(!seg) {
+          seg = [];
+          if(i > 0) { try { const ix = turf.lineIntersect(turf.lineString([allPts[i-1],allPts[i]]),turfBound); if(ix.features.length) seg.push(ix.features[0].geometry.coordinates); } catch(e){} }
+        }
+        seg.push(allPts[i]);
+      } else if(seg) {
+        try { const ix = turf.lineIntersect(turf.lineString([allPts[i-1],allPts[i]]),turfBound); if(ix.features.length) seg.push(ix.features[0].geometry.coordinates); } catch(e){}
+        flush();
+      }
+    }
+    flush();
+    return added > 0;
+  }
+
+  const addRow = modoGuia === 'spline' ? addSplineRow : addRetaRow;
 
   addRow(0);
   for(let n = 1; n <= nBoth; n++) addRow( n * spacingKm);
