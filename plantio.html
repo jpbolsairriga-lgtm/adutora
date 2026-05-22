@@ -739,37 +739,33 @@ function gerarOffset(){
 
   function addRow(distKm, sign){
     const dir = sign>0 ? perpBrg : rowBrg-90;
-    let pts;
 
     if(lineMode==='spline' && lineTempPts.length>=2){
-      // SPLINE: translada pontos de controle, regera spline, estende nas extremidades
+      // SPLINE: translada pontos de controle, regera spline
       const ctrlOff=lineTempPts.map(pt=>{
         const [lng,lat]=turf.destination(turf.point([pt.lng(),pt.lat()]),distKm,dir,{units:'kilometers'}).geometry.coordinates;
         return {lat:()=>lat,lng:()=>lng};
       });
       const sp=catmullRomSpline(ctrlOff,30);
       const spPts=sp.map(p=>[p.lng,p.lat]);
-      // Estende nas extremidades na direção rowBrg (direção das linhas)
-      // para garantir que alcança os cantos do polígono
+      // Extensão em rowBrg para alcançar os cantos do polígono
       const extS=[],extE=[];
       for(let i=N_EXT;i>=1;i--)
         extS.push(turf.destination(turf.point(spPts[0]),(i/N_EXT)*ext,rowBrg+180,{units:'kilometers'}).geometry.coordinates);
       for(let i=1;i<=N_EXT;i++)
         extE.push(turf.destination(turf.point(spPts[spPts.length-1]),(i/N_EXT)*ext,rowBrg,{units:'kilometers'}).geometry.coordinates);
-      pts=[...extS,...spPts,...extE];
-      const splineAdded=emitSegments(pts);
-      if(splineAdded>0)return true;
-      // Spline não tocou o polígono nessa posição → usa linha reta
+      if(emitSegments([...extS,...spPts,...extE])>0) return true;
     }
-    // RETA: fallback ou modo padrão — N amostras ao longo de rowBrg
+
+    // RETA: fallback ou modo padrão
     const ref=distKm===0?anchor
       :turf.destination(turf.point(anchor),distKm,dir,{units:'kilometers'}).geometry.coordinates;
-    const pts=[];
+    const rowPts=[];
     for(let i=0;i<=N_STR;i++){
       const t=((i/N_STR)-0.5)*2*ext;
-      pts.push(turf.destination(turf.point(ref),t,rowBrg,{units:'kilometers'}).geometry.coordinates);
+      rowPts.push(turf.destination(turf.point(ref),t,rowBrg,{units:'kilometers'}).geometry.coordinates);
     }
-    return emitSegments(pts)>0;
+    return emitSegments(rowPts)>0;
   }
 
   addRow(0,1);
