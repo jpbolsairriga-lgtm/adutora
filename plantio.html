@@ -699,27 +699,16 @@ function gerarOffset(){
   setStatus('stOffset','Gerando linhas...','info');
   let count=0;
 
-  // Sampling + intersecção exata na borda:
-  // 1. Amostra N pontos ao longo da linha reta (direção da guia)
-  // 2. Verifica cada ponto com booleanPointInPolygon
-  // 3. Nas transições dentro/fora, usa lineIntersect para ponto exato na borda
-  // Resultado: linhas paralelas que tocam exatamente o contorno do polígono.
-  const N = 400;
+  // Sampling + intersecção exata na borda.
+  // Funciona igual para linhas retas e curvas (spline).
+  // booleanPointInPolygon por ponto + lineIntersect exato na transição.
+  const N_STR = 400; // amostras para linha reta
+  const N_EXT = 50;  // amostras de extensão além dos extremos do spline
 
-  function addRow(distKm, sign){
-    const dir = sign>0 ? perpBrg : rowBrg-90;
-    const ref = distKm===0 ? anchor
-      : turf.destination(turf.point(anchor),distKm,dir,{units:'kilometers'}).geometry.coordinates;
-
-    // Gera N amostras de -ext a +ext ao longo de rowBrg
-    const pts=[];
-    for(let i=0;i<=N;i++){
-      const t=((i/N)-0.5)*2*ext;
-      pts.push(turf.destination(turf.point(ref),t,rowBrg,{units:'kilometers'}).geometry.coordinates);
-    }
-
+  // Percorre array de pontos, agrupa os de dentro em segmentos e emite Polylines.
+  function emitSegments(pts){
     let seg=null, added=0;
-    const flushSeg=()=>{
+    const flush=()=>{
       if(seg&&seg.length>=2){
         offsetLines.push(new google.maps.Polyline({
           path:seg.map(p=>({lat:p[1],lng:p[0]})),
@@ -729,32 +718,58 @@ function gerarOffset(){
       }
       seg=null;
     };
-
-    for(let i=0;i<=N;i++){
+    for(let i=0;i<pts.length;i++){
       const inside=turf.booleanPointInPolygon(turf.point(pts[i]),turfPoly);
       if(inside){
         if(!seg){
           seg=[];
-          // Transição fora→dentro: encontra ponto exato na borda
-          if(i>0){
-            try{
-              const ixs=turf.lineIntersect(turf.lineString([pts[i-1],pts[i]]),polyBound);
-              if(ixs.features.length>0) seg.push(ixs.features[0].geometry.coordinates);
-            }catch(e){}
-          }
+          if(i>0){try{const ix=turf.lineIntersect(turf.lineString([pts[i-1],pts[i]]),polyBound);
+            if(ix.features.length>0)seg.push(ix.features[0].geometry.coordinates);}catch(e){}}
         }
         seg.push(pts[i]);
       } else if(seg){
-        // Transição dentro→fora: encontra ponto exato na borda
-        try{
-          const ixs=turf.lineIntersect(turf.lineString([pts[i-1],pts[i]]),polyBound);
-          if(ixs.features.length>0) seg.push(ixs.features[0].geometry.coordinates);
-        }catch(e){}
-        flushSeg();
+        try{const ix=turf.lineIntersect(turf.lineString([pts[i-1],pts[i]]),polyBound);
+          if(ix.features.length>0)seg.push(ix.features[0].geometry.coordinates);}catch(e){}
+        flush();
       }
     }
-    flushSeg(); // última linha se terminar dentro
-    return added>0;
+    flush();
+    return added;
+  }
+
+  function addRow(distKm, sign){
+    const dir = sign>0 ? perpBrg : rowBrg-90;
+    let pts;
+
+    if(lineMode==='spline' && lineTempPts.length>=2){
+      // SPLINE: translada pontos de controle, regera spline, estende nas extremidades
+      const ctrlOff=lineTempPts.map(pt=>{
+        const [lng,lat]=turf.destination(turf.point([pt.lng(),pt.lat()]),distKm,dir,{units:'kilometers'}).geometry.coordinates;
+        return {lat:()=>lat,lng:()=>lng};
+      });
+      const sp=catmullRomSpline(ctrlOff,30);
+      const spPts=sp.map(p=>[p.lng,p.lat]);
+      // Extensão nas extremidades seguindo a tangente do spline
+      const b0=turf.bearing(turf.point(spPts[Math.min(1,spPts.length-1)]),turf.point(spPts[0]));
+      const bN=turf.bearing(turf.point(spPts[Math.max(0,spPts.length-2)]),turf.point(spPts[spPts.length-1]));
+      const extS=[],extE=[];
+      for(let i=N_EXT;i>=1;i--)
+        extS.push(turf.destination(turf.point(spPts[0]),(i/N_EXT)*ext,b0,{units:'kilometers'}).geometry.coordinates);
+      for(let i=1;i<=N_EXT;i++)
+        extE.push(turf.destination(turf.point(spPts[spPts.length-1]),(i/N_EXT)*ext,bN,{units:'kilometers'}).geometry.coordinates);
+      pts=[...extS,...spPts,...extE];
+    } else {
+      // RETA: N amostras ao longo de rowBrg a partir do ponto de referência
+      const ref=distKm===0?anchor
+        :turf.destination(turf.point(anchor),distKm,dir,{units:'kilometers'}).geometry.coordinates;
+      pts=[];
+      for(let i=0;i<=N_STR;i++){
+        const t=((i/N_STR)-0.5)*2*ext;
+        pts.push(turf.destination(turf.point(ref),t,rowBrg,{units:'kilometers'}).geometry.coordinates);
+      }
+    }
+
+    return emitSegments(pts)>0;
   }
 
   addRow(0,1);
