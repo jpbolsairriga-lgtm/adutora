@@ -749,26 +749,26 @@ function gerarOffset(){
       });
       const sp=catmullRomSpline(ctrlOff,30);
       const spPts=sp.map(p=>[p.lng,p.lat]);
-      // Extensão nas extremidades seguindo a tangente do spline
-      const b0=turf.bearing(turf.point(spPts[Math.min(1,spPts.length-1)]),turf.point(spPts[0]));
-      const bN=turf.bearing(turf.point(spPts[Math.max(0,spPts.length-2)]),turf.point(spPts[spPts.length-1]));
+      // Estende nas extremidades na direção rowBrg (direção das linhas)
+      // para garantir que alcança os cantos do polígono
       const extS=[],extE=[];
       for(let i=N_EXT;i>=1;i--)
-        extS.push(turf.destination(turf.point(spPts[0]),(i/N_EXT)*ext,b0,{units:'kilometers'}).geometry.coordinates);
+        extS.push(turf.destination(turf.point(spPts[0]),(i/N_EXT)*ext,rowBrg+180,{units:'kilometers'}).geometry.coordinates);
       for(let i=1;i<=N_EXT;i++)
-        extE.push(turf.destination(turf.point(spPts[spPts.length-1]),(i/N_EXT)*ext,bN,{units:'kilometers'}).geometry.coordinates);
+        extE.push(turf.destination(turf.point(spPts[spPts.length-1]),(i/N_EXT)*ext,rowBrg,{units:'kilometers'}).geometry.coordinates);
       pts=[...extS,...spPts,...extE];
-    } else {
-      // RETA: N amostras ao longo de rowBrg a partir do ponto de referência
-      const ref=distKm===0?anchor
-        :turf.destination(turf.point(anchor),distKm,dir,{units:'kilometers'}).geometry.coordinates;
-      pts=[];
-      for(let i=0;i<=N_STR;i++){
-        const t=((i/N_STR)-0.5)*2*ext;
-        pts.push(turf.destination(turf.point(ref),t,rowBrg,{units:'kilometers'}).geometry.coordinates);
-      }
+      const splineAdded=emitSegments(pts);
+      if(splineAdded>0)return true;
+      // Spline não tocou o polígono nessa posição → usa linha reta
     }
-
+    // RETA: fallback ou modo padrão — N amostras ao longo de rowBrg
+    const ref=distKm===0?anchor
+      :turf.destination(turf.point(anchor),distKm,dir,{units:'kilometers'}).geometry.coordinates;
+    const pts=[];
+    for(let i=0;i<=N_STR;i++){
+      const t=((i/N_STR)-0.5)*2*ext;
+      pts.push(turf.destination(turf.point(ref),t,rowBrg,{units:'kilometers'}).geometry.coordinates);
+    }
     return emitSegments(pts)>0;
   }
 
