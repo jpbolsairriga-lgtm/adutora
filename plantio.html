@@ -699,47 +699,64 @@ function gerarOffset(){
   setStatus('stOffset','Gerando linhas...','info');
   let count=0;
 
-  // Se guia for spline com pontos de controle, usa eles para gerar linhas curvas.
-  // Transladar os pontos de controle (poucos, sem ruído) garante curva suave sem cruzamento.
+  // Abordagem por amostragem: para cada linha, amostra N pontos e verifica quais
+  // estão dentro do polígono. Cria segmentos dos pontos consecutivos que estão dentro.
+  // Funciona para qualquer polígono e qualquer linha (reta ou curva). Zero clip exótico.
   const usarSpline = lineMode==='spline' && lineTempPts.length>=2;
+  const N_SAMPLES = 600; // resolução: 2*ext/600 ≈ 5m por amostra
 
-  function clipAndAdd(coords){
-    if(coords.length<2)return false;
-    const n=coords.length;
-    const brgS=n>=2?turf.bearing(turf.point(coords[1]),turf.point(coords[0])):rowBrg+180;
-    const brgE=n>=2?turf.bearing(turf.point(coords[n-2]),turf.point(coords[n-1])):rowBrg;
-    const extS=turf.destination(turf.point(coords[0]),ext,brgS,{units:'kilometers'}).geometry.coordinates;
-    const extE=turf.destination(turf.point(coords[n-1]),ext,brgE,{units:'kilometers'}).geometry.coordinates;
-    const clipped=clipCurveToPolygon([extS,...coords,extE],turfPoly,polyBound);
-    if(!clipped||clipped.length<2)return false;
-    const mid=clipped[Math.floor(clipped.length/2)];
-    if(!turf.booleanPointInPolygon(turf.point(mid),turfPoly))return false;
-    offsetLines.push(new google.maps.Polyline({
-      path:clipped.map(c=>({lat:c[1],lng:c[0]})),
-      map,strokeColor:corLinha,strokeWeight:espessura,strokeOpacity:.95,zIndex:10,clickable:false
-    }));
-    count++;return true;
+  function addFromSamples(samples){
+    // samples: [[lng,lat], ...]
+    let inSeg=false, segPts=[], added=0;
+    const flush=()=>{
+      if(segPts.length>=2){
+        offsetLines.push(new google.maps.Polyline({
+          path:segPts.map(p=>({lat:p[1],lng:p[0]})),
+          map,strokeColor:corLinha,strokeWeight:espessura,strokeOpacity:.95,zIndex:10,clickable:false
+        }));
+        count++;added++;
+      }
+      segPts=[];inSeg=false;
+    };
+    for(const pt of samples){
+      if(turf.booleanPointInPolygon(turf.point(pt),turfPoly)){
+        inSeg=true;segPts.push(pt);
+      } else if(inSeg) flush();
+    }
+    if(inSeg)flush();
+    return added>0;
   }
 
   function addRow(distKm,sign){
     const dir=sign>0?perpBrg:rowBrg-90;
 
     if(usarSpline){
-      // Curva: translada pontos de controle e regera spline
+      // Spline: translada pontos de controle e amostra ao longo do spline resultante
       const ctrlOff=lineTempPts.map(pt=>{
         const [lng,lat]=turf.destination(turf.point([pt.lng(),pt.lat()]),distKm,dir,{units:'kilometers'}).geometry.coordinates;
         return {lat:()=>lat,lng:()=>lng};
       });
-      const spCoords=catmullRomSpline(ctrlOff).map(p=>[p.lng,p.lat]);
-      if(clipAndAdd(spCoords))return true;
+      const spline=catmullRomSpline(ctrlOff,40); // 40 segmentos por intervalo = suave
+      // Estende o spline nos extremos para alcançar a borda do polígono
+      const sp0=spline[0],sp1=spline[1]||sp0;
+      const spN=spline[spline.length-1],spN1=spline[spline.length-2]||spN;
+      const bS=turf.bearing(turf.point([sp1.lng,sp1.lat]),turf.point([sp0.lng,sp0.lat]));
+      const bE=turf.bearing(turf.point([spN1.lng,spN1.lat]),turf.point([spN.lng,spN.lat]));
+      const eS=turf.destination(turf.point([sp0.lng,sp0.lat]),ext,bS,{units:'kilometers'}).geometry.coordinates;
+      const eE=turf.destination(turf.point([spN.lng,spN.lat]),ext,bE,{units:'kilometers'}).geometry.coordinates;
+      const samples=[eS,...spline.map(p=>[p.lng,p.lat]),eE];
+      if(addFromSamples(samples))return true;
     }
 
-    // Reta: linha passando pelo ponto de referência no rowBrg
+    // Reta: N_SAMPLES pontos ao longo de uma linha reta em rowBrg
     const ref=distKm===0?anchor
       :turf.destination(turf.point(anchor),distKm,dir,{units:'kilometers'}).geometry.coordinates;
-    const p1=turf.destination(turf.point(ref),ext,rowBrg,{units:'kilometers'}).geometry.coordinates;
-    const p2=turf.destination(turf.point(ref),ext,rowBrg+180,{units:'kilometers'}).geometry.coordinates;
-    return clipAndAdd([p2,ref,p1]);
+    const samples=[];
+    for(let i=0;i<=N_SAMPLES;i++){
+      const t=(i/N_SAMPLES-0.5)*2; // -1 a 1
+      samples.push(turf.destination(turf.point(ref),t*ext,rowBrg,{units:'kilometers'}).geometry.coordinates);
+    }
+    return addFromSamples(samples);
   }
 
   addRow(0,1);
