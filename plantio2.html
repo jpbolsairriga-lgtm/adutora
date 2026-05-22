@@ -118,8 +118,20 @@ input[type=color]{height:32px;padding:2px 4px;cursor:pointer;}
     <div class="sec-title">4. Gerar</div>
     <button class="btn btn-gen" id="btnGerar" onclick="gerarLinhas()" disabled>&#10038; Gerar Linhas de Plantio</button>
     <button class="btn btn-kml" id="btnKml" onclick="exportarKML()" style="display:none;margin-top:4px;">&#128462; Exportar KML</button>
+    <button class="btn" id="btnDecliv" onclick="classificarDeclividade()" style="background:#4a148c;color:#fff;display:none;margin-top:4px;">&#9650; Classificar Declividade</button>
     <button class="btn btn-clr" onclick="limparLinhas()" style="margin-top:4px;">&#10005; Limpar Linhas</button>
     <button class="btn btn-clr" onclick="limparTudo()" style="margin-top:4px;border-color:#37474f;color:#90a4ae;">&#128465; Limpar Tudo</button>
+  </div>
+
+  <div class="sec" id="secLegenda" style="display:none;">
+    <div class="sec-title">Legenda — Declividade</div>
+    <div style="font-size:11px;line-height:2;">
+      <span style="display:inline-block;width:12px;height:12px;background:#4CAF50;border-radius:2px;vertical-align:middle;margin-right:5px;"></span>0 – 3% &nbsp; Mecanização total<br>
+      <span style="display:inline-block;width:12px;height:12px;background:#FFEB3B;border-radius:2px;vertical-align:middle;margin-right:5px;"></span>3 – 8% &nbsp; Terraços recomendados<br>
+      <span style="display:inline-block;width:12px;height:12px;background:#FF9800;border-radius:2px;vertical-align:middle;margin-right:5px;"></span>8 – 12% &nbsp; Terraços obrigatórios<br>
+      <span style="display:inline-block;width:12px;height:12px;background:#F44336;border-radius:2px;vertical-align:middle;margin-right:5px;"></span>12 – 20% &nbsp; Mecanização limitada<br>
+      <span style="display:inline-block;width:12px;height:12px;background:#9C27B0;border-radius:2px;vertical-align:middle;margin-right:5px;"></span>&gt; 20% &nbsp; Preservação
+    </div>
   </div>
 
   <div class="sec">
@@ -543,7 +555,71 @@ function gerarLinhas() {
   $('iLinhas').textContent = count;
   $('iEspac').textContent = spacing + ' m';
   $('btnKml').style.display = 'flex';
+  $('btnDecliv').style.display = 'flex';
   setStatus(count + ' linhas geradas com espaçamento de ' + spacing + ' m.', 'ok');
+}
+
+// ── Declividade ───────────────────────────────────────────────────────────────
+function slopeColor(pct) {
+  const s = Math.abs(pct);
+  if(s < 3)  return '#4CAF50';
+  if(s < 8)  return '#FFEB3B';
+  if(s < 12) return '#FF9800';
+  if(s < 20) return '#F44336';
+  return '#9C27B0';
+}
+
+function classificarDeclividade() {
+  if(!linhas.length) { setStatus('Gere as linhas primeiro.', 'err'); return; }
+  if(!window.google || !window.google.maps) {
+    setStatus('Ative o Google Maps (chave API) para usar a classificação de declividade.', 'err'); return;
+  }
+
+  setStatus('Buscando elevações…', 'info');
+  $('btnDecliv').disabled = true;
+
+  const elevator = new google.maps.ElevationService();
+
+  // Coleta início e fim de cada linha
+  const validLines = [];
+  const allPts = [];
+  linhas.forEach((pl, li) => {
+    const pts = pl.getLatLngs().flat();
+    if(pts.length < 2) return;
+    validLines.push({li, p0: pts[0], p1: pts[pts.length-1]});
+    allPts.push(new google.maps.LatLng(pts[0].lat, pts[0].lng));
+    allPts.push(new google.maps.LatLng(pts[pts.length-1].lat, pts[pts.length-1].lng));
+  });
+
+  // Processa em batches de 512 pontos
+  const BATCH = 512;
+  const elevs = [];
+  let done = 0;
+  const total = Math.ceil(allPts.length / BATCH);
+
+  for(let b = 0; b < total; b++) {
+    const slice = allPts.slice(b * BATCH, (b+1) * BATCH);
+    elevator.getElevationForLocations({locations: slice}, (res, status) => {
+      if(status === 'OK') res.forEach((r, i) => { elevs[b * BATCH + i] = r.elevation; });
+      if(++done === total) aplicarCoresDeclividade(validLines, elevs);
+    });
+  }
+}
+
+function aplicarCoresDeclividade(validLines, elevs) {
+  let ok = 0;
+  validLines.forEach(({li, p0, p1}, i) => {
+    const e0 = elevs[i*2], e1 = elevs[i*2+1];
+    if(e0 == null || e1 == null) return;
+    const distM = haversineM(p0, p1);
+    if(distM < 0.5) return;
+    const slope = Math.abs((e1 - e0) / distM) * 100;
+    linhas[li].setStyle({color: slopeColor(slope), weight: 2, opacity: 1});
+    ok++;
+  });
+  $('secLegenda').style.display = '';
+  $('btnDecliv').disabled = false;
+  setStatus(`Declividade classificada em ${ok} linhas.`, 'ok');
 }
 
 // ── Exportar KML ──────────────────────────────────────────────────────────────
@@ -577,6 +653,8 @@ function limparLinhas() {
   linhas.forEach(l=>l.remove()); linhas=[];
   $('iLinhas').textContent='—'; $('iEspac').textContent='—';
   $('btnKml').style.display='none';
+  $('btnDecliv').style.display='none';
+  $('secLegenda').style.display='none';
 }
 function limparGuia() {
   guideMarkers.forEach(m=>m.remove()); guideMarkers=[];
