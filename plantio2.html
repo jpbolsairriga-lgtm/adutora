@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Traçado de Plantio</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{display:flex;height:100vh;font-family:'Segoe UI',sans-serif;background:#1a1a2e;}
+#sidebar{width:270px;min-width:270px;background:#16213e;color:#e0e0e0;display:flex;flex-direction:column;overflow-y:auto;z-index:1000;}
+#map{flex:1;position:relative;}
+.logo{padding:14px 16px 10px;border-bottom:1px solid #0f3460;}
+.logo h1{font-size:15px;color:#e2b96e;letter-spacing:.04em;}
+.logo p{font-size:11px;color:#7a8499;margin-top:2px;}
+.sec{padding:12px 14px;border-bottom:1px solid #0f3460;}
+.sec-title{font-size:10px;font-weight:700;letter-spacing:.1em;color:#7a8499;text-transform:uppercase;margin-bottom:8px;}
+.btn{display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;transition:.15s;margin-bottom:5px;text-align:left;}
+.btn:last-child{margin-bottom:0;}
+.btn-poly{background:#1565c0;color:#fff;}
+.btn-poly:hover{background:#1976d2;}
+.btn-poly.active{background:#42a5f5;color:#fff;box-shadow:0 0 0 2px #90caf9;}
+.btn-guide{background:#e65100;color:#fff;}
+.btn-guide:hover{background:#ef6c00;}
+.btn-guide.active{background:#ff8f00;color:#fff;box-shadow:0 0 0 2px #ffcc02;}
+.btn-gen{background:#1b5e20;color:#fff;}
+.btn-gen:hover{background:#2e7d32;}
+.btn-gen:disabled{background:#37474f;color:#607d8b;cursor:not-allowed;}
+.btn-clr{background:transparent;color:#ef9a9a;border:1px solid #c62828;}
+.btn-clr:hover{background:#c62828;color:#fff;}
+.btn-kml{background:#4a148c;color:#fff;}
+.btn-kml:hover{background:#6a1b9a;}
+.btn-finish{background:#00695c;color:#fff;display:none;}
+.btn-finish:hover{background:#00897b;}
+label{display:block;font-size:11px;color:#90a4ae;margin-bottom:3px;margin-top:8px;}
+label:first-child{margin-top:0;}
+input[type=number],input[type=color],select{width:100%;background:#0f3460;color:#e0e0e0;border:1px solid #1e4a7a;border-radius:5px;padding:6px 8px;font-size:13px;}
+input[type=color]{height:32px;padding:2px 4px;cursor:pointer;}
+.row2{display:flex;gap:8px;}
+.row2>div{flex:1;}
+.info-box{background:#0f3460;border-radius:6px;padding:10px;font-size:12px;}
+.info-row{display:flex;justify-content:space-between;margin-bottom:4px;}
+.info-row:last-child{margin-bottom:0;}
+.info-label{color:#78909c;}
+.info-val{color:#e2b96e;font-weight:700;}
+#status{padding:8px 14px;font-size:12px;min-height:34px;border-top:1px solid #0f3460;color:#90a4ae;}
+#status.ok{color:#a5d6a7;}
+#status.err{color:#ef9a9a;}
+#status.info{color:#81d4fa;}
+/* Leaflet overrides */
+.leaflet-container{background:#111;}
+.vertex-marker{width:10px;height:10px;background:#fff;border:2px solid #1565c0;border-radius:50%;cursor:grab;margin:-5px 0 0 -5px;}
+.vertex-marker.guide{border-color:#e65100;}
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <div class="logo">
+    <h1>&#9874; Traçado de Plantio</h1>
+    <p>Bolsa Irriga · João Paulo de Oliveira</p>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title">1. Talhão</div>
+    <button class="btn btn-poly" id="btnPoly" onclick="iniciarPoligono()">&#9632; Desenhar Contorno</button>
+    <button class="btn btn-finish" id="btnFechar" onclick="fecharPoligono()">&#10003; Fechar Contorno</button>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title">2. Linha Guia</div>
+    <div class="row2" style="margin-bottom:6px;">
+      <button class="btn" id="btnModoReta" onclick="setModoGuia('reta')" style="background:#37474f;font-size:12px;">&#9135; Reta</button>
+      <button class="btn" id="btnModoSpline" onclick="setModoGuia('spline')" style="background:#37474f;font-size:12px;">&#12316; Suave</button>
+    </div>
+    <button class="btn btn-guide" id="btnGuia" onclick="iniciarGuia()">&#9998; Desenhar Guia</button>
+    <button class="btn btn-finish" id="btnFinGuia" onclick="finalizarGuia()">&#10003; Finalizar Guia</button>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title">3. Configurações</div>
+    <label>Espaçamento entre linhas</label>
+    <div class="row2"><div><input type="number" id="espac" value="12" min="1" max="500" step="0.5"> </div><div style="display:flex;align-items:center;padding-left:4px;font-size:12px;color:#78909c;">metros</div></div>
+    <div class="row2">
+      <div><label>Cor</label><input type="color" id="corLinha" value="#FFD600"></div>
+      <div><label>Espessura</label><input type="number" id="espess" value="1.5" min="0.5" max="8" step="0.5"></div>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title">4. Gerar</div>
+    <button class="btn btn-gen" id="btnGerar" onclick="gerarLinhas()" disabled>&#10038; Gerar Linhas de Plantio</button>
+    <button class="btn btn-kml" id="btnKml" onclick="exportarKML()" style="display:none;margin-top:4px;">&#128462; Exportar KML</button>
+    <button class="btn btn-clr" onclick="limparLinhas()" style="margin-top:4px;">&#10005; Limpar Linhas</button>
+    <button class="btn btn-clr" onclick="limparTudo()" style="margin-top:4px;border-color:#37474f;color:#90a4ae;">&#128465; Limpar Tudo</button>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title">Informações</div>
+    <div class="info-box">
+      <div class="info-row"><span class="info-label">Área:</span><span class="info-val" id="iArea">—</span></div>
+      <div class="info-row"><span class="info-label">Linhas:</span><span class="info-val" id="iLinhas">—</span></div>
+      <div class="info-row"><span class="info-label">Espaçamento:</span><span class="info-val" id="iEspac">—</span></div>
+    </div>
+  </div>
+
+  <div id="status">Desenhe o contorno do talhão para começar.</div>
+</div>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+<script>
+// ── Mapa ──────────────────────────────────────────────────────────────────────
+const map = L.map('map', {zoomControl: true, doubleClickZoom: false}).setView([-21, -52], 13);
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  attribution: 'Tiles © Esri — Source: Esri, Maxar, GeoEye, Earthstar Geographics',
+  maxZoom: 21
+}).addTo(map);
+
+// ── Estado ───────────────────────────────────────────────────────────────────
+let modo = 'idle'; // 'poly' | 'guide' | 'idle'
+let modoGuia = 'reta'; // 'reta' | 'spline'
+let polyPts = [], polyMarkers = [], polyLayer = null, polyTempLine = null;
+let guidePts = [], guideMarkers = [], guideLayer = null;
+let linhas = [];
+let turfPoly = null, turfBound = null;
+
+// ── Utilitários ───────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+function setStatus(msg, tipo = '') {
+  const el = $('status');
+  el.textContent = msg;
+  el.className = tipo;
+}
+function mkIcon(cls) {
+  return L.divIcon({className: cls, iconSize: [10,10], iconAnchor: [5,5]});
+}
+function haversineM(a, b) {
+  const R=6371000, dLat=(b.lat-a.lat)*Math.PI/180, dLng=(b.lng-a.lng)*Math.PI/180;
+  const s=Math.sin(dLat/2)**2+Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.sin(dLng/2)**2;
+  return R*2*Math.atan2(Math.sqrt(s),Math.sqrt(1-s));
+}
+function areaHa(pts) {
+  if(pts.length < 3) return 0;
+  const coords = pts.map(p => [p.lng, p.lat]);
+  coords.push(coords[0]);
+  try { return turf.area(turf.polygon([coords])) / 10000; } catch(e) { return 0; }
+}
+
+// Catmull-Rom spline (re-usa lógica do plantio.html)
+function catmullRom(pts, segs=20) {
+  if(pts.length < 2) return pts;
+  const n=pts.length, res=[];
+  for(let i=0;i<n-1;i++){
+    const p0=pts[Math.max(0,i-1)], p1=pts[i], p2=pts[Math.min(n-1,i+1)], p3=pts[Math.min(n-1,i+2)];
+    const lim=i===n-2?segs:segs-1;
+    for(let j=0;j<=lim;j++){
+      const t=j/segs,t2=t*t,t3=t2*t;
+      const lat=.5*((2*p1.lat)+(-p0.lat+p2.lat)*t+(2*p0.lat-5*p1.lat+4*p2.lat-p3.lat)*t2+(-p0.lat+3*p1.lat-3*p2.lat+p3.lat)*t3);
+      const lng=.5*((2*p1.lng)+(-p0.lng+p2.lng)*t+(2*p0.lng-5*p1.lng+4*p2.lng-p3.lng)*t2+(-p0.lng+3*p1.lng-3*p2.lng+p3.lng)*t3);
+      res.push({lat,lng});
+    }
+  }
+  return res;
+}
+
+// ── Eventos do mapa ───────────────────────────────────────────────────────────
+map.on('click', e => {
+  if(modo === 'poly') addPolyPt(e.latlng);
+  else if(modo === 'guide') addGuidePt(e.latlng);
+});
+map.on('dblclick', e => {
+  if(modo === 'poly' && polyPts.length >= 3) fecharPoligono();
+  else if(modo === 'guide' && guidePts.length >= 2) finalizarGuia();
+});
+
+// ── Polígono ──────────────────────────────────────────────────────────────────
+function iniciarPoligono() {
+  limparTudo();
+  modo = 'poly';
+  map.getContainer().style.cursor = 'crosshair';
+  $('btnPoly').classList.add('active');
+  $('btnFechar').style.display = 'flex';
+  $('btnGerar').disabled = true;
+  setStatus('Clique no mapa para adicionar vértices. Duplo clique para fechar.', 'info');
+}
+
+function addPolyPt(ll) {
+  polyPts.push(ll);
+  const mk = L.marker(ll, {
+    icon: mkIcon('vertex-marker'), draggable: true
+  }).addTo(map);
+  mk.on('drag', () => { updatePolyDisplay(); });
+  mk.on('dragend', () => { rebuildPoly(); });
+  polyMarkers.push(mk);
+  updatePolyDisplay();
+}
+
+function updatePolyDisplay() {
+  const pts = polyMarkers.map(m => m.getLatLng());
+  if(polyTempLine) polyTempLine.remove();
+  if(pts.length >= 2) {
+    const latlngs = [...pts, pts[0]];
+    polyTempLine = L.polyline(latlngs, {color:'#42a5f5', weight:2, dashArray:'6,4', opacity:.8}).addTo(map);
+  }
+  if(pts.length >= 3) $('btnFechar').style.display = 'flex';
+}
+
+function rebuildPoly() {
+  polyPts = polyMarkers.map(m => m.getLatLng());
+  if(polyLayer) { polyLayer.remove(); polyLayer = null; }
+  if(polyPts.length >= 3 && modo === 'idle') {
+    polyLayer = L.polygon(polyPts, {color:'#42a5f5', fillColor:'#1565c0', fillOpacity:.1, weight:2}).addTo(map);
+  }
+  buildTurfPoly();
+}
+
+function fecharPoligono() {
+  if(polyPts.length < 3) { setStatus('Mínimo 3 pontos.', 'err'); return; }
+  if(polyTempLine) { polyTempLine.remove(); polyTempLine = null; }
+  modo = 'idle';
+  map.getContainer().style.cursor = '';
+  $('btnPoly').classList.remove('active');
+  $('btnFechar').style.display = 'none';
+  polyPts = polyMarkers.map(m => m.getLatLng());
+  polyLayer = L.polygon(polyPts, {
+    color:'#42a5f5', fillColor:'#1565c0', fillOpacity:.08, weight:2
+  }).addTo(map);
+  buildTurfPoly();
+  const ha = areaHa(polyPts);
+  $('iArea').textContent = ha.toFixed(2) + ' ha';
+  setStatus('Contorno fechado: ' + ha.toFixed(2) + ' ha. Desenhe a linha guia.', 'ok');
+}
+
+function buildTurfPoly() {
+  if(polyPts.length < 3) return;
+  const coords = polyPts.map(p => [p.lng, p.lat]);
+  coords.push(coords[0]);
+  try {
+    turfPoly = turf.polygon([coords]);
+    turf.rewind(turfPoly, {mutate:true});
+    turfBound = turf.polygonToLine(turfPoly);
+  } catch(e) { turfPoly = null; turfBound = null; }
+}
+
+// ── Linha Guia ────────────────────────────────────────────────────────────────
+function setModoGuia(m) {
+  modoGuia = m;
+  $('btnModoReta').style.background = m==='reta' ? '#1565c0' : '#37474f';
+  $('btnModoSpline').style.background = m==='spline' ? '#e65100' : '#37474f';
+}
+
+function iniciarGuia() {
+  if(!turfPoly) { setStatus('Desenhe o contorno primeiro.', 'err'); return; }
+  limparGuia(); limparLinhas();
+  modo = 'guide';
+  map.getContainer().style.cursor = 'crosshair';
+  $('btnGuia').classList.add('active');
+  $('btnFinGuia').style.display = 'flex';
+  $('btnGerar').disabled = true;
+  setStatus('Clique para adicionar pontos da guia. Define a direção das linhas.', 'info');
+}
+
+function addGuidePt(ll) {
+  guidePts.push(ll);
+  const mk = L.marker(ll, {
+    icon: mkIcon('vertex-marker guide'), draggable: true
+  }).addTo(map);
+  mk.on('drag', () => updateGuiaDisplay());
+  mk.on('dragend', () => { guidePts = guideMarkers.map(m => m.getLatLng()); updateGuiaDisplay(); });
+  guideMarkers.push(mk);
+  updateGuiaDisplay();
+  if(guidePts.length >= 2) $('btnFinGuia').style.display = 'flex';
+}
+
+function updateGuiaDisplay() {
+  const pts = guideMarkers.map(m => m.getLatLng());
+  if(guideLayer) { guideLayer.remove(); guideLayer = null; }
+  if(pts.length < 2) return;
+  const latlngs = modoGuia==='spline' ? catmullRom(pts.map(p=>({lat:p.lat,lng:p.lng}))).map(p=>[p.lat,p.lng]) : pts;
+  guideLayer = L.polyline(latlngs, {color:'#ff8f00', weight:2.5, opacity:.9}).addTo(map);
+}
+
+function finalizarGuia() {
+  if(guidePts.length < 2) { setStatus('Mínimo 2 pontos na guia.', 'err'); return; }
+  modo = 'idle';
+  map.getContainer().style.cursor = '';
+  $('btnGuia').classList.remove('active');
+  $('btnFinGuia').style.display = 'none';
+  guidePts = guideMarkers.map(m => m.getLatLng());
+  updateGuiaDisplay();
+  $('btnGerar').disabled = false;
+  setStatus('Guia definida. Configure o espaçamento e gere as linhas.', 'ok');
+}
+
+// ── Geração de Linhas ─────────────────────────────────────────────────────────
+function gerarLinhas() {
+  if(!turfPoly || !turfBound) { setStatus('Desenhe o contorno primeiro.', 'err'); return; }
+  if(guidePts.length < 2) { setStatus('Desenhe a linha guia primeiro.', 'err'); return; }
+
+  limparLinhas();
+  const spacing = parseFloat($('espac').value) || 12;
+  const spacingKm = spacing / 1000;
+  const cor = $('corLinha').value;
+  const esp = parseFloat($('espess').value) || 1.5;
+
+  // Bearing da guia: primeiro → último ponto de controle
+  const gp = guidePts;
+  const rowBrg = turf.bearing(turf.point([gp[0].lng,gp[0].lat]), turf.point([gp[gp.length-1].lng,gp[gp.length-1].lat]));
+  const perpBrg = rowBrg + 90;
+
+  // Extensão: 2× diagonal do bbox
+  const bbox = turf.bbox(turfPoly);
+  const ext = turf.distance(turf.point([bbox[0],bbox[1]]), turf.point([bbox[2],bbox[3]])) * 2;
+
+  // Âncora: centróide do polígono
+  const anchor = turf.centroid(turfPoly).geometry.coordinates;
+
+  // Extensão perpendicular total projetando todos os vértices
+  let minD=0, maxD=0;
+  turfPoly.geometry.coordinates[0].forEach(v => {
+    const d = turf.distance(turf.point(anchor), turf.point(v), {units:'kilometers'});
+    const b = turf.bearing(turf.point(anchor), turf.point(v));
+    const s = d * Math.cos((b - perpBrg) * Math.PI/180);
+    minD = Math.min(minD, s); maxD = Math.max(maxD, s);
+  });
+  const nPos = Math.ceil(maxD/spacingKm)+1;
+  const nNeg = Math.ceil(-minD/spacingKm)+1;
+
+  let count = 0;
+
+  // MODO RETA: lineIntersect direto — preciso, cobre qualquer polígono
+  function addRetaRow(distKm, sign) {
+    const dir = sign>0 ? perpBrg : rowBrg-90;
+    const ref = distKm===0 ? anchor
+      : turf.destination(turf.point(anchor), distKm, dir, {units:'kilometers'}).geometry.coordinates;
+    const p1 = turf.destination(turf.point(ref), ext, rowBrg, {units:'kilometers'}).geometry.coordinates;
+    const p2 = turf.destination(turf.point(ref), ext, rowBrg+180, {units:'kilometers'}).geometry.coordinates;
+    try {
+      const ixs = turf.lineIntersect(turf.lineString([p2,p1]), turfBound);
+      if(!ixs.features.length) return false;
+      const p2pt = turf.point(p2);
+      const sorted = ixs.features.map(f=>f.geometry.coordinates)
+        .sort((a,b)=>turf.distance(p2pt,turf.point(a))-turf.distance(p2pt,turf.point(b)));
+      let added=0;
+      for(let i=0;i+1<sorted.length;i+=2){
+        const s=sorted[i], e=sorted[i+1];
+        const mid=[(s[0]+e[0])/2,(s[1]+e[1])/2];
+        if(!turf.booleanPointInPolygon(turf.point(mid),turfPoly)) continue;
+        const pl = L.polyline([[s[1],s[0]],[e[1],e[0]]], {color:cor,weight:esp,opacity:.95}).addTo(map);
+        linhas.push(pl); count++; added++;
+      }
+      return added>0;
+    } catch(e){return false;}
+  }
+
+  // MODO SPLINE: translada pontos de controle, sampling com lineIntersect exato
+  function addSplineRow(distKm, sign) {
+    const dir = sign>0 ? perpBrg : rowBrg-90;
+    const ctrlOff = gp.map(pt => {
+      const [lng,lat] = turf.destination(turf.point([pt.lng,pt.lat]), distKm, dir, {units:'kilometers'}).geometry.coordinates;
+      return {lat,lng};
+    });
+    const sp = catmullRom(ctrlOff, 30);
+    const spPts = sp.map(p=>[p.lng,p.lat]);
+    // Extensão em rowBrg (alcança cantos do polígono)
+    const N=150, extS=[], extE=[];
+    for(let i=N;i>=1;i--) extS.push(turf.destination(turf.point(spPts[0]),(i/N)*ext,rowBrg+180,{units:'kilometers'}).geometry.coordinates);
+    for(let i=1;i<=N;i++) extE.push(turf.destination(turf.point(spPts[spPts.length-1]),(i/N)*ext,rowBrg,{units:'kilometers'}).geometry.coordinates);
+    const allPts=[...extS,...spPts,...extE];
+    // Sampling + lineIntersect exato na transição
+    let seg=null, added=0;
+    const flush=()=>{
+      if(seg&&seg.length>=2){
+        const pl=L.polyline(seg.map(p=>[p[1],p[0]]),{color:cor,weight:esp,opacity:.95}).addTo(map);
+        linhas.push(pl); count++; added++;
+      }
+      seg=null;
+    };
+    for(let i=0;i<allPts.length;i++){
+      const inside=turf.booleanPointInPolygon(turf.point(allPts[i]),turfPoly);
+      if(inside){
+        if(!seg){
+          seg=[];
+          if(i>0){try{const ix=turf.lineIntersect(turf.lineString([allPts[i-1],allPts[i]]),turfBound);if(ix.features.length)seg.push(ix.features[0].geometry.coordinates);}catch(e){}}
+        }
+        seg.push(allPts[i]);
+      } else if(seg){
+        try{const ix=turf.lineIntersect(turf.lineString([allPts[i-1],allPts[i]]),turfBound);if(ix.features.length)seg.push(ix.features[0].geometry.coordinates);}catch(e){}
+        flush();
+      }
+    }
+    flush();
+    return added>0;
+  }
+
+  const addRow = modoGuia==='spline' ? addSplineRow : addRetaRow;
+
+  addRow(0,1);
+  for(let n=1;n<=nPos;n++) addRow(n*spacingKm,1);
+  for(let n=1;n<=nNeg;n++) addRow(n*spacingKm,-1);
+
+  if(count===0){ setStatus('Nenhuma linha gerada. Verifique se a guia cruza o talhão.','err'); return; }
+  $('iLinhas').textContent = count;
+  $('iEspac').textContent = spacing + ' m';
+  $('btnKml').style.display = 'flex';
+  setStatus(count+' linhas geradas com espaçamento de '+spacing+' m.','ok');
+}
+
+// ── Exportar KML ──────────────────────────────────────────────────────────────
+function exportarKML() {
+  let kml = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document>\n`;
+  kml += `<Style id="sPoly"><LineStyle><color>ffb56a42</color><width>2</width></LineStyle><PolyStyle><color>110000ff</color></PolyStyle></Style>\n`;
+  kml += `<Style id="sLinha"><LineStyle><color>ff00d6ff</color><width>2</width></LineStyle></Style>\n`;
+  // Polígono
+  if(polyPts.length>=3){
+    const coords=polyPts.map(p=>p.lng+','+p.lat+',0').join(' ')+' '+polyPts[0].lng+','+polyPts[0].lat+',0';
+    kml+=`<Placemark><styleUrl>#sPoly</styleUrl><name>Talhão</name><Polygon><outerBoundaryIs><LinearRing><coordinates>${coords}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>\n`;
+  }
+  // Linhas
+  if(linhas.length){
+    kml+=`<Folder><name>Linhas de Plantio</name>\n`;
+    linhas.forEach((pl,i)=>{
+      const pts=pl.getLatLngs();
+      const coords=pts.map(p=>p.lng+','+p.lat+',0').join(' ');
+      kml+=`<Placemark><styleUrl>#sLinha</styleUrl><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;
+    });
+    kml+=`</Folder>\n`;
+  }
+  kml+=`</Document></kml>`;
+  const blob=new Blob([kml],{type:'application/vnd.google-earth.kml+xml'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download='plantio.kml'; a.click();
+}
+
+// ── Limpar ────────────────────────────────────────────────────────────────────
+function limparLinhas() {
+  linhas.forEach(l=>l.remove()); linhas=[];
+  $('iLinhas').textContent='—'; $('iEspac').textContent='—';
+  $('btnKml').style.display='none';
+}
+function limparGuia() {
+  guideMarkers.forEach(m=>m.remove()); guideMarkers=[];
+  guidePts=[];
+  if(guideLayer){guideLayer.remove();guideLayer=null;}
+  $('btnGerar').disabled=true;
+}
+function limparPoligono() {
+  polyMarkers.forEach(m=>m.remove()); polyMarkers=[];
+  polyPts=[];
+  if(polyLayer){polyLayer.remove();polyLayer=null;}
+  if(polyTempLine){polyTempLine.remove();polyTempLine=null;}
+  turfPoly=null; turfBound=null;
+  $('iArea').textContent='—';
+}
+function limparTudo() {
+  limparLinhas(); limparGuia(); limparPoligono();
+  modo='idle'; map.getContainer().style.cursor='';
+  $('btnPoly').classList.remove('active');
+  $('btnGuia').classList.remove('active');
+  $('btnFechar').style.display='none';
+  $('btnFinGuia').style.display='none';
+  setStatus('Desenhe o contorno do talhão para começar.','');
+}
+
+// Init modo guia
+setModoGuia('reta');
+</script>
+</body>
+</html>
