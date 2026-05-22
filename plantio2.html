@@ -326,35 +326,57 @@ function buildTurfPoly() {
 }
 
 // ── Busca de Local ────────────────────────────────────────────────────────────
-async function buscarLocal() {
+function buscarLocal() {
   const q = $('searchInput').value.trim();
   if(!q) return;
   const box = $('searchResults');
   box.style.display = 'block';
   box.innerHTML = '<div class="search-item" style="color:#78909c;">Buscando…</div>';
-  try {
-    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=5&q=${encodeURIComponent(q)}`, {
-      headers: {'Accept-Language': 'pt-BR,pt;q=0.9'}
-    });
-    const data = await res.json();
-    if(!data.length) { box.innerHTML = '<div class="search-item" style="color:#ef9a9a;">Nenhum resultado.</div>'; return; }
+
+  function mostrarResultados(items) {
+    // items = [{nome, subtitulo, lat, lng}]
+    if(!items.length) { box.innerHTML = '<div class="search-item" style="color:#ef9a9a;">Nenhum resultado.</div>'; return; }
     box.innerHTML = '';
-    data.forEach(r => {
+    items.forEach(r => {
       const el = document.createElement('div');
       el.className = 'search-item';
-      const nome = r.display_name.split(',').slice(0,2).join(',');
-      const resto = r.display_name.split(',').slice(2).join(',').trim();
-      el.innerHTML = `<strong>${nome}</strong>${resto}`;
+      el.innerHTML = `<strong>${r.nome}</strong>${r.sub}`;
       el.onclick = () => {
-        map.setView([parseFloat(r.lat), parseFloat(r.lon)], 14);
+        map.setView([r.lat, r.lng], 15);
         box.style.display = 'none';
-        $('searchInput').value = nome;
+        $('searchInput').value = r.nome;
       };
       box.appendChild(el);
     });
-  } catch(e) {
-    box.innerHTML = '<div class="search-item" style="color:#ef9a9a;">Erro na busca.</div>';
   }
+
+  // 1ª opção: Google Maps Geocoder (já carregado com o satellite)
+  if(window.google && window.google.maps && window.google.maps.Geocoder) {
+    new google.maps.Geocoder().geocode({address: q, language: 'pt-BR'}, (res, status) => {
+      if(status !== 'OK' || !res.length) {
+        box.innerHTML = '<div class="search-item" style="color:#ef9a9a;">Nenhum resultado.</div>';
+        return;
+      }
+      mostrarResultados(res.slice(0,5).map(r => ({
+        nome: r.formatted_address.split(',')[0].trim(),
+        sub:  ' — ' + r.formatted_address.split(',').slice(1).join(',').trim(),
+        lat:  r.geometry.location.lat(),
+        lng:  r.geometry.location.lng()
+      })));
+    });
+    return;
+  }
+
+  // Fallback: Nominatim (quando sem chave Google)
+  fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=br&q=${encodeURIComponent(q)}`)
+    .then(r => r.json())
+    .then(data => mostrarResultados(data.map(r => ({
+        nome: r.display_name.split(',')[0].trim(),
+        sub:  ' — ' + r.display_name.split(',').slice(1,3).join(',').trim(),
+        lat:  parseFloat(r.lat),
+        lng:  parseFloat(r.lon)
+      }))))
+    .catch(() => { box.innerHTML = '<div class="search-item" style="color:#ef9a9a;">Erro na busca.</div>'; });
 }
 // Fechar resultados ao clicar fora
 document.addEventListener('click', e => {
