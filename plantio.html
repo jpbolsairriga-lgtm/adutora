@@ -761,15 +761,38 @@ function gerarOffset(){
   for(let n=1;n<=nPos;n++) addLine(n*spacing/1000,1);
   for(let n=1;n<=nNeg;n++) addLine(n*spacing/1000,-1);
 
-  // EXTRIM: remove qualquer linha cujo ponto médio esteja fora do polígono
-  offsetLines=offsetLines.filter(pl=>{
-    const path=pl.getPath().getArray();
-    if(path.length<1){pl.setMap(null);return false;}
+  // EXTRIM real: re-clipa CADA linha gerada contra o polígono via lineSplit.
+  // Corta as pontas que saem do polígono, mantém apenas os segmentos internos.
+  const trimmed=[];
+  offsetLines.forEach(pl=>{
+    const path=pl.getPath().getArray().map(p=>[p.lng(),p.lat()]);
+    pl.setMap(null); // remove a linha original do mapa
+    if(path.length<2)return;
+    try{
+      const split=turf.lineSplit(turf.lineString(path),polyBound);
+      if(split&&split.features&&split.features.length>0){
+        split.features.forEach(seg=>{
+          const c=seg.geometry.coordinates;
+          if(c.length>=2&&turf.booleanPointInPolygon(turf.point(c[Math.floor(c.length/2)]),turfPoly)){
+            trimmed.push(new google.maps.Polyline({
+              path:c.map(p=>({lat:p[1],lng:p[0]})),
+              map,strokeColor:corLinha,strokeWeight:espessura,strokeOpacity:.95,zIndex:10,clickable:false
+            }));
+          }
+        });
+        return;
+      }
+    }catch(e){}
+    // lineSplit falhou: mantém só se midpoint estiver dentro
     const mid=path[Math.floor(path.length/2)];
-    const inside=turf.booleanPointInPolygon(turf.point([mid.lng(),mid.lat()]),turfPoly);
-    if(!inside)pl.setMap(null);
-    return inside;
+    if(turf.booleanPointInPolygon(turf.point(mid),turfPoly)){
+      trimmed.push(new google.maps.Polyline({
+        path:path.map(p=>({lat:p[1],lng:p[0]})),
+        map,strokeColor:corLinha,strokeWeight:espessura,strokeOpacity:.95,zIndex:10,clickable:false
+      }));
+    }
   });
+  offsetLines=trimmed;
   count=offsetLines.length;
 
   if(count===0){
