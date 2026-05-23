@@ -132,16 +132,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="sec">
     <div class="sec-title">4. Gerar</div>
     <button class="btn btn-gen" id="btnGerar" onclick="gerarLinhas()" disabled>&#10038; Gerar Linhas de Plantio</button>
-    <button class="btn" id="btnFinalizarTalhao" onclick="arquivarTalhaoAtual()" style="display:none;background:#00695c;color:#fff;margin-top:4px;">&#10003; Finalizar Talhão</button>
     <button class="btn btn-kml" id="btnKml" onclick="exportarKML()" style="display:none;margin-top:4px;">&#128462; Exportar KML</button>
-    <div id="divDecliv" style="display:none;margin-top:4px;">
-      <label style="margin-top:0;">Espaçamento da análise</label>
-      <div class="row2">
-        <div><input type="number" id="espacDecliv" value="25" min="5" max="200" step="5"></div>
-        <div style="display:flex;align-items:center;padding-left:4px;font-size:12px;color:#78909c;">metros</div>
-      </div>
-      <button class="btn" id="btnDecliv" onclick="classificarDeclividade()" style="background:#4a148c;color:#fff;margin-top:5px;">&#9650; Classificar Declividade</button>
-    </div>
     <button class="btn btn-clr" onclick="limparLinhas()" style="margin-top:4px;">&#10005; Limpar Linhas</button>
     <button class="btn btn-clr" onclick="limparTudo()" style="margin-top:4px;border-color:#37474f;color:#90a4ae;">&#128465; Limpar Tudo</button>
   </div>
@@ -173,6 +164,17 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
     <div id="curvaInfo" style="display:none;margin-top:8px;background:#0f3460;border-radius:6px;padding:8px 10px;font-size:11px;line-height:1.8;color:#90a4ae;"></div>
   </div>
 
+  <div class="sec">
+    <div class="sec-title">6. Declividade</div>
+    <label>Espaçamento da análise</label>
+    <div class="row2">
+      <div><input type="number" id="espacDecliv" value="25" min="5" max="200" step="5"></div>
+      <div style="display:flex;align-items:center;padding-left:4px;font-size:12px;color:#78909c;">metros</div>
+    </div>
+    <button class="btn" id="btnDeclivTodos" onclick="classificarTodosDeclividade()" style="background:#4a148c;color:#fff;margin-top:6px;" disabled>&#9650; Classificar Todos os Talhões</button>
+    <button class="btn btn-clr" id="btnLimparDecliv" onclick="limparDeclivTodos()" style="display:none;margin-top:4px;font-size:11px;">&#10005; Limpar Classificação</button>
+  </div>
+
   <div class="sec" id="secLegenda" style="display:none;">
     <div class="sec-title">Legenda — Declividade</div>
     <div style="font-size:11px;line-height:2;">
@@ -193,7 +195,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
       <div class="info-row"><span class="info-label">Espaçamento:</span><span class="info-val" id="iEspac">—</span></div>
     </div>
     <button class="btn btn-clr" id="btnLimparArquivados" onclick="limparTalhoesArquivados()" style="display:none;margin-top:6px;font-size:11px;">&#128465; Limpar talhões bloqueados</button>
-    <div id="divLabelScale" style="display:none;margin-top:10px;">
+    <div id="divLabelScale" style="margin-top:10px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
         <span style="font-size:10px;color:#78909c;text-transform:uppercase;letter-spacing:.08em;">Escala da legenda</span>
         <span id="labelScaleVal" style="font-size:12px;color:#e2b96e;font-weight:700;">50%</span>
@@ -532,7 +534,8 @@ function arquivarTalhaoAtual() {
   talhoesArquivados.push({
     idx: idx + 1,
     cor,
-    corLinha: corLinhaAtual, // cor das linhas de plantio para KML
+    corLinha: corLinhaAtual,
+    baseLabelZoom: baseLabelZoom, // zoom quando a legenda foi criada
     polyLayer,
     polyPts: [...polyPts],
     linhas: [...linhas],
@@ -552,18 +555,15 @@ function arquivarTalhaoAtual() {
   $('iArea').textContent = '—';
   $('iLinhas').textContent = '—';
   $('iEspac').textContent = '—';
-  $('btnFinalizarTalhao').style.display = 'none'; // esconde após finalizar
   $('btnKml').style.display = 'flex'; // mantém KML disponível
-  $('divDecliv').style.display = 'none';
-  $('secLegenda').style.display = 'none';
-  $('divLabelScale').style.display = 'none';
 
-  // Atualiza contador
+  // Atualiza contador e habilita classificação global
   $('iTalhoes').textContent = talhoesArquivados.length;
   $('btnLimparArquivados').style.display = '';
+  $('btnDeclivTodos').disabled = false;
   if(!turfCurvaPoly) $('btnCurvas').disabled = true;
 
-  setStatus(`Talhão ${talhoesArquivados.length} bloqueado ✓  Desenhe o próximo contorno.`, 'ok');
+  setStatus(`Talhão ${talhoesArquivados.length} travado ✓  Desenhe o próximo contorno ou classifique a declividade.`, 'ok');
 }
 
 function limparTalhoesArquivados() {
@@ -576,7 +576,9 @@ function limparTalhoesArquivados() {
   talhoesArquivados = [];
   $('iTalhoes').textContent = '0';
   $('btnLimparArquivados').style.display = 'none';
-  // Só esconde KML se também não há talhão ativo com linhas
+  $('btnDeclivTodos').disabled = true;
+  $('secLegenda').style.display = 'none';
+  $('btnLimparDecliv').style.display = 'none';
   if(!linhas.length) $('btnKml').style.display = 'none';
 }
 
@@ -596,8 +598,6 @@ function mostrarLabel(ha, spacing, nLinhas, metrosLin) {
     </div>
   </div>`;
   baseLabelZoom = map.getZoom();
-  $('divLabelScale').style.display = '';
-  $('labelScaleVal').textContent = $('labelScale').value + '%';
   infoMarker = L.marker([c[1], c[0]], {
     icon: L.divIcon({html, className:'', iconAnchor:[84, 58]}),
     interactive: false, zIndexOffset: 500
@@ -606,13 +606,25 @@ function mostrarLabel(ha, spacing, nLinhas, metrosLin) {
 }
 
 // Escala a legenda: zoom geográfico × fator do slider do usuário
+// Aplica a TODOS os talhões (arquivados + ativo)
 function _updateLabelScale() {
+  const userFactor = (parseInt($('labelScale')?.value) || 50) / 100;
+  const currentZoom = map.getZoom();
+  // Talhões arquivados
+  talhoesArquivados.forEach(t => {
+    if(!t.infoMarker) return;
+    const lbl = t.infoMarker.getElement()?.querySelector('.poly-label');
+    if(!lbl) return;
+    const zf = Math.pow(2, currentZoom - (t.baseLabelZoom || currentZoom));
+    lbl.style.transform = `scale(${zf * userFactor})`;
+    lbl.style.transformOrigin = '84px 58px';
+  });
+  // Talhão ativo
   if(!infoMarker) return;
   const lbl = infoMarker.getElement()?.querySelector('.poly-label');
   if(!lbl) return;
-  const zoomFactor = Math.pow(2, map.getZoom() - baseLabelZoom);
-  const userFactor = (parseInt($('labelScale')?.value) || 50) / 100;
-  lbl.style.transform = `scale(${zoomFactor * userFactor})`;
+  const zf = Math.pow(2, currentZoom - baseLabelZoom);
+  lbl.style.transform = `scale(${zf * userFactor})`;
   lbl.style.transformOrigin = '84px 58px';
 }
 function atualizarEscalaLabel() {
@@ -728,8 +740,6 @@ function gerarLinhas() {
   $('iLinhas').textContent = count;
   $('iEspac').textContent = spacing + ' m';
   corLinhaAtual = cor; // salva cor para exportar no KML junto com o talhão
-  $('btnKml').style.display = 'flex';
-  $('divDecliv').style.display = '';
   limparGuia();
   // Metros lineares totais
   let metrosLin = 0;
@@ -739,12 +749,11 @@ function gerarLinhas() {
   });
   const ha = areaHa(polyPts);
   mostrarLabel(ha, spacing, count, metrosLin);
-  // Mostra botão para o usuário finalizar o talhão após ajustar escala / classificar declividade
-  $('btnFinalizarTalhao').style.display = 'flex';
-  setStatus(`${count} linhas geradas. Ajuste a escala, classifique a declividade e clique "Finalizar Talhão".`, 'ok');
+  // Trava o talhão imediatamente após gerar
+  arquivarTalhaoAtual();
 }
 
-// ── Declividade ───────────────────────────────────────────────────────────────
+// ── Declividade (global — todos os talhões) ───────────────────────────────────
 function slopeColor(pct) {
   const s = Math.abs(pct);
   if(s < 3)  return '#4CAF50';
@@ -777,41 +786,39 @@ function resampleLine(latlngs, spacingM) {
   return pts;
 }
 
-// linhasDecl declarado no bloco de estado principal
-
-function classificarDeclividade() {
-  if(!linhas.length) { setStatus('Gere as linhas primeiro.', 'err'); return; }
+function classificarTodosDeclividade() {
+  if(!talhoesArquivados.length) { setStatus('Gere pelo menos um talhão primeiro.', 'err'); return; }
   if(!window.google || !window.google.maps) {
     setStatus('Ative o Google Maps (chave API) para classificação de declividade.', 'err'); return;
   }
 
   const spacingM = Math.max(5, parseFloat($('espacDecliv').value) || 25);
-  setStatus('Amostrando linhas e buscando elevações…', 'info');
-  $('btnDecliv').disabled = true;
+  setStatus('Amostrando linhas de todos os talhões…', 'info');
+  $('btnDeclivTodos').disabled = true;
 
-  // Remove classificação anterior
-  linhasDecl.forEach(l => l.remove()); linhasDecl = [];
-
-  const elevator = new google.maps.ElevationService();
-
-  // Para cada linha: reamostrar → coletar pontos com índice de volta
-  const lineInfo = []; // [{inicio, count}] — onde no allPts está cada linha
-  const allPts   = []; // todos os pontos amostrados, em ordem
-
-  linhas.forEach((pl) => {
-    const raw = pl.getLatLngs().flat();
-    if(raw.length < 2) return;
-    const samples = resampleLine(raw, spacingM);
-    lineInfo.push({samples, inicio: allPts.length});
-    samples.forEach(p => allPts.push(new google.maps.LatLng(p.lat, p.lng)));
+  // Limpa classificação anterior de todos os talhões arquivados
+  talhoesArquivados.forEach(t => {
+    t.linhasDecl.forEach(l => l.remove());
+    t.linhasDecl = [];
+    t.linhas.forEach(pl => pl.setStyle({opacity: 0.18}));
   });
 
-  if(!allPts.length) { $('btnDecliv').disabled = false; return; }
+  const lineInfo = []; // [{talhao, samples, inicio}]
+  const allPts   = [];
 
-  // Reduz opacidade das linhas originais — classificação fica por cima
-  linhas.forEach(pl => pl.setStyle({opacity: 0.18}));
+  talhoesArquivados.forEach(talhao => {
+    talhao.linhas.forEach(pl => {
+      const raw = pl.getLatLngs().flat();
+      if(raw.length < 2) return;
+      const samples = resampleLine(raw, spacingM);
+      lineInfo.push({talhao, samples, inicio: allPts.length});
+      samples.forEach(p => allPts.push(new google.maps.LatLng(p.lat, p.lng)));
+    });
+  });
 
-  // Batches de 512 pontos
+  if(!allPts.length) { $('btnDeclivTodos').disabled = false; return; }
+
+  const elevator = new google.maps.ElevationService();
   const BATCH = 512;
   const elevs = new Array(allPts.length);
   let done = 0;
@@ -822,14 +829,14 @@ function classificarDeclividade() {
     const slice  = allPts.slice(offset, offset + BATCH);
     elevator.getElevationForLocations({locations: slice}, (res, status) => {
       if(status === 'OK') res.forEach((r, i) => { elevs[offset + i] = r.elevation; });
-      if(++done === totalBatches) aplicarCoresDeclividade(lineInfo, elevs);
+      if(++done === totalBatches) aplicarCoresDeclivTodos(lineInfo, elevs);
     });
   }
 }
 
-function aplicarCoresDeclividade(lineInfo, elevs) {
+function aplicarCoresDeclivTodos(lineInfo, elevs) {
   let totalSegs = 0;
-  lineInfo.forEach(({samples, inicio}) => {
+  lineInfo.forEach(({talhao, samples, inicio}) => {
     for(let i = 0; i < samples.length - 1; i++) {
       const e0 = elevs[inicio + i], e1 = elevs[inicio + i + 1];
       if(e0 == null || e1 == null) continue;
@@ -841,13 +848,26 @@ function aplicarCoresDeclividade(lineInfo, elevs) {
         [[p0.lat, p0.lng], [p1.lat, p1.lng]],
         {color: slopeColor(slope), weight: 2.5, opacity: 1}
       ).addTo(map);
-      linhasDecl.push(pl);
+      talhao.linhasDecl.push(pl);
       totalSegs++;
     }
   });
   $('secLegenda').style.display = '';
-  $('btnDecliv').disabled = false;
-  setStatus(`Declividade classificada em ${totalSegs} segmentos.`, 'ok');
+  $('btnDeclivTodos').disabled = false;
+  $('btnLimparDecliv').style.display = '';
+  setStatus(`Declividade classificada: ${totalSegs} segmentos em ${talhoesArquivados.length} talhão(ões).`, 'ok');
+}
+
+function limparDeclivTodos() {
+  talhoesArquivados.forEach(t => {
+    t.linhasDecl.forEach(l => l.remove());
+    t.linhasDecl = [];
+    t.linhas.forEach(pl => pl.setStyle({opacity: 0.95}));
+  });
+  linhasDecl.forEach(l => l.remove()); linhasDecl = [];
+  linhas.forEach(pl => pl.setStyle({opacity: 0.95}));
+  $('secLegenda').style.display = 'none';
+  $('btnLimparDecliv').style.display = 'none';
 }
 
 // ── Curvas de Nível ───────────────────────────────────────────────────────────
@@ -1227,13 +1247,9 @@ function exportarKML() {
 function limparLinhas() {
   linhas.forEach(l=>l.remove()); linhas=[];
   $('iLinhas').textContent='—'; $('iEspac').textContent='—';
-  $('btnFinalizarTalhao').style.display='none';
   $('btnKml').style.display='none';
-  $('divDecliv').style.display='none';
-  $('secLegenda').style.display='none';
   linhasDecl.forEach(l=>l.remove()); linhasDecl=[];
   if(infoMarker){infoMarker.remove();infoMarker=null;}
-  $('divLabelScale').style.display='none';
 }
 function limparGuia() {
   guideMarkers.forEach(m=>m.remove()); guideMarkers=[];
@@ -1252,6 +1268,7 @@ function limparPoligono() {
   if(!turfCurvaPoly) $('btnCurvas').disabled=true;
 }
 function limparTudo() {
+  limparDeclivTodos();
   limparLinhas(); limparGuia(); limparPoligono(); limparPoligonoCurva();
   limparTalhoesArquivados();
   modo='idle'; map.getContainer().style.cursor='';
@@ -1259,6 +1276,8 @@ function limparTudo() {
   $('btnGuia').classList.remove('active');
   $('btnFechar').style.display='none';
   $('btnFinGuia').style.display='none';
+  $('btnDeclivTodos').disabled = true;
+  $('secLegenda').style.display = 'none';
   setStatus('Desenhe o contorno do talhão para começar.','');
 }
 
