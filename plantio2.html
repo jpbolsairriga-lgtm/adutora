@@ -175,6 +175,17 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
     <button class="btn btn-clr" id="btnLimparDecliv" onclick="limparDeclivTodos()" style="display:none;margin-top:4px;font-size:11px;">&#10005; Limpar Classificação</button>
   </div>
 
+  <div class="sec">
+    <div class="sec-title">7. Relatório PDF</div>
+    <label>Consultor</label>
+    <input type="text" id="rConsultor" value="João Paulo de Oliveira" style="background:#0f3460;color:#e0e0e0;border:1px solid #1e4a7a;border-radius:5px;padding:6px 8px;font-size:12px;width:100%;">
+    <label>Cliente</label>
+    <input type="text" id="rCliente" placeholder="Nome do cliente" style="background:#0f3460;color:#e0e0e0;border:1px solid #1e4a7a;border-radius:5px;padding:6px 8px;font-size:12px;width:100%;">
+    <label>Propriedade</label>
+    <input type="text" id="rPropriedade" placeholder="Nome da fazenda / propriedade" style="background:#0f3460;color:#e0e0e0;border:1px solid #1e4a7a;border-radius:5px;padding:6px 8px;font-size:12px;width:100%;">
+    <button class="btn" onclick="gerarPDF()" style="background:#b71c1c;color:#fff;margin-top:8px;">&#128196; Gerar Relat&#243;rio PDF</button>
+  </div>
+
   <div class="sec" id="secLegenda" style="display:none;">
     <div class="sec-title">Legenda — Declividade</div>
     <div style="font-size:11px;line-height:2;">
@@ -288,6 +299,7 @@ let turfPoly = null, turfBound = null;
 let infoMarker = null;
 let baseLabelZoom = 14;
 let corLinhaAtual = '#FFD600'; // cor das linhas do talhão ativo (salva para KML)
+let spacingAtual = 12, countLinhasAtual = 0, metrosLinAtual = 0, areaHaAtual = 0;
 
 // Talhões bloqueados (múltiplos)
 let talhoesArquivados = [];
@@ -535,7 +547,11 @@ function arquivarTalhaoAtual() {
     idx: idx + 1,
     cor,
     corLinha: corLinhaAtual,
-    baseLabelZoom: baseLabelZoom, // zoom quando a legenda foi criada
+    baseLabelZoom: baseLabelZoom,
+    areaHa: areaHaAtual,
+    spacing: spacingAtual,
+    count: countLinhasAtual,
+    metrosLin: metrosLinAtual,
     polyLayer,
     polyPts: [...polyPts],
     linhas: [...linhas],
@@ -739,7 +755,9 @@ function gerarLinhas() {
   if(count === 0) { setStatus('Nenhuma linha gerada. Verifique se a guia cruza o talhão.', 'err'); return; }
   $('iLinhas').textContent = count;
   $('iEspac').textContent = spacing + ' m';
-  corLinhaAtual = cor; // salva cor para exportar no KML junto com o talhão
+  corLinhaAtual = cor;
+  spacingAtual = spacing;
+  countLinhasAtual = count;
   limparGuia();
   // Metros lineares totais
   let metrosLin = 0;
@@ -747,7 +765,9 @@ function gerarLinhas() {
     const pts = pl.getLatLngs().flat();
     for(let i = 0; i < pts.length - 1; i++) metrosLin += haversineM(pts[i], pts[i+1]);
   });
+  metrosLinAtual = metrosLin;
   const ha = areaHa(polyPts);
+  areaHaAtual = ha;
   mostrarLabel(ha, spacing, count, metrosLin);
   // Trava o talhão imediatamente após gerar
   arquivarTalhaoAtual();
@@ -1236,11 +1256,178 @@ function exportarKML() {
   }
 
   kml += `</Document></kml>`;
-  const blob = new Blob([kml], {type:'application/vnd.google-earth.kml+xml'});
+  baixarArquivo(kml, 'plantio_bolsairriga.kml', 'application/vnd.google-earth.kml+xml');
+}
+
+// ── Download universal (iOS + desktop) ───────────────────────────────────────
+function baixarArquivo(conteudo, nomeArquivo, tipoMime) {
+  const blob = new Blob([conteudo], {type: tipoMime});
+  // iOS Safari: Web Share API com arquivos
+  try {
+    if(navigator.canShare) {
+      const file = new File([blob], nomeArquivo, {type: tipoMime});
+      if(navigator.canShare({files: [file]})) {
+        navigator.share({files: [file], title: nomeArquivo});
+        return;
+      }
+    }
+  } catch(e) {}
+  // Desktop / Android: download direto
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'plantio_bolsairriga.kml';
+  a.href = url;
+  a.download = nomeArquivo;
+  document.body.appendChild(a);
   a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+// ── Relatório PDF ─────────────────────────────────────────────────────────────
+function gerarPDF() {
+  if(!talhoesArquivados.length && polyPts.length < 3) {
+    alert('Gere pelo menos um talhão antes de gerar o relatório.');
+    return;
+  }
+  const key   = localStorage.getItem('mapskey_pl') || '';
+  const date  = new Date().toLocaleDateString('pt-BR');
+  const consultor   = $('rConsultor').value.trim()   || 'João Paulo de Oliveira';
+  const cliente     = $('rCliente').value.trim()     || '—';
+  const propriedade = $('rPropriedade').value.trim() || '—';
+
+  // Todos os talhões arquivados
+  const todos = [...talhoesArquivados];
+
+  // Bounding box de todos os polígonos para centralizar o mapa
+  const allLats = [], allLngs = [];
+  todos.forEach(t => t.polyPts.forEach(p => { allLats.push(p.lat); allLngs.push(p.lng); }));
+  if(polyPts.length) polyPts.forEach(p => { allLats.push(p.lat); allLngs.push(p.lng); });
+  if(curvaPolyPts.length) curvaPolyPts.forEach(p => { allLats.push(p.lat); allLngs.push(p.lng); });
+
+  // Mapa estático (Google Static Maps API)
+  let mapImg = '';
+  if(key && allLats.length) {
+    const minLat = Math.min(...allLats), maxLat = Math.max(...allLats);
+    const minLng = Math.min(...allLngs), maxLng = Math.max(...allLngs);
+    const cLat = (minLat + maxLat) / 2, cLng = (minLng + maxLng) / 2;
+    const latSpan = Math.max(maxLat - minLat, 0.001);
+    const lngSpan = Math.max(maxLng - minLng, 0.001);
+    const zLat = Math.floor(Math.log(180 * 380 / (256 * latSpan * 1.35)) / Math.LN2);
+    const zLng = Math.floor(Math.log(360 * 580 / (256 * lngSpan * 1.35)) / Math.LN2);
+    const zoom = Math.max(1, Math.min(zLat, zLng, 20));
+    let paths = '';
+    // Área de curvas (contorno verde)
+    if(curvaPolyPts.length >= 3) {
+      const enc = curvaPolyPts.map(p=>`${p.lat.toFixed(6)},${p.lng.toFixed(6)}`).join('|');
+      paths += `&path=fillcolor:0x26a69a18|color:0x26a69aFF|weight:1|${enc}|${curvaPolyPts[0].lat.toFixed(6)},${curvaPolyPts[0].lng.toFixed(6)}`;
+    }
+    // Cada talhão arquivado
+    todos.forEach(t => {
+      if(t.polyPts.length < 3) return;
+      const c = t.cor.replace('#','');
+      const enc = t.polyPts.map(p=>`${p.lat.toFixed(6)},${p.lng.toFixed(6)}`).join('|');
+      paths += `&path=fillcolor:0x${c}28|color:0x${c}FF|weight:2|${enc}|${t.polyPts[0].lat.toFixed(6)},${t.polyPts[0].lng.toFixed(6)}`;
+    });
+    mapImg = `https://maps.googleapis.com/maps/api/staticmap?center=${cLat.toFixed(7)},${cLng.toFixed(7)}&zoom=${zoom}&size=580x380&maptype=satellite${paths}&key=${key}`;
+  }
+
+  // Tabela de talhões
+  const fmtN = n => Math.round(n).toLocaleString('pt-BR');
+  let linhasTable = '';
+  let totalHa = 0, totalLinhas = 0, totalMetros = 0;
+  todos.forEach(t => {
+    totalHa     += t.areaHa   || 0;
+    totalLinhas += t.count    || t.linhas.length;
+    totalMetros += t.metrosLin|| 0;
+    linhasTable += `<tr>
+      <td><b>Talhão ${t.idx}</b></td>
+      <td>${(t.areaHa||0).toFixed(2)} ha</td>
+      <td>${t.spacing||'—'} m</td>
+      <td>${t.count||t.linhas.length}</td>
+      <td>${fmtN(t.metrosLin||0)} m</td>
+      <td><span style="display:inline-block;width:14px;height:14px;background:${t.corLinha||'#FFD600'};border-radius:2px;vertical-align:middle;border:1px solid #ccc;"></span></td>
+    </tr>`;
+  });
+
+  // Curvas de nível
+  const curvaHtml = curvaLayers.length ? `
+  <div class="sec"><h2>&#128200; Curvas de N&#237;vel</h2>
+  <div class="grid">
+    <div class="box"><div class="bv">${curvaMinElev.toFixed(1)} m</div><div class="bl">Alt. m&#237;nima</div></div>
+    <div class="box"><div class="bv">${curvaMaxElev.toFixed(1)} m</div><div class="bl">Alt. m&#225;xima</div></div>
+    <div class="box"><div class="bv">${(curvaMaxElev-curvaMinElev).toFixed(1)} m</div><div class="bl">Amplitude</div></div>
+    <div class="box"><div class="bv">${curvaLayers.length}</div><div class="bl">Curvas geradas</div></div>
+  </div></div>` : '';
+
+  // Legenda de declividade
+  const temDecliv = todos.some(t => t.linhasDecl.length > 0);
+  const declivHtml = temDecliv ? `
+  <div class="sec"><h2>&#9650; Legenda &#8212; Declividade</h2>
+  <div style="display:flex;flex-wrap:wrap;gap:.5rem .9rem;font-size:8.5px;line-height:1.8;">
+    <span><span style="display:inline-block;width:10px;height:10px;background:#4CAF50;border-radius:2px;vertical-align:middle;margin-right:3px;"></span>0&#8211;3%&nbsp; Mecaniza&#231;&#227;o total</span>
+    <span><span style="display:inline-block;width:10px;height:10px;background:#FFEB3B;border:1px solid #ccc;border-radius:2px;vertical-align:middle;margin-right:3px;"></span>3&#8211;8%&nbsp; Terra&#231;os recomendados</span>
+    <span><span style="display:inline-block;width:10px;height:10px;background:#FF9800;border-radius:2px;vertical-align:middle;margin-right:3px;"></span>8&#8211;12%&nbsp; Terra&#231;os obrigat&#243;rios</span>
+    <span><span style="display:inline-block;width:10px;height:10px;background:#F44336;border-radius:2px;vertical-align:middle;margin-right:3px;"></span>12&#8211;20%&nbsp; Mecaniza&#231;&#227;o limitada</span>
+    <span><span style="display:inline-block;width:10px;height:10px;background:#9C27B0;border-radius:2px;vertical-align:middle;margin-right:3px;"></span>&gt;20%&nbsp; Preserva&#231;&#227;o</span>
+  </div></div>` : '';
+
+  const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
+<title>Sistematiza&#231;&#227;o de Plantio &#8212; Bolsa Irriga</title>
+<style>
+@page{size:A4 portrait;margin:.8cm}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;font-size:10px;color:#1a2535;background:#fff}
+.hdr{display:flex;align-items:center;gap:.7rem;padding-bottom:.5rem;border-bottom:2.5px solid #003d5c;margin-bottom:.7rem}
+.hdr img{height:46px;width:46px;object-fit:contain;border-radius:6px;background:#003d5c;padding:4px}
+.hdr-info{flex:1}
+h1{font-size:14px;font-weight:900;color:#003d5c;margin-bottom:.1rem}
+.hdr-sub{font-size:8.5px;color:#607080;line-height:1.6}
+.hdr-r{text-align:right;font-size:8.5px;color:#607080;line-height:1.7;flex-shrink:0}
+.hdr-r b{color:#003d5c;font-size:10px;display:block;font-weight:900}
+.sec{margin-bottom:.65rem}
+h2{font-size:9px;font-weight:800;color:#0077b6;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.3rem;padding-bottom:.12rem;border-bottom:1.5px solid #b8dcf0}
+.grid{display:flex;flex-wrap:wrap;gap:.3rem}
+.box{background:#f0f7ff;border:1px solid #d0e4f0;border-radius:4px;padding:.2rem .45rem;min-width:70px}
+.bv{font-size:11px;font-weight:800;color:#003d5c}
+.bl{font-size:7.5px;color:#607080;text-transform:uppercase}
+table{width:100%;border-collapse:collapse;font-size:8.5px}
+th{background:#f4f7fb;padding:.3rem .5rem;font-size:7.5px;text-transform:uppercase;border:1px solid #d0e4f0;text-align:center}
+td{padding:.3rem .5rem;border:1px solid #d0e4f0;text-align:center}
+tfoot td{background:#e3f2fd}
+.mapa{width:100%;border:1px solid #ccc;border-radius:4px;display:block}
+.footer{margin-top:.7rem;padding-top:.4rem;border-top:1px solid #d0e4f0;font-size:8px;color:#aaa;text-align:center;line-height:1.8}
+</style></head><body>
+<div class="hdr">
+  <img src="https://jpbolsairriga-lgtm.github.io/adutora/logo%20perfil%20branca.png" onerror="this.style.display='none'">
+  <div class="hdr-info">
+    <h1>Sistematiza&#231;&#227;o de Plantio</h1>
+    <div class="hdr-sub">Talh&#245;es &middot; Linhas de Plantio &middot; Curvas de N&#237;vel &middot; Declividade</div>
+    <div class="hdr-sub">Cliente: <b>${cliente}</b> &middot; Propriedade: <b>${propriedade}</b></div>
+  </div>
+  <div class="hdr-r"><b>${consultor}</b>Eng. Agr&#244;nomo &middot; Irriga&#231;&#227;o<br>bolsairriga.com.br &middot; (16) 3702-6571<br>${date}</div>
+</div>
+${mapImg ? `<div class="sec"><h2>&#127757; Mapa dos Talh&#245;es</h2><img class="mapa" id="smap" src="${mapImg}" onerror="this.style.minHeight='120px';this.style.background='#f0ede8'"></div>` : ''}
+<div class="sec"><h2>&#9632; Talh&#245;es</h2>
+<table><thead><tr><th>Talh&#227;o</th><th>&#193;rea</th><th>Espa&#231;amento</th><th>Linhas</th><th>Metros Lineares</th><th>Cor</th></tr></thead>
+<tbody>${linhasTable}</tbody>
+<tfoot><tr><td><b>Total</b></td><td><b>${totalHa.toFixed(2)} ha</b></td><td>&#8212;</td><td><b>${totalLinhas}</b></td><td><b>${fmtN(totalMetros)} m</b></td><td>&#8212;</td></tr></tfoot>
+</table></div>
+${curvaHtml}
+${declivHtml}
+<div class="footer">Bolsa Irriga&#174; &mdash; Av. Elias Abr&#227;o, n&#186; 140 &middot; Franca &ndash; SP &middot; (16) 3702-6571 &middot; bolsairriga.com.br<br>&#169; 2025 Jo&#227;o Paulo de Oliveira &middot; Gerado em ${date}</div>
+<script>
+window.onload = function() {
+  var img = document.getElementById('smap');
+  var go = function() { setTimeout(function(){ window.print(); }, 600); };
+  if(!img || img.complete) go(); else { img.onload = go; img.onerror = go; }
+};
+<\/script>
+</body></html>`;
+
+  const win = window.open('', '_blank');
+  if(!win) { alert('Popup bloqueado. Permita pop-ups para este site e tente novamente.'); return; }
+  win.document.write(html);
+  win.document.close();
 }
 
 // ── Limpar ────────────────────────────────────────────────────────────────────
