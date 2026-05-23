@@ -132,6 +132,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="sec">
     <div class="sec-title">4. Gerar</div>
     <button class="btn btn-gen" id="btnGerar" onclick="gerarLinhas()" disabled>&#10038; Gerar Linhas de Plantio</button>
+    <button class="btn" id="btnFinalizarTalhao" onclick="arquivarTalhaoAtual()" style="display:none;background:#00695c;color:#fff;margin-top:4px;">&#10003; Finalizar Talhão</button>
     <button class="btn btn-kml" id="btnKml" onclick="exportarKML()" style="display:none;margin-top:4px;">&#128462; Exportar KML</button>
     <div id="divDecliv" style="display:none;margin-top:4px;">
       <label style="margin-top:0;">Espaçamento da análise</label>
@@ -284,6 +285,7 @@ let linhas = [], linhasDecl = [];
 let turfPoly = null, turfBound = null;
 let infoMarker = null;
 let baseLabelZoom = 14;
+let corLinhaAtual = '#FFD600'; // cor das linhas do talhão ativo (salva para KML)
 
 // Talhões bloqueados (múltiplos)
 let talhoesArquivados = [];
@@ -530,6 +532,7 @@ function arquivarTalhaoAtual() {
   talhoesArquivados.push({
     idx: idx + 1,
     cor,
+    corLinha: corLinhaAtual, // cor das linhas de plantio para KML
     polyLayer,
     polyPts: [...polyPts],
     linhas: [...linhas],
@@ -549,6 +552,7 @@ function arquivarTalhaoAtual() {
   $('iArea').textContent = '—';
   $('iLinhas').textContent = '—';
   $('iEspac').textContent = '—';
+  $('btnFinalizarTalhao').style.display = 'none'; // esconde após finalizar
   $('btnKml').style.display = 'flex'; // mantém KML disponível
   $('divDecliv').style.display = 'none';
   $('secLegenda').style.display = 'none';
@@ -723,6 +727,7 @@ function gerarLinhas() {
   if(count === 0) { setStatus('Nenhuma linha gerada. Verifique se a guia cruza o talhão.', 'err'); return; }
   $('iLinhas').textContent = count;
   $('iEspac').textContent = spacing + ' m';
+  corLinhaAtual = cor; // salva cor para exportar no KML junto com o talhão
   $('btnKml').style.display = 'flex';
   $('divDecliv').style.display = '';
   limparGuia();
@@ -734,8 +739,9 @@ function gerarLinhas() {
   });
   const ha = areaHa(polyPts);
   mostrarLabel(ha, spacing, count, metrosLin);
-  // Bloqueia o talhão e prepara para o próximo
-  arquivarTalhaoAtual();
+  // Mostra botão para o usuário finalizar o talhão após ajustar escala / classificar declividade
+  $('btnFinalizarTalhao').style.display = 'flex';
+  setStatus(`${count} linhas geradas. Ajuste a escala, classifique a declividade e clique "Finalizar Talhão".`, 'ok');
 }
 
 // ── Declividade ───────────────────────────────────────────────────────────────
@@ -1108,7 +1114,7 @@ function exportarKML() {
   kml += `<name>Traçado de Plantio — Bolsa Irriga</name>\n`;
 
   // Helper: exporta um talhão (arquivado ou ativo) como Folder KML
-  function kmlTalhao(label, cor, pts, lnhs, lnhsDecl) {
+  function kmlTalhao(label, cor, pts, lnhs, lnhsDecl, corLinha) {
     if(pts.length < 3 && !lnhs.length) return '';
     let f = `<Folder><name>${label}</name>\n`;
     // Contorno
@@ -1120,7 +1126,7 @@ function exportarKML() {
     }
     // Linhas de plantio
     if(lnhs.length) {
-      const corL = $('corLinha').value || '#FFD600';
+      const corL = corLinha || '#FFD600';
       f += `<Folder><name>Linhas de Plantio</name>\n`;
       lnhs.forEach(pl => {
         const p = pl.getLatLngs().flat();
@@ -1155,12 +1161,12 @@ function exportarKML() {
 
   // ── 1. Talhões (arquivados + ativo) ──────────────────────────────────────
   talhoesArquivados.forEach(t => {
-    kml += kmlTalhao(`Talhão ${t.idx}`, t.cor, t.polyPts, t.linhas, t.linhasDecl);
+    kml += kmlTalhao(`Talhão ${t.idx}`, t.cor, t.polyPts, t.linhas, t.linhasDecl, t.corLinha);
   });
   // Talhão ativo (se tiver linhas)
   if(polyPts.length >= 3 || linhas.length) {
     const idxAtivo = talhoesArquivados.length + 1;
-    kml += kmlTalhao(`Talhão ${idxAtivo}`, '#42a5f5', polyPts, linhas, linhasDecl);
+    kml += kmlTalhao(`Talhão ${idxAtivo}`, '#42a5f5', polyPts, linhas, linhasDecl, corLinhaAtual);
   }
 
   // ── 2. Área de curvas de nível (se desenhada) ─────────────────────────────
@@ -1221,12 +1227,11 @@ function exportarKML() {
 function limparLinhas() {
   linhas.forEach(l=>l.remove()); linhas=[];
   $('iLinhas').textContent='—'; $('iEspac').textContent='—';
+  $('btnFinalizarTalhao').style.display='none';
   $('btnKml').style.display='none';
   $('divDecliv').style.display='none';
   $('secLegenda').style.display='none';
   linhasDecl.forEach(l=>l.remove()); linhasDecl=[];
-  // Restaura opacidade das linhas originais ao limpar a classificação
-  linhas.forEach(pl => pl.setStyle({opacity: .95}));
   if(infoMarker){infoMarker.remove();infoMarker=null;}
   $('divLabelScale').style.display='none';
 }
