@@ -134,6 +134,14 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
     <button class="btn btn-gen" id="btnGerar" onclick="gerarLinhas()" disabled>&#10038; Gerar Linhas de Plantio</button>
     <button class="btn" id="btnTravarTalhao" onclick="arquivarTalhaoAtual()" style="display:none;background:#00695c;color:#fff;margin-top:4px;">&#128274; Travar Talh&#227;o</button>
     <button class="btn" id="btnRedesenharLinhas" onclick="redesenharLinhas()" style="display:none;background:#37474f;color:#ff8f00;border:1px solid #e65100;margin-top:4px;">&#8629; Redesenhar Linhas</button>
+    <div id="divDeclivAtivo" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid #0f3460;">
+      <div class="sec-title" style="margin-bottom:6px;">Declividade — Talhão Atual</div>
+      <label style="margin-top:0;">Espa&#231;amento da an&#225;lise</label>
+      <div class="row2"><div><input type="number" id="espacDeclivAtivo" value="25" min="5" max="200" step="5"></div>
+      <div style="display:flex;align-items:center;padding-left:4px;font-size:12px;color:#78909c;">metros</div></div>
+      <button class="btn" id="btnDeclivAtivo" onclick="classificarDeclivAtivo()" style="background:#4a148c;color:#fff;margin-top:6px;">&#9650; Classificar Declividade</button>
+      <button class="btn btn-clr" id="btnLimparDeclivAtivo" onclick="limparDeclivAtivo()" style="display:none;margin-top:4px;font-size:11px;">&#10005; Limpar Classifica&#231;&#227;o</button>
+    </div>
     <button class="btn btn-kml" id="btnKml" onclick="exportarKML()" style="display:none;margin-top:4px;">&#128462; Exportar KML</button>
     <button class="btn btn-clr" onclick="limparLinhas()" style="margin-top:4px;">&#10005; Limpar Linhas</button>
     <button class="btn btn-clr" onclick="limparTudo()" style="margin-top:4px;border-color:#37474f;color:#90a4ae;">&#128465; Limpar Tudo</button>
@@ -544,6 +552,8 @@ function arquivarTalhaoAtual() {
   // Bloqueia: remove marcadores de edição, reestiliza contorno com cor do talhão
   polyMarkers.forEach(m => m.remove());
   if(polyLayer) polyLayer.setStyle({color: cor, fillColor: cor, fillOpacity:.06, weight:2});
+  // Restaura opacidade das linhas originais (podem ter sido dimadas pela classif. ativo)
+  linhas.forEach(pl => pl.setStyle({opacity: 0.9}));
 
   // Arquiva
   talhoesArquivados.push({
@@ -576,6 +586,8 @@ function arquivarTalhaoAtual() {
   $('iEspac').textContent = '—';
   $('btnTravarTalhao').style.display = 'none';
   $('btnRedesenharLinhas').style.display = 'none';
+  $('divDeclivAtivo').style.display = 'none';
+  $('btnLimparDeclivAtivo').style.display = 'none';
   $('btnKml').style.display = 'flex'; // mantém KML disponível
 
   // Atualiza contador e habilita classificação global
@@ -774,10 +786,11 @@ function gerarLinhas() {
   const ha = areaHa(polyPts);
   areaHaAtual = ha;
   mostrarLabel(ha, spacing, count, metrosLin);
-  // Aguarda decisão do usuário: travar ou redesenhar
+  // Aguarda decisão do usuário: classificar declividade, travar ou redesenhar
   $('btnTravarTalhao').style.display = 'flex';
   $('btnRedesenharLinhas').style.display = 'flex';
-  setStatus(`${count} linhas geradas. Trave o talhão ou redesenhe as linhas.`, 'ok');
+  $('divDeclivAtivo').style.display = '';
+  setStatus(`${count} linhas geradas. Classifique a declividade, trave ou redesenhe.`, 'ok');
 }
 
 // ── Declividade (global — todos os talhões) ───────────────────────────────────
@@ -811,6 +824,69 @@ function resampleLine(latlngs, spacingM) {
   }
   pts.push(latlngs[latlngs.length - 1]);
   return pts;
+}
+
+// ── Declividade do talhão ATIVO (antes de travar) ────────────────────────────
+function classificarDeclivAtivo() {
+  if(!linhas.length) { setStatus('Gere as linhas primeiro.', 'err'); return; }
+  if(!window.google || !window.google.maps) {
+    setStatus('Ative o Google Maps (chave API) para classificação.', 'err'); return;
+  }
+  const spacingM = Math.max(5, parseFloat($('espacDeclivAtivo').value) || 25);
+  setStatus('Classificando declividade do talhão ativo…', 'info');
+  $('btnDeclivAtivo').disabled = true;
+
+  // Limpa classificação anterior
+  linhasDecl.forEach(l => l.remove()); linhasDecl = [];
+  linhas.forEach(pl => pl.setStyle({opacity: 0.18}));
+
+  const lineInfo = [], allPts = [];
+  linhas.forEach(pl => {
+    const raw = pl.getLatLngs().flat();
+    if(raw.length < 2) return;
+    const samples = resampleLine(raw, spacingM);
+    lineInfo.push({samples, inicio: allPts.length});
+    samples.forEach(p => allPts.push(new google.maps.LatLng(p.lat, p.lng)));
+  });
+  if(!allPts.length) { $('btnDeclivAtivo').disabled = false; return; }
+
+  const elevator = new google.maps.ElevationService();
+  const BATCH = 512, elevs = new Array(allPts.length);
+  let done = 0;
+  const totalBatches = Math.ceil(allPts.length / BATCH);
+  for(let b = 0; b < totalBatches; b++) {
+    const off = b * BATCH, slice = allPts.slice(off, off + BATCH);
+    elevator.getElevationForLocations({locations: slice}, (res, status) => {
+      if(status === 'OK') res.forEach((r, i) => { elevs[off + i] = r.elevation; });
+      if(++done === totalBatches) _aplicarDeclivAtivo(lineInfo, elevs);
+    });
+  }
+}
+function _aplicarDeclivAtivo(lineInfo, elevs) {
+  let totalSegs = 0;
+  lineInfo.forEach(({samples, inicio}) => {
+    for(let i = 0; i < samples.length - 1; i++) {
+      const e0 = elevs[inicio + i], e1 = elevs[inicio + i + 1];
+      if(e0 == null || e1 == null) continue;
+      const p0 = samples[i], p1 = samples[i + 1];
+      const distM = haversineM(p0, p1);
+      if(distM < 0.1) continue;
+      const slope = Math.abs((e1 - e0) / distM) * 100;
+      linhasDecl.push(L.polyline([[p0.lat,p0.lng],[p1.lat,p1.lng]],
+        {color:slopeColor(slope), weight:2.5, opacity:1}).addTo(map));
+      totalSegs++;
+    }
+  });
+  $('secLegenda').style.display = '';
+  $('btnDeclivAtivo').disabled = false;
+  $('btnLimparDeclivAtivo').style.display = '';
+  setStatus(`Declividade: ${totalSegs} segmentos. Trave o talhão ou redesenhe.`, 'ok');
+}
+function limparDeclivAtivo() {
+  linhasDecl.forEach(l => l.remove()); linhasDecl = [];
+  linhas.forEach(pl => pl.setStyle({opacity: 0.95}));
+  $('secLegenda').style.display = 'none';
+  $('btnLimparDeclivAtivo').style.display = 'none';
 }
 
 function classificarTodosDeclividade() {
@@ -1431,12 +1507,15 @@ window.onload = function(){ setTimeout(function(){ window.print(); }, 500); };
 
 // ── Redesenhar linhas (mantém polígono, descarta linhas não travadas) ─────────
 function redesenharLinhas() {
-  linhas.forEach(l => l.remove()); linhas = [];
   linhasDecl.forEach(l => l.remove()); linhasDecl = [];
+  linhas.forEach(l => l.remove()); linhas = [];
   if(infoMarker){ infoMarker.remove(); infoMarker = null; }
   $('iLinhas').textContent = '—'; $('iEspac').textContent = '—';
   $('btnTravarTalhao').style.display = 'none';
   $('btnRedesenharLinhas').style.display = 'none';
+  $('divDeclivAtivo').style.display = 'none';
+  $('btnLimparDeclivAtivo').style.display = 'none';
+  $('secLegenda').style.display = 'none';
   $('btnKml').style.display = 'none';
   setStatus('Linhas descartadas. Desenhe a linha guia e gere novamente.', 'info');
 }
@@ -1447,8 +1526,11 @@ function limparLinhas() {
   $('iLinhas').textContent='—'; $('iEspac').textContent='—';
   $('btnTravarTalhao').style.display='none';
   $('btnRedesenharLinhas').style.display='none';
+  $('divDeclivAtivo').style.display='none';
+  $('btnLimparDeclivAtivo').style.display='none';
   $('btnKml').style.display='none';
   linhasDecl.forEach(l=>l.remove()); linhasDecl=[];
+  linhas.forEach(pl=>pl.setStyle({opacity:.95})); // restaura opacidade caso tenha classificado
   if(infoMarker){infoMarker.remove();infoMarker=null;}
 }
 function limparGuia() {
