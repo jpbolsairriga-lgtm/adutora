@@ -1232,6 +1232,10 @@ function kmlPolygonCoords(pts) {
 }
 
 function exportarKML() {
+  try { _exportarKMLInterno(); }
+  catch(e) { alert('Erro ao gerar KML: ' + e.message); console.error(e); }
+}
+function _exportarKMLInterno() {
   let kml  = `<?xml version="1.0" encoding="UTF-8"?>\n`;
   kml += `<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n`;
   kml += `<name>Traçado de Plantio — Bolsa Irriga</name>\n`;
@@ -1340,22 +1344,25 @@ function exportarKML() {
 
   kml += `</Document></kml>`;
   baixarArquivo(kml, 'plantio_bolsairriga.kml', 'application/vnd.google-earth.kml+xml');
-}
+} // fim _exportarKMLInterno
 
 // ── Download universal (iOS + desktop) ───────────────────────────────────────
 function baixarArquivo(conteudo, nomeArquivo, tipoMime) {
   const blob = new Blob([conteudo], {type: tipoMime});
-  // iOS Safari: Web Share API com arquivos
-  try {
-    if(navigator.canShare) {
-      const file = new File([blob], nomeArquivo, {type: tipoMime});
-      if(navigator.canShare({files: [file]})) {
-        navigator.share({files: [file], title: nomeArquivo});
-        return;
+  // iOS Safari: Web Share API (único jeito de baixar arquivo no Safari iOS)
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  if(isIOS) {
+    try {
+      if(navigator.canShare) {
+        const file = new File([blob], nomeArquivo, {type: tipoMime});
+        if(navigator.canShare({files: [file]})) {
+          navigator.share({files: [file], title: nomeArquivo});
+          return;
+        }
       }
-    }
-  } catch(e) {}
-  // Desktop / Android: download direto
+    } catch(e) {}
+  }
+  // Desktop / Android: download direto via <a>
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -1539,8 +1546,8 @@ function gerarPDF() {
   const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
 <title>Sistematiza&#231;&#227;o de Plantio &#8212; Bolsa Irriga</title>
 <style>
-@page{size:A4 portrait;margin:.8cm}
-*{box-sizing:border-box;margin:0;padding:0}
+@page{size:A4 landscape;margin:.8cm}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 body{font-family:'Segoe UI',system-ui,sans-serif;font-size:10px;color:#1a2535;background:#fff}
 .hdr{display:flex;align-items:center;gap:.7rem;padding-bottom:.5rem;border-bottom:2.5px solid #003d5c;margin-bottom:.65rem}
 .hdr img{height:46px;width:46px;object-fit:contain;border-radius:6px;background:#003d5c;padding:4px}
