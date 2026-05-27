@@ -442,7 +442,6 @@ function buscarLocal() {
   box.innerHTML = '<div class="search-item" style="color:#78909c;">Buscando…</div>';
 
   function mostrarResultados(items) {
-    // items = [{nome, subtitulo, lat, lng}]
     if(!items.length) { box.innerHTML = '<div class="search-item" style="color:#ef9a9a;">Nenhum resultado.</div>'; return; }
     box.innerHTML = '';
     items.forEach(r => {
@@ -458,33 +457,38 @@ function buscarLocal() {
     });
   }
 
-  // 1ª opção: Google Maps Geocoder (já carregado com o satellite)
+  function usarNominatim() {
+    fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=br&accept-language=pt-BR&q=${encodeURIComponent(q)}`)
+      .then(r => r.json())
+      .then(data => mostrarResultados(data.map(r => ({
+          nome: r.display_name.split(',')[0].trim(),
+          sub:  ' — ' + r.display_name.split(',').slice(1,3).join(',').trim(),
+          lat:  parseFloat(r.lat),
+          lng:  parseFloat(r.lon)
+        }))))
+      .catch(() => { box.innerHTML = '<div class="search-item" style="color:#ef9a9a;">Erro na busca.</div>'; });
+  }
+
+  // 1ª opção: Google Geocoder (se chave carregada)
   if(window.google && window.google.maps && window.google.maps.Geocoder) {
     new google.maps.Geocoder().geocode({address: q, language: 'pt-BR'}, (res, status) => {
-      if(status !== 'OK' || !res.length) {
-        box.innerHTML = '<div class="search-item" style="color:#ef9a9a;">Nenhum resultado.</div>';
-        return;
+      if(status === 'OK' && res && res.length) {
+        mostrarResultados(res.slice(0,5).map(r => ({
+          nome: r.formatted_address.split(',')[0].trim(),
+          sub:  ' — ' + r.formatted_address.split(',').slice(1).join(',').trim(),
+          lat:  r.geometry.location.lat(),
+          lng:  r.geometry.location.lng()
+        })));
+      } else {
+        // Geocoder falhou (cota, API não habilitada etc.) → usa Nominatim
+        usarNominatim();
       }
-      mostrarResultados(res.slice(0,5).map(r => ({
-        nome: r.formatted_address.split(',')[0].trim(),
-        sub:  ' — ' + r.formatted_address.split(',').slice(1).join(',').trim(),
-        lat:  r.geometry.location.lat(),
-        lng:  r.geometry.location.lng()
-      })));
     });
     return;
   }
 
-  // Fallback: Nominatim (quando sem chave Google)
-  fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=br&q=${encodeURIComponent(q)}`)
-    .then(r => r.json())
-    .then(data => mostrarResultados(data.map(r => ({
-        nome: r.display_name.split(',')[0].trim(),
-        sub:  ' — ' + r.display_name.split(',').slice(1,3).join(',').trim(),
-        lat:  parseFloat(r.lat),
-        lng:  parseFloat(r.lon)
-      }))))
-    .catch(() => { box.innerHTML = '<div class="search-item" style="color:#ef9a9a;">Erro na busca.</div>'; });
+  // Sem chave Google → Nominatim direto
+  usarNominatim();
 }
 // Fechar resultados ao clicar fora
 document.addEventListener('click', e => {
@@ -1410,10 +1414,11 @@ function gerarPDF() {
   const prop       = $('rPropriedade').value.trim() || '—';
   const key        = localStorage.getItem('mapskey_pl') || '';
 
-  // ── Bounds: somente vértices dos polígonos (linhas sempre ficam dentro do polígono)
+  // ── Bounds: polígonos + curvas de nível (que podem ultrapassar o polígono)
   const polyAllPts = [];
   todos.forEach(t => t.polyPts.forEach(p => polyAllPts.push(p)));
   if (polyPts.length >= 3) polyPts.forEach(p => polyAllPts.push(p));
+  curvaLayers.forEach(pl => { try { pl.getLatLngs().flat(Infinity).forEach(ll => polyAllPts.push({lat:ll.lat,lng:ll.lng})); } catch(e){} });
 
   const lats = polyAllPts.map(p => p.lat), lngs = polyAllPts.map(p => p.lng);
   const latMin = Math.min(...lats), latMax = Math.max(...lats);
