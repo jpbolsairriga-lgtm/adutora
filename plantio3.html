@@ -2032,15 +2032,18 @@ function confirmarDivisao() {
 
     newLayer.on('click', () => { if(modo==='idle') selecionarTalhao(capturedNewUid); });
 
-    talhoesArquivados.push({
+    const novoTalhao = {
       uid: newUid, idx: newIdx+1, cor: newCor,
-      corLinha: t.corLinha, baseLabelZoom: t.baseLabelZoom,
+      corLinha: t.corLinha, baseLabelZoom: map.getZoom(),
       areaHa: turf.area(parte)/10000,
       spacing: t.spacing, count:0, metrosLin:0,
       polyLayer: newLayer, polyPts: newPolyPts,
       linhas:[], linhasDecl:[], infoMarker:null,
       turfPoly: parte
-    });
+    };
+    talhoesArquivados.push(novoTalhao);
+    // Cria legenda centrada no sub-polígono real (usa polyPts extraídos do turf)
+    novoTalhao.infoMarker = _criarInfoMarkerParaTalhao(novoTalhao);
   });
 
   // ─ Limpar estado da divisão e seleção ─
@@ -2049,7 +2052,8 @@ function confirmarDivisao() {
   $('divSelInfo').innerHTML = 'Clique em um talh&#227;o travado para selecionar';
   $('divCarreadorOps').style.display = 'none';
   $('btnLimparArquivados').style.display = '';
-  renumerarTalhoes();
+  renumerarTalhoes();       // reordena idx e atualiza cabeçalhos das legendas
+  _updateLabelScale();      // aplica escala inicial às novas legendas
   setStatus(`✓ Talhão dividido em ${partes.length} novos talhões — carreador de ${largura}m criado.`, 'ok');
 }
 
@@ -2077,6 +2081,33 @@ function excluirTalhaoSelecionado() {
   // Restore turfPoly
   if(polyPts.length >= 3) buildTurfPoly(); else { turfPoly=null; turfBound=null; }
   setStatus(`Talhão ${t.idx} excluído.`, 'ok');
+}
+
+// ── Cria infoMarker centrado no talhão (usado após divisão) ──────────────────
+function _criarInfoMarkerParaTalhao(t) {
+  if(!t.polyPts || t.polyPts.length < 3) return null;
+  const coords = t.polyPts.map(p => [p.lng, p.lat]);
+  coords.push(coords[0]);
+  let c;
+  try {
+    const poly = turf.polygon([coords]);
+    turf.rewind(poly, {mutate:true});
+    c = turf.centroid(poly).geometry.coordinates; // [lng, lat]
+  } catch(e) { return null; }
+  const fmt = n => Math.round(n).toLocaleString('pt-BR');
+  const html = `<div class="poly-label">
+    <div class="poly-label-head">&#9632; Talh&#227;o ${t.idx}</div>
+    <div class="poly-label-body">
+      <div class="poly-label-row"><span class="poly-label-lbl">&#193;rea</span><span class="poly-label-val">${(t.areaHa||0).toFixed(2)} ha</span></div>
+      <div class="poly-label-row"><span class="poly-label-lbl">Espa&#231;amento</span><span class="poly-label-val">${t.spacing||'&#8212;'} m</span></div>
+      <div class="poly-label-row"><span class="poly-label-lbl">Linhas</span><span class="poly-label-val">${t.count||0}</span></div>
+      <div class="poly-label-row"><span class="poly-label-lbl">Metros lineares</span><span class="poly-label-val">${fmt(t.metrosLin||0)} m</span></div>
+    </div>
+  </div>`;
+  return L.marker([c[1], c[0]], {
+    icon: L.divIcon({html, className:'', iconAnchor:[84,58]}),
+    interactive: false, zIndexOffset: 500
+  }).addTo(map);
 }
 
 // Extende a linha de divisão para além dos limites do polígono
