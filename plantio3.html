@@ -194,6 +194,11 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
     </div>
     <button class="btn btn-guide" id="btnGuia" onclick="iniciarGuia()">&#9998; Desenhar Guia</button>
     <button class="btn btn-finish" id="btnFinGuia" onclick="finalizarGuia()">&#10003; Finalizar Guia</button>
+    <div id="rowGuiaLen" style="display:none;margin-top:6px;background:#0f3460;border-radius:5px;padding:5px 10px;font-size:12px;">
+      <span style="color:#78909c;">Comprimento:</span>
+      <span id="iGuiaLen" style="color:#e2b96e;font-weight:700;float:right;">—</span>
+    </div>
+    <button class="btn" id="btnPerfilGuia" onclick="mostrarPerfilGuia()" style="display:none;background:#004d40;color:#fff;margin-top:4px;">&#128200; Perfil de Eleva&#231;&#227;o</button>
   </div>
 
   <div class="sec">
@@ -276,6 +281,15 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   </div>
 
   <div id="status">Desenhe o contorno do talhão para começar.</div>
+</div>
+
+<!-- ── Modal: Perfil de Elevação da Guia ── -->
+<div class="modal-bg" id="modalPerfil" onclick="if(event.target===this)fecharPerfil()">
+  <div class="modal" style="max-width:660px;width:95%">
+    <button class="modal-close" onclick="fecharPerfil()">&#10005;</button>
+    <h2>&#128200; Perfil de Eleva&#231;&#227;o &mdash; Linha Guia</h2>
+    <div id="perfilContent" style="margin-top:12px;"></div>
+  </div>
 </div>
 
 <!-- ── Modal: Tutorial Chave Google Maps API ── -->
@@ -634,9 +648,14 @@ function addGuidePt(ll) {
 function updateGuiaDisplay() {
   const pts = guideMarkers.map(m => m.getLatLng());
   if(guideLayer) { guideLayer.remove(); guideLayer = null; }
-  if(pts.length < 2) return;
+  if(pts.length < 2) { $('rowGuiaLen').style.display = 'none'; return; }
   const latlngs = modoGuia==='spline' ? catmullRom(pts.map(p=>({lat:p.lat,lng:p.lng}))).map(p=>[p.lat,p.lng]) : pts;
   guideLayer = L.polyline(latlngs, {color:'#ff8f00', weight:2.5, opacity:.9}).addTo(map);
+  const linePts = modoGuia==='spline' ? latlngs.map(p=>({lat:p[0]??p.lat, lng:p[1]??p.lng})) : pts;
+  let totalM = 0;
+  for(let i = 0; i < linePts.length - 1; i++) totalM += haversineM(linePts[i], linePts[i+1]);
+  $('iGuiaLen').textContent = totalM >= 1000 ? (totalM/1000).toFixed(2)+' km' : Math.round(totalM)+' m';
+  $('rowGuiaLen').style.display = 'block';
 }
 
 function finalizarGuia() {
@@ -648,6 +667,7 @@ function finalizarGuia() {
   guidePts = guideMarkers.map(m => m.getLatLng());
   updateGuiaDisplay();
   $('btnGerar').disabled = false;
+  $('btnPerfilGuia').style.display = 'flex';
   setStatus('Guia definida. Configure o espaçamento e gere as linhas.', 'ok');
 }
 
@@ -1797,6 +1817,8 @@ function limparGuia() {
   guidePts=[];
   if(guideLayer){guideLayer.remove();guideLayer=null;}
   $('btnGerar').disabled=true;
+  $('rowGuiaLen').style.display='none';
+  $('btnPerfilGuia').style.display='none';
 }
 function limparPoligono() {
   polyMarkers.forEach(m=>m.remove()); polyMarkers=[];
@@ -1864,6 +1886,9 @@ function selecionarTalhao(uid) {
   $('btnFinDivisao').style.display = 'none';
   $('btnIniciarDivisao').style.display = 'flex';
   $('btnEditarLinhas').style.display = 'flex';
+  $('iArea').textContent   = t.areaHa.toFixed(2) + ' ha';
+  $('iLinhas').textContent = t.count  || '—';
+  $('iEspac').textContent  = t.spacing ? t.spacing + ' m' : '—';
   setStatus(`Talhão ${t.idx} selecionado — use "Traçar Divisão" ou "Editar Linhas".`, 'info');
 }
 
@@ -1876,6 +1901,11 @@ function desselecionarTalhao() {
   _limparDivisaoLine();
   $('divSelInfo').innerHTML = 'Clique em um talh&#227;o travado para selecionar';
   $('divCarreadorOps').style.display = 'none';
+  if(polyPts.length < 3) {
+    $('iArea').textContent = '—';
+    $('iLinhas').textContent = '—';
+    $('iEspac').textContent = '—';
+  }
   // Restore turfPoly to active polygon if any
   if(polyPts.length >= 3) buildTurfPoly(); else { turfPoly=null; turfBound=null; }
   setStatus('Seleção cancelada.','');
@@ -2188,6 +2218,103 @@ function abrirTutorialChave() {
 }
 function fecharTutorialChave() {
   $('modalChave').classList.remove('open');
+}
+
+// ── Perfil de Elevação da Linha Guia ──────────────────────────────────────────
+function mostrarPerfilGuia() {
+  if(guidePts.length < 2) { setStatus('Defina a linha guia primeiro.', 'err'); return; }
+  if(!window.google?.maps?.ElevationService) {
+    alert('Perfil de elevação requer a chave Google Maps API. Ative-a nas configurações.');
+    return;
+  }
+  const rawPts = modoGuia === 'spline'
+    ? catmullRom(guidePts.map(p => ({lat: p.lat, lng: p.lng}))).map(p => ({lat: p.lat, lng: p.lng}))
+    : guidePts.map(p => ({lat: p.lat, lng: p.lng}));
+
+  let totalRaw = 0;
+  for(let i = 0; i < rawPts.length - 1; i++) totalRaw += haversineM(rawPts[i], rawPts[i+1]);
+  const step = Math.max(totalRaw / 99, 2);
+  const samples = resampleLine(rawPts, step);
+
+  $('perfilContent').innerHTML = '<p style="color:#90a4ae;text-align:center;padding:24px 0">Carregando eleva&#231;&#245;es...</p>';
+  $('modalPerfil').classList.add('open');
+
+  const elevator = new google.maps.ElevationService();
+  const elevs = new Array(samples.length);
+  let done = 0, totalBatches = Math.ceil(samples.length / 512);
+  for(let b = 0; b < totalBatches; b++) {
+    const off = b * 512;
+    const slice = samples.slice(off, off + 512).map(p => new google.maps.LatLng(p.lat, p.lng));
+    elevator.getElevationForLocations({locations: slice}, (res, status) => {
+      if(status === 'OK') res.forEach((r, i) => { elevs[off + i] = r.elevation; });
+      if(++done === totalBatches) _renderPerfilGuia(samples, elevs);
+    });
+  }
+}
+
+function _renderPerfilGuia(samples, elevs) {
+  const dists = [0];
+  for(let i = 1; i < samples.length; i++) dists.push(dists[i-1] + haversineM(samples[i-1], samples[i]));
+  const totalM = dists[dists.length - 1];
+
+  const valid = elevs.filter(e => e != null);
+  if(!valid.length) {
+    $('perfilContent').innerHTML = '<p style="color:#ef5350;text-align:center;padding:20px">Erro ao buscar eleva&#231;&#245;es.</p>';
+    return;
+  }
+  const minE = Math.min(...valid), maxE = Math.max(...valid);
+  const rangeE = Math.max(maxE - minE, 1);
+
+  const W = 580, H = 190, pL = 46, pR = 14, pT = 10, pB = 34;
+  const cW = W - pL - pR, cH = H - pT - pB;
+  const xS = d => pL + (d / totalM) * cW;
+  const yS = e => pT + cH - ((e - minE) / rangeE) * cH;
+
+  let pathD = '', areaD = `M${xS(0).toFixed(1)},${(pT+cH).toFixed(1)}`;
+  samples.forEach((s, i) => {
+    if(elevs[i] == null) return;
+    const x = xS(dists[i]).toFixed(1), y = yS(elevs[i]).toFixed(1);
+    pathD += (pathD ? 'L' : 'M') + x + ',' + y;
+    areaD += 'L' + x + ',' + y;
+  });
+  areaD += `L${xS(totalM).toFixed(1)},${(pT+cH).toFixed(1)}Z`;
+
+  let yTicks = '';
+  for(let i = 0; i <= 4; i++) {
+    const e = minE + (rangeE / 4) * i, y = yS(e).toFixed(1);
+    yTicks += `<line x1="${pL}" y1="${y}" x2="${pL+cW}" y2="${y}" stroke="#1a3a5c" stroke-width="1"/>`;
+    yTicks += `<text x="${pL-5}" y="${parseFloat(y)+4}" text-anchor="end" font-size="9" fill="#78909c">${e.toFixed(0)}</text>`;
+  }
+  let xTicks = '';
+  for(let i = 0; i <= 5; i++) {
+    const d = (totalM / 5) * i, x = xS(d).toFixed(1);
+    xTicks += `<line x1="${x}" y1="${pT}" x2="${x}" y2="${pT+cH+3}" stroke="#1a3a5c" stroke-width="1"/>`;
+    const lbl = d >= 1000 ? (d/1000).toFixed(1)+'km' : Math.round(d)+'m';
+    xTicks += `<text x="${x}" y="${pT+cH+15}" text-anchor="middle" font-size="9" fill="#78909c">${lbl}</text>`;
+  }
+
+  const fmtM = m => m >= 1000 ? (m/1000).toFixed(2)+' km' : Math.round(m)+' m';
+  $('perfilContent').innerHTML = `
+    <div style="display:flex;gap:18px;justify-content:center;flex-wrap:wrap;margin-bottom:10px;font-size:11px;color:#90a4ae;">
+      <span>Comprimento: <b style="color:#e2b96e">${fmtM(totalM)}</b></span>
+      <span>Alt. m&#237;n: <b style="color:#e2b96e">${minE.toFixed(1)} m</b></span>
+      <span>Alt. m&#225;x: <b style="color:#e2b96e">${maxE.toFixed(1)} m</b></span>
+      <span>Desn&#237;vel: <b style="color:#e2b96e">${(maxE-minE).toFixed(1)} m</b></span>
+    </div>
+    <svg width="100%" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="background:#0b2540;border-radius:6px;display:block;">
+      <defs><linearGradient id="eGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#26c6da" stop-opacity=".45"/>
+        <stop offset="100%" stop-color="#26c6da" stop-opacity=".04"/>
+      </linearGradient></defs>
+      ${yTicks}${xTicks}
+      <path d="${areaD}" fill="url(#eGrad)"/>
+      <path d="${pathD}" stroke="#26c6da" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round"/>
+      <text x="${pL-8}" y="${pT+cH/2}" text-anchor="middle" font-size="8.5" fill="#546e7a" transform="rotate(-90,${pL-8},${pT+cH/2})">Altitude (m)</text>
+    </svg>`;
+}
+
+function fecharPerfil() {
+  $('modalPerfil').classList.remove('open');
 }
 
 // Init divisão mode buttons
