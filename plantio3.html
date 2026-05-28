@@ -1562,11 +1562,25 @@ function gerarPDF() {
   const sw = { lat: latMin - latSpan * pad, lng: lngMin - lngSpan * pad };
   const ne = { lat: latMax + latSpan * pad, lng: lngMax + lngSpan * pad };
 
+  // ── Dimensões do mapa: adaptadas ao aspecto físico do campo ─────────────
+  // Campo quase quadrado em imagem 16:9 → talhões ficam minúsculos
+  // Calcula MW/MH para que a razão largura/altura corresponda ao campo
+  const midLat = (latMin + latMax) / 2;
+  const fieldAsp = (lngMax - lngMin) * Math.cos(midLat * Math.PI / 180)
+                 / Math.max(latMax - latMin, 1e-6);
+  // Espaço disponível no PDF (A4 paisagem, margem 0.8cm, header ~30mm)
+  const pdfW = 860, pdfH = 620;
+  let MW, MH;
+  if (fieldAsp >= pdfW / pdfH) {
+    MW = pdfW; MH = Math.max(300, Math.round(pdfW / fieldAsp));
+  } else {
+    MH = pdfH; MW = Math.max(300, Math.round(pdfH * fieldAsp));
+  }
+  MW += MW % 2; MH += MH % 2; // pares → compatível com scale=2
   // ── Mapa estático Google ───────────────────────────────────────────────────
-  const MW = 1024, MH = 614;
   const { zoom, cLat, cLng } = _staticMapParams(sw, ne, MW, MH);
   const staticUrl = key
-    ? `https://maps.googleapis.com/maps/api/staticmap?center=${cLat},${cLng}&zoom=${zoom}&size=${MW}x${MH}&maptype=satellite&key=${key}`
+    ? `https://maps.googleapis.com/maps/api/staticmap?center=${cLat},${cLng}&zoom=${zoom}&size=${MW/2}x${MH/2}&scale=2&maptype=satellite&key=${key}`
     : '';
 
   // ── Projeção Mercator — idêntica ao nivelamento.html ──────────────────────
