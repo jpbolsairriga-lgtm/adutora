@@ -194,11 +194,20 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
     </div>
     <button class="btn btn-guide" id="btnGuia" onclick="iniciarGuia()">&#9998; Desenhar Guia</button>
     <button class="btn btn-finish" id="btnFinGuia" onclick="finalizarGuia()">&#10003; Finalizar Guia</button>
+    <button class="btn btn-clr" id="btnCancelarGuia" onclick="cancelarGuia()" style="display:none;">&#10005; Cancelar Guia</button>
     <div id="rowGuiaLen" style="display:none;margin-top:6px;background:#0f3460;border-radius:5px;padding:5px 10px;font-size:12px;">
       <span style="color:#78909c;">Comprimento:</span>
       <span id="iGuiaLen" style="color:#e2b96e;font-weight:700;float:right;">—</span>
     </div>
     <button class="btn" id="btnPerfilGuia" onclick="mostrarPerfilGuia()" style="display:none;background:#004d40;color:#fff;margin-top:4px;">&#128200; Perfil de Eleva&#231;&#227;o</button>
+    <div style="border-top:1px solid #1e4a7a;margin-top:10px;padding-top:8px;">
+      <button class="btn" id="btnRegua" onclick="toggleRegua()" style="background:#37474f;color:#e0e0e0;">&#128207; R&#233;gua</button>
+      <div id="rowReguaLen" style="display:none;margin-top:6px;background:#0f3460;border-radius:5px;padding:5px 10px;font-size:12px;">
+        <span style="color:#78909c;">Medi&#231;&#227;o:</span>
+        <span id="iReguaLen" style="color:#e2b96e;font-weight:700;float:right;">0 m</span>
+      </div>
+      <button class="btn btn-clr" id="btnLimparRegua" onclick="limparRegua()" style="display:none;margin-top:4px;font-size:11px;">&#10005; Limpar R&#233;gua</button>
+    </div>
   </div>
 
   <div class="sec">
@@ -406,6 +415,7 @@ let modo = 'idle'; // 'poly' | 'guide' | 'idle' | 'curvapoly'
 let modoGuia = 'reta'; // 'reta' | 'spline'
 let polyPts = [], polyMarkers = [], polyLayer = null, polyTempLine = null;
 let guidePts = [], guideMarkers = [], guideLayer = null;
+let reguaPts = [], reguaMarkers = [], reguaLayer = null;
 let linhas = [], linhasDecl = [];
 let turfPoly = null, turfBound = null;
 let infoMarker = null;
@@ -465,12 +475,14 @@ map.on('click', e => {
   else if(modo === 'guide') addGuidePt(e.latlng);
   else if(modo === 'curvapoly') addCurvaPolyPt(e.latlng);
   else if(modo === 'divisao') addDivisaoPt(e.latlng);
+  else if(modo === 'regua') addReguaPt(e.latlng);
 });
 map.on('dblclick', e => {
   if(modo === 'poly' && polyPts.length >= 3) fecharPoligono();
   else if(modo === 'guide' && guidePts.length >= 2) finalizarGuia();
   else if(modo === 'curvapoly' && curvaPolyPts.length >= 3) fecharPoligonoCurva();
   else if(modo === 'divisao' && divisaoPts.length >= 2) finalizarDivisaoLinha();
+  else if(modo === 'regua') limparRegua();
 });
 
 // ── Polígono ──────────────────────────────────────────────────────────────────
@@ -630,6 +642,7 @@ function iniciarGuia() {
   map.getContainer().style.cursor = 'crosshair';
   $('btnGuia').classList.add('active');
   $('btnFinGuia').style.display = 'flex';
+  $('btnCancelarGuia').style.display = 'flex';
   $('btnGerar').disabled = true;
   setStatus('Clique para adicionar pontos da guia. Define a direção das linhas.', 'info');
 }
@@ -665,11 +678,66 @@ function finalizarGuia() {
   map.getContainer().style.cursor = '';
   $('btnGuia').classList.remove('active');
   $('btnFinGuia').style.display = 'none';
+  $('btnCancelarGuia').style.display = 'none';
   guidePts = guideMarkers.map(m => m.getLatLng());
   updateGuiaDisplay();
   $('btnGerar').disabled = false;
   $('btnPerfilGuia').style.display = 'flex';
   setStatus('Guia definida. Configure o espaçamento e gere as linhas.', 'ok');
+}
+
+function cancelarGuia() {
+  limparGuia();
+  modo = 'idle';
+  map.getContainer().style.cursor = '';
+  $('btnGuia').classList.remove('active');
+  $('btnFinGuia').style.display = 'none';
+  $('btnCancelarGuia').style.display = 'none';
+  setStatus('Guia cancelada.', '');
+}
+
+// ── Régua ─────────────────────────────────────────────────────────────────────
+function toggleRegua() {
+  if(modo === 'regua') { limparRegua(); return; }
+  if(modo !== 'idle') { setStatus('Finalize ou cancele a ferramenta atual antes de usar a régua.', 'err'); return; }
+  modo = 'regua';
+  map.getContainer().style.cursor = 'crosshair';
+  $('btnRegua').style.background = '#e65100';
+  $('btnRegua').textContent = '✕ Sair da Régua';
+  $('btnLimparRegua').style.display = 'flex';
+  $('rowReguaLen').style.display = 'block';
+  setStatus('Régua: clique para medir distâncias. Duplo-clique para encerrar.', 'info');
+}
+
+function addReguaPt(ll) {
+  reguaPts.push(ll);
+  const mk = L.marker(ll, {icon: mkIcon('vertex-marker guide'), draggable: true}).addTo(map);
+  mk.on('drag', () => updateReguaDisplay());
+  mk.on('dragend', () => { reguaPts = reguaMarkers.map(m => m.getLatLng()); updateReguaDisplay(); });
+  reguaMarkers.push(mk);
+  updateReguaDisplay();
+}
+
+function updateReguaDisplay() {
+  const pts = reguaMarkers.map(m => m.getLatLng());
+  if(reguaLayer) { reguaLayer.remove(); reguaLayer = null; }
+  if(pts.length < 2) { $('iReguaLen').textContent = '0 m'; return; }
+  reguaLayer = L.polyline(pts, {color:'#26c6da', weight:2, opacity:.9, dashArray:'8,4'}).addTo(map);
+  let totalM = 0;
+  for(let i = 0; i < pts.length - 1; i++) totalM += haversineM(pts[i], pts[i+1]);
+  $('iReguaLen').textContent = totalM >= 1000 ? (totalM/1000).toFixed(3)+' km' : totalM.toFixed(1)+' m';
+}
+
+function limparRegua() {
+  reguaMarkers.forEach(m => m.remove()); reguaMarkers = []; reguaPts = [];
+  if(reguaLayer) { reguaLayer.remove(); reguaLayer = null; }
+  modo = 'idle';
+  map.getContainer().style.cursor = '';
+  $('btnRegua').style.background = '#37474f';
+  $('btnRegua').innerHTML = '&#128207; R&#233;gua';
+  $('rowReguaLen').style.display = 'none';
+  $('btnLimparRegua').style.display = 'none';
+  setStatus('', '');
 }
 
 // ── Múltiplos Talhões ─────────────────────────────────────────────────────────
