@@ -1102,7 +1102,7 @@ function _aplicarDeclivAtivo(lineInfo, elevs) {
       if(distM < 0.1) continue;
       const slope = Math.abs((e1 - e0) / distM) * 100;
       linhasDecl.push(L.polyline([[p0.lat,p0.lng],[p1.lat,p1.lng]],
-        {color:slopeColor(slope), weight:2.5, opacity:1}).addTo(map));
+        {color:slopeColor(slope), weight:parseFloat($('espess').value)||1.5, opacity:1}).addTo(map));
       totalSegs++;
     }
   });
@@ -1178,7 +1178,7 @@ function aplicarCoresDeclivTodos(lineInfo, elevs) {
       const slope = Math.abs((e1 - e0) / distM) * 100;
       const pl = L.polyline(
         [[p0.lat, p0.lng], [p1.lat, p1.lng]],
-        {color: slopeColor(slope), weight: 2.5, opacity: 1}
+        {color: slopeColor(slope), weight: parseFloat($('espess').value)||1.5, opacity: 1}
       ).addTo(map);
       talhao.linhasDecl.push(pl);
       totalSegs++;
@@ -2335,34 +2335,53 @@ function _renderPerfilGuia(samples, elevs) {
   for(let i = 1; i < samples.length; i++) dists.push(dists[i-1] + haversineM(samples[i-1], samples[i]));
   const totalM = dists[dists.length - 1];
 
-  const valid = elevs.filter(e => e != null);
-  if(!valid.length) {
+  const validIdxs = samples.map((_,i) => i).filter(i => elevs[i] != null);
+  if(!validIdxs.length) {
     $('perfilContent').innerHTML = '<p style="color:#ef5350;text-align:center;padding:20px">Erro ao buscar eleva&#231;&#245;es.</p>';
     return;
   }
+  const valid = validIdxs.map(i => elevs[i]);
   const minE = Math.min(...valid), maxE = Math.max(...valid);
   const rangeE = Math.max(maxE - minE, 1);
+
+  // Ganho, perda e declividade máxima
+  let gain = 0, loss = 0, maxSlope = 0;
+  for(let j = 1; j < validIdxs.length; j++) {
+    const i0 = validIdxs[j-1], i1 = validIdxs[j];
+    const de = elevs[i1] - elevs[i0];
+    const dd = dists[i1] - dists[i0];
+    if(de > 0) gain += de; else loss += Math.abs(de);
+    const sp = dd > 0 ? Math.abs(de / dd) * 100 : 0;
+    if(sp > maxSlope) maxSlope = sp;
+  }
 
   const W = 580, H = 190, pL = 46, pR = 14, pT = 10, pB = 34;
   const cW = W - pL - pR, cH = H - pT - pB;
   const xS = d => pL + (d / totalM) * cW;
   const yS = e => pT + cH - ((e - minE) / rangeE) * cH;
 
-  let pathD = '', areaD = `M${xS(0).toFixed(1)},${(pT+cH).toFixed(1)}`;
-  samples.forEach((s, i) => {
-    if(elevs[i] == null) return;
-    const x = xS(dists[i]).toFixed(1), y = yS(elevs[i]).toFixed(1);
-    pathD += (pathD ? 'L' : 'M') + x + ',' + y;
-    areaD += 'L' + x + ',' + y;
-  });
-  areaD += `L${xS(totalM).toFixed(1)},${(pT+cH).toFixed(1)}Z`;
+  // Área de preenchimento
+  let areaD = `M${xS(dists[validIdxs[0]]).toFixed(1)},${(pT+cH).toFixed(1)}`;
+  validIdxs.forEach(i => { areaD += `L${xS(dists[i]).toFixed(1)},${yS(elevs[i]).toFixed(1)}`; });
+  areaD += `L${xS(dists[validIdxs[validIdxs.length-1]]).toFixed(1)},${(pT+cH).toFixed(1)}Z`;
 
+  // Segmentos coloridos por declividade
+  let segs = '';
+  for(let j = 1; j < validIdxs.length; j++) {
+    const i0 = validIdxs[j-1], i1 = validIdxs[j];
+    const dd = dists[i1] - dists[i0];
+    const sp = dd > 0 ? Math.abs(elevs[i1] - elevs[i0]) / dd * 100 : 0;
+    segs += `<line x1="${xS(dists[i0]).toFixed(1)}" y1="${yS(elevs[i0]).toFixed(1)}" x2="${xS(dists[i1]).toFixed(1)}" y2="${yS(elevs[i1]).toFixed(1)}" stroke="${slopeColor(sp)}" stroke-width="2.5" stroke-linecap="round"/>`;
+  }
+
+  // Eixo Y
   let yTicks = '';
   for(let i = 0; i <= 4; i++) {
     const e = minE + (rangeE / 4) * i, y = yS(e).toFixed(1);
     yTicks += `<line x1="${pL}" y1="${y}" x2="${pL+cW}" y2="${y}" stroke="#1a3a5c" stroke-width="1"/>`;
     yTicks += `<text x="${pL-5}" y="${parseFloat(y)+4}" text-anchor="end" font-size="9" fill="#78909c">${e.toFixed(0)}</text>`;
   }
+  // Eixo X
   let xTicks = '';
   for(let i = 0; i <= 5; i++) {
     const d = (totalM / 5) * i, x = xS(d).toFixed(1);
@@ -2373,22 +2392,31 @@ function _renderPerfilGuia(samples, elevs) {
 
   const fmtM = m => m >= 1000 ? (m/1000).toFixed(2)+' km' : Math.round(m)+' m';
   $('perfilContent').innerHTML = `
-    <div style="display:flex;gap:18px;justify-content:center;flex-wrap:wrap;margin-bottom:10px;font-size:11px;color:#90a4ae;">
+    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-bottom:8px;font-size:11px;color:#90a4ae;">
       <span>Comprimento: <b style="color:#e2b96e">${fmtM(totalM)}</b></span>
       <span>Alt. m&#237;n: <b style="color:#e2b96e">${minE.toFixed(1)} m</b></span>
       <span>Alt. m&#225;x: <b style="color:#e2b96e">${maxE.toFixed(1)} m</b></span>
-      <span>Desn&#237;vel: <b style="color:#e2b96e">${(maxE-minE).toFixed(1)} m</b></span>
+      <span>&#9650; Ganho: <b style="color:#4CAF50">+${gain.toFixed(1)} m</b></span>
+      <span>&#9660; Perda: <b style="color:#ef5350">&#8722;${loss.toFixed(1)} m</b></span>
+      <span>Decl. m&#225;x: <b style="color:#FF9800">${maxSlope.toFixed(1)}%</b></span>
     </div>
-    <svg width="100%" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="background:#0b2540;border-radius:6px;display:block;">
+    <svg width="100%" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="background:#0b2540;border-radius:6px 6px 0 0;display:block;">
       <defs><linearGradient id="eGrad" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#26c6da" stop-opacity=".45"/>
-        <stop offset="100%" stop-color="#26c6da" stop-opacity=".04"/>
+        <stop offset="0%" stop-color="#37474f" stop-opacity=".5"/>
+        <stop offset="100%" stop-color="#37474f" stop-opacity=".08"/>
       </linearGradient></defs>
       ${yTicks}${xTicks}
       <path d="${areaD}" fill="url(#eGrad)"/>
-      <path d="${pathD}" stroke="#26c6da" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round"/>
+      ${segs}
       <text x="${pL-8}" y="${pT+cH/2}" text-anchor="middle" font-size="8.5" fill="#546e7a" transform="rotate(-90,${pL-8},${pT+cH/2})">Altitude (m)</text>
-    </svg>`;
+    </svg>
+    <div style="background:#0b2540;border-radius:0 0 6px 6px;padding:5px 10px 7px;display:flex;gap:14px;flex-wrap:wrap;justify-content:center;font-size:10px;color:#78909c;">
+      <span style="display:flex;align-items:center;gap:5px;"><span style="width:22px;height:3px;background:#4CAF50;display:inline-block;border-radius:2px;"></span>0&#8211;3%</span>
+      <span style="display:flex;align-items:center;gap:5px;"><span style="width:22px;height:3px;background:#FFEB3B;display:inline-block;border-radius:2px;"></span>3&#8211;8%</span>
+      <span style="display:flex;align-items:center;gap:5px;"><span style="width:22px;height:3px;background:#FF9800;display:inline-block;border-radius:2px;"></span>8&#8211;12%</span>
+      <span style="display:flex;align-items:center;gap:5px;"><span style="width:22px;height:3px;background:#F44336;display:inline-block;border-radius:2px;"></span>12&#8211;20%</span>
+      <span style="display:flex;align-items:center;gap:5px;"><span style="width:22px;height:3px;background:#9C27B0;display:inline-block;border-radius:2px;"></span>&gt;20%</span>
+    </div>`;
 }
 
 function fecharPerfil() {
