@@ -185,6 +185,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
       </div>
       <button class="btn" id="btnConfDivisao" onclick="confirmarDivisao()" style="display:none;background:#2e7d32;color:#fff">&#10003; Confirmar Divis&#227;o</button>
       <button class="btn" id="btnEditarLinhas" onclick="ativarTalhaoParaEdicao()" style="background:#1565c0;color:#fff">&#9998; Editar Linhas</button>
+      <button class="btn" id="btnRedesenharSelec" onclick="redesenharLinhasSelecionado()" style="background:#e65100;color:#fff;">&#8635; Redesenhar Linhas</button>
       <button class="btn btn-clr" id="btnExcluirTalhao" onclick="excluirTalhaoSelecionado()" style="border-color:#b71c1c;color:#ef9a9a;">&#128465; Excluir Talh&#227;o</button>
       <button class="btn btn-clr" id="btnDesselecionar" onclick="desselecionarTalhao()">&#10005; Cancelar Sele&#231;&#227;o</button>
     </div>
@@ -1203,7 +1204,7 @@ function limparDeclivTodos() {
 }
 
 // ── Curvas de Nível ───────────────────────────────────────────────────────────
-let curvaLayers = [];
+let curvaLayers = [], curvaLabels = [];
 let curvaMinElev = 0, curvaMaxElev = 0;
 // Polígono independente para área de curvas de nível
 let curvaPolyPts=[], curvaPolyMarkers=[], curvaPolyLayer=null, curvaPolyTempLine=null;
@@ -1280,7 +1281,7 @@ function limparPoligonoCurva() {
 
 function elevColorCurva(level, mn, mx) {
   const t = mx > mn ? (level - mn) / (mx - mn) : 0;
-  const stops = [[34,139,34],[107,186,52],[255,215,0],[210,105,30],[139,69,19],[128,0,0]];
+  const stops = [[0,180,60],[80,210,0],[230,220,0],[255,130,0],[215,30,0],[150,0,0]];
   const n = stops.length - 1;
   const idx = Math.min(Math.floor(t * n), n - 1);
   const f = t * n - idx;
@@ -1415,10 +1416,30 @@ async function gerarCurvas() {
           const pl = L.polyline(seg.map(p=>[p.lat,p.lng]), {
             color:cor, weight:isMaster?2.5:1.2, opacity:isMaster?0.95:0.75
           }).addTo(map);
-          pl._level = lv;        // cota de altimetria em metros
+          pl._level = lv;
           pl._isMaster = isMaster;
           curvaLayers.push(pl);
           lineCount++;
+          // Cotas no início e fim — apenas curvas mestras com segmento suficientemente longo
+          if(isMaster) {
+            const pts = pl.getLatLngs();
+            const len = pts.length;
+            if(len >= 2) {
+              const segLen = haversineM(pts[0], pts[len-1]);
+              if(segLen > 40) {
+                const mkLabel = ll => L.marker(ll, {
+                  icon: L.divIcon({
+                    className:'',
+                    html:`<div style="background:rgba(0,0,0,.65);color:#fff;font-size:8.5px;font-weight:700;padding:1px 4px;border-radius:2px;white-space:nowrap;pointer-events:none;">${lv.toFixed(0)} m</div>`,
+                    iconAnchor:[0,8]
+                  }),
+                  interactive:false, zIndexOffset:-50
+                }).addTo(map);
+                curvaLabels.push(mkLabel(pts[0]));
+                curvaLabels.push(mkLabel(pts[len-1]));
+              }
+            }
+          }
         }
         seg = [];
       };
@@ -1440,6 +1461,7 @@ async function gerarCurvas() {
 
 function limparCurvas() {
   curvaLayers.forEach(l=>l.remove()); curvaLayers=[];
+  curvaLabels.forEach(m=>m.remove()); curvaLabels=[];
   $('btnLimparCurvas').style.display='none';
   $('curvaInfo').style.display='none';
 }
@@ -1982,6 +2004,14 @@ function desselecionarTalhao() {
   // Restore turfPoly to active polygon if any
   if(polyPts.length >= 3) buildTurfPoly(); else { turfPoly=null; turfBound=null; }
   setStatus('Seleção cancelada.','');
+}
+
+function redesenharLinhasSelecionado() {
+  if(talhaoSelecionadoUid === null) return;
+  ativarTalhaoParaEdicao();   // desbloqueia o talhão como ativo
+  redesenharLinhas();          // limpa linhas existentes
+  $('btnTravarTalhao').style.display = 'flex'; // mantém opção de re-arquivar
+  setStatus('Linhas limpas. Desenhe a linha guia e gere as novas linhas de plantio.', 'info');
 }
 
 // ── Editar Linhas de um Talhão Arquivado ─────────────────────────────────────
