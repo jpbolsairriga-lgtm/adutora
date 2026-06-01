@@ -162,6 +162,12 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <!-- ── Carreador / Divisão ── -->
   <div class="sec" id="secCarreador">
     <div class="sec-title">2. Carreador / Divis&#227;o</div>
+    <button class="btn" id="btnMultiSelect" onclick="toggleMultiSelect()" style="background:#37474f;color:#e0e0e0;margin-bottom:4px;">&#9635; Selecionar M&#250;ltiplos</button>
+    <div id="divMultiSelInfo" style="display:none;background:#0f3460;border-radius:5px;padding:5px 10px;font-size:12px;margin-bottom:4px;">
+      <span style="color:#78909c;">Selecionados:</span>
+      <span id="iMultiSelCount" style="color:#ffd600;font-weight:700;float:right;">0</span>
+    </div>
+    <button class="btn btn-clr" id="btnCancelarMulti" onclick="cancelarMultiSelect()" style="display:none;font-size:11px;margin-bottom:4px;">&#10005; Cancelar Multi-sele&#231;&#227;o</button>
     <div id="divSelInfo" class="talhao-sel-info">Clique em um talh&#227;o travado para selecionar</div>
     <div id="divCarreadorOps" style="display:none">
       <div style="background:#0f3460;border-radius:5px;padding:6px 8px;margin-bottom:8px;font-size:11px;color:#ffd600;">
@@ -229,6 +235,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
     <div class="sec-title">5. Gerar</div>
     <button class="btn btn-gen" id="btnGerar" onclick="gerarLinhas()" disabled>&#10038; Gerar Linhas de Plantio</button>
     <button class="btn" id="btnTravarTalhao" onclick="arquivarTalhaoAtual()" style="display:none;background:#00695c;color:#fff;margin-top:4px;">&#128274; Travar Talh&#227;o</button>
+    <button class="btn" id="btnTravarTodos" onclick="travarTodosMulti()" style="display:none;background:#00695c;color:#fff;margin-top:4px;">&#128274; Travar Todos os Selecionados</button>
     <button class="btn" id="btnRedesenharLinhas" onclick="redesenharLinhas()" style="display:none;background:#37474f;color:#ff8f00;border:1px solid #e65100;margin-top:4px;">&#8629; Redesenhar Linhas</button>
     <div id="divDeclivAtivo" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid #0f3460;">
       <div class="sec-title" style="margin-bottom:6px;">Declividade — Talhão Atual</div>
@@ -432,6 +439,10 @@ let spacingAtual = 12, countLinhasAtual = 0, metrosLinAtual = 0, areaHaAtual = 0
 let talhoesArquivados = [];
 // Paleta de cores para contorno de cada talhão
 const CORES_TALHAO = ['#42a5f5','#ef5350','#66bb6a','#ffa726','#ab47bc','#26c6da','#ff7043','#8d6e63'];
+
+// Multi-seleção de talhões
+let multiSelectMode = false;
+let talhoesMultiSel = new Set();
 
 // ── Carreador / Divisão ──────────────────────────────────────────────────────
 let nextTalhaoUid = 1;
@@ -637,11 +648,15 @@ function setModoGuia(m) {
 }
 
 function iniciarGuia() {
-  // Se tiver talhão arquivado selecionado e nenhum polígono ativo → ativa para edição automaticamente
-  if(talhaoSelecionadoUid !== null && polyPts.length < 3) {
-    ativarTalhaoParaEdicao();
+  if(multiSelectMode) {
+    if(talhoesMultiSel.size === 0) { setStatus('Selecione pelo menos um talhão na multi-seleção.', 'err'); return; }
+  } else {
+    // Se tiver talhão arquivado selecionado e nenhum polígono ativo → ativa para edição automaticamente
+    if(talhaoSelecionadoUid !== null && polyPts.length < 3) {
+      ativarTalhaoParaEdicao();
+    }
+    if(!turfPoly) { setStatus('Desenhe o contorno primeiro ou selecione um talhão.', 'err'); return; }
   }
-  if(!turfPoly) { setStatus('Desenhe o contorno primeiro ou selecione um talhão.', 'err'); return; }
   limparGuia(); limparLinhas();
   modo = 'guide';
   map.getContainer().style.cursor = 'crosshair';
@@ -825,6 +840,16 @@ function limparTalhoesArquivados() {
   talhoesArquivados = [];
   carreadorLayers.forEach(l => l.remove()); carreadorLayers = [];
   talhaoSelecionadoUid = null;
+  talhoesMultiSel.clear();
+  if(multiSelectMode) {
+    multiSelectMode = false;
+    $('btnMultiSelect').style.background = '#37474f';
+    $('btnMultiSelect').innerHTML = '&#9635; Selecionar M&#250;ltiplos';
+    $('divMultiSelInfo').style.display = 'none';
+    $('btnCancelarMulti').style.display = 'none';
+    $('iMultiSelCount').textContent = '0';
+    $('btnTravarTodos').style.display = 'none';
+  }
   $('divSelInfo').innerHTML = 'Clique em um talh&#227;o travado para selecionar';
   $('divCarreadorOps').style.display = 'none';
   $('iTalhoes').textContent = '0';
@@ -896,10 +921,129 @@ function atualizarEscalaLabel() {
 }
 map.on('zoomend', _updateLabelScale);
 
+// ── Helper: gera linhas para um talhão específico (multi-seleção) ─────────────
+function _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingKm, cor, esp, linhasArr) {
+  const bbox = turf.bbox(tPolyT);
+  const ext = turf.distance(turf.point([bbox[0],bbox[1]]), turf.point([bbox[2],bbox[3]])) * 2;
+  const anchor = turf.centroid(tPolyT).geometry.coordinates;
+  const nBoth = Math.ceil(ext / 2 / spacingKm) + 2;
+  let count = 0;
+  function addRetaRow(projKm) {
+    const dir = projKm >= 0 ? perpBrg : perpBrg + 180;
+    const ref = Math.abs(projKm) < 1e-9 ? anchor
+      : turf.destination(turf.point(anchor), Math.abs(projKm), dir, {units:'kilometers'}).geometry.coordinates;
+    const p1 = turf.destination(turf.point(ref), ext, rowBrgGlobal,       {units:'kilometers'}).geometry.coordinates;
+    const p2 = turf.destination(turf.point(ref), ext, rowBrgGlobal + 180, {units:'kilometers'}).geometry.coordinates;
+    try {
+      const ixs = turf.lineIntersect(turf.lineString([p2, p1]), tBoundT);
+      if(!ixs.features.length) return false;
+      const p2pt = turf.point(p2);
+      const sorted = ixs.features.map(f => f.geometry.coordinates)
+        .sort((a, b) => turf.distance(p2pt, turf.point(a)) - turf.distance(p2pt, turf.point(b)));
+      let added = 0;
+      for(let i = 0; i + 1 < sorted.length; i += 2) {
+        const s = sorted[i], e = sorted[i+1];
+        const mid = [(s[0]+e[0])/2, (s[1]+e[1])/2];
+        if(!turf.booleanPointInPolygon(turf.point(mid), tPolyT)) continue;
+        const pl = L.polyline([[s[1],s[0]], [e[1],e[0]]], {color:cor, weight:esp, opacity:.95}).addTo(map);
+        linhasArr.push(pl); count++; added++;
+      }
+      return added > 0;
+    } catch(e) { return false; }
+  }
+  function addSplineRow(projKm) {
+    const dir = projKm >= 0 ? perpBrg : perpBrg + 180;
+    const ctrlOff = guidePts.map(pt => {
+      if(Math.abs(projKm) < 1e-9) return {lat:pt.lat, lng:pt.lng};
+      const [lng,lat] = turf.destination(turf.point([pt.lng,pt.lat]), Math.abs(projKm), dir, {units:'kilometers'}).geometry.coordinates;
+      return {lat, lng};
+    });
+    const sp = catmullRom(ctrlOff, 60);
+    const spPts = sp.map(p => [p.lng, p.lat]);
+    const N = 200, extS = [], extE = [];
+    for(let i = N; i >= 1; i--) extS.push(turf.destination(turf.point(spPts[0]), (i/N)*ext, rowBrgGlobal+180, {units:'kilometers'}).geometry.coordinates);
+    for(let i = 1; i <= N; i++) extE.push(turf.destination(turf.point(spPts[spPts.length-1]), (i/N)*ext, rowBrgGlobal, {units:'kilometers'}).geometry.coordinates);
+    const allPts = [...extS, ...spPts, ...extE];
+    let seg = null, added = 0;
+    const flush = () => {
+      if(seg && seg.length >= 2) {
+        const pl = L.polyline(seg.map(p => [p[1],p[0]]), {color:cor, weight:esp, opacity:.95}).addTo(map);
+        linhasArr.push(pl); count++; added++;
+      }
+      seg = null;
+    };
+    for(let i = 0; i < allPts.length; i++) {
+      const inside = turf.booleanPointInPolygon(turf.point(allPts[i]), tPolyT);
+      if(inside) {
+        if(!seg) {
+          seg = [];
+          if(i > 0) { try { const ix = turf.lineIntersect(turf.lineString([allPts[i-1],allPts[i]]),tBoundT); if(ix.features.length) seg.push(ix.features[0].geometry.coordinates); } catch(e){} }
+        }
+        seg.push(allPts[i]);
+      } else if(seg) {
+        try { const ix = turf.lineIntersect(turf.lineString([allPts[i-1],allPts[i]]),tBoundT); if(ix.features.length) seg.push(ix.features[0].geometry.coordinates); } catch(e){}
+        flush();
+      }
+    }
+    flush();
+    return added > 0;
+  }
+  const addRow = modoGuia === 'spline' ? addSplineRow : addRetaRow;
+  addRow(0);
+  for(let n = 1; n <= nBoth; n++) addRow(n * spacingKm);
+  for(let n = 1; n <= nBoth; n++) addRow(-n * spacingKm);
+  return count;
+}
+
 // ── Geração de Linhas ─────────────────────────────────────────────────────────
 function gerarLinhas() {
-  if(!turfPoly || !turfBound) { setStatus('Desenhe o contorno primeiro.', 'err'); return; }
   if(guidePts.length < 2) { setStatus('Desenhe a linha guia primeiro.', 'err'); return; }
+
+  // ── Modo multi-seleção ─────────────────────────────────────────────────────
+  if(multiSelectMode && talhoesMultiSel.size > 0) {
+    const spacing = parseFloat($('espac').value) || 12;
+    const spacingKm = spacing / 1000;
+    const cor = $('corLinha').value;
+    const esp = parseFloat($('espess').value) || 1.5;
+    const gp = guidePts;
+    const rowBrgGlobal = turf.bearing(turf.point([gp[0].lng,gp[0].lat]), turf.point([gp[gp.length-1].lng,gp[gp.length-1].lat]));
+    const perpBrg = rowBrgGlobal + 90;
+    let totalCount = 0;
+    talhoesMultiSel.forEach(uid => {
+      const t = talhoesArquivados.find(x => x.uid === uid);
+      if(!t) return;
+      const ring = [...t.polyPts.map(p => [p.lng,p.lat]), [t.polyPts[0].lng,t.polyPts[0].lat]];
+      let tPolyT, tBoundT;
+      try { tPolyT = turf.polygon([ring]); turf.rewind(tPolyT,{mutate:true}); tBoundT = turf.polygonToLine(tPolyT); } catch(e) { return; }
+      t.linhas.forEach(l => l.remove()); t.linhas = [];
+      t.linhasDecl.forEach(l => l.remove()); t.linhasDecl = [];
+      const newLinhas = [];
+      const count = _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingKm, cor, esp, newLinhas);
+      if(count === 0) return;
+      t.linhas = newLinhas;
+      t.count = count;
+      t.spacing = spacing;
+      t.corLinha = cor;
+      let metrosLin = 0;
+      newLinhas.forEach(pl => { const pts = pl.getLatLngs().flat(); for(let i=0;i<pts.length-1;i++) metrosLin+=haversineM(pts[i],pts[i+1]); });
+      t.metrosLin = metrosLin;
+      if(t.infoMarker) { t.infoMarker.remove(); t.infoMarker = null; }
+      const c = turf.centroid(tPolyT).geometry.coordinates;
+      const fmt = n => Math.round(n).toLocaleString('pt-BR');
+      const html = `<div class="poly-label"><div class="poly-label-head">&#9632; Talh&#227;o ${t.idx}</div><div class="poly-label-body"><div class="poly-label-row"><span class="poly-label-lbl">&#193;rea</span><span class="poly-label-val">${t.areaHa.toFixed(2)} ha</span></div><div class="poly-label-row"><span class="poly-label-lbl">Espa&#231;amento</span><span class="poly-label-val">${spacing} m</span></div><div class="poly-label-row"><span class="poly-label-lbl">Linhas</span><span class="poly-label-val">${count}</span></div><div class="poly-label-row"><span class="poly-label-lbl">Metros lineares</span><span class="poly-label-val">${fmt(metrosLin)} m</span></div></div></div>`;
+      t.infoMarker = L.marker([c[1],c[0]], {icon:L.divIcon({html, className:'', iconAnchor:[84,58]}), interactive:false, zIndexOffset:500}).addTo(map);
+      totalCount += count;
+    });
+    if(totalCount === 0) { setStatus('Nenhuma linha gerada. Verifique se a guia passa pelos talhões selecionados.', 'err'); return; }
+    limparGuia();
+    _updateLabelScale();
+    $('btnTravarTodos').style.display = 'flex';
+    setStatus(`${totalCount} linhas geradas em ${talhoesMultiSel.size} talhão(ões). Clique em "Travar Todos" para confirmar.`, 'ok');
+    return;
+  }
+
+  // ── Modo simples ───────────────────────────────────────────────────────────
+  if(!turfPoly || !turfBound) { setStatus('Desenhe o contorno primeiro.', 'err'); return; }
 
   limparLinhas();
   const spacing = parseFloat($('espac').value) || 12;
@@ -1929,6 +2073,7 @@ function limparTudo() {
   limparDeclivTodos();
   limparLinhas(); limparGuia(); limparPoligono(); limparPoligonoCurva();
   limparTalhoesArquivados();
+  if(multiSelectMode) cancelarMultiSelect();
   modo='idle'; map.getContainer().style.cursor='';
   $('btnPoly').classList.remove('active');
   $('btnGuia').classList.remove('active');
@@ -1946,8 +2091,62 @@ setModoGuia('reta');
 // CARREADOR / DIVISÃO
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── Multi-seleção ─────────────────────────────────────────────────────────────
+function toggleMultiSelect() {
+  if(multiSelectMode) { cancelarMultiSelect(); return; }
+  if(talhaoSelecionadoUid !== null) desselecionarTalhao();
+  multiSelectMode = true;
+  $('btnMultiSelect').style.background = '#e65100';
+  $('btnMultiSelect').innerHTML = '&#10005; Sair Multi-sele&#231;&#227;o';
+  $('divMultiSelInfo').style.display = 'block';
+  $('btnCancelarMulti').style.display = 'flex';
+  setStatus('Multi-sele&#231;&#227;o ativa: clique nos talh&#245;es para selecionar, depois desenhe a guia e gere as linhas.', 'info');
+}
+
+function cancelarMultiSelect() {
+  talhoesMultiSel.forEach(uid => {
+    const t = talhoesArquivados.find(x => x.uid === uid);
+    if(t && t.polyLayer) t.polyLayer.setStyle({color:t.cor, weight:2, fillOpacity:.06, dashArray:null});
+  });
+  talhoesMultiSel.clear();
+  multiSelectMode = false;
+  $('btnMultiSelect').style.background = '#37474f';
+  $('btnMultiSelect').innerHTML = '&#9635; Selecionar M&#250;ltiplos';
+  $('divMultiSelInfo').style.display = 'none';
+  $('btnCancelarMulti').style.display = 'none';
+  $('iMultiSelCount').textContent = '0';
+  $('btnTravarTodos').style.display = 'none';
+  setStatus('', '');
+}
+
+function toggleTalhaoMultiSel(uid) {
+  const t = talhoesArquivados.find(x => x.uid === uid);
+  if(!t) return;
+  if(talhoesMultiSel.has(uid)) {
+    talhoesMultiSel.delete(uid);
+    if(t.polyLayer) t.polyLayer.setStyle({color:t.cor, weight:2, fillOpacity:.06, dashArray:null});
+  } else {
+    talhoesMultiSel.add(uid);
+    if(t.polyLayer) t.polyLayer.setStyle({color:'#FFD600', weight:3, fillOpacity:.18, dashArray:'10,5'});
+  }
+  $('iMultiSelCount').textContent = talhoesMultiSel.size;
+  const n = talhoesMultiSel.size;
+  setStatus(n > 0 ? `${n} talhão(ões) selecionado(s) — desenhe a linha guia e gere as linhas.` : 'Nenhum talhão selecionado.', 'info');
+}
+
+function travarTodosMulti() {
+  const count = talhoesMultiSel.size;
+  talhoesMultiSel.forEach(uid => {
+    const t = talhoesArquivados.find(x => x.uid === uid);
+    if(t) t.linhas.forEach(pl => pl.setStyle({opacity:0.9}));
+  });
+  cancelarMultiSelect();
+  setStatus(`${count} talhão(ões) travado(s) ✓`, 'ok');
+}
+
 // ── Seleção de Talhão ─────────────────────────────────────────────────────────
 function selecionarTalhao(uid) {
+  if(multiSelectMode) { toggleTalhaoMultiSel(uid); return; }
   // Deselect any previous
   if(talhaoSelecionadoUid !== null) {
     const prev = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
