@@ -293,10 +293,15 @@ function iniciarPoligono(){
   $('btnPoly').style.background='#42a5f5';$('btnFechar').style.display='flex';
   setStatus('Clique para adicionar vértices. Duplo-clique ou ✓ para fechar.','info');
 }
+function geoDistM(lat1,lng1,lat2,lng2){
+  var R=6371000,dLat=(lat2-lat1)*Math.PI/180,dLng=(lng2-lng1)*Math.PI/180;
+  var a=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)*Math.sin(dLng/2);
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
 function calcPolyPerim(){
   if(polyPts.length<2)return 0;
   let d=0;
-  for(let i=1;i<polyPts.length;i++)d+=turf.distance([polyPts[i-1].lng,polyPts[i-1].lat],[polyPts[i].lng,polyPts[i].lat],{units:'meters'});
+  for(let i=1;i<polyPts.length;i++)d+=geoDistM(polyPts[i-1].lat,polyPts[i-1].lng,polyPts[i].lat,polyPts[i].lng);
   return d;
 }
 function addPolyPt(ll){
@@ -308,7 +313,7 @@ function addPolyPt(ll){
   mk.on('dragend',()=>buildTurfPoly());
   polyMarkers.push(mk);updatePolyDisplay();
   if(prev){
-    const seg=turf.distance([prev.lng,prev.lat],[ll.lng,ll.lat],{units:'meters'});
+    const seg=geoDistM(prev.lat,prev.lng,ll.lat,ll.lng);
     const tot=calcPolyPerim();
     setStatus('Segmento: '+seg.toFixed(1)+' m  |  Parcial: '+tot.toFixed(0)+' m ('+polyPts.length+' vértices)','info');
   }else{setStatus('1º vértice. Clique para continuar, duplo-clique ou ✓ para fechar.','info');}
@@ -366,7 +371,7 @@ map.on('dblclick',e=>{if(modo==='poly'&&polyPts.length>=3)fecharPoligono();});
 map.on('mousemove',e=>{
   if(modo==='poly'&&polyPts.length>0){
     const prev=polyPts[polyPts.length-1];
-    const seg=turf.distance([prev.lng,prev.lat],[e.latlng.lng,e.latlng.lat],{units:'meters'});
+    const seg=geoDistM(prev.lat,prev.lng,e.latlng.lat,e.latlng.lng);
     const tot=calcPolyPerim()+seg;
     setStatus('→ '+seg.toFixed(1)+' m  |  Perímetro estimado: '+tot.toFixed(0)+' m','info');
   }
@@ -742,9 +747,8 @@ function svgCorte(id, titleStr, ptLabelL, ptLabelR, z_tL, z_tR, r){
   var waterD=mk([[XNL,Yn],[X3,Yf],[X4,Yf],[XNR,Yn]],true);
   out.push('<path d="'+waterD+'" fill="#c8e6f5" opacity="0.85" stroke="#64b5f6" stroke-width="1"/>');
 
-  // 3. Linha de terreno natural (dourada)
-  out.push('<line x1="'+X0.toFixed(1)+'" y1="'+YtL.toFixed(1)+'" x2="'+XTL.toFixed(1)+'" y2="'+YtL.toFixed(1)+'" stroke="#c4963a" stroke-width="2.2"/>');
-  out.push('<line x1="'+XTR.toFixed(1)+'" y1="'+YtR.toFixed(1)+'" x2="'+X7.toFixed(1)+'" y2="'+YtR.toFixed(1)+'" stroke="#c4963a" stroke-width="2.2"/>');
+  // 3. Linha de terreno natural (dourada) — de A até B completa
+  out.push('<line x1="'+X0.toFixed(1)+'" y1="'+YtL.toFixed(1)+'" x2="'+X7.toFixed(1)+'" y2="'+YtR.toFixed(1)+'" stroke="#c4963a" stroke-width="2.5"/>');
 
   // 4. Perfil do talude (contorno azul escuro)
   var pts=[X0,YtL,X1,Yc,X2,Yc,X3,Yf,X4,Yf,X5,Yc,X6,Yc,X7,YtR];
