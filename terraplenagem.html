@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reservatório Escavado — Terraplenagem</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{display:flex;height:100vh;font-family:'Segoe UI',sans-serif;background:#1a1a2e;}
+#sidebar{width:280px;min-width:280px;background:#16213e;color:#e0e0e0;display:flex;flex-direction:column;overflow-y:auto;z-index:1000;}
+#map{flex:1;position:relative;}
+.logo{padding:14px 16px 10px;border-bottom:1px solid #0f3460;}
+.logo h1{font-size:14px;color:#e2b96e;letter-spacing:.03em;}
+.logo p{font-size:11px;color:#7a8499;margin-top:2px;}
+.sec{padding:11px 14px;border-bottom:1px solid #0f3460;}
+.sec-title{font-size:10px;font-weight:700;letter-spacing:.1em;color:#7a8499;text-transform:uppercase;margin-bottom:8px;}
+.btn{display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;transition:.15s;margin-bottom:5px;text-align:left;}
+.btn:last-child{margin-bottom:0;}
+.btn-poly{background:#1565c0;color:#fff;}
+.btn-poly:hover{background:#1976d2;}
+.btn-finish{background:#00695c;color:#fff;display:none;}
+.btn-finish:hover{background:#00897b;}
+.btn-clr{background:transparent;color:#ef9a9a;border:1px solid #c62828;}
+.btn-clr:hover{background:#c62828;color:#fff;}
+.btn-action{background:#e65100;color:#fff;}
+.btn-action:hover{background:#ef6c00;}
+.btn-action:disabled{background:#37474f;color:#607d8b;cursor:not-allowed;}
+label{display:block;font-size:11px;color:#90a4ae;margin-bottom:3px;margin-top:8px;}
+label:first-child{margin-top:0;}
+input[type=number],select,input[type=text]{width:100%;background:#0f3460;color:#e0e0e0;border:1px solid #1e4a7a;border-radius:5px;padding:6px 8px;font-size:13px;}
+.row2{display:flex;gap:8px;}
+.row2>div{flex:1;}
+.info-box{background:#0f3460;border-radius:6px;padding:10px;font-size:12px;}
+.info-row{display:flex;justify-content:space-between;margin-bottom:5px;border-bottom:1px solid rgba(255,255,255,.04);padding-bottom:4px;}
+.info-row:last-child{margin-bottom:0;border-bottom:none;padding-bottom:0;}
+.info-label{color:#78909c;font-size:11px;}
+.info-val{color:#e2b96e;font-weight:700;}
+.info-val.ok{color:#a5d6a7;}
+.info-val.warn{color:#ffcc02;}
+.info-val.bad{color:#ef9a9a;}
+#status{padding:8px 14px;font-size:12px;min-height:34px;border-top:1px solid #0f3460;color:#90a4ae;}
+#status.ok{color:#a5d6a7;}
+#status.err{color:#ef9a9a;}
+#status.info{color:#81d4fa;}
+.leaflet-container{background:#111;}
+.vertex-marker{width:10px;height:10px;background:#fff;border:2px solid #1565c0;border-radius:50%;cursor:grab;margin:-5px 0 0 -5px;}
+.search-item{padding:6px 8px;font-size:11px;color:#cfd8dc;cursor:pointer;border-bottom:1px solid #1e4a7a;line-height:1.4;}
+.search-item:last-child{border-bottom:none;}
+.search-item:hover{background:#1565c0;color:#fff;}
+.search-item strong{display:block;font-size:12px;color:#e2b96e;}
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9999;align-items:center;justify-content:center;}
+.modal-bg.open{display:flex;}
+.modal{background:#16213e;border:1px solid #1e4a7a;border-radius:12px;padding:20px;max-width:700px;width:95%;color:#e0e0e0;font-size:13px;line-height:1.6;position:relative;max-height:92vh;overflow-y:auto;}
+.modal h2{font-size:15px;font-weight:700;color:#e2b96e;margin-bottom:12px;}
+.modal-close{position:absolute;top:12px;right:14px;background:none;border:none;color:#78909c;font-size:20px;cursor:pointer;}
+.modal-close:hover{color:#e0e0e0;}
+.tag-badge{display:inline-block;padding:.15rem .6rem;border-radius:20px;font-size:.7rem;font-weight:700;background:#1b3a5c;color:#64b5f6;border:1px solid #1e4a7a;margin-top:4px;}
+.divider{height:1px;background:#0f3460;margin:8px 0;}
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <div class="logo">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+      <img src="logo perfil branca.png" alt="" onerror="this.style.display='none'" style="height:30px;width:30px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
+      <h1>Reservatório Escavado <span style="font-size:10px;color:#78909c;font-weight:400">Terraplenagem</span></h1>
+    </div>
+    <p>João Paulo de Oliveira · Eng. Agrônomo</p>
+  </div>
+
+  <!-- Google Maps Key -->
+  <div class="sec">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+      <div class="sec-title" style="margin-bottom:0;">Google Maps API</div>
+      <button style="background:none;border:1px solid #37474f;color:#78909c;border-radius:50%;width:22px;height:22px;font-size:11px;cursor:pointer;" onclick="$('modalChave').classList.add('open')">?</button>
+    </div>
+    <div style="display:flex;gap:6px;">
+      <input type="password" id="gmKey" placeholder="Cole sua chave AIzaSy…" style="flex:1;background:#0f3460;color:#e0e0e0;border:1px solid #1e4a7a;border-radius:5px;padding:6px 8px;font-size:11px;" onkeydown="if(event.key==='Enter') salvarKey()">
+      <button onclick="salvarKey()" style="background:#1565c0;color:#fff;border:none;border-radius:5px;padding:6px 10px;cursor:pointer;font-weight:700;">✓</button>
+    </div>
+    <div id="keyStatus" style="font-size:11px;color:#78909c;margin-top:4px;">Chave necessária para elevações</div>
+  </div>
+
+  <!-- Buscar Local -->
+  <div class="sec">
+    <div class="sec-title">Buscar Local</div>
+    <div style="display:flex;gap:6px;">
+      <input type="text" id="searchInput" placeholder="Cidade, fazenda, endereço…" style="flex:1;background:#0f3460;color:#e0e0e0;border:1px solid #1e4a7a;border-radius:5px;padding:6px 8px;font-size:12px;" onkeydown="if(event.key==='Enter') buscarLocal()">
+      <button onclick="buscarLocal()" style="background:#1565c0;color:#fff;border:none;border-radius:5px;padding:6px 10px;cursor:pointer;font-weight:700;">🔍</button>
+    </div>
+    <div id="searchResults" style="display:none;margin-top:4px;background:#0f3460;border-radius:5px;max-height:130px;overflow-y:auto;"></div>
+  </div>
+
+  <!-- 1. Espelho -->
+  <div class="sec">
+    <div class="sec-title">1. Espelho d'Água</div>
+    <button class="btn btn-poly" id="btnPoly" onclick="iniciarPoligono()">◼ Desenhar Contorno</button>
+    <button class="btn btn-finish" id="btnFechar" onclick="fecharPoligono()">✓ Fechar Contorno</button>
+    <button class="btn btn-clr" id="btnLimparPoly" onclick="limparPoligono()" style="display:none;font-size:11px;">✕ Limpar</button>
+    <div id="polyInfo" style="display:none;margin-top:6px;background:#0f3460;border-radius:5px;padding:6px 10px;font-size:12px;">
+      <span style="color:#78909c;">Área espelho:</span>
+      <span id="iPolyArea" style="color:#e2b96e;font-weight:700;float:right;">—</span>
+    </div>
+  </div>
+
+  <!-- 2. Parâmetros -->
+  <div class="sec">
+    <div class="sec-title">2. Parâmetros do Projeto</div>
+    <label>Volume útil desejado (m³)</label>
+    <input type="number" id="pVutil" value="10000" min="100" max="5000000" step="100">
+    <label>Volume morto (m³)</label>
+    <input type="number" id="pVmort" value="0" min="0" step="100">
+    <div class="divider"></div>
+    <label>Talude interno — corte (H : 1V)</label>
+    <div class="row2">
+      <div><input type="number" id="pTi" value="2" min="0.5" max="10" step="0.5"></div>
+      <div style="display:flex;align-items:center;padding-left:4px;font-size:12px;color:#78909c;">H por 1V</div>
+    </div>
+    <label>Talude externo — aterro (H : 1V)</label>
+    <div class="row2">
+      <div><input type="number" id="pTe" value="3" min="0.5" max="10" step="0.5"></div>
+      <div style="display:flex;align-items:center;padding-left:4px;font-size:12px;color:#78909c;">H por 1V</div>
+    </div>
+    <label>Largura da crista (m)</label>
+    <input type="number" id="pLc" value="3" min="1" max="20" step="0.5">
+    <label>Borda livre (m)</label>
+    <input type="number" id="pBL" value="0.5" min="0.2" max="3" step="0.1">
+    <label>Fator de empolamento</label>
+    <input type="number" id="pFe" value="1.25" min="1" max="2" step="0.05">
+  </div>
+
+  <!-- 3. Elevações -->
+  <div class="sec">
+    <div class="sec-title">3. Grade de Elevação</div>
+    <label>Resolução da grade interna</label>
+    <select id="pGrid">
+      <option value="20">20 × 20 (rápido)</option>
+      <option value="25" selected>25 × 25 (padrão)</option>
+      <option value="30">30 × 30 (detalhado)</option>
+      <option value="40">40 × 40 (fino)</option>
+    </select>
+    <div id="gridInfo" style="margin-top:6px;font-size:11px;color:#78909c;">Desenhe o polígono para ver estimativa</div>
+  </div>
+
+  <!-- Botão principal -->
+  <div class="sec">
+    <button class="btn btn-action" id="btnDimensionar" onclick="dimensionar()" disabled>⚙ Dimensionar Reservatório</button>
+  </div>
+
+  <!-- Resultados -->
+  <div class="sec" id="secResultados" style="display:none;">
+    <div class="sec-title">Resultados</div>
+    <div class="info-box" id="boxResultados"></div>
+    <div style="margin-top:8px;">
+      <button class="btn" onclick="$('modalPerfil').classList.add('open')" style="background:#004d40;color:#fff;margin-bottom:5px;">📊 Perfil Transversal</button>
+      <button class="btn" onclick="gerarPDF()" style="background:#b71c1c;color:#fff;">📄 Relatório PDF</button>
+    </div>
+  </div>
+
+  <!-- Consultor (para PDF) -->
+  <div class="sec" id="secPDF" style="display:none;">
+    <div class="sec-title">Dados do Relatório</div>
+    <label>Consultor</label>
+    <input type="text" id="rConsultor" value="João Paulo de Oliveira" style="background:#0f3460;color:#e0e0e0;border:1px solid #1e4a7a;border-radius:5px;padding:6px 8px;font-size:12px;width:100%;">
+    <label>Cliente</label>
+    <input type="text" id="rCliente" placeholder="Nome do cliente" style="background:#0f3460;color:#e0e0e0;border:1px solid #1e4a7a;border-radius:5px;padding:6px 8px;font-size:12px;width:100%;">
+    <label>Propriedade</label>
+    <input type="text" id="rPropriedade" placeholder="Nome da fazenda" style="background:#0f3460;color:#e0e0e0;border:1px solid #1e4a7a;border-radius:5px;padding:6px 8px;font-size:12px;width:100%;">
+  </div>
+
+  <div id="status">Desenhe o contorno do espelho d'água para começar.</div>
+</div>
+
+<div id="map"></div>
+
+<!-- Modal Perfil Transversal -->
+<div class="modal-bg" id="modalPerfil" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal" style="max-width:720px;">
+    <button class="modal-close" onclick="$('modalPerfil').classList.remove('open')">✕</button>
+    <h2>📊 Perfil Transversal</h2>
+    <div id="perfilContent" style="margin-top:10px;overflow-x:auto;"></div>
+  </div>
+</div>
+
+<!-- Modal Tutorial Chave -->
+<div class="modal-bg" id="modalChave" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal" style="max-width:420px;">
+    <button class="modal-close" onclick="$('modalChave').classList.remove('open')">✕</button>
+    <h2>🔑 Chave Google Maps API</h2>
+    <p style="color:#90a4ae;font-size:12px;margin-bottom:10px;">A chave ativa o mapa satélite Google e o serviço de elevação — necessário para calcular corte e aterro.</p>
+    <ol style="padding-left:18px;font-size:12px;color:#cfd8dc;">
+      <li style="margin-bottom:8px;">Acesse <strong>console.cloud.google.com</strong> e crie/selecione um projeto.</li>
+      <li style="margin-bottom:8px;">Ative <strong>Maps JavaScript API</strong> e <strong>Maps Elevation API</strong>.</li>
+      <li style="margin-bottom:8px;">Em <strong>Credenciais → + Criar Credencial → Chave de API</strong>, copie a chave.</li>
+      <li>Cole a chave no campo acima e pressione ✓.</li>
+    </ol>
+    <div style="background:#0f3460;border-left:3px solid #e2b96e;border-radius:4px;padding:8px 10px;font-size:11px;color:#90a4ae;margin-top:10px;">
+      O Google oferece US$ 200 de crédito gratuito/mês — suficiente para uso profissional normal.
+    </div>
+    <button onclick="$('modalChave').classList.remove('open')" style="margin-top:14px;width:100%;background:#1565c0;color:#fff;border:none;border-radius:6px;padding:9px;font-size:13px;font-weight:700;cursor:pointer;">Entendi</button>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.gridlayer.googlemutant@latest/dist/Leaflet.GoogleMutant.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+<script>
+// ── Utilitários básicos ───────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+function setStatus(msg, tipo='') { const el=$('status'); if(el){el.textContent=msg; el.className=tipo;} }
+function fmt(n,d=0){return n.toLocaleString('pt-BR',{minimumFractionDigits:d,maximumFractionDigits:d});}
+
+// ── Mapa ──────────────────────────────────────────────────────────────────────
+const map = L.map('map', {zoomControl:true, doubleClickZoom:false, preferCanvas:true}).setView([-21,-52],13);
+const esriLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{attribution:'© Esri',maxZoom:21}).addTo(map);
+const esriLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',{maxZoom:21,opacity:.85}).addTo(map);
+let googleLayer = null;
+
+function ativarGoogleMaps(key) {
+  if(!key) return;
+  if(window.google && window.google.maps) { _ativarMutant(); return; }
+  const s = document.createElement('script');
+  s.src = `https://maps.googleapis.com/maps/api/js?key=${key}&v=weekly`;
+  s.onload = _ativarMutant;
+  s.onerror = () => setStatus('Chave Google Maps inválida.','err');
+  document.head.appendChild(s);
+}
+function _ativarMutant() {
+  try {
+    esriLayer.remove(); esriLabels.remove();
+    googleLayer = L.gridLayer.googleMutant({type:'hybrid',maxZoom:21}).addTo(map);
+    $('keyStatus').textContent='Google Maps ativo ✓';
+    $('keyStatus').style.color='#a5d6a7';
+  } catch(e) { setStatus('Erro ao ativar Google Maps.','err'); }
+}
+function salvarKey() {
+  const k=$('gmKey').value.trim(); if(!k) return;
+  localStorage.setItem('mapskey_terra',k); ativarGoogleMaps(k);
+}
+const savedKey = localStorage.getItem('mapskey_terra');
+if(savedKey) { $('gmKey').value=savedKey; $('keyStatus').textContent='Carregando…'; $('keyStatus').style.color='#81d4fa'; ativarGoogleMaps(savedKey); }
+
+// ── Estado ────────────────────────────────────────────────────────────────────
+let modo = 'idle';
+let polyPts=[], polyMarkers=[], polyLayer=null, polyTempLine=null;
+let turfPoly=null;
+let gridCells=[];    // {lat,lng,elev,areaM2} — inside polygon
+let perimCells=[];   // {lat,lng,elev} — along boundary
+let transectPts=[];  // {lat,lng,elev,distM,insidePoly,distToEdgeM} — cross-section
+let resultado=null;
+
+function haversineM(a,b){
+  const R=6371000,dLat=(b.lat-a.lat)*Math.PI/180,dLng=(b.lng-a.lng)*Math.PI/180;
+  const s=Math.sin(dLat/2)**2+Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.sin(dLng/2)**2;
+  return R*2*Math.asin(Math.sqrt(s));
+}
+function mkIcon(){return L.divIcon({className:'vertex-marker',iconSize:[10,10],iconAnchor:[5,5]});}
+
+// ── Busca de Local ────────────────────────────────────────────────────────────
+function buscarLocal(){
+  const q=$('searchInput').value.trim(); if(!q) return;
+  const box=$('searchResults'); box.style.display='block';
+  box.innerHTML='<div class="search-item" style="color:#78909c;">Buscando…</div>';
+  function show(items){
+    if(!items.length){box.innerHTML='<div class="search-item" style="color:#ef9a9a;">Sem resultados.</div>';return;}
+    box.innerHTML='';
+    items.forEach(r=>{
+      const el=document.createElement('div'); el.className='search-item';
+      el.innerHTML=`<strong>${r.nome}</strong>${r.sub}`;
+      el.onclick=()=>{map.setView([r.lat,r.lng],15);box.style.display='none';$('searchInput').value=r.nome;};
+      box.appendChild(el);
+    });
+  }
+  function usarNominatim(){
+    fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=br&accept-language=pt-BR&q=${encodeURIComponent(q)}`)
+      .then(r=>r.json()).then(data=>show(data.map(r=>({nome:r.display_name.split(',')[0].trim(),sub:' — '+r.display_name.split(',').slice(1,3).join(',').trim(),lat:parseFloat(r.lat),lng:parseFloat(r.lon)}))))
+      .catch(()=>{box.innerHTML='<div class="search-item" style="color:#ef9a9a;">Erro.</div>';});
+  }
+  if(window.google&&window.google.maps&&window.google.maps.Geocoder){
+    new google.maps.Geocoder().geocode({address:q,language:'pt-BR'},(res,status)=>{
+      if(status==='OK'&&res&&res.length) show(res.slice(0,5).map(r=>({nome:r.formatted_address.split(',')[0].trim(),sub:' — '+r.formatted_address.split(',').slice(1).join(',').trim(),lat:r.geometry.location.lat(),lng:r.geometry.location.lng()})));
+      else usarNominatim();
+    });
+  } else usarNominatim();
+}
+document.addEventListener('click',e=>{
+  if(!e.target.closest('#searchResults')&&e.target.id!=='searchInput') { const b=$('searchResults'); if(b) b.style.display='none'; }
+});
+
+// ── Polígono ──────────────────────────────────────────────────────────────────
+function iniciarPoligono(){
+  limparPoligono();
+  modo='poly';
+  map.getContainer().style.cursor='crosshair';
+  $('btnPoly').style.background='#42a5f5';
+  $('btnFechar').style.display='flex';
+  setStatus('Clique para adicionar vértices. Duplo-clique ou ✓ para fechar.','info');
+}
+
+function addPolyPt(ll){
+  polyPts.push({lat:ll.lat,lng:ll.lng});
+  const mk=L.marker(ll,{icon:mkIcon(),draggable:true}).addTo(map);
+  const i=polyPts.length-1;
+  mk.on('drag',()=>{polyPts[i]={lat:mk.getLatLng().lat,lng:mk.getLatLng().lng};updatePolyDisplay();});
+  mk.on('dragend',()=>buildTurfPoly());
+  polyMarkers.push(mk);
+  updatePolyDisplay();
+}
+
+function updatePolyDisplay(){
+  if(polyTempLine){polyTempLine.remove();polyTempLine=null;}
+  const pts=polyMarkers.map(m=>m.getLatLng());
+  if(pts.length>=2) polyTempLine=L.polyline([...pts,pts[0]],{color:'#42a5f5',weight:2,dashArray:'6,4',opacity:.8}).addTo(map);
+}
+
+function fecharPoligono(){
+  if(polyPts.length<3){setStatus('Mínimo 3 pontos.','err');return;}
+  if(polyTempLine){polyTempLine.remove();polyTempLine=null;}
+  modo='idle'; map.getContainer().style.cursor='';
+  $('btnPoly').style.background='#1565c0';
+  $('btnFechar').style.display='none';
+  polyPts=polyMarkers.map(m=>({lat:m.getLatLng().lat,lng:m.getLatLng().lng}));
+  if(polyLayer){polyLayer.remove();polyLayer=null;}
+  polyLayer=L.polygon(polyPts,{color:'#42a5f5',fillColor:'#1565c0',fillOpacity:.1,weight:2}).addTo(map);
+  buildTurfPoly();
+  $('btnLimparPoly').style.display='flex';
+  $('polyInfo').style.display='block';
+  const ha=(turf.area(turfPoly)/10000).toFixed(2);
+  $('iPolyArea').textContent=ha+' ha  ('+(turf.area(turfPoly)).toFixed(0)+' m²)';
+  $('btnDimensionar').disabled=false;
+  atualizarGridInfo();
+  setStatus('Contorno fechado. Defina os parâmetros e clique em Dimensionar.','ok');
+}
+
+function limparPoligono(){
+  polyMarkers.forEach(m=>m.remove()); polyMarkers=[];
+  polyPts=[];
+  if(polyLayer){polyLayer.remove();polyLayer=null;}
+  if(polyTempLine){polyTempLine.remove();polyTempLine=null;}
+  turfPoly=null;
+  $('btnLimparPoly').style.display='none';
+  $('polyInfo').style.display='none';
+  $('btnDimensionar').disabled=true;
+  $('secResultados').style.display='none';
+  $('secPDF').style.display='none';
+  gridCells=[]; perimCells=[]; resultado=null;
+  setStatus('Desenhe o contorno do espelho d\'água para começar.','');
+}
+
+function buildTurfPoly(){
+  if(polyPts.length<3){turfPoly=null;return;}
+  const coords=polyPts.map(p=>[p.lng,p.lat]);
+  coords.push(coords[0]);
+  try{ turfPoly=turf.polygon([coords]); turf.rewind(turfPoly,{mutate:true}); }
+  catch(e){ turfPoly=null; }
+}
+
+function atualizarGridInfo(){
+  if(!turfPoly){$('gridInfo').textContent='Desenhe o polígono para ver estimativa';return;}
+  const N=parseInt($('pGrid').value)||25;
+  const approx=Math.round(N*N*0.78)+50+60;
+  const batches=Math.ceil(approx/500);
+  $('gridInfo').textContent=`~${approx} pontos de elevação · ${batches} requisição(ões) API`;
+}
+document.getElementById('pGrid').addEventListener('change',atualizarGridInfo);
+
+// ── Clicks do mapa ────────────────────────────────────────────────────────────
+map.on('click',e=>{ if(modo==='poly') addPolyPt(e.latlng); });
+map.on('dblclick',e=>{ if(modo==='poly'&&polyPts.length>=3) fecharPoligono(); });
+
+// ── Elevações via Google Elevation API ────────────────────────────────────────
+async function fetchElevations(points){
+  // points: [{lat,lng},...] — splits into batches of 500
+  if(!window.google||!window.google.maps){
+    throw new Error('Chave Google Maps API necessária para buscar elevações.');
+  }
+  const elevator=new google.maps.ElevationService();
+  const BATCH=500;
+  const elevs=new Array(points.length).fill(null);
+  for(let i=0;i<points.length;i+=BATCH){
+    const batch=points.slice(i,i+BATCH);
+    const locs=batch.map(p=>new google.maps.LatLng(p.lat,p.lng));
+    await new Promise((resolve,reject)=>{
+      elevator.getElevationForLocations({locations:locs},(results,status)=>{
+        if(status!=='OK'||!results){reject(new Error('Elevation API: '+status));return;}
+        results.forEach((r,j)=>{ elevs[i+j]=r.elevation; });
+        resolve();
+      });
+    });
+  }
+  return elevs;
+}
+
+// Gera grade N×N dentro do bbox + pontos do perímetro + pontos do transecto
+function buildSamplePoints(N){
+  if(!turfPoly) return {inside:[],perim:[],transect:[]};
+  const bbox=turf.bbox(turfPoly);
+  const latMin=bbox[1],latMax=bbox[3],lngMin=bbox[0],lngMax=bbox[2];
+  const dLat=(latMax-latMin)/(N-1), dLng=(lngMax-lngMin)/(N-1);
+
+  // Inside grid
+  const inside=[];
+  for(let r=0;r<N;r++){
+    for(let c=0;c<N;c++){
+      const lat=latMin+r*dLat, lng=lngMin+c*dLng;
+      if(turf.booleanPointInPolygon(turf.point([lng,lat]),turfPoly))
+        inside.push({lat,lng,row:r,col:c});
+    }
+  }
+
+  // Perimeter (50 evenly spaced points)
+  const NPERIM=50;
+  const perim=[];
+  const line=turf.polygonToLine(turfPoly);
+  const totalLen=turf.length(line,{units:'kilometers'});
+  for(let i=0;i<NPERIM;i++){
+    const d=totalLen*i/NPERIM;
+    const pt=turf.along(line,d,{units:'kilometers'});
+    perim.push({lat:pt.geometry.coordinates[1],lng:pt.geometry.coordinates[0]});
+  }
+
+  // Transect: along the major bounding box axis (60 points)
+  const NTRANS=60;
+  const transect=[];
+  const cLat=(latMin+latMax)/2, cLng=(lngMin+lngMax)/2;
+  const spanLat=latMax-latMin, spanLng=lngMax-lngMin;
+  // Choose wider axis for transect
+  const useLng=spanLng>spanLat;
+  const extFactor=0.4; // extend 40% beyond bbox on each side for embankment
+  for(let i=0;i<NTRANS;i++){
+    const t=(i/(NTRANS-1));
+    let lat,lng;
+    if(useLng){
+      lng=lngMin-spanLng*extFactor+t*(spanLng*(1+2*extFactor));
+      lat=cLat;
+    } else {
+      lat=latMin-spanLat*extFactor+t*(spanLat*(1+2*extFactor));
+      lng=cLng;
+    }
+    transect.push({lat,lng,t});
+  }
+
+  return {inside,perim,transect};
+}
+
+// ── Algoritmo de dimensionamento ─────────────────────────────────────────────
+
+function polyArea(geojson){
+  try{ return turf.area(geojson); } catch(e){ return 0; }
+}
+
+function bufferedArea(tPoly, offsetM){
+  if(offsetM>=0) return polyArea(tPoly);
+  const r_km=offsetM/1000;
+  try{
+    const b=turf.buffer(tPoly,r_km,{units:'kilometers',steps:24});
+    if(!b) return 0;
+    return polyArea(b);
+  }catch(e){return 0;}
+}
+
+function prismatoidVol(Ae,Am,Af,H){
+  return (H/6)*(Ae+4*Am+Af);
+}
+
+function bisectDepth(tPoly,Ae,Ti,Vdesired){
+  let lo=0.05, hi=50;
+  // Verify Vmax is achievable
+  const Vmax=prismatoidVol(Ae,bufferedArea(tPoly,-hi*Ti/2*1),Ae*0.01,hi); // rough
+  for(let i=0;i<70;i++){
+    const H=(lo+hi)/2;
+    const Af=bufferedArea(tPoly,-H*Ti);
+    const Am=bufferedArea(tPoly,-H*Ti/2);
+    const Vt=prismatoidVol(Ae,Am,Af,H);
+    if(Math.abs(Vt-Vdesired)/Vdesired<0.0002) return H;
+    if(Vt<Vdesired) lo=H; else hi=H;
+  }
+  return (lo+hi)/2;
+}
+
+// Calcula distância (m) de um ponto lat/lng ao polígono boundary usando nearestPointOnLine
+const _boundaryCache={};
+function distToEdgeM(tPoly,lat,lng){
+  let boundary=_boundaryCache.line;
+  if(!boundary){ boundary=turf.polygonToLine(tPoly); _boundaryCache.line=boundary; }
+  const near=turf.nearestPointOnLine(boundary,turf.point([lng,lat]));
+  return near.properties.dist*1000;
+}
+
+function calcCorte(cells,fundoPoly,tPoly,z_op,z_fundo,H,Ti){
+  _boundaryCache.line=null; // reset
+  let Vcut=0;
+  cells.forEach(cell=>{
+    const distM=distToEdgeM(tPoly,cell.lat,cell.lng);
+    const z_floor=(distM>=H*Ti)?z_fundo:(z_op-distM/Ti);
+    Vcut+=Math.max(0,cell.elev-z_floor)*cell.areaM2;
+  });
+  return Vcut;
+}
+
+function calcAterro(perimPts,z_coroamento,Lc,Te){
+  let Vfill=0;
+  for(let i=0;i<perimPts.length;i++){
+    const A=perimPts[i];
+    const B=perimPts[(i+1)%perimPts.length];
+    const segLen=haversineM(A,B);
+    const h=Math.max(0,z_coroamento-A.elev);
+    const Asec=Lc*h+Te*h*h/2; // trapezoidal cross-section
+    Vfill+=Asec*segLen;
+  }
+  return Vfill;
+}
+
+function calcGeomembrana(Ae,Af,H,Ti,perimEspelho,perimFundo){
+  const Pavg=(perimEspelho+perimFundo)/2;
+  const slopeLen=Math.sqrt(H*H+(H*Ti)*(H*Ti));
+  const Ageo=Af+Pavg*slopeLen;
+  return Ageo*1.10; // +10% para sobreposição e ancoragem
+}
+
+// ── Função principal: Dimensionar ─────────────────────────────────────────────
+async function dimensionar(){
+  if(!turfPoly){setStatus('Desenhe o contorno do espelho d\'água primeiro.','err');return;}
+  if(!window.google||!window.google.maps){setStatus('Ative o Google Maps (chave API) para buscar elevações.','err');return;}
+
+  const p={
+    Vutil:    parseFloat($('pVutil').value)||10000,
+    Vmort:    parseFloat($('pVmort').value)||0,
+    Ti:       parseFloat($('pTi').value)||2,
+    Te:       parseFloat($('pTe').value)||3,
+    Lc:       parseFloat($('pLc').value)||3,
+    BL:       parseFloat($('pBL').value)||0.5,
+    Fe:       parseFloat($('pFe').value)||1.25,
+    N:        parseInt($('pGrid').value)||25,
+  };
+
+  $('btnDimensionar').disabled=true;
+  $('btnDimensionar').textContent='⏳ Buscando elevações…';
+  setStatus('Buscando elevações — aguarde…','info');
+
+  try {
+    // 1. Build sample points
+    const {inside,perim,transect}=buildSamplePoints(p.N);
+    if(!inside.length){throw new Error('Nenhum ponto da grade dentro do polígono.');}
+
+    // 2. Fetch all elevations in one call (batched internally)
+    const allPts=[...inside,...perim,...transect];
+    setStatus(`Buscando ${allPts.length} elevações…`,'info');
+    const elevs=await fetchElevations(allPts);
+
+    // 3. Separate results
+    const ni=inside.length, np=perim.length;
+    const bbox=turf.bbox(turfPoly);
+    const latSpan=bbox[3]-bbox[1], lngSpan=bbox[2]-bbox[0];
+    const cellAreaDeg2=(latSpan/p.N)*(lngSpan/p.N);
+    // Convert deg² to m² (rough: 1 deg lat ≈ 111320m; 1 deg lng ≈ 111320*cos(lat) m)
+    const avgLat=(bbox[1]+bbox[3])/2;
+    const mPerDegLat=111320, mPerDegLng=111320*Math.cos(avgLat*Math.PI/180);
+    const cellAreaM2=(latSpan/p.N)*mPerDegLat*(lngSpan/p.N)*mPerDegLng;
+
+    gridCells=inside.map((pt,i)=>({...pt,elev:elevs[i]??0,areaM2:cellAreaM2}));
+    perimCells=perim.map((pt,i)=>({...pt,elev:elevs[ni+i]??0}));
+
+    // 4. Compute z_op = average perimeter elevation
+    const z_op_raw=perimCells.reduce((s,c)=>s+c.elev,0)/perimCells.length;
+    const z_op=parseFloat(z_op_raw.toFixed(2));
+    const z_coroamento=+(z_op+p.BL).toFixed(2);
+
+    // 5. Find depth H by bisection
+    setStatus('Calculando profundidade…','info');
+    const Ae=turf.area(turfPoly);
+    const H=bisectDepth(turfPoly,Ae,p.Ti,p.Vutil);
+    const z_fundo=+(z_op-H).toFixed(2);
+
+    // Verify final volume
+    const Af=bufferedArea(turfPoly,-H*p.Ti);
+    const Am=bufferedArea(turfPoly,-H*p.Ti/2);
+    const Vverif=prismatoidVol(Ae,Am,Af,H);
+
+    // 6. Cut volume
+    setStatus('Calculando corte e aterro…','info');
+    const Vcut=calcCorte(gridCells,null,turfPoly,z_op,z_fundo,H,p.Ti);
+
+    // 7. Fill volume
+    const Vfill=calcAterro(perimCells,z_coroamento,p.Lc,p.Te);
+
+    // 8. Geomembrane
+    const boundary=turf.polygonToLine(turfPoly);
+    const Perim_e=turf.length(boundary,{units:'kilometers'})*1000;
+    let fundoPoly=null;
+    try{ fundoPoly=turf.buffer(turfPoly,-H*p.Ti/1000,{units:'kilometers',steps:24}); }catch(e){}
+    const Perim_f=fundoPoly ? turf.length(turf.polygonToLine(fundoPoly),{units:'kilometers'})*1000 : 0;
+    const Ageo=calcGeomembrana(Ae,Af,H,p.Ti,Perim_e,Perim_f);
+
+    // 9. Transect data
+    const transectRaw=transect.map((pt,i)=>({...pt,elev:elevs[ni+np+i]??0}));
+    // Compute distance along transect and distance to polygon edge
+    const t0=transectRaw[0];
+    _boundaryCache.line=null;
+    transectPts=transectRaw.map(pt=>{
+      const distM=haversineM(t0,pt);
+      const inside=turf.booleanPointInPolygon(turf.point([pt.lng,pt.lat]),turfPoly);
+      let d2edge=0;
+      if(inside){ try{ d2edge=distToEdgeM(turfPoly,pt.lat,pt.lng); }catch(e){} }
+      return {...pt,distM,insidePoly:inside,distToEdgeM:d2edge};
+    });
+
+    // 10. Store result
+    resultado={
+      p, z_op, z_coroamento, z_fundo, H,
+      Ae, Af, Am, Vutil:Vverif, Vmort:p.Vmort, Vtotal:Vverif+p.Vmort,
+      Vcut, Vfill,
+      Vcut_banco:Vcut,                     // corte já em banco (natural)
+      Vfill_banco:Vfill*p.Fe,              // aterro em banco (empolado)
+      balanco: Vcut - Vfill*p.Fe,          // >0: sobra; <0: importar
+      Ageo,
+      perimE:Perim_e, perimF:Perim_f,
+    };
+
+    mostrarResultados();
+    desenharPerfil();
+    setStatus('Dimensionamento concluído ✓','ok');
+  } catch(e){
+    console.error(e);
+    setStatus('Erro: '+e.message,'err');
+  } finally {
+    $('btnDimensionar').disabled=false;
+    $('btnDimensionar').textContent='⚙ Dimensionar Reservatório';
+  }
+}
+
+// ── Exibir Resultados ─────────────────────────────────────────────────────────
+function mostrarResultados(){
+  const r=resultado;
+  const balancoClass=r.balanco>0?'ok':(r.balanco>-500?'warn':'bad');
+  const balancoTxt=r.balanco>0?`+${fmt(r.balanco)} m³ (excedente)`:`${fmt(r.balanco)} m³ (importar)`;
+
+  $('boxResultados').innerHTML=`
+    <div class="info-row"><span class="info-label">Cota operação</span><span class="info-val">${r.z_op.toFixed(2)} m</span></div>
+    <div class="info-row"><span class="info-label">Cota coroamento</span><span class="info-val">${r.z_coroamento.toFixed(2)} m</span></div>
+    <div class="info-row"><span class="info-label">Cota de fundo</span><span class="info-val">${r.z_fundo.toFixed(2)} m</span></div>
+    <div class="info-row"><span class="info-label">Profundidade útil</span><span class="info-val">${r.H.toFixed(2)} m</span></div>
+    <div class="info-row"><span class="info-label">Área espelho</span><span class="info-val">${fmt(r.Ae)} m²</span></div>
+    <div class="info-row"><span class="info-label">Área do fundo</span><span class="info-val">${fmt(r.Af)} m²</span></div>
+    <div class="info-row"><span class="info-label">Volume útil</span><span class="info-val">${fmt(r.Vutil)} m³</span></div>
+    <div class="info-row"><span class="info-label">Volume morto</span><span class="info-val">${fmt(r.Vmort)} m³</span></div>
+    <div class="info-row"><span class="info-label">Volume total</span><span class="info-val">${fmt(r.Vtotal)} m³</span></div>
+    <div style="height:6px;"></div>
+    <div class="info-row"><span class="info-label">Volume de corte</span><span class="info-val">${fmt(r.Vcut)} m³</span></div>
+    <div class="info-row"><span class="info-label">Volume de aterro (compac.)</span><span class="info-val">${fmt(r.Vfill)} m³</span></div>
+    <div class="info-row"><span class="info-label">Aterro banco (×${r.p.Fe})</span><span class="info-val">${fmt(r.Vfill_banco)} m³</span></div>
+    <div class="info-row"><span class="info-label">Balanço de material</span><span class="info-val ${balancoClass}">${balancoTxt}</span></div>
+    <div style="height:6px;"></div>
+    <div class="info-row"><span class="info-label">Geomembrana (+10%)</span><span class="info-val">${fmt(r.Ageo)} m²</span></div>
+  `;
+  $('secResultados').style.display='';
+  $('secPDF').style.display='';
+}
+
+// ── Perfil Transversal ────────────────────────────────────────────────────────
+function desenharPerfil(){
+  if(!transectPts.length||!resultado) return;
+  const r=resultado;
+  const W=660, H_svg=260, PAD={top:30,bot:50,left:60,right:20};
+  const plotW=W-PAD.left-PAD.right, plotH=H_svg-PAD.top-PAD.bot;
+
+  // Elevation range for Y axis
+  const elevs=transectPts.map(p=>p.elev);
+  const minE=Math.min(...elevs,r.z_fundo)-0.5;
+  const maxE=Math.max(...elevs,r.z_coroamento)+0.5;
+  const eSpan=maxE-minE;
+  const dists=transectPts.map(p=>p.distM);
+  const minD=Math.min(...dists), maxD=Math.max(...dists);
+  const dSpan=maxD-minD;
+
+  const sx=d=>PAD.left+plotW*(d-minD)/dSpan;
+  const sy=e=>PAD.top+plotH*(1-(e-minE)/eSpan);
+
+  // Terrain polyline
+  const terrainPts=transectPts.map(p=>`${sx(p.distM)},${sy(p.elev)}`).join(' ');
+
+  // Reservoir geometry along transect
+  let reservPts='', waterPts='';
+  const polylineInside=transectPts.filter(p=>p.insidePoly);
+
+  // For points inside polygon: compute z_floor
+  const segments=[];
+  transectPts.forEach((pt,i)=>{
+    if(!pt.insidePoly) return;
+    const d2e=pt.distToEdgeM;
+    const z_floor=d2e>=r.H*r.p.Ti ? r.z_fundo : r.z_op-d2e/r.p.Ti;
+    segments.push({x:sx(pt.distM), y_terrain:sy(pt.elev), y_floor:sy(z_floor), y_op:sy(r.z_op), z_floor});
+  });
+
+  // Excavation polygon (floor profile)
+  let excavPath='';
+  if(segments.length>1){
+    excavPath=`M${segments[0].x},${segments[0].y_floor}`;
+    segments.slice(1).forEach(s=>{ excavPath+=` L${s.x},${s.y_floor}`; });
+    // Close excavation shape by going up terrain on right, left
+    for(let i=segments.length-1;i>=0;i--){ excavPath+=` L${segments[i].x},${segments[i].y_terrain}`; }
+    excavPath+='Z';
+  }
+
+  // Water polygon
+  let waterPath='';
+  if(segments.length>1){
+    const yop=sy(r.z_op);
+    waterPath=`M${segments[0].x},${yop}`;
+    segments.slice(1).forEach(s=>{ waterPath+=` L${s.x},${yop}`; });
+    for(let i=segments.length-1;i>=0;i--){ waterPath+=` L${segments[i].x},${segments[i].y_floor}`; }
+    waterPath+='Z';
+  }
+
+  // Embankment geometry (outside polygon, left and right side)
+  const entrySeg=segments[0], exitSeg=segments[segments.length-1];
+  let embLeft='', embRight='';
+  if(entrySeg){
+    const x0=entrySeg.x;
+    const hLeft=Math.max(0,r.z_coroamento-(transectPts.find(p=>!p.insidePoly&&p.distM<transectPts[segments[0]?.i||0]?.distM||true)?.elev||r.z_op));
+    // Simple embankment left: from x0 going left
+    const crownW_px=plotW*(r.p.Lc/dSpan);
+    const slopeW_px=plotW*(r.p.BL*r.p.Te/dSpan);
+    const yCoron=sy(r.z_coroamento), yOp=sy(r.z_op);
+    const yTerrLeft=sy(transectPts[0].elev), yTerrRight=sy(transectPts[transectPts.length-1].elev);
+    const xCrownInnerL=x0, xCrownOuterL=x0-crownW_px, xToeL=x0-crownW_px-slopeW_px;
+    const xCrownInnerR=exitSeg.x, xCrownOuterR=exitSeg.x+crownW_px, xToeR=exitSeg.x+crownW_px+slopeW_px;
+    embLeft=`M${xCrownInnerL},${yCoron} L${xCrownOuterL},${yCoron} L${xToeL},${yTerrLeft}`;
+    embRight=`M${xCrownInnerR},${yCoron} L${xCrownOuterR},${yCoron} L${xToeR},${yTerrRight}`;
+  }
+
+  // Y-axis labels
+  const yLabels=[];
+  const nY=5;
+  for(let i=0;i<=nY;i++){
+    const e=minE+eSpan*i/nY;
+    yLabels.push({y:sy(e), label:e.toFixed(1)});
+  }
+  // X-axis labels
+  const xLabels=[];
+  const nX=5;
+  for(let i=0;i<=nX;i++){
+    const d=minD+dSpan*i/nX;
+    xLabels.push({x:sx(d), label:Math.round(d-minD)+'m'});
+  }
+
+  const svg=`<svg viewBox="0 0 ${W} ${H_svg}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:${W}px;font-family:Arial,sans-serif;background:#0f1b2d;border-radius:8px;">
+  <!-- Grid lines -->
+  ${yLabels.map(l=>`<line x1="${PAD.left}" y1="${l.y}" x2="${W-PAD.right}" y2="${l.y}" stroke="#1e4a7a" stroke-width="0.5"/>`).join('')}
+  <!-- Terrain fill -->
+  <polygon points="${transectPts.map(p=>`${sx(p.distM)},${sy(p.elev)}`).join(' ')} ${sx(maxD)},${sy(minE)} ${sx(minD)},${sy(minE)}" fill="#3d4f2a" opacity="0.7"/>
+  <!-- Terrain line -->
+  <polyline points="${terrainPts}" fill="none" stroke="#8bc34a" stroke-width="2"/>
+  <!-- Excavação (corte) -->
+  ${excavPath?`<path d="${excavPath}" fill="#795548" opacity="0.6" stroke="#a1887f" stroke-width="1"/>`:''}
+  <!-- Água -->
+  ${waterPath?`<path d="${waterPath}" fill="#0288d1" opacity="0.45" stroke="#29b6f6" stroke-width="1.5"/>`:''}
+  <!-- Talude / Aterro esquerdo -->
+  ${embLeft?`<path d="${embLeft}" fill="none" stroke="#ff8f00" stroke-width="2" stroke-dasharray="4,3"/>`:''}
+  ${embRight?`<path d="${embRight}" fill="none" stroke="#ff8f00" stroke-width="2" stroke-dasharray="4,3"/>`:''}
+  <!-- Linhas de cotas -->
+  <line x1="${PAD.left}" y1="${sy(r.z_op)}" x2="${W-PAD.right}" y2="${sy(r.z_op)}" stroke="#29b6f6" stroke-width="1.2" stroke-dasharray="8,4"/>
+  <line x1="${PAD.left}" y1="${sy(r.z_fundo)}" x2="${W-PAD.right}" y2="${sy(r.z_fundo)}" stroke="#ffb300" stroke-width="1.2" stroke-dasharray="6,3"/>
+  <line x1="${PAD.left}" y1="${sy(r.z_coroamento)}" x2="${W-PAD.right}" y2="${sy(r.z_coroamento)}" stroke="#ff8f00" stroke-width="1.2" stroke-dasharray="4,4"/>
+  <!-- Labels cotas -->
+  <text x="${W-PAD.right+3}" y="${sy(r.z_op)+4}" fill="#29b6f6" font-size="9" font-weight="bold">NA (${r.z_op.toFixed(1)} m)</text>
+  <text x="${W-PAD.right+3}" y="${sy(r.z_fundo)+4}" fill="#ffb300" font-size="9" font-weight="bold">Fundo (${r.z_fundo.toFixed(1)} m)</text>
+  <text x="${W-PAD.right+3}" y="${sy(r.z_coroamento)+4}" fill="#ff8f00" font-size="9" font-weight="bold">Coroa (${r.z_coroamento.toFixed(1)} m)</text>
+  <!-- Y-axis labels -->
+  ${yLabels.map(l=>`<text x="${PAD.left-5}" y="${l.y+4}" fill="#78909c" font-size="9" text-anchor="end">${l.label}</text>`).join('')}
+  <!-- X-axis labels -->
+  ${xLabels.map(l=>`<text x="${l.x}" y="${H_svg-PAD.bot+18}" fill="#78909c" font-size="9" text-anchor="middle">${l.label}</text>`).join('')}
+  <!-- Axis -->
+  <line x1="${PAD.left}" y1="${PAD.top}" x2="${PAD.left}" y2="${H_svg-PAD.bot}" stroke="#37474f" stroke-width="1.5"/>
+  <line x1="${PAD.left}" y1="${H_svg-PAD.bot}" x2="${W-PAD.right}" y2="${H_svg-PAD.bot}" stroke="#37474f" stroke-width="1.5"/>
+  <!-- Axis labels -->
+  <text x="${PAD.left+(plotW/2)}" y="${H_svg-8}" fill="#90a4ae" font-size="10" text-anchor="middle">Distância (m)</text>
+  <text x="12" y="${PAD.top+plotH/2}" fill="#90a4ae" font-size="10" text-anchor="middle" transform="rotate(-90,12,${PAD.top+plotH/2})">Elevação (m)</text>
+  <!-- Legend -->
+  <rect x="${PAD.left+5}" y="${PAD.top+5}" width="180" height="58" rx="4" fill="rgba(0,0,0,.5)"/>
+  <line x1="${PAD.left+12}" y1="${PAD.top+18}" x2="${PAD.left+28}" y2="${PAD.top+18}" stroke="#8bc34a" stroke-width="2"/>
+  <text x="${PAD.left+32}" y="${PAD.top+22}" fill="#cfd8dc" font-size="9">Terreno natural</text>
+  <rect x="${PAD.left+12}" y="${PAD.top+27}" width="16" height="8" fill="#0288d1" opacity=".6"/>
+  <text x="${PAD.left+32}" y="${PAD.top+35}" fill="#cfd8dc" font-size="9">Volume de água</text>
+  <rect x="${PAD.left+12}" y="${PAD.top+40}" width="16" height="8" fill="#795548" opacity=".6"/>
+  <text x="${PAD.left+32}" y="${PAD.top+48}" fill="#cfd8dc" font-size="9">Volume de corte</text>
+  <line x1="${PAD.left+12}" y1="${PAD.top+57}" x2="${PAD.left+28}" y2="${PAD.top+57}" stroke="#ff8f00" stroke-width="2" stroke-dasharray="4,3"/>
+  <text x="${PAD.left+32}" y="${PAD.top+61}" fill="#cfd8dc" font-size="9">Aterro / dique</text>
+</svg>`;
+
+  $('perfilContent').innerHTML=svg;
+}
+
+// ── PDF ───────────────────────────────────────────────────────────────────────
+function gerarPDF(){
+  if(!resultado){alert('Dimensione o reservatório primeiro.');return;}
+  const r=resultado;
+  const win=window.open('','_blank');
+  if(!win){alert('Popup bloqueado.');return;}
+  const date=new Date().toLocaleDateString('pt-BR');
+  const consultor=$('rConsultor').value.trim()||'João Paulo de Oliveira';
+  const cliente=$('rCliente').value.trim()||'—';
+  const prop=$('rPropriedade').value.trim()||'—';
+  const key=localStorage.getItem('mapskey_terra')||'';
+
+  // Map static image
+  const bbox=turf.bbox(turfPoly);
+  const pad=0.08;
+  const lats=[bbox[1],bbox[3]], lngs=[bbox[0],bbox[2]];
+  const latSpan=lats[1]-lats[0], lngSpan=lngs[1]-lngs[0];
+  const sw={lat:lats[0]-latSpan*pad, lng:lngs[0]-lngSpan*pad};
+  const ne={lat:lats[1]+latSpan*pad, lng:lngs[1]+lngSpan*pad};
+  const MW=512, MH=307;
+  function _staticMapParams(sw,ne,W,H){
+    const T=256,LN2=Math.LN2;
+    const latRad=lat=>Math.log((1+Math.sin(lat*Math.PI/180))/(1-Math.sin(lat*Math.PI/180)))/2;
+    const latF=Math.abs(latRad(ne.lat)-latRad(sw.lat))/Math.PI;
+    const lngF=Math.abs(ne.lng-sw.lng)/360;
+    const zL=Math.floor(Math.log(2*H/T/latF)/LN2);
+    const zG=Math.floor(Math.log(W/T/lngF)/LN2);
+    return {zoom:Math.min(zL,zG,20),cLat:(sw.lat+ne.lat)/2,cLng:(sw.lng+ne.lng)/2};
+  }
+  const {zoom,cLat,cLng}=_staticMapParams(sw,ne,MW,MH);
+  const staticUrl=key?`https://maps.googleapis.com/maps/api/staticmap?center=${cLat},${cLng}&zoom=${zoom}&size=${MW}x${MH}&scale=2&maptype=satellite&key=${key}`:'';
+
+  // Polygon overlay on map
+  function _mkToPx(cLat,cLng,zoom,W,H){
+    const S=256*Math.pow(2,zoom);
+    const wx=lng=>(lng+180)/360*S;
+    const wy=lat=>{const s=Math.sin(lat*Math.PI/180);return(0.5-Math.log((1+s)/(1-s))/(4*Math.PI))*S;};
+    const cx=wx(cLng),cy=wy(cLat);
+    return(lat,lng)=>({x:wx(lng)-cx+W/2,y:wy(lat)-cy+H/2});
+  }
+  const toPx=_mkToPx(cLat,cLng,zoom,MW,MH);
+  const polyCoords=polyPts.map(p=>toPx(p.lat,p.lng));
+  const polyPath=polyCoords.map((p,i)=>`${i===0?'M':'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')+'Z';
+
+  const balancoClass=r.balanco>0?'#4caf50':(r.balanco>-500?'#ff9800':'#f44336');
+  const balancoTxt=r.balanco>0?`+${fmt(r.balanco)} m³ (excedente)`:`${fmt(r.balanco)} m³ (importar material)`;
+
+  // Rebuild cross-section SVG for PDF (same function)
+  desenharPerfil();
+  const perfilSVG=$('perfilContent').innerHTML;
+
+  win.document.write(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
+<title>Reservatório Escavado — Terraplenagem</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Segoe UI',Arial,sans-serif;font-size:11pt;background:#fff;color:#1a2535;}
+@page{size:A4 portrait;margin:18mm 15mm 18mm 15mm;}
+@media print{body{margin:0;}}
+.page{max-width:180mm;margin:0 auto;padding:0;}
+.header{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:10px;border-bottom:2px solid #003d5c;margin-bottom:14px;}
+.header h1{font-size:15pt;color:#003d5c;font-weight:900;}
+.header p{font-size:9pt;color:#607080;margin-top:2px;}
+.header-right{text-align:right;font-size:9pt;color:#607080;}
+.section{margin-bottom:16px;}
+.section-title{font-size:10pt;font-weight:800;color:#003d5c;letter-spacing:.06em;text-transform:uppercase;border-bottom:1px solid #d0dbe8;padding-bottom:3px;margin-bottom:8px;}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+table{width:100%;border-collapse:collapse;font-size:10pt;}
+th{background:#003d5c;color:#fff;padding:5px 8px;text-align:left;font-size:9pt;}
+td{padding:4px 8px;border-bottom:1px solid #e8edf2;}
+tr:nth-child(even) td{background:#f5f8fb;}
+.val{font-weight:700;text-align:right;}
+.map-wrap{aspect-ratio:512/307;width:100%;overflow:hidden;border:1px solid #b0b0b0;border-radius:4px;}
+.map-wrap svg{display:block;width:100%;height:100%;}
+.badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:9pt;font-weight:700;}
+.footer{margin-top:20px;padding-top:8px;border-top:1px solid #d0dbe8;font-size:8pt;color:#9aa8b8;display:flex;justify-content:space-between;}
+</style></head><body><div class="page">
+
+<div class="header">
+  <div>
+    <h1>Reservatório Escavado — Terraplenagem</h1>
+    <p>${prop} &nbsp;·&nbsp; ${cliente}</p>
+    <p style="margin-top:4px;color:#003d5c;">${consultor}</p>
+  </div>
+  <div class="header-right">
+    <div style="font-size:10pt;font-weight:700;color:#003d5c;">Bolsa Irriga®</div>
+    <div>${date}</div>
+  </div>
+</div>
+
+<div class="two-col">
+<div>
+<div class="section">
+  <div class="section-title">Cotas de Projeto</div>
+  <table>
+    <tr><td>Cota de operação (NA)</td><td class="val">${r.z_op.toFixed(2)} m</td></tr>
+    <tr><td>Cota de coroamento</td><td class="val">${r.z_coroamento.toFixed(2)} m</td></tr>
+    <tr><td>Cota de fundo</td><td class="val">${r.z_fundo.toFixed(2)} m</td></tr>
+    <tr><td>Profundidade útil</td><td class="val">${r.H.toFixed(2)} m</td></tr>
+    <tr><td>Borda livre</td><td class="val">${r.p.BL.toFixed(1)} m</td></tr>
+  </table>
+</div>
+<div class="section">
+  <div class="section-title">Volumes</div>
+  <table>
+    <tr><td>Área do espelho</td><td class="val">${fmt(r.Ae)} m²</td></tr>
+    <tr><td>Área do fundo</td><td class="val">${fmt(r.Af)} m²</td></tr>
+    <tr><td>Volume útil</td><td class="val">${fmt(r.Vutil)} m³</td></tr>
+    <tr><td>Volume morto</td><td class="val">${fmt(r.Vmort)} m³</td></tr>
+    <tr><td>Volume total</td><td class="val"><strong>${fmt(r.Vtotal)} m³</strong></td></tr>
+  </table>
+</div>
+<div class="section">
+  <div class="section-title">Terraplenagem</div>
+  <table>
+    <tr><td>Talude interno (corte)</td><td class="val">1V : ${r.p.Ti}H</td></tr>
+    <tr><td>Talude externo (aterro)</td><td class="val">1V : ${r.p.Te}H</td></tr>
+    <tr><td>Largura da crista</td><td class="val">${r.p.Lc} m</td></tr>
+    <tr><td>Volume de corte (banco)</td><td class="val">${fmt(r.Vcut)} m³</td></tr>
+    <tr><td>Volume de aterro (compac.)</td><td class="val">${fmt(r.Vfill)} m³</td></tr>
+    <tr><td>Aterro banco (Fe=${r.p.Fe})</td><td class="val">${fmt(r.Vfill_banco)} m³</td></tr>
+    <tr><td>Balanço de material</td><td class="val"><span class="badge" style="background:${balancoClass};color:#fff;">${balancoTxt}</span></td></tr>
+    <tr><td>Geomembrana (+10%)</td><td class="val">${fmt(r.Ageo)} m²</td></tr>
+  </table>
+</div>
+</div>
+
+<div>
+<div class="section">
+  <div class="section-title">Mapa Satélite</div>
+  <div class="map-wrap">
+    <svg viewBox="0 0 ${MW} ${MH}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+      ${staticUrl?`<image href="${staticUrl}" x="0" y="0" width="${MW}" height="${MH}" preserveAspectRatio="none"/>`:`<rect width="${MW}" height="${MH}" fill="#1a2535"/><text x="${MW/2}" y="${MH/2}" text-anchor="middle" fill="#78909c" font-size="14">Sem chave API</text>`}
+      <path d="${polyPath}" stroke="#42a5f5" stroke-width="2.5" fill="rgba(66,165,245,0.18)" stroke-linejoin="round"/>
+    </svg>
+  </div>
+</div>
+</div>
+</div>
+
+<div class="section" style="margin-top:8px;">
+  <div class="section-title">Perfil Transversal</div>
+  ${perfilSVG}
+</div>
+
+<div class="footer">
+  <span>Bolsa Irriga® · Av. Elias Abraão, 140 · Franca-SP · (16) 3702-6571 · bolsairriga.com.br</span>
+  <span>© ${new Date().getFullYear()} João Paulo de Oliveira</span>
+</div>
+
+</div></body></html>`);
+  win.document.close();
+  setTimeout(()=>win.print(),800);
+}
+</script>
+</body>
+</html>
