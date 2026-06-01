@@ -157,6 +157,8 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
     <div class="sec-title">1. Talhão</div>
     <button class="btn btn-poly" id="btnPoly" onclick="iniciarPoligono()">&#9632; Desenhar Contorno</button>
     <button class="btn btn-finish" id="btnFechar" onclick="fecharPoligono()">&#10003; Fechar Contorno</button>
+    <input type="file" id="inputKml" accept=".kml" style="display:none" onchange="if(this.files[0]){const r=new FileReader();r.onload=e=>_processarKMLImportado(e.target.result);r.readAsText(this.files[0]);this.value='';}">
+    <button class="btn" onclick="$('inputKml').click()" style="background:#37474f;color:#e0e0e0;margin-top:4px;">&#8599; Importar KML</button>
   </div>
 
   <!-- ── Carreador / Divisão ── -->
@@ -1608,6 +1610,145 @@ function limparCurvas() {
   curvaLabels.forEach(m=>m.remove()); curvaLabels=[];
   $('btnLimparCurvas').style.display='none';
   $('curvaInfo').style.display='none';
+}
+
+// ── Importar KML ──────────────────────────────────────────────────────────────
+function _processarKMLImportado(text) {
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(text, 'application/xml');
+    if(doc.getElementsByTagName('parsererror').length) {
+      alert('Erro ao ler o arquivo KML. Verifique se é um arquivo válido.'); return;
+    }
+
+    // Helpers para navegar XML com namespace
+    function childrenByTag(parent, tag) {
+      return Array.from(parent.children).filter(el => el.localName === tag);
+    }
+    function directName(el) {
+      for(const ch of el.children) { if(ch.localName === 'name') return ch.textContent.trim(); }
+      return '';
+    }
+    function kmlColorToHex(kmlColor) {
+      if(!kmlColor || kmlColor.length < 8) return null;
+      return '#' + kmlColor.slice(6,8) + kmlColor.slice(4,6) + kmlColor.slice(2,4);
+    }
+    function getLineColor(placemark) {
+      const ls = placemark.getElementsByTagName('LineStyle');
+      if(!ls.length) return null;
+      const c = ls[0].getElementsByTagName('color');
+      return c.length ? kmlColorToHex(c[0].textContent.trim()) : null;
+    }
+    function parseCoords(str) {
+      return str.trim().split(/\s+/).map(c => {
+        const p = c.split(',');
+        return {lat: parseFloat(p[1]), lng: parseFloat(p[0])};
+      }).filter(p => !isNaN(p.lat) && !isNaN(p.lng));
+    }
+
+    const docEl = doc.getElementsByTagName('Document')[0];
+    if(!docEl) { alert('Arquivo KML sem Document.'); return; }
+
+    const topFolders = childrenByTag(docEl, 'Folder');
+    const talhaoFolders = topFolders.filter(f => directName(f).startsWith('Talhão'));
+    if(!talhaoFolders.length) {
+      alert('Nenhum talhão encontrado no KML.\nImporte um arquivo exportado por este app.'); return;
+    }
+
+    let importados = 0;
+
+    talhaoFolders.forEach(folder => {
+      // Contorno
+      const placemarks = childrenByTag(folder, 'Placemark');
+      const contorno = placemarks.find(p => {
+        for(const ch of p.children) { if(ch.localName === 'name' && ch.textContent.trim() === 'Contorno') return true; }
+        return false;
+      });
+      if(!contorno) return;
+      const polyCoordEl = contorno.getElementsByTagName('coordinates')[0];
+      if(!polyCoordEl) return;
+      let pts = parseCoords(polyCoordEl.textContent);
+      // remove ponto de fechamento se igual ao primeiro
+      if(pts.length > 1) {
+        const f = pts[0], l = pts[pts.length-1];
+        if(Math.abs(f.lat-l.lat) < 1e-9 && Math.abs(f.lng-l.lng) < 1e-9) pts = pts.slice(0,-1);
+      }
+      if(pts.length < 3) return;
+      const corContorno = getLineColor(contorno);
+
+      // Linhas de Plantio
+      const subFolders = childrenByTag(folder, 'Folder');
+      const linhasFolder = subFolders.find(f => directName(f) === 'Linhas de Plantio');
+      let linhasImp = [], corLinha = '#FFD600';
+      if(linhasFolder) {
+        let firstColor = null;
+        childrenByTag(linhasFolder, 'Placemark').forEach(p => {
+          const ce = p.getElementsByTagName('coordinates');
+          if(!ce.length) return;
+          const lpts = parseCoords(ce[0].textContent);
+          if(lpts.length < 2) return;
+          const col = getLineColor(p) || '#FFD600';
+          if(!firstColor) firstColor = col;
+          linhasImp.push(L.polyline(lpts.map(p=>[p.lat,p.lng]), {color:col, weight:1.5, opacity:.95}).addTo(map));
+        });
+        if(firstColor) corLinha = firstColor;
+      }
+
+      // Área
+      let haArea = 0;
+      const ring = [...pts.map(p=>[p.lng,p.lat]), [pts[0].lng,pts[0].lat]];
+      try { haArea = turf.area(turf.polygon([ring])) / 10000; } catch(e) {}
+
+      // Criar layer do polígono
+      const uid = nextTalhaoUid++;
+      const idxN = talhoesArquivados.length;
+      const cor = corContorno || CORES_TALHAO[idxN % CORES_TALHAO.length];
+      const polyLyr = L.polygon(pts, {color:cor, fillColor:cor, fillOpacity:.06, weight:2}).addTo(map);
+
+      // Métricas
+      const count = linhasImp.length;
+      let metrosLin = 0;
+      linhasImp.forEach(pl => { const lp = pl.getLatLngs().flat(); for(let i=0;i<lp.length-1;i++) metrosLin+=haversineM(lp[i],lp[i+1]); });
+
+      // Legenda
+      let infoMk = null;
+      try {
+        const c = turf.centroid(turf.polygon([ring])).geometry.coordinates;
+        const fmt = n => Math.round(n).toLocaleString('pt-BR');
+        const html = `<div class="poly-label"><div class="poly-label-head">&#9632; Talh&#227;o</div><div class="poly-label-body"><div class="poly-label-row"><span class="poly-label-lbl">&#193;rea</span><span class="poly-label-val">${haArea.toFixed(2)} ha</span></div>${count>0?`<div class="poly-label-row"><span class="poly-label-lbl">Linhas</span><span class="poly-label-val">${count}</span></div>`:''}${metrosLin>0?`<div class="poly-label-row"><span class="poly-label-lbl">Metros lineares</span><span class="poly-label-val">${fmt(metrosLin)} m</span></div>`:''}</div></div>`;
+        infoMk = L.marker([c[1],c[0]], {icon:L.divIcon({html, className:'', iconAnchor:[84,58]}), interactive:false, zIndexOffset:500}).addTo(map);
+      } catch(e) {}
+
+      talhoesArquivados.push({
+        uid, idx: idxN + 1, cor, corLinha,
+        areaHa: haArea, spacing: 0, count, metrosLin,
+        polyLayer: polyLyr, polyPts: pts,
+        linhas: linhasImp, linhasDecl: [],
+        infoMarker: infoMk, baseLabelZoom: map.getZoom(),
+        turfPoly: null
+      });
+      polyLyr.on('click', () => { if(modo === 'idle') selecionarTalhao(uid); });
+      importados++;
+    });
+
+    if(importados === 0) { alert('Nenhum talhão válido encontrado no KML.'); return; }
+
+    renumerarTalhoes();
+    _updateLabelScale();
+    $('btnLimparArquivados').style.display = '';
+    $('btnDeclivTodos').disabled = false;
+    $('btnKml').style.display = 'flex';
+
+    // Centralizar mapa nos talhões importados
+    const allPts = [];
+    talhoesArquivados.slice(-importados).forEach(t => t.polyPts.forEach(p => allPts.push([p.lat,p.lng])));
+    if(allPts.length) map.fitBounds(allPts, {padding:[50,50]});
+
+    setStatus(`${importados} talhão(ões) importado(s) com sucesso.`, 'ok');
+  } catch(e) {
+    alert('Erro ao processar KML: ' + e.message);
+    console.error(e);
+  }
 }
 
 // ── Exportar KML ──────────────────────────────────────────────────────────────
