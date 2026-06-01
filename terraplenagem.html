@@ -113,8 +113,14 @@ input[type=number],select,input[type=text],input[type=password]{width:100%;backg
     <button class="btn btn-finish" id="btnFechar" onclick="fecharPoligono()">✓ Fechar Contorno</button>
     <button class="btn btn-clr" id="btnLimparPoly" onclick="limparPoligono()" style="display:none;">✕ Limpar</button>
     <div id="polyInfo" style="display:none;margin-top:5px;background:#0f3460;border-radius:4px;padding:5px 9px;font-size:11px;">
-      <span style="color:#78909c;">Área espelho:</span>
-      <span id="iPolyArea" style="color:#e2b96e;font-weight:700;float:right;">—</span>
+      <div style="display:flex;justify-content:space-between;margin-bottom:2px;">
+        <span style="color:#78909c;">Área espelho:</span>
+        <span id="iPolyArea" style="color:#e2b96e;font-weight:700;">—</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;">
+        <span style="color:#78909c;">Perímetro:</span>
+        <span id="iPolyPerim" style="color:#81d4fa;font-weight:700;">—</span>
+      </div>
     </div>
   </div>
 
@@ -201,7 +207,7 @@ input[type=number],select,input[type=text],input[type=password]{width:100%;backg
   <div class="modal" style="max-width:1060px;">
     <button class="modal-close" onclick="$('modalCortes').classList.remove('open')">✕</button>
     <h2>📊 Cortes Transversais</h2>
-    <div id="cortesContent" style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;"></div>
+    <div id="cortesContent" style="margin-top:8px;"></div>
   </div>
 </div>
 
@@ -287,18 +293,33 @@ function iniciarPoligono(){
   $('btnPoly').style.background='#42a5f5';$('btnFechar').style.display='flex';
   setStatus('Clique para adicionar vértices. Duplo-clique ou ✓ para fechar.','info');
 }
+function calcPolyPerim(){
+  if(polyPts.length<2)return 0;
+  let d=0;
+  for(let i=1;i<polyPts.length;i++)d+=turf.distance([polyPts[i-1].lng,polyPts[i-1].lat],[polyPts[i].lng,polyPts[i].lat],{units:'meters'});
+  return d;
+}
 function addPolyPt(ll){
+  const prev=polyPts.length>0?polyPts[polyPts.length-1]:null;
   polyPts.push({lat:ll.lat,lng:ll.lng});
   const mk=L.marker(ll,{icon:mkIcon(),draggable:true}).addTo(map);
   const i=polyPts.length-1;
   mk.on('drag',()=>{polyPts[i]={lat:mk.getLatLng().lat,lng:mk.getLatLng().lng};updatePolyDisplay();});
   mk.on('dragend',()=>buildTurfPoly());
   polyMarkers.push(mk);updatePolyDisplay();
+  if(prev){
+    const seg=turf.distance([prev.lng,prev.lat],[ll.lng,ll.lat],{units:'meters'});
+    const tot=calcPolyPerim();
+    setStatus('Segmento: '+seg.toFixed(1)+' m  |  Parcial: '+tot.toFixed(0)+' m ('+polyPts.length+' vértices)','info');
+  }else{setStatus('1º vértice. Clique para continuar, duplo-clique ou ✓ para fechar.','info');}
 }
 function updatePolyDisplay(){
   if(polyTempLine){polyTempLine.remove();polyTempLine=null;}
   const pts=polyMarkers.map(m=>m.getLatLng());
-  if(pts.length>=2)polyTempLine=L.polyline([...pts,pts[0]],{color:'#42a5f5',weight:2,dashArray:'6,4',opacity:.8}).addTo(map);
+  if(pts.length>=2){
+    polyTempLine=L.polyline([...pts,pts[0]],{color:'#42a5f5',weight:2,dashArray:'6,4',opacity:.8}).addTo(map);
+    const p=$('iPolyPerim');if(p)p.textContent=calcPolyPerim().toFixed(0)+' m';
+  }
 }
 function fecharPoligono(){
   if(polyPts.length<3){setStatus('Mínimo 3 pontos.','err');return;}
@@ -342,6 +363,14 @@ function atualizarGridInfo(){
 $('pGrid').addEventListener('change',atualizarGridInfo);
 map.on('click',e=>{if(modo==='poly')addPolyPt(e.latlng);});
 map.on('dblclick',e=>{if(modo==='poly'&&polyPts.length>=3)fecharPoligono();});
+map.on('mousemove',e=>{
+  if(modo==='poly'&&polyPts.length>0){
+    const prev=polyPts[polyPts.length-1];
+    const seg=turf.distance([prev.lng,prev.lat],[e.latlng.lng,e.latlng.lat],{units:'meters'});
+    const tot=calcPolyPerim()+seg;
+    setStatus('→ '+seg.toFixed(1)+' m  |  Perímetro estimado: '+tot.toFixed(0)+' m','info');
+  }
+});
 
 // ── Elevações ─────────────────────────────────────────────────────────────────
 async function fetchElevations(points){
@@ -661,101 +690,136 @@ function mostrarResultados(){
   $('secPDF').style.display='';
 }
 
-// ── SVG Corte Transversal ─────────────────────────────────────────────────────
-function svgCorte(id, titleStr, ptLabel, z_t, r){
+// ── SVG Corte Transversal (seção completa A→B) ───────────────────────────────
+function svgCorte(id, titleStr, ptLabelL, ptLabelR, z_tL, z_tR, r){
   var p=r.p, Ti=p.Ti, Te=p.Te, Lc=p.Lc, BL=p.BL;
   var H=r.H, zNa=r.z_na, zCr=r.z_crista, zFd=r.z_fundo;
-  var hAt=Math.max(0,zCr-z_t), hEs=Math.max(0,z_t-zFd);
+  var h_atL=Math.max(0,zCr-z_tL), h_atR=Math.max(0,zCr-z_tR);
+  var rFd=Math.max(4,Math.sqrt(r.Af/Math.PI)), fd_w=2*rFd;
 
-  // Horizontal coords (m from external toe)
-  var x0=0, x1=hAt*Te, x2=x1+Lc;
-  var x3=x2+hAt*Ti;            // slope meets terrain
-  var x4=x2+(H+BL)*Ti;         // fundo edge
-  var xNa=x2+BL*Ti;            // slope at z_na
+  // Coordenadas horizontais (m desde o pé externo esquerdo)
+  var x0=0, x1=h_atL*Te, x2=x1+Lc;
+  var x3=x2+(H+BL)*Ti, x4=x3+fd_w;
+  var x5=x4+(H+BL)*Ti, x6=x5+Lc, x7=x6+h_atR*Te;
+  var xNaL=x2+BL*Ti, xNaR=x4+H*Ti;
+  // Onde o terreno intersecta o talude interno (para linha de terreno)
+  var xTL=Math.min(x2+h_atL*Ti,x3), xTR=Math.max(x5-h_atR*Ti,x4);
 
-  var rFundo=Math.max(0,Math.sqrt(r.Af/Math.PI));
-  var xCap=x4+Math.min(rFundo,42);
-
-  var W=510, SH=182, pt_=24, pb_=50, pl_=48, pr_=86;
+  // Canvas SVG
+  var W=760, SH=310, pt_=44, pb_=62, pl_=60, pr_=118;
   var plotW=W-pl_-pr_, plotH=SH-pt_-pb_;
-  var zMin=Math.min(zFd,z_t)-1.0, zMax=zCr+0.8, zSp=zMax-zMin;
-
-  function sx(xm){return pl_+plotW*Math.min(Math.max(xm,0),xCap)/xCap;}
+  var zMin=Math.min(zFd,z_tL,z_tR)-2.8, zMax=zCr+3.0, zSp=zMax-zMin;
+  var xTot=Math.max(x7,1);
+  function sx(xm){return pl_+plotW*xm/xTot;}
   function sy(z){return pt_+plotH*(1-(z-zMin)/zSp);}
 
-  var X0=sx(x0),X1=sx(x1),X2=sx(x2),X3=sx(x3),X4=sx(x4),XN=sx(xNa),XC=sx(xCap);
-  var Yc=sy(zCr),Yn=sy(zNa),Yf=sy(zFd),Yt=sy(z_t);
+  var X0=sx(x0),X1=sx(x1),X2=sx(x2),X3=sx(x3),X4=sx(x4);
+  var X5=sx(x5),X6=sx(x6),X7=sx(x7);
+  var XNL=sx(xNaL),XNR=sx(xNaR),XTL=sx(xTL),XTR=sx(xTR);
+  var Yc=sy(zCr),Yn=sy(zNa),Yf=sy(zFd),YtL=sy(z_tL),YtR=sy(z_tR),Ybot=pt_+plotH;
 
-  function mkPth(segs,close){
-    var d=segs.map(function(s,i){return(i?'L':'M')+s[0].toFixed(1)+','+s[1].toFixed(1);}).join(' ');
-    return close?d+' Z':d;
+  function mk(segs,close){
+    return segs.map(function(s,i){return(i?'L':'M')+s[0].toFixed(1)+','+s[1].toFixed(1);}).join(' ')+(close?' Z':'');
   }
 
-  var fillPath=hAt>0.05?mkPth([[X0,Yt],[X1,Yc],[X2,Yc],[X3,Yt]],true):null;
-  var cutPath=hEs>0.05?mkPth([[X3,Yt],[X4,Yf],[XC,Yf],[XC,Yt]],true):null;
-  var waterPath=mkPth([[XN,Yn],[XC,Yn],[XC,Yf],[X4,Yf]],true);
-  var embPath=mkPth([[X0,Yt],[X1,Yc],[X2,Yc],[X4,Yf],[XC,Yf]],false);
+  var uid='s'+id;
+  var out=['<svg viewBox="0 0 '+W+' '+SH+'" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block;background:#fff;font-family:Arial,sans-serif;">'];
 
-  var out=[];
-  out.push('<svg viewBox="0 0 '+W+' '+SH+'" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:'+W+'px;background:#fff;font-family:Arial,sans-serif;">');
   out.push('<defs>');
-  out.push('<pattern id="pF'+id+'" patternUnits="userSpaceOnUse" width="7" height="7" patternTransform="rotate(45)"><line x1="3.5" y1="0" x2="3.5" y2="7" stroke="#e65100" stroke-width="2.4" opacity="0.55"/></pattern>');
-  out.push('<pattern id="pC'+id+'" patternUnits="userSpaceOnUse" width="7" height="7" patternTransform="rotate(-45)"><line x1="3.5" y1="0" x2="3.5" y2="7" stroke="#5d4037" stroke-width="2.4" opacity="0.55"/></pattern>');
+  // Hachura azul diagonal
+  out.push('<pattern id="ph'+uid+'" patternUnits="userSpaceOnUse" width="9" height="9" patternTransform="rotate(-45 0 0)"><line x1="4.5" y1="0" x2="4.5" y2="9" stroke="#aac6e8" stroke-width="3.6"/></pattern>');
+  // Marcadores de seta vermelha
+  out.push('<marker id="arR'+uid+'" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><polygon points="0 0,7 3.5,0 7" fill="#c62828"/></marker>');
+  out.push('<marker id="arL'+uid+'" markerWidth="7" markerHeight="7" refX="1" refY="3.5" orient="auto"><polygon points="7 0,0 3.5,7 7" fill="#c62828"/></marker>');
   out.push('</defs>');
-  out.push('<rect width="'+W+'" height="'+SH+'" fill="white"/>');
+  out.push('<rect width="'+W+'" height="'+SH+'" fill="#fff"/>');
 
-  if(fillPath){out.push('<path d="'+fillPath+'" fill="url(#pF'+id+')" stroke="#bf360c" stroke-width="1"/>');}
-  if(cutPath){out.push('<path d="'+cutPath+'" fill="url(#pC'+id+')" stroke="#4e342e" stroke-width="1"/>');}
-  out.push('<path d="'+waterPath+'" fill="#bbdefb" opacity="0.88" stroke="#42a5f5" stroke-width="1.2"/>');
-  out.push('<path d="'+embPath+'" fill="none" stroke="#1a237e" stroke-width="1.8"/>');
+  // 1. Corpo principal (polígono fechado via linha de terreno)
+  var bodyD=mk([[X0,YtL],[X1,Yc],[X2,Yc],[X3,Yf],[X4,Yf],[X5,Yc],[X6,Yc],[X7,YtR]],true);
+  out.push('<path d="'+bodyD+'" fill="url(#ph'+uid+')" stroke="none"/>');
 
-  // Terrain lines
-  out.push('<line x1="'+X0.toFixed(1)+'" y1="'+Yt.toFixed(1)+'" x2="'+X3.toFixed(1)+'" y2="'+Yt.toFixed(1)+'" stroke="#2e7d32" stroke-width="1.5"/>');
-  out.push('<line x1="'+X3.toFixed(1)+'" y1="'+Yt.toFixed(1)+'" x2="'+XC.toFixed(1)+'" y2="'+Yt.toFixed(1)+'" stroke="#2e7d32" stroke-width="1" stroke-dasharray="4,3"/>');
+  // 2. Zona de água (NA até fundo, interior do reservatório)
+  var waterD=mk([[XNL,Yn],[X3,Yf],[X4,Yf],[XNR,Yn]],true);
+  out.push('<path d="'+waterD+'" fill="#c8e6f5" opacity="0.85" stroke="#64b5f6" stroke-width="1"/>');
 
-  // Reference lines + labels
-  var refs=[{z:zCr,c:'#7b1fa2',d:'6,3',lbl:zCr.toFixed(2)+' Crista'},{z:zNa,c:'#1565c0',d:'8,4',lbl:zNa.toFixed(2)+' NA norm.'},{z:z_t,c:'#2e7d32',d:'3,3',lbl:z_t.toFixed(2)+' TIN'},{z:zFd,c:'#e65100',d:'4,4',lbl:zFd.toFixed(2)+' Fundo'}];
-  refs.forEach(function(rf){var y=sy(rf.z);if(y<pt_-4||y>pt_+plotH+4)return;out.push('<line x1="'+pl_+'" y1="'+y.toFixed(1)+'" x2="'+(W-pr_+2)+'" y2="'+y.toFixed(1)+'" stroke="'+rf.c+'" stroke-width="0.8" stroke-dasharray="'+rf.d+'"/>');out.push('<text x="'+(W-pr_+5)+'" y="'+(y+3.5).toFixed(1)+'" font-size="6.5" fill="'+rf.c+'" font-weight="bold">'+rf.lbl+'</text>');});
+  // 3. Linha de terreno natural (dourada)
+  out.push('<line x1="'+X0.toFixed(1)+'" y1="'+YtL.toFixed(1)+'" x2="'+XTL.toFixed(1)+'" y2="'+YtL.toFixed(1)+'" stroke="#c4963a" stroke-width="2.2"/>');
+  out.push('<line x1="'+XTR.toFixed(1)+'" y1="'+YtR.toFixed(1)+'" x2="'+X7.toFixed(1)+'" y2="'+YtR.toFixed(1)+'" stroke="#c4963a" stroke-width="2.2"/>');
 
-  // Slope labels
-  if(hAt>0.5&&X1-X0>10)out.push('<text x="'+((X0+X1)/2).toFixed(1)+'" y="'+((Yt+Yc)/2+4).toFixed(1)+'" font-size="7.5" text-anchor="middle" fill="#bf360c" font-weight="bold">1:'+Te+'</text>');
-  if(X4-X2>8)out.push('<text x="'+((X2+X4)/2).toFixed(1)+'" y="'+((Yc+Yf)/2+4).toFixed(1)+'" font-size="7.5" text-anchor="middle" fill="#1a237e" font-weight="bold">1:'+Ti+'</text>');
+  // 4. Perfil do talude (contorno azul escuro)
+  var pts=[X0,YtL,X1,Yc,X2,Yc,X3,Yf,X4,Yf,X5,Yc,X6,Yc,X7,YtR];
+  var ptStr='';for(var i=0;i<pts.length;i+=2)ptStr+=pts[i].toFixed(1)+','+pts[i+1].toFixed(1)+' ';
+  out.push('<polyline points="'+ptStr.trim()+'" fill="none" stroke="#1a237e" stroke-width="2.4" stroke-linejoin="round"/>');
 
-  // Crista width dimension
-  if(X2-X1>10){var yd=Yc-9;out.push('<line x1="'+X1.toFixed(1)+'" y1="'+yd+'" x2="'+X2.toFixed(1)+'" y2="'+yd+'" stroke="#444" stroke-width="0.7"/>');out.push('<line x1="'+X1.toFixed(1)+'" y1="'+(yd-3)+'" x2="'+X1.toFixed(1)+'" y2="'+(yd+3)+'" stroke="#444" stroke-width="0.7"/>');out.push('<line x1="'+X2.toFixed(1)+'" y1="'+(yd-3)+'" x2="'+X2.toFixed(1)+'" y2="'+(yd+3)+'" stroke="#444" stroke-width="0.7"/>');out.push('<text x="'+((X1+X2)/2).toFixed(1)+'" y="'+(yd-2)+'" font-size="6.5" text-anchor="middle" fill="#333">'+Lc.toFixed(2)+'</text>');}
+  // 5. Linhas de referência tracejadas + rótulos à direita
+  var refs=[
+    {z:zCr,c:'#8e24aa',d:'9,4',lbl:zCr.toFixed(2)+' Crista'},
+    {z:zNa,c:'#1565c0',d:'12,5',lbl:zNa.toFixed(2)+' NA norm.'},
+    {z:zFd,c:'#00838f',d:'6,4',lbl:zFd.toFixed(2)+' Fundo'}
+  ];
+  refs.forEach(function(rf){
+    var y=sy(rf.z); if(y<pt_-8||y>Ybot+8)return;
+    out.push('<line x1="'+pl_+'" y1="'+y.toFixed(1)+'" x2="'+(W-pr_+2)+'" y2="'+y.toFixed(1)+'" stroke="'+rf.c+'" stroke-width="1" stroke-dasharray="'+rf.d+'"/>');
+    out.push('<text x="'+(W-pr_+8)+'" y="'+(y+4.5).toFixed(1)+'" font-size="9" fill="'+rf.c+'" font-weight="bold">'+rf.lbl+'</text>');
+  });
 
-  // Base width dimension
-  if(hAt>0.1&&X2-X0>6){var yb=SH-pb_+16;out.push('<line x1="'+X0.toFixed(1)+'" y1="'+yb+'" x2="'+X2.toFixed(1)+'" y2="'+yb+'" stroke="#c62828" stroke-width="0.7"/>');out.push('<line x1="'+X0.toFixed(1)+'" y1="'+(yb-3)+'" x2="'+X0.toFixed(1)+'" y2="'+(yb+3)+'" stroke="#c62828" stroke-width="0.7"/>');out.push('<line x1="'+X2.toFixed(1)+'" y1="'+(yb-3)+'" x2="'+X2.toFixed(1)+'" y2="'+(yb+3)+'" stroke="#c62828" stroke-width="0.7"/>');out.push('<text x="'+((X0+X2)/2).toFixed(1)+'" y="'+(yb+11)+'" font-size="6.5" text-anchor="middle" fill="#c62828">'+x2.toFixed(2)+'</text>');}
+  // 6. Rótulos de inclinação dos taludes
+  function slopeLabel(xa,ya,xb,yb,txt){
+    if(Math.abs(xb-xa)<18)return;
+    var mx=((xa+xb)/2).toFixed(1),my=((ya+yb)/2+6).toFixed(1);
+    out.push('<text x="'+mx+'" y="'+my+'" font-size="10" text-anchor="middle" fill="#1a237e" font-weight="bold">'+txt+'</text>');
+  }
+  if(h_atL>0.3)slopeLabel(X0,YtL,X1,Yc,'1:'+Te);
+  slopeLabel(X2,Yc,X3,Yf,'1:'+Ti);
+  slopeLabel(X4,Yf,X5,Yc,'1:'+Ti);
+  if(h_atR>0.3)slopeLabel(X6,Yc,X7,YtR,'1:'+Te);
 
-  // Y axis
-  out.push('<line x1="'+pl_+'" y1="'+pt_+'" x2="'+pl_+'" y2="'+(pt_+plotH)+'" stroke="#bbb" stroke-width="0.8"/>');
-  out.push('<line x1="'+pl_+'" y1="'+(pt_+plotH)+'" x2="'+(W-pr_)+'" y2="'+(pt_+plotH)+'" stroke="#bbb" stroke-width="0.8"/>');
+  // 7. Setas de cota (vermelhas)
+  function arrow(xa,xb,y,lbl){
+    if(xb-xa<18)return;
+    out.push('<line x1="'+xa.toFixed(1)+'" y1="'+y+'" x2="'+xb.toFixed(1)+'" y2="'+y+'" stroke="#c62828" stroke-width="1.6" marker-start="url(#arL'+uid+')" marker-end="url(#arR'+uid+')"/>');
+    out.push('<line x1="'+xa.toFixed(1)+'" y1="'+(y-6)+'" x2="'+xa.toFixed(1)+'" y2="'+(y+6)+'" stroke="#c62828" stroke-width="1.2"/>');
+    out.push('<line x1="'+xb.toFixed(1)+'" y1="'+(y-6)+'" x2="'+xb.toFixed(1)+'" y2="'+(y+6)+'" stroke="#c62828" stroke-width="1.2"/>');
+    out.push('<text x="'+((xa+xb)/2).toFixed(1)+'" y="'+(y-5)+'" font-size="10" text-anchor="middle" fill="#c62828" font-weight="bold">'+lbl+'</text>');
+  }
+  // Largura da crista (esquerda)
+  if(X2-X1>18)arrow(X1,X2,Yc-18,Lc.toFixed(2)+' m');
+  // Base do aterro esquerdo (pé externo até borda interna da crista)
+  if(X2-X0>18)arrow(X0,X2,Ybot+22,x2.toFixed(2)+' m');
 
-  // Y labels
-  var yStep=Math.max(0.5,Math.round(zSp/6*2)/2);
-  for(var zz=Math.ceil(zMin*2)/2;zz<=zMax+0.01;zz+=yStep){var yy=sy(zz);if(yy>=pt_&&yy<=pt_+plotH+1){out.push('<text x="'+(pl_-3)+'" y="'+(yy+3).toFixed(1)+'" font-size="7" text-anchor="end" fill="#555">'+zz.toFixed(1)+'</text>');out.push('<line x1="'+pl_+'" y1="'+yy.toFixed(1)+'" x2="'+(pl_-2)+'" y2="'+yy.toFixed(1)+'" stroke="#bbb" stroke-width="0.8"/>');}}
+  // 8. Eixo Y (elevação)
+  out.push('<line x1="'+pl_+'" y1="'+pt_+'" x2="'+pl_+'" y2="'+Ybot+'" stroke="#ccc" stroke-width="0.9"/>');
+  out.push('<line x1="'+pl_+'" y1="'+Ybot+'" x2="'+(W-pr_)+'" y2="'+Ybot+'" stroke="#ccc" stroke-width="0.9"/>');
+  var yStep=Math.max(0.5,Math.round(zSp/8*2)/2);
+  for(var zz=Math.ceil(zMin*2)/2;zz<=zMax+0.01;zz+=yStep){
+    var yy=sy(zz); if(yy<pt_-1||yy>Ybot+1)continue;
+    out.push('<text x="'+(pl_-5)+'" y="'+(yy+3.5).toFixed(1)+'" font-size="9" text-anchor="end" fill="#444">'+zz.toFixed(1)+'</text>');
+    out.push('<line x1="'+pl_+'" y1="'+yy.toFixed(1)+'" x2="'+(pl_-3)+'" y2="'+yy.toFixed(1)+'" stroke="#999" stroke-width="0.9"/>');
+    if(yy>pt_+3&&yy<Ybot-3)out.push('<line x1="'+pl_+'" y1="'+yy.toFixed(1)+'" x2="'+(W-pr_)+'" y2="'+yy.toFixed(1)+'" stroke="#f0f0f0" stroke-width="0.6"/>');
+  }
 
-  // Axis labels
-  out.push('<text x="'+(pl_+plotW/2)+'" y="'+(SH-7)+'" font-size="7.5" text-anchor="middle" fill="#555">Distância (m)</text>');
-  out.push('<text x="10" y="'+(pt_+plotH/2)+'" font-size="7.5" text-anchor="middle" fill="#555" transform="rotate(-90,10,'+(pt_+plotH/2)+')">Elevação (m)</text>');
+  // 9. Rótulos dos eixos
+  out.push('<text x="'+(pl_+plotW/2)+'" y="'+(SH-10)+'" font-size="10" text-anchor="middle" fill="#555">Distância (m)</text>');
+  out.push('<text x="14" y="'+(pt_+plotH/2)+'" font-size="10" text-anchor="middle" fill="#555" transform="rotate(-90,14,'+(pt_+plotH/2)+')">Elevação (m)</text>');
 
-  // Title
-  out.push('<text x="'+pl_+'" y="'+(pt_-8)+'" font-size="8.5" font-weight="bold" fill="#1a237e">'+titleStr+'</text>');
+  // 10. Título
+  out.push('<text x="'+pl_+'" y="'+(pt_-14)+'" font-size="11.5" font-weight="bold" fill="#1a237e">'+titleStr+'</text>');
 
-  // Legend
-  var lx=pl_+4,ly=pt_+4;
-  out.push('<rect x="'+lx+'" y="'+ly+'" width="86" height="54" rx="3" fill="white" opacity="0.93" stroke="#ddd" stroke-width="0.5"/>');
-  if(fillPath){out.push('<rect x="'+(lx+5)+'" y="'+(ly+7)+'" width="10" height="7" fill="url(#pF'+id+')" stroke="#bf360c" stroke-width="0.5"/>');out.push('<text x="'+(lx+19)+'" y="'+(ly+13)+'" font-size="7" fill="#555">Aterro</text>');}
-  if(cutPath){out.push('<rect x="'+(lx+5)+'" y="'+(ly+17)+'" width="10" height="7" fill="url(#pC'+id+')" stroke="#4e342e" stroke-width="0.5"/>');out.push('<text x="'+(lx+19)+'" y="'+(ly+23)+'" font-size="7" fill="#555">Corte</text>');}
-  out.push('<rect x="'+(lx+5)+'" y="'+(ly+28)+'" width="10" height="7" fill="#bbdefb" stroke="#42a5f5" stroke-width="0.5"/>');
-  out.push('<text x="'+(lx+19)+'" y="'+(ly+34)+'" font-size="7" fill="#555">Água</text>');
-  out.push('<line x1="'+(lx+5)+'" y1="'+(ly+44)+'" x2="'+(lx+15)+'" y2="'+(ly+44)+'" stroke="#2e7d32" stroke-width="1.5"/>');
-  out.push('<text x="'+(lx+19)+'" y="'+(ly+48)+'" font-size="7" fill="#555">Terreno</text>');
+  // 11. Legenda
+  var lx=pl_+12,ly=pt_+10;
+  out.push('<rect x="'+lx+'" y="'+ly+'" width="92" height="64" rx="4" fill="rgba(255,255,255,0.93)" stroke="#ddd" stroke-width="0.7"/>');
+  out.push('<rect x="'+(lx+6)+'" y="'+(ly+7)+'" width="14" height="9" fill="url(#ph'+uid+')" stroke="#1565c0" stroke-width="0.6"/>');
+  out.push('<text x="'+(lx+24)+'" y="'+(ly+15)+'" font-size="9" fill="#333">Estrutura</text>');
+  out.push('<rect x="'+(lx+6)+'" y="'+(ly+20)+'" width="14" height="9" fill="#c8e6f5" stroke="#64b5f6" stroke-width="0.6"/>');
+  out.push('<text x="'+(lx+24)+'" y="'+(ly+28)+'" font-size="9" fill="#333">Água</text>');
+  out.push('<line x1="'+(lx+6)+'" y1="'+(ly+40)+'" x2="'+(lx+20)+'" y2="'+(ly+40)+'" stroke="#c4963a" stroke-width="2.2"/>');
+  out.push('<text x="'+(lx+24)+'" y="'+(ly+44)+'" font-size="9" fill="#333">Terreno nat.</text>');
+  out.push('<line x1="'+(lx+6)+'" y1="'+(ly+56)+'" x2="'+(lx+20)+'" y2="'+(ly+56)+'" stroke="#1a237e" stroke-width="2.4"/>');
+  out.push('<text x="'+(lx+24)+'" y="'+(ly+60)+'" font-size="9" fill="#333">Perfil talude</text>');
 
-  // Point label
-  out.push('<text x="'+X0.toFixed(1)+'" y="'+(SH-pb_+12)+'" font-size="9" text-anchor="middle" font-weight="bold" fill="#c62828">'+ptLabel+'</text>');
-  // Interior break indicator
-  if(rFundo>43)out.push('<text x="'+(XC-5)+'" y="'+(Yf-4)+'" font-size="12" fill="#aaa">›</text>');
+  // 12. Rótulos dos pontos (A/B ou C/D)
+  out.push('<text x="'+X0.toFixed(1)+'" y="'+(Ybot+14)+'" font-size="13" text-anchor="middle" font-weight="bold" fill="#c62828">'+ptLabelL+'</text>');
+  out.push('<text x="'+X7.toFixed(1)+'" y="'+(Ybot+14)+'" font-size="13" text-anchor="middle" font-weight="bold" fill="#c62828">'+ptLabelR+'</text>');
 
   out.push('</svg>');
   return out.join('\n');
@@ -765,18 +829,16 @@ function gerarCortesSVG(){
   const r=resultado;
   const cc=$('cortesContent');
   cc.innerHTML='';
-
-  const wrap1=document.createElement('div');
-  wrap1.style.cssText='flex:1;min-width:260px;';
-  wrap1.innerHTML='<div style="font-size:11px;font-weight:700;color:#e2b96e;margin-bottom:6px;">CORTE A-B — MAIOR ATERRO ('+r.h_at_A.toFixed(2)+' m)</div>'
-    +svgCorte('ab','CORTE A-B — MAIOR ATERRO ('+r.h_at_A.toFixed(2)+' m)','A',r.z_t_A,r);
-  cc.appendChild(wrap1);
-
-  const wrap2=document.createElement('div');
-  wrap2.style.cssText='flex:1;min-width:260px;';
-  wrap2.innerHTML='<div style="font-size:11px;font-weight:700;color:#e2b96e;margin-bottom:6px;">CORTE C-D — MENOR ATERRO ('+r.h_at_C.toFixed(2)+' m)</div>'
-    +svgCorte('cd','CORTE C-D — MENOR ATERRO ('+r.h_at_C.toFixed(2)+' m)','C',r.z_t_C,r);
-  cc.appendChild(wrap2);
+  function addCorte(hdr,svgHtml){
+    const w=document.createElement('div');
+    w.style.cssText='margin-bottom:20px;';
+    w.innerHTML='<div style="font-size:11px;font-weight:700;color:#e2b96e;margin-bottom:6px;">'+hdr+'</div>'+svgHtml;
+    cc.appendChild(w);
+  }
+  addCorte('CORTE A-B — MAIOR ATERRO ('+r.h_at_A.toFixed(2)+' m)',
+    svgCorte('ab','CORTE A-B — MAIOR ATERRO ('+r.h_at_A.toFixed(2)+' m)','A','B',r.z_t_A,r.z_t_B,r));
+  addCorte('CORTE C-D — MENOR ATERRO ('+r.h_at_C.toFixed(2)+' m)',
+    svgCorte('cd','CORTE C-D — MENOR ATERRO ('+r.h_at_C.toFixed(2)+' m)','C','D',r.z_t_C,r.z_t_D,r));
 }
 
 // ── PDF ───────────────────────────────────────────────────────────────────────
@@ -823,8 +885,8 @@ function gerarPDF(){
   const balancoTxt=(r.balanco>0?'+':'')+fmt(r.balanco)+' m³ '+(r.balanco>0?'(excedente)':'(importar)');
 
   // Cross-section SVGs
-  const svgAB=svgCorte('pab','CORTE A-B — MAIOR ATERRO ('+r.h_at_A.toFixed(2)+' m)','A',r.z_t_A,r);
-  const svgCD=svgCorte('pcd','CORTE C-D — MENOR ATERRO ('+r.h_at_C.toFixed(2)+' m)','C',r.z_t_C,r);
+  const svgAB=svgCorte('pab','CORTE A-B — MAIOR ATERRO ('+r.h_at_A.toFixed(2)+' m)','A','B',r.z_t_A,r.z_t_B,r);
+  const svgCD=svgCorte('pcd','CORTE C-D — MENOR ATERRO ('+r.h_at_C.toFixed(2)+' m)','C','D',r.z_t_C,r.z_t_D,r);
 
   function tr(lbl,val,bold=false,color=''){return`<tr><td>${lbl}</td><td style="text-align:right;font-weight:${bold?'700':'500'};color:${color||'#1a2535'}">${val}</td></tr>`;}
   function th(t){return`<tr><td colspan="2" style="background:#003d5c;color:#fff;font-size:7.5pt;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:3px 6px;">${t}</td></tr>`;}
