@@ -70,6 +70,7 @@ input[type=number],select,input[type=text],input[type=password]{width:100%;backg
 .divider{height:1px;background:#0f3460;margin:6px 0;}
 #mapLegend{display:none;position:absolute;bottom:28px;left:8px;background:rgba(12,22,48,.92);border:1px solid #1e4a7a;border-radius:6px;padding:7px 10px;font-size:10.5px;color:#e0e0e0;z-index:500;line-height:1.9;min-width:170px;}
 #northArrow{display:none;position:absolute;top:10px;right:10px;background:rgba(12,22,48,.88);border-radius:50%;width:36px;height:36px;z-index:500;align-items:center;justify-content:center;flex-direction:column;font-size:9px;color:#e0e0e0;font-weight:700;line-height:1;}
+#drawTip{display:none;position:absolute;background:rgba(0,0,0,.82);color:#fff;font-size:12px;font-weight:700;padding:4px 11px;border-radius:5px;pointer-events:none;z-index:800;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.4);}
 </style>
 </head>
 <body>
@@ -198,6 +199,7 @@ input[type=number],select,input[type=text],input[type=password]{width:100%;backg
 </div>
 
 <div id="map">
+  <div id="drawTip"></div>
   <div id="mapLegend"></div>
   <div id="northArrow" style="display:none;position:absolute;top:10px;right:10px;background:rgba(12,22,48,.88);border-radius:50%;width:36px;height:36px;z-index:500;align-items:center;justify-content:center;flex-direction:column;font-size:9px;color:#e0e0e0;font-weight:700;line-height:1.2;text-align:center;">↑<br>N</div>
 </div>
@@ -262,7 +264,7 @@ if(savedKey){$('gmKey').value=savedKey;$('keyStatus').textContent='Carregando…
 
 // ── Estado ────────────────────────────────────────────────────────────────────
 let modo='idle';
-let polyPts=[],polyMarkers=[],polyLayer=null,polyTempLine=null;
+let polyPts=[],polyMarkers=[],polyLayer=null,polyTempLine=null,rubberLine=null;
 let turfPoly=null;
 let gridCells=[],perimCells=[];
 let resultado=null;
@@ -329,6 +331,7 @@ function updatePolyDisplay(){
 function fecharPoligono(){
   if(polyPts.length<3){setStatus('Mínimo 3 pontos.','err');return;}
   if(polyTempLine){polyTempLine.remove();polyTempLine=null;}
+  cleanRubber();
   modo='idle';map.getContainer().style.cursor='';
   $('btnPoly').style.background='#1565c0';$('btnFechar').style.display='none';
   polyPts=polyMarkers.map(m=>({lat:m.getLatLng().lat,lng:m.getLatLng().lng}));
@@ -342,6 +345,7 @@ function fecharPoligono(){
   setStatus('Contorno fechado. Defina os parâmetros e clique em Dimensionar.','ok');
 }
 function limparPoligono(){
+  cleanRubber();
   polyMarkers.forEach(m=>m.remove());polyMarkers=[];polyPts=[];
   if(polyLayer){polyLayer.remove();polyLayer=null;}
   if(polyTempLine){polyTempLine.remove();polyTempLine=null;}
@@ -366,6 +370,11 @@ function atualizarGridInfo(){
   $('gridInfo').textContent=`~${approx} pontos de elevação · ${Math.ceil(approx/500)} requisição(ões) API`;
 }
 $('pGrid').addEventListener('change',atualizarGridInfo);
+
+function cleanRubber(){
+  if(rubberLine){rubberLine.remove();rubberLine=null;}
+  $('drawTip').style.display='none';
+}
 map.on('click',e=>{if(modo==='poly')addPolyPt(e.latlng);});
 map.on('dblclick',e=>{if(modo==='poly'&&polyPts.length>=3)fecharPoligono();});
 map.on('mousemove',e=>{
@@ -373,8 +382,19 @@ map.on('mousemove',e=>{
     const prev=polyPts[polyPts.length-1];
     const seg=geoDistM(prev.lat,prev.lng,e.latlng.lat,e.latlng.lng);
     const tot=calcPolyPerim()+seg;
-    setStatus('→ '+seg.toFixed(1)+' m  |  Perímetro estimado: '+tot.toFixed(0)+' m','info');
-  }
+    // Linha elástica do último vértice ao cursor
+    const ll1=[prev.lat,prev.lng], ll2=[e.latlng.lat,e.latlng.lng];
+    if(!rubberLine){
+      rubberLine=L.polyline([ll1,ll2],{color:'#fff',weight:1.5,dashArray:'5,5',opacity:.75,interactive:false}).addTo(map);
+    }else{rubberLine.setLatLngs([ll1,ll2]);}
+    // Tooltip flutuante no mapa
+    const tip=$('drawTip');
+    const pt=map.latLngToContainerPoint(e.latlng);
+    tip.style.left=(pt.x+16)+'px';
+    tip.style.top=(pt.y-12)+'px';
+    tip.style.display='block';
+    tip.textContent=seg.toFixed(1)+' m  (perímetro: '+tot.toFixed(0)+' m)';
+  }else if(rubberLine||$('drawTip').style.display==='block'){cleanRubber();}
 });
 
 // ── Elevações ─────────────────────────────────────────────────────────────────
