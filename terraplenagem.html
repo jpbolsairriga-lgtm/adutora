@@ -180,6 +180,7 @@ input[type=number],select,input[type=text],input[type=password]{width:100%;backg
     <div id="boxRes"></div>
     <div style="margin-top:8px;display:flex;flex-direction:column;gap:4px;">
       <button class="btn btn-sec" onclick="$('modalCortes').classList.add('open')">📊 Cortes Transversais</button>
+      <button class="btn" style="background:#1b5e20;color:#fff;" onclick="gerarVista3D()">🏗 Vista 3D</button>
       <button class="btn btn-pdf" onclick="gerarPDF()">📄 Relatório PDF</button>
     </div>
   </div>
@@ -210,6 +211,16 @@ input[type=number],select,input[type=text],input[type=password]{width:100%;backg
     <button class="modal-close" onclick="$('modalCortes').classList.remove('open')">✕</button>
     <h2>📊 Cortes Transversais</h2>
     <div id="cortesContent" style="margin-top:8px;"></div>
+  </div>
+</div>
+
+<!-- Modal Vista 3D -->
+<div class="modal-bg" id="modal3D" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal" style="max-width:640px;padding:14px;">
+    <button class="modal-close" onclick="$('modal3D').classList.remove('open')">✕</button>
+    <h2>🏗 Vista Esquemática 3D</h2>
+    <canvas id="canvas3D" style="width:100%;border-radius:6px;display:block;"></canvas>
+    <p style="font-size:9.5px;color:#546e7a;margin-top:6px;text-align:center;">Aproximação cilíndrica — raios equivalentes. Exagero vertical para legibilidade.</p>
   </div>
 </div>
 
@@ -605,27 +616,64 @@ async function dimensionar(){
   }
 }
 
+// ── Hachura SVG no mapa ───────────────────────────────────────────────────────
+function injetarHachura(){
+  const pane=map.getPane('overlayPane'); if(!pane)return;
+  const svg=pane.querySelector('svg'); if(!svg)return;
+  let defs=svg.querySelector('defs');
+  if(!defs){defs=document.createElementNS('http://www.w3.org/2000/svg','defs');svg.insertBefore(defs,svg.firstChild);}
+  const cfgs=[
+    {id:'hNA', color:'#29b6f6', angle:45,  w:7, sw:2.8},
+    {id:'hFD', color:'#0d47a1', angle:-45, w:7, sw:2.8},
+    {id:'hCR', color:'#9c27b0', angle:45,  w:7, sw:2.2},
+    {id:'hPE', color:'#4a148c', angle:-45, w:9, sw:1.8},
+  ];
+  cfgs.forEach(cfg=>{
+    const ex=defs.querySelector('#'+cfg.id); if(ex)ex.remove();
+    const pat=document.createElementNS('http://www.w3.org/2000/svg','pattern');
+    pat.id=cfg.id; pat.setAttribute('patternUnits','userSpaceOnUse');
+    pat.setAttribute('width',cfg.w); pat.setAttribute('height',cfg.w);
+    pat.setAttribute('patternTransform','rotate('+cfg.angle+')');
+    const ln=document.createElementNS('http://www.w3.org/2000/svg','line');
+    ln.setAttribute('x1',cfg.w/2); ln.setAttribute('y1','0');
+    ln.setAttribute('x2',cfg.w/2); ln.setAttribute('y2',cfg.w);
+    ln.setAttribute('stroke',cfg.color); ln.setAttribute('stroke-width',cfg.sw);
+    pat.appendChild(ln); defs.appendChild(pat);
+  });
+}
+function applyHatch(lyr,id){
+  if(lyr&&lyr._path){lyr._path.setAttribute('fill','url(#'+id+')');}
+}
+map.on('zoomend moveend',injetarHachura);
+
 // ── Overlays no mapa ──────────────────────────────────────────────────────────
 function desenharOverlays(){
   limparOverlays();
   const r=resultado;
+  injetarHachura();
 
-  // Pé externo (mais externo, tracejado)
+  // Pé externo
   if(r.peExtBuf){
     const coords=r.peExtBuf.geometry.coordinates[0].map(c=>[c[1],c[0]]);
-    overlayLayers.push(L.polygon(coords,{color:'#4a148c',fill:false,weight:2,dashArray:'7,4',opacity:.9}).addTo(map));
+    const lyr=L.polygon(coords,{color:'#4a148c',fill:true,fillColor:'#4a148c',fillOpacity:.40,weight:2,dashArray:'7,4',opacity:.9}).addTo(map);
+    applyHatch(lyr,'hPE'); overlayLayers.push(lyr);
   }
   // Crista
   if(r.cristaBuf){
     const coords=r.cristaBuf.geometry.coordinates[0].map(c=>[c[1],c[0]]);
-    overlayLayers.push(L.polygon(coords,{color:'#9c27b0',fill:false,weight:2.5,opacity:.95}).addTo(map));
+    const lyr=L.polygon(coords,{color:'#9c27b0',fill:true,fillColor:'#9c27b0',fillOpacity:.42,weight:2.5,opacity:.95}).addTo(map);
+    applyHatch(lyr,'hCR'); overlayLayers.push(lyr);
   }
-  // Espelho NA (restyle existing polyLayer)
-  if(polyLayer)polyLayer.setStyle({color:'#29b6f6',fillColor:'#64b5f6',fillOpacity:.30,weight:2});
+  // Espelho NA
+  if(polyLayer){
+    polyLayer.setStyle({color:'#29b6f6',fillColor:'#29b6f6',fillOpacity:.38,weight:2});
+    applyHatch(polyLayer,'hNA');
+  }
   // Fundo
   if(r.fundoBuf){
     const coords=r.fundoBuf.geometry.coordinates[0].map(c=>[c[1],c[0]]);
-    overlayLayers.push(L.polygon(coords,{color:'#1565c0',fillColor:'#0d47a1',fillOpacity:.70,weight:1.5}).addTo(map));
+    const lyr=L.polygon(coords,{color:'#1565c0',fillColor:'#0d47a1',fillOpacity:.72,weight:1.5}).addTo(map);
+    applyHatch(lyr,'hFD'); overlayLayers.push(lyr);
   }
 
   // Legenda
@@ -865,6 +913,172 @@ function gerarCortesSVG(){
     svgCorte('cd','CORTE C-D — MENOR ATERRO ('+r.h_at_C.toFixed(2)+' m)','C','D',r.z_t_C,r.z_t_D,r));
 }
 
+// ── Vista 3D ──────────────────────────────────────────────────────────────────
+function gerarVista3D(){
+  if(!resultado){return;}
+  const r=resultado;
+  $('modal3D').classList.add('open');
+  const cv=$('canvas3D');
+  const W=cv.width=600, H=cv.height=380;
+  const ctx=cv.getContext('2d');
+  ctx.clearRect(0,0,W,H);
+
+  // Raios equivalentes (círculos)
+  const r_fd=Math.max(2,Math.sqrt(r.Af/Math.PI));
+  const r_na=Math.sqrt(r.Ae/Math.PI);
+  const r_cr=r_na+Math.max(1,r.p.Lc-r.p.BL*r.p.Ti);
+  const r_pe=r_cr+Math.max(0.5,r.h_at_avg*r.p.Te);
+
+  // Alturas relativas ao fundo (z=0)
+  const z_fd=0, z_na=r.H, z_cr=r.H+r.p.BL;
+  const z_ter=Math.max(0,r.h_esc_avg); // terreno acima do fundo
+
+  // Projeção oblíqua
+  const ob=0.42; // rx/ry ratio
+  const cx=W*0.50, cy=H*0.80;
+  const vEx=Math.min(6,Math.max(2.5,30/Math.max(r.H,0.5))); // exagero adaptativo
+  const hSc=Math.min((W*0.42)/r_pe,40);
+  const vSc=hSc*vEx;
+
+  function ey(z){return cy-z*vSc;}
+  function rx(rm){return rm*hSc;}
+  function ry(rm){return rm*hSc*ob;}
+
+  // Desenha elipse completa
+  function elips(rm,z,fill,stroke,sw,alpha){
+    ctx.save();if(alpha!==undefined)ctx.globalAlpha=alpha;
+    ctx.beginPath();ctx.ellipse(cx,ey(z),rx(rm),ry(rm),0,0,Math.PI*2);
+    if(fill){ctx.fillStyle=fill;ctx.fill();}
+    if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=sw||1.5;ctx.stroke();}
+    ctx.restore();
+  }
+  // Anel (donut)
+  function anel(ri,ro,z,fill,stroke){
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(cx,ey(z),rx(ro),ry(ro),0,0,Math.PI*2);
+    ctx.ellipse(cx,ey(z),rx(ri),ry(ri),0,Math.PI*2,0,true);
+    if(fill){ctx.fillStyle=fill;ctx.fill('evenodd');}
+    if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=1.5;ctx.stroke();}
+    ctx.restore();
+  }
+  // Face frontal de cone/cilindro truncado
+  function face(rb,zb,rt,zt,fill,stroke){
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(cx,ey(zb),rx(rb),ry(rb),0,0,Math.PI,false);
+    ctx.lineTo(cx-rx(rt),ey(zt));
+    ctx.ellipse(cx,ey(zt),rx(rt),ry(rt),0,Math.PI,0,true);
+    ctx.lineTo(cx+rx(rb),ey(zb));
+    ctx.closePath();
+    if(fill){ctx.fillStyle=fill;ctx.fill();}
+    if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=1.2;ctx.stroke();}
+    ctx.restore();
+  }
+
+  // ── Fundo para trás ──
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#1a2a3a');bg.addColorStop(1,'#2d3a25');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  // Plano de terreno
+  elips(r_pe*1.6,z_ter,'#4e5e3a',null,0,0.6);
+
+  // Talude externo — meia traseira
+  {ctx.save();
+   ctx.beginPath();
+   ctx.ellipse(cx,ey(z_ter),rx(r_pe),ry(r_pe),0,Math.PI,0,false);
+   ctx.lineTo(cx+rx(r_cr),ey(z_cr));
+   ctx.ellipse(cx,ey(z_cr),rx(r_cr),ry(r_cr),0,0,Math.PI,true);
+   ctx.lineTo(cx-rx(r_pe),ey(z_ter));
+   ctx.closePath();
+   ctx.fillStyle='#7a6845';ctx.fill();ctx.strokeStyle='#554433';ctx.lineWidth=.8;ctx.stroke();
+   ctx.restore();}
+
+  // Crista (anel superior) — parte traseira
+  {ctx.save();
+   ctx.beginPath();
+   ctx.ellipse(cx,ey(z_cr),rx(r_cr),ry(r_cr),0,Math.PI,0,false);
+   ctx.lineTo(cx+rx(r_na),ey(z_cr));
+   ctx.ellipse(cx,ey(z_cr),rx(r_na),ry(r_na),0,0,Math.PI,true);
+   ctx.closePath();
+   ctx.fillStyle='#9e9e9e';ctx.fill();ctx.strokeStyle='#777';ctx.lineWidth=.8;ctx.stroke();
+   ctx.restore();}
+
+  // Talude interno superior (crista→NA) — parte traseira
+  {ctx.save();
+   ctx.beginPath();
+   ctx.ellipse(cx,ey(z_na),rx(r_na),ry(r_na),0,Math.PI,0,false);
+   ctx.lineTo(cx+rx(r_na),ey(z_cr));
+   ctx.ellipse(cx,ey(z_cr),rx(r_na),ry(r_na),0,0,Math.PI,true);
+   ctx.closePath();
+   ctx.fillStyle='#6a7a8a';ctx.fill();ctx.restore();}
+
+  // Corpo de água (fundo→NA) — face traseira
+  {ctx.save();
+   ctx.beginPath();
+   ctx.ellipse(cx,ey(z_fd),rx(r_fd),ry(r_fd),0,Math.PI,0,false);
+   ctx.lineTo(cx+rx(r_na),ey(z_na));
+   ctx.ellipse(cx,ey(z_na),rx(r_na),ry(r_na),0,0,Math.PI,true);
+   ctx.lineTo(cx-rx(r_fd),ey(z_fd));
+   ctx.closePath();
+   ctx.fillStyle='#0d5fa8';ctx.fill();ctx.restore();}
+
+  // Fundo
+  elips(r_fd,z_fd,'#0d47a1','#1565c0',1.5);
+
+  // Corpo de água — face frontal
+  face(r_fd,z_fd,r_na,z_na,'#1976d2','#1565c0');
+
+  // Espelho d'água
+  {const wg=ctx.createRadialGradient(cx,ey(z_na),0,cx,ey(z_na),rx(r_na));
+   wg.addColorStop(0,'rgba(100,181,246,0.9)');wg.addColorStop(1,'rgba(21,101,192,0.85)');
+   elips(r_na,z_na,wg,'#42a5f5',1.5,0.88);}
+
+  // Talude interno (frente)
+  face(r_na,z_na,r_na,z_cr,'#7a8a9a','#556070');
+
+  // Crista — anel frontal
+  {ctx.save();
+   ctx.beginPath();
+   ctx.ellipse(cx,ey(z_cr),rx(r_cr),ry(r_cr),0,0,Math.PI,false);
+   ctx.lineTo(cx-rx(r_na),ey(z_cr));
+   ctx.ellipse(cx,ey(z_cr),rx(r_na),ry(r_na),0,Math.PI,0,true);
+   ctx.closePath();
+   ctx.fillStyle='#b0b8c0';ctx.fill();ctx.strokeStyle='#888';ctx.lineWidth=1;ctx.stroke();
+   ctx.restore();}
+
+  // Talude externo — frente
+  face(r_pe,z_ter,r_cr,z_cr,'#9a8055','#554433');
+
+  // Contornos de referência
+  {const rxn=rx(r_na),ryn=ry(r_na);
+   ctx.save();ctx.beginPath();ctx.ellipse(cx,ey(z_na),rxn,ryn,0,0,Math.PI);
+   ctx.strokeStyle='#64b5f6';ctx.lineWidth=2;ctx.stroke();ctx.restore();}
+
+  // Linhas e rótulos laterais
+  const anot=[
+    {z:z_cr,  rm:r_cr,  lbl:'Crista  '+r.z_crista.toFixed(2)+' m',  c:'#ce93d8'},
+    {z:z_na,  rm:r_na,  lbl:'NA  '+r.z_na.toFixed(2)+' m',          c:'#64b5f6'},
+    {z:z_ter, rm:r_na*0.35, lbl:'Terreno  '+r.z_terreno.toFixed(2)+' m', c:'#a5d6a7'},
+    {z:z_fd,  rm:r_fd,  lbl:'Fundo  '+r.z_fundo.toFixed(2)+' m',    c:'#90caf9'},
+  ];
+  ctx.font='12px Arial';
+  anot.forEach(a=>{
+    const xx=cx+rx(a.rm)+8, yy=ey(a.z)+4;
+    ctx.beginPath();ctx.moveTo(cx+rx(a.rm),ey(a.z));ctx.lineTo(xx-2,yy-4);
+    ctx.strokeStyle=a.c;ctx.lineWidth=0.9;ctx.stroke();
+    ctx.strokeStyle='rgba(0,0,0,.55)';ctx.lineWidth=3;ctx.strokeText(a.lbl,xx,yy);
+    ctx.fillStyle=a.c;ctx.fillText(a.lbl,xx,yy);
+  });
+
+  // Título e nota
+  ctx.font='bold 12px Arial';ctx.fillStyle='#e2b96e';
+  ctx.fillText('Vista 3D — Reservatório Escavado',12,20);
+  ctx.font='10px Arial';ctx.fillStyle='#78909c';
+  ctx.fillText('Exagero vertical ×'+vEx.toFixed(1)+' — raios equivalentes (área = π·r²)',12,36);
+}
+
 // ── PDF ───────────────────────────────────────────────────────────────────────
 function gerarPDF(){
   if(!resultado){alert('Dimensione o reservatório primeiro.');return;}
@@ -1023,30 +1237,44 @@ tr:nth-child(even) td:not([colspan]){background:#f8fafc;}
   </div>
 </div>
 
-<div class="cortes">
-  <div class="corte-item">
-    <div class="corte-title">CORTE A-B — MAIOR ATERRO (${r.h_at_A.toFixed(2)} m)</div>
-    ${svgAB}
-  </div>
-  <div class="corte-item">
-    <div class="corte-title">CORTE C-D — MENOR ATERRO (${r.h_at_C.toFixed(2)} m)</div>
-    ${svgCD}
-  </div>
-</div>
-
 <div class="footer">
   <div class="footer-card" style="flex:1;">
-    <div class="fc-label">CLIENTE</div>
-    <div class="fc-val">${cliente}</div>
+    <div class="fc-label">CLIENTE</div><div class="fc-val">${cliente}</div>
     <div style="margin-top:3px;"><div class="fc-label">PROJETO</div><div class="fc-val">${prop}</div></div>
   </div>
   <div class="footer-meta">
-    Desenhado por ${consultor} &nbsp;|&nbsp; Data ${date} &nbsp;|&nbsp; Escala Indicada &nbsp;|&nbsp; Folha 01/01<br>
+    Desenhado por ${consultor} &nbsp;|&nbsp; Data ${date} &nbsp;|&nbsp; Escala Indicada &nbsp;|&nbsp; Folha 01/03<br>
     Bolsa Irriga® — Av. Elias Abraão, nº 140 · Franca – SP · (16) 3702-6571
   </div>
 </div>
-
 </div>
+
+<!-- PÁGINA 2 — CORTE A-B -->
+<div class="page" style="page-break-before:always;">
+<div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1.5pt solid #003d5c;padding-bottom:2mm;margin-bottom:4mm;">
+  <div>
+    <div style="font-size:12pt;font-weight:900;color:#003d5c;">CORTE A-B — MAIOR ATERRO (${r.h_at_A.toFixed(2)} m)</div>
+    <div style="font-size:7.5pt;color:#607080;">${prop} &nbsp;·&nbsp; ${cliente} &nbsp;·&nbsp; ${consultor}</div>
+  </div>
+  <div style="text-align:right;font-size:7.5pt;color:#607080;"><strong style="color:#003d5c;">Bolsa Irriga®</strong> &nbsp;·&nbsp; ${date} &nbsp;·&nbsp; Folha 02/03</div>
+</div>
+${svgAB}
+<div style="margin-top:6mm;font-size:7pt;color:#999;text-align:right;">Reservatório Escavado — Terraplenagem &nbsp;|&nbsp; Bolsa Irriga® · Franca–SP</div>
+</div>
+
+<!-- PÁGINA 3 — CORTE C-D -->
+<div class="page" style="page-break-before:always;">
+<div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1.5pt solid #003d5c;padding-bottom:2mm;margin-bottom:4mm;">
+  <div>
+    <div style="font-size:12pt;font-weight:900;color:#003d5c;">CORTE C-D — MENOR ATERRO (${r.h_at_C.toFixed(2)} m)</div>
+    <div style="font-size:7.5pt;color:#607080;">${prop} &nbsp;·&nbsp; ${cliente} &nbsp;·&nbsp; ${consultor}</div>
+  </div>
+  <div style="text-align:right;font-size:7.5pt;color:#607080;"><strong style="color:#003d5c;">Bolsa Irriga®</strong> &nbsp;·&nbsp; ${date} &nbsp;·&nbsp; Folha 03/03</div>
+</div>
+${svgCD}
+<div style="margin-top:6mm;font-size:7pt;color:#999;text-align:right;">Reservatório Escavado — Terraplenagem &nbsp;|&nbsp; Bolsa Irriga® · Franca–SP</div>
+</div>
+
 <script>setTimeout(()=>window.print(),800);<\/script>
 </body></html>`);
   win.document.close();
