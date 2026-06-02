@@ -155,6 +155,17 @@ input[type=number],select,input[type=text],input[type=password]{width:100%;backg
         <input type="number" id="pFc" value="1.30" min="1" max="2" step="0.05">
       </div>
     </div>
+    <div class="divider"></div>
+    <div class="row2">
+      <div>
+        <label>Esp. limpeza (m)</label>
+        <input type="number" id="pHlimp" value="0.20" min="0.05" max="1" step="0.05">
+      </div>
+      <div>
+        <label>V caminhão (m³)</label>
+        <input type="number" id="pCaminhao" value="10" min="1" max="100" step="1">
+      </div>
+    </div>
   </div>
 
   <!-- 3. Grade -->
@@ -181,6 +192,7 @@ input[type=number],select,input[type=text],input[type=password]{width:100%;backg
     <div style="margin-top:8px;display:flex;flex-direction:column;gap:4px;">
       <button class="btn btn-sec" onclick="$('modalCortes').classList.add('open')">📊 Cortes Transversais</button>
       <button class="btn" style="background:#1b5e20;color:#fff;" onclick="gerarVista3D()">🏗 Vista 3D</button>
+      <button class="btn" style="background:#37474f;color:#fff;" onclick="gerarPlantaTecnica()">📋 Planta Técnica</button>
       <button class="btn btn-pdf" onclick="gerarPDF()">📄 Relatório PDF</button>
     </div>
   </div>
@@ -506,6 +518,8 @@ async function dimensionar(){
     h_na_ab:  +($('pNaAbove').value)||0,
     Fe:       +($('pFe').value)||1.40,
     Fc:       +($('pFc').value)||1.30,
+    h_limp:   +($('pHlimp').value)||0.20,
+    V_caminhao: +($('pCaminhao').value)||10,
     N:        parseInt($('pGrid').value)||25,
   };
   const Vtotal_des=p.Vutil+p.Vmort;
@@ -577,6 +591,13 @@ async function dimensionar(){
     const cristaBuf=bufferedPoly(turfPoly,(p.Lc-p.BL*p.Ti));
     const peExtBuf=cristaBuf?bufferedPoly(cristaBuf,h_at_avg*p.Te):null;
 
+    // Limpeza e transporte
+    const A_pe_total=peExtBuf?turf.area(peExtBuf):Ae;
+    const V_limpeza=A_pe_total*p.h_limp;
+    const V_bota=Math.max(0,balanco);
+    const n_bota=V_bota>0?Math.ceil(V_bota/p.V_caminhao):0;
+    const n_limp=Math.ceil(V_limpeza/p.V_caminhao);
+
     // Cross-section: A = max aterro, C = min aterro
     let idx_A=0,idx_C=0;
     let minEl=Infinity,maxEl=-Infinity;
@@ -602,6 +623,7 @@ async function dimensionar(){
       pt_A: perimCells[idx_A], pt_B: perimCells[idx_B],
       pt_C: perimCells[idx_C], pt_D: perimCells[idx_D],
       fundoBuf, cristaBuf, peExtBuf,
+      A_pe_total, V_limpeza, V_bota, n_bota, n_limp,
     };
 
     mostrarResultados();
@@ -757,7 +779,15 @@ function mostrarResultados(){
     +`<div class="res-row subtot"><span class="res-lbl">+ Subtotal líquido</span><span class="res-val sub">${fmt(r.A_subtotal)} m²</span></div>`
     +row('+ Sobreposição (3,5%)','+'+fmt(r.A_sobreposi)+' m²','sub',true)
     +row('+ Sobra (10%)','+'+fmt(r.A_sobra)+' m²','sub',true)
-    +`<div class="res-row"><span class="res-lbl" style="font-weight:700;color:#e0e0e0;">Total</span><span class="res-val tot">${fmt(r.A_total)} m²</span></div>`;
+    +`<div class="res-row"><span class="res-lbl" style="font-weight:700;color:#e0e0e0;">Total</span><span class="res-val tot">${fmt(r.A_total)} m²</span></div>`
+
+    +cat('Limpeza e Transporte')
+    +row('Camada vegetal',r.p.h_limp.toFixed(2)+' m')
+    +row('Volume de limpeza',fmt(r.V_limpeza)+' m³')
+    +row('Área total (c/ taludes)',fmt(r.A_pe_total)+' m²')
+    +row('Volume por caminhão',r.p.V_caminhao+' m³')
+    +(r.n_bota>0?`<div class="res-row"><span class="res-lbl">Bota-fora excedente</span><span class="res-val pos">${r.n_bota} caminhões</span></div>`:'')
+    +row('Transporte limpeza',r.n_limp+' caminhões');
 
   $('secRes').style.display='';
   $('secPDF').style.display='';
@@ -1072,6 +1102,199 @@ function gerarVista3D(){
   ctx.fillText('Vista 3D — Reservatório Escavado',12,20);
   ctx.font='10px Arial';ctx.fillStyle='#78909c';
   ctx.fillText('Exagero vertical ×'+vEx.toFixed(1)+' — projeção oblíqua do polígono real',12,36);
+}
+
+// ── Planta Técnica ────────────────────────────────────────────────────────────
+function gerarPlantaTecnica(){
+  if(!resultado){alert('Dimensione o reservatório primeiro.');return;}
+  const r=resultado;
+  const win=window.open('','_blank');
+  if(!win){alert('Popup bloqueado.');return;}
+
+  const date=new Date().toLocaleDateString('pt-BR');
+  const consultor=$('rConsultor').value.trim()||'João Paulo de Oliveira';
+  const cliente=$('rCliente').value.trim()||'—';
+  const prop=$('rProp').value.trim()||'—';
+  const key=localStorage.getItem('mapskey_terra')||'';
+
+  const bbox=turf.bbox(r.peExtBuf||r.cristaBuf||turfPoly);
+  const pad=0.18;
+  const latSp=bbox[3]-bbox[1],lngSp=bbox[2]-bbox[0];
+  const sw={lat:bbox[1]-latSp*pad,lng:bbox[0]-lngSp*pad};
+  const ne={lat:bbox[3]+latSp*pad,lng:bbox[2]+lngSp*pad};
+  const MW=512,MH=307;
+
+  function _zoom2(sw,ne,W,H){const T=256;const latRad=lat=>Math.log((1+Math.sin(lat*Math.PI/180))/(1-Math.sin(lat*Math.PI/180)))/2;const latF=Math.abs(latRad(ne.lat)-latRad(sw.lat))/Math.PI;const lngF=Math.abs(ne.lng-sw.lng)/360;const zL=Math.floor(Math.log(2*H/T/latF)/Math.LN2);const zG=Math.floor(Math.log(W/T/lngF)/Math.LN2);return{zoom:Math.min(zL,zG,20),cLat:(sw.lat+ne.lat)/2,cLng:(sw.lng+ne.lng)/2};}
+  const {zoom:zm,cLat:cLt,cLng:cLg}=_zoom2(sw,ne,MW,MH);
+  const staticUrl=key?`https://maps.googleapis.com/maps/api/staticmap?center=${cLt},${cLg}&zoom=${zm}&size=${MW}x${MH}&scale=2&maptype=satellite&key=${key}`:'';
+
+  function _mkToPx2(cLat,cLng,zoom,W,H){const S=256*Math.pow(2,zoom);const wx=lng=>(lng+180)/360*S;const wy=lat=>{const s=Math.sin(lat*Math.PI/180);return(0.5-Math.log((1+s)/(1-s))/(4*Math.PI))*S;};const cx=wx(cLng),cy=wy(cLat);return(lat,lng)=>({x:wx(lng)-cx+W/2,y:wy(lat)-cy+H/2});}
+  const toPx2=_mkToPx2(cLt,cLg,zm,MW,MH);
+  function polyPath2(pts){return pts.map((p,i)=>{const px=toPx2(p[0],p[1]);return(i?'L':'M')+px.x.toFixed(1)+','+px.y.toFixed(1);}).join(' ')+'Z';}
+
+  const naPath2=polyPath2(polyPts.map(p=>[p.lat,p.lng]));
+  const fdPath2=r.fundoBuf?polyPath2(r.fundoBuf.geometry.coordinates[0].map(c=>[c[1],c[0]])):null;
+  const crPath2=r.cristaBuf?polyPath2(r.cristaBuf.geometry.coordinates[0].map(c=>[c[1],c[0]])):null;
+  const pePath2=r.peExtBuf?polyPath2(r.peExtBuf.geometry.coordinates[0].map(c=>[c[1],c[0]])):null;
+  const ptAPx=toPx2(r.pt_A.lat,r.pt_A.lng),ptBPx=toPx2(r.pt_B.lat,r.pt_B.lng);
+  const ptCPx=toPx2(r.pt_C.lat,r.pt_C.lng),ptDPx=toPx2(r.pt_D.lat,r.pt_D.lng);
+
+  const naCent=turf.centroid(turfPoly).geometry.coordinates;
+  const naPx=toPx2(naCent[1],naCent[0]);
+  let fdPx=naPx;
+  if(r.fundoBuf){const fc=turf.centroid(r.fundoBuf).geometry.coordinates;fdPx=toPx2(fc[1],fc[0]);}
+
+  // Escala gráfica
+  const mPerPx=(2*Math.PI*6378137*Math.cos(cLt*Math.PI/180))/(256*Math.pow(2,zm));
+  let sbM=10;
+  for(const t of [5,10,20,25,50,100,150,200,250,500,1000]){if(t/mPerPx>=50&&t/mPerPx<=115){sbM=t;break;}}
+  const sbPx=sbM/mPerPx,sbX=10,sbY=MH-18;
+
+  const balCls=r.balanco>0?'#2e7d32':'#c62828';
+  const balTxt=(r.balanco>0?'+':'')+fmt(r.balanco)+' m³ '+(r.balanco>0?'(excedente)':'(importar)');
+  function tr2(lbl,val,bold=false,color=''){return`<tr><td>${lbl}</td><td style="text-align:right;font-weight:${bold?700:500};color:${color||'#1a2535'}">${val}</td></tr>`;}
+  function th2(t){return`<tr><td colspan="2" class="th2">${t}</td></tr>`;}
+
+  // Anotações de área sobre o mapa
+  const fdLbl=`Fundo: ${fmt(r.Af)} m²`;
+  const naLbl=`NA: ${fmt(r.Ae)} m² · ${(r.Ae/10000).toFixed(2)} ha`;
+  const fdW=fdLbl.length*4.5+8,naW=naLbl.length*4.5+8;
+
+  win.document.write(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
+<title>Planta Técnica — Reservatório Escavado</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:Arial,Helvetica,sans-serif;font-size:7.5pt;background:#fff;color:#1a2535;}
+@page{size:A4 landscape;margin:8mm 10mm;}
+@media print{.no-print{display:none!important;}}
+.page{width:277mm;margin:0 auto;}
+table{width:100%;border-collapse:collapse;font-size:7pt;}
+td{padding:1.8px 4px;border-bottom:0.4pt solid #e4e9ee;}
+tr:nth-child(even) td:not(.th2){background:#f7f9fb;}
+.th2{background:#003d5c;color:#fff;font-size:6.5pt;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:2.5px 4px;}
+</style></head><body>
+<div class="page">
+
+<div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2pt solid #003d5c;padding-bottom:2mm;margin-bottom:3mm;">
+  <div>
+    <div style="font-size:12.5pt;font-weight:900;color:#003d5c;">Reservatório Escavado — Planta de Movimentação de Terra</div>
+    <div style="font-size:7.5pt;color:#607080;margin-top:1mm;">${prop} &nbsp;·&nbsp; ${cliente} &nbsp;·&nbsp; ${consultor}</div>
+  </div>
+  <div style="text-align:right;font-size:7.5pt;color:#607080;line-height:1.6;"><strong style="color:#003d5c;font-size:9pt;">Bolsa Irriga®</strong><br>${date}</div>
+</div>
+
+<div style="display:flex;gap:5mm;">
+
+  <div style="flex:0 0 174mm;">
+    <div style="font-size:6pt;font-weight:700;letter-spacing:.08em;color:#546e7a;text-transform:uppercase;margin-bottom:1.5mm;">PLANTA BAIXA — MOVIMENTAÇÃO DE TERRA</div>
+    <div style="position:relative;width:174mm;height:120mm;overflow:hidden;border:0.8pt solid #888;">
+      ${staticUrl?`<img src="${staticUrl}" style="width:100%;height:100%;object-fit:cover;display:block;" alt="Sat"/>`:'<div style="width:100%;height:100%;background:#c8d4e0;display:flex;align-items:center;justify-content:center;font-size:8.5pt;color:#666;">Chave Google API necessária para imagem satélite</div>'}
+      <svg viewBox="0 0 ${MW} ${MH}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" style="position:absolute;inset:0;width:100%;height:100%;">
+        <defs>
+          <pattern id="hPE2" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(-45)"><line x1="4" y1="0" x2="4" y2="8" stroke="#6a1b9a" stroke-width="2"/></pattern>
+          <pattern id="hNA2" patternUnits="userSpaceOnUse" width="7" height="7" patternTransform="rotate(45)"><line x1="3.5" y1="0" x2="3.5" y2="7" stroke="#1976d2" stroke-width="2.2"/></pattern>
+        </defs>
+        ${pePath2?`<path d="${pePath2}" fill="url(#hPE2)" fill-opacity="0.5" stroke="#6a1b9a" stroke-width="1.8" stroke-dasharray="6,3"/>`:''}
+        ${crPath2?`<path d="${crPath2}" fill="rgba(200,175,115,0.38)" stroke="#8d6e45" stroke-width="2.2"/>`:''}
+        <path d="${naPath2}" fill="url(#hNA2)" fill-opacity="0.32" stroke="#1565c0" stroke-width="2.2"/>
+        ${fdPath2?`<path d="${fdPath2}" fill="#0d47a1" fill-opacity="0.72" stroke="#0d47a1" stroke-width="1.2"/>`:''}
+        <line x1="${ptAPx.x.toFixed(1)}" y1="${ptAPx.y.toFixed(1)}" x2="${ptBPx.x.toFixed(1)}" y2="${ptBPx.y.toFixed(1)}" stroke="#c62828" stroke-width="1.5" stroke-dasharray="8,4"/>
+        <line x1="${ptCPx.x.toFixed(1)}" y1="${ptCPx.y.toFixed(1)}" x2="${ptDPx.x.toFixed(1)}" y2="${ptDPx.y.toFixed(1)}" stroke="#1565c0" stroke-width="1.5" stroke-dasharray="8,4"/>
+        ${[{px:ptAPx,l:'A'},{px:ptBPx,l:'B'},{px:ptCPx,l:'C'},{px:ptDPx,l:'D'}].map(({px,l})=>`<circle cx="${px.x.toFixed(1)}" cy="${px.y.toFixed(1)}" r="6.5" fill="#c62828" stroke="white" stroke-width="1.2"/><text x="${px.x.toFixed(1)}" y="${(px.y+4).toFixed(1)}" font-size="7.5" font-weight="bold" fill="white" text-anchor="middle">${l}</text>`).join('')}
+        <rect x="${(fdPx.x-fdW/2).toFixed(1)}" y="${(fdPx.y-9).toFixed(1)}" width="${fdW.toFixed(1)}" height="13" rx="2.5" fill="rgba(13,71,161,0.78)"/>
+        <text x="${fdPx.x.toFixed(1)}" y="${(fdPx.y+3).toFixed(1)}" font-size="7.5" fill="white" text-anchor="middle" font-weight="bold">${fdLbl}</text>
+        <rect x="${(naPx.x-naW/2).toFixed(1)}" y="${(naPx.y-23).toFixed(1)}" width="${naW.toFixed(1)}" height="13" rx="2.5" fill="rgba(21,101,192,0.75)"/>
+        <text x="${naPx.x.toFixed(1)}" y="${(naPx.y-12).toFixed(1)}" font-size="7.5" fill="white" text-anchor="middle" font-weight="bold">${naLbl}</text>
+        <g transform="translate(${MW-22},20)">
+          <circle r="14" fill="rgba(0,0,0,0.65)" stroke="rgba(255,255,255,0.9)" stroke-width="0.8"/>
+          <polygon points="0,-12 3.5,3 0,-1 -3.5,3" fill="white"/>
+          <polygon points="0,-12 -3.5,3 0,-1 3.5,3" fill="rgba(255,255,255,0.35)"/>
+          <text y="10" font-size="8.5" font-weight="bold" fill="white" text-anchor="middle">N</text>
+        </g>
+        <rect x="${(sbX-2).toFixed(1)}" y="${(sbY-6).toFixed(1)}" width="${(sbPx+4).toFixed(1)}" height="18" rx="2.5" fill="rgba(0,0,0,0.65)"/>
+        <text x="${(sbX+sbPx/2).toFixed(1)}" y="${(sbY-1).toFixed(1)}" font-size="7" fill="white" text-anchor="middle">0  ────  ${sbM} m</text>
+        <line x1="${sbX.toFixed(1)}" y1="${(sbY+6).toFixed(1)}" x2="${(sbX+sbPx).toFixed(1)}" y2="${(sbY+6).toFixed(1)}" stroke="white" stroke-width="2.5"/>
+        <line x1="${sbX.toFixed(1)}" y1="${(sbY+2).toFixed(1)}" x2="${sbX.toFixed(1)}" y2="${(sbY+10).toFixed(1)}" stroke="white" stroke-width="1.5"/>
+        <line x1="${(sbX+sbPx).toFixed(1)}" y1="${(sbY+2).toFixed(1)}" x2="${(sbX+sbPx).toFixed(1)}" y2="${(sbY+10).toFixed(1)}" stroke="white" stroke-width="1.5"/>
+        <line x1="${(sbX+sbPx/2).toFixed(1)}" y1="${(sbY+3).toFixed(1)}" x2="${(sbX+sbPx/2).toFixed(1)}" y2="${(sbY+9).toFixed(1)}" stroke="white" stroke-width="1"/>
+      </svg>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:1.5mm 5mm;margin-top:1.5mm;font-size:6.5pt;color:#333;align-items:center;">
+      <span><span style="display:inline-block;width:11pt;height:6.5pt;background:#64b5f6;border:1px solid #1565c0;opacity:.75;vertical-align:middle;margin-right:1.5mm;"></span>Espelho d'água (NA ${r.z_na.toFixed(2)} m)</span>
+      <span><span style="display:inline-block;width:11pt;height:6.5pt;background:#0d47a1;border:1px solid #0d47a1;vertical-align:middle;margin-right:1.5mm;"></span>Fundo (${r.z_fundo.toFixed(2)} m)</span>
+      <span><span style="display:inline-block;width:11pt;height:6.5pt;background:#c8b47a;border:1px solid #8d6e45;opacity:.8;vertical-align:middle;margin-right:1.5mm;"></span>Crista (${r.z_crista.toFixed(2)} m)</span>
+      <span><span style="display:inline-block;width:11pt;height:0;border-top:2pt dashed #6a1b9a;vertical-align:middle;margin-right:1.5mm;margin-top:3pt;"></span>Pé externo</span>
+      <span style="color:#c62828;">— — A-B (aterro ${r.h_at_A.toFixed(2)} m)</span>
+      <span style="color:#1565c0;">— — C-D (aterro ${r.h_at_C.toFixed(2)} m)</span>
+    </div>
+  </div>
+
+  <div style="flex:1;min-width:0;">
+    <table>
+      ${th2('Dados do Reservatório')}
+      ${tr2('Volume útil',fmt(r.Vutil_calc)+' m³',true)}
+      ${tr2('Volume total (c/ morto)',fmt(r.Vtotal_calc)+' m³')}
+      ${tr2('Profundidade total',r.h_prof.toFixed(2)+' m')}
+      ${tr2('Alt. escavação (média)',r.h_esc_avg.toFixed(2)+' m')}
+      ${tr2('Alt. aterro (média)',r.h_at_avg.toFixed(2)+' m')}
+      ${tr2('Área espelho d\'água',fmt(r.Ae)+' m²')}
+      ${tr2('Área do fundo',fmt(r.Af)+' m²')}
+      ${tr2('Cota NA / crista',r.z_na.toFixed(2)+' / '+r.z_crista.toFixed(2)+' m')}
+      ${tr2('Cota terreno / fundo',r.z_terreno.toFixed(2)+' / '+r.z_fundo.toFixed(2)+' m')}
+      ${tr2('Taludes Ti / Te','1:'+r.p.Ti+' / 1:'+r.p.Te)}
+      ${tr2('Crista / borda livre',r.p.Lc.toFixed(1)+' m / '+r.p.BL.toFixed(1)+' m')}
+      ${th2('Movimentação de Terra')}
+      ${tr2('Corte — TIN',fmt(r.Vcut)+' m³')}
+      ${tr2('Aterro — TIN',fmt(r.Vfill_tin)+' m³')}
+      ${tr2('FC compactação ('+r.comp_pct+'%)',r.p.Fc.toFixed(2))}
+      ${tr2('Aterro necessário',fmt(r.Vfill_nec)+' m³',true)}
+      ${tr2('Saldo de material',balTxt,true,balCls)}
+      ${tr2('Empolamento Fe',r.p.Fe.toFixed(2))}
+      ${th2('Limpeza e Transporte')}
+      ${tr2('Área total (c/ taludes)',fmt(r.A_pe_total)+' m²')}
+      ${tr2('Camada vegetal removida',r.p.h_limp.toFixed(2)+' m')}
+      ${tr2('Volume de limpeza',fmt(r.V_limpeza)+' m³')}
+      ${tr2('Volume por caminhão',r.p.V_caminhao+' m³')}
+      ${r.n_bota>0?tr2('Bota-fora excedente',r.n_bota+' viagens',false,'#2e7d32'):''}
+      ${tr2('Transporte de limpeza',r.n_limp+' viagens')}
+      ${th2('Geomembrana PEAD')}
+      ${tr2('Fundo',fmt(r.A_fundo)+' m²')}
+      ${tr2('Talude interno',fmt(r.A_talude)+' m²')}
+      ${tr2('Borda de fixação',fmt(r.A_borda)+' m²')}
+      ${tr2('+ Sobreposição 3,5%','+'+fmt(r.A_sobreposi)+' m²',false,'#1565c0')}
+      ${tr2('+ Sobra 10%','+'+fmt(r.A_sobra)+' m²',false,'#1565c0')}
+      ${tr2('Total',fmt(r.A_total)+' m²',true,'#003d5c')}
+    </table>
+  </div>
+</div>
+
+<div style="display:flex;gap:4mm;margin-top:3mm;border-top:0.8pt solid #ccc;padding-top:2mm;">
+  <div style="flex:0 0 58mm;">
+    <div style="font-size:5.5pt;color:#999;text-transform:uppercase;letter-spacing:.06em;margin-bottom:1mm;">Cliente</div>
+    <div style="font-size:8pt;font-weight:700;">${cliente}</div>
+    <div style="margin-top:2mm;font-size:5.5pt;color:#999;text-transform:uppercase;letter-spacing:.06em;margin-bottom:1mm;">Projeto / Propriedade</div>
+    <div style="font-size:8pt;font-weight:700;">${prop}</div>
+  </div>
+  <div style="flex:0 0 52mm;">
+    <div style="font-size:5.5pt;color:#999;text-transform:uppercase;letter-spacing:.06em;margin-bottom:1mm;">Responsável Técnico</div>
+    <div style="font-size:8pt;font-weight:700;">${consultor}</div>
+    <div style="margin-top:2mm;font-size:5.5pt;color:#999;text-transform:uppercase;letter-spacing:.06em;margin-bottom:1mm;">Data de Emissão</div>
+    <div style="font-size:8pt;font-weight:700;">${date}</div>
+  </div>
+  <div style="flex:1;text-align:right;font-size:6pt;color:#999;line-height:1.8;padding-top:2mm;">
+    Planta de Movimentação de Terra &nbsp;|&nbsp; Reservatório Escavado<br>
+    Bolsa Irriga® &nbsp;·&nbsp; Av. Elias Abraão, nº 140 &nbsp;·&nbsp; Franca – SP &nbsp;·&nbsp; (16) 3702-6571 &nbsp;·&nbsp; bolsairriga.com.br
+  </div>
+</div>
+</div>
+
+<div class="no-print" style="text-align:center;margin:8mm auto;max-width:277mm;">
+  <button onclick="window.print()" style="background:#003d5c;color:#fff;border:none;border-radius:6px;padding:9px 26px;font-size:12pt;font-weight:700;cursor:pointer;margin-right:8px;">🖨️ Imprimir / PDF</button>
+  <button onclick="window.close()" style="background:#546e7a;color:#fff;border:none;border-radius:6px;padding:9px 18px;font-size:11pt;cursor:pointer;">✕ Fechar</button>
+</div>
+<script>setTimeout(()=>window.print(),900);<\/script>
+</body></html>`);
+  win.document.close();
 }
 
 // ── PDF ───────────────────────────────────────────────────────────────────────
