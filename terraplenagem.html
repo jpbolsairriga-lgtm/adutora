@@ -558,19 +558,6 @@ async function dimensionar(){
     V_caminhao: +($('pCaminhao').value)||10,
     N:        parseInt($('pGrid').value)||25,
   };
-  // Passe 1: bisseção sem volume morto para estimar H
-  const H1=bisectDepth(turfPoly,Ae,p.Ti,p.Vutil);
-  const Af1=bufferedArea(turfPoly,-H1*p.Ti);
-  const h_m=Math.min(p.h_mort,H1*0.9);
-  let Vmort=0;
-  if(h_m>0){
-    const Af_top=bufferedArea(turfPoly,-(H1-h_m)*p.Ti);
-    const Am_mort=bufferedArea(turfPoly,-(H1-h_m/2)*p.Ti);
-    Vmort=prismatoidVol(Af1,Am_mort,Af_top,h_m);
-  }
-  // Passe 2: corrige com volume morto real
-  const Vtotal_des=p.Vutil+Vmort;
-
   $('btnDim').disabled=true;$('btnDim').textContent='⏳ Buscando elevações…';
   setStatus('Buscando elevações — aguarde…','info');
 
@@ -598,7 +585,18 @@ async function dimensionar(){
 
     setStatus('Calculando geometria…','info');
     const Ae=turf.area(turfPoly);
-    const H=bisectDepth(turfPoly,Ae,p.Ti,Vtotal_des);
+    // Passe 1: estima H ignorando volume morto
+    const H1=bisectDepth(turfPoly,Ae,p.Ti,p.Vutil);
+    const Af1=bufferedArea(turfPoly,-H1*p.Ti);
+    const h_m=Math.min(p.h_mort,H1*0.9);
+    let Vmort=0;
+    if(h_m>0){
+      const Af_top=bufferedArea(turfPoly,-(H1-h_m)*p.Ti);
+      const Am_mort=bufferedArea(turfPoly,-(H1-h_m/2)*p.Ti);
+      Vmort=prismatoidVol(Af1,Am_mort,Af_top,h_m);
+    }
+    // Passe 2: H correto com volume morto incluído
+    const H=bisectDepth(turfPoly,Ae,p.Ti,p.Vutil+Vmort);
     const z_fundo=+(z_na-H).toFixed(2);
 
     const Af=bufferedArea(turfPoly,-H*p.Ti);
