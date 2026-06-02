@@ -877,17 +877,17 @@ function svgCorte(id, titleStr, ptLabelL, ptLabelR, z_tL, z_tR, r){
   // 10. Título
   out.push('<text x="'+pl_+'" y="'+(pt_-14)+'" font-size="11.5" font-weight="bold" fill="#1a237e">'+titleStr+'</text>');
 
-  // 11. Legenda
-  var lx=pl_+12,ly=pt_+10;
-  out.push('<rect x="'+lx+'" y="'+ly+'" width="92" height="64" rx="4" fill="rgba(255,255,255,0.93)" stroke="#ddd" stroke-width="0.7"/>');
-  out.push('<rect x="'+(lx+6)+'" y="'+(ly+7)+'" width="14" height="9" fill="url(#ph'+uid+')" stroke="#1565c0" stroke-width="0.6"/>');
-  out.push('<text x="'+(lx+24)+'" y="'+(ly+15)+'" font-size="9" fill="#333">Estrutura</text>');
-  out.push('<rect x="'+(lx+6)+'" y="'+(ly+20)+'" width="14" height="9" fill="#c8e6f5" stroke="#64b5f6" stroke-width="0.6"/>');
-  out.push('<text x="'+(lx+24)+'" y="'+(ly+28)+'" font-size="9" fill="#333">Água</text>');
-  out.push('<line x1="'+(lx+6)+'" y1="'+(ly+40)+'" x2="'+(lx+20)+'" y2="'+(ly+40)+'" stroke="#c4963a" stroke-width="2.2"/>');
-  out.push('<text x="'+(lx+24)+'" y="'+(ly+44)+'" font-size="9" fill="#333">Terreno nat.</text>');
-  out.push('<line x1="'+(lx+6)+'" y1="'+(ly+56)+'" x2="'+(lx+20)+'" y2="'+(ly+56)+'" stroke="#1a237e" stroke-width="2.4"/>');
-  out.push('<text x="'+(lx+24)+'" y="'+(ly+60)+'" font-size="9" fill="#333">Perfil talude</text>');
+  // 11. Legenda horizontal no topo direito (fora da área de plot)
+  var ll=320,lt=6;
+  out.push('<rect x="'+(ll-4)+'" y="'+lt+'" width="350" height="18" rx="3" fill="rgba(255,255,255,0.88)" stroke="#ccc" stroke-width="0.5"/>');
+  out.push('<rect x="'+(ll+2)+'" y="'+(lt+4)+'" width="12" height="9" fill="url(#ph'+uid+')" stroke="#1565c0" stroke-width="0.5"/>');
+  out.push('<text x="'+(ll+17)+'" y="'+(lt+13)+'" font-size="9" fill="#333">Estrutura</text>');
+  out.push('<rect x="'+(ll+84)+'" y="'+(lt+4)+'" width="12" height="9" fill="#c8e6f5" stroke="#64b5f6" stroke-width="0.5"/>');
+  out.push('<text x="'+(ll+99)+'" y="'+(lt+13)+'" font-size="9" fill="#333">Água</text>');
+  out.push('<line x1="'+(ll+162)+'" y1="'+(lt+9)+'" x2="'+(ll+176)+'" y2="'+(lt+9)+'" stroke="#c4963a" stroke-width="2.2"/>');
+  out.push('<text x="'+(ll+179)+'" y="'+(lt+13)+'" font-size="9" fill="#333">Terreno nat.</text>');
+  out.push('<line x1="'+(ll+252)+'" y1="'+(lt+9)+'" x2="'+(ll+266)+'" y2="'+(lt+9)+'" stroke="#1a237e" stroke-width="2.4"/>');
+  out.push('<text x="'+(ll+269)+'" y="'+(lt+13)+'" font-size="9" fill="#333">Perfil talude</text>');
 
   // 12. Rótulos dos pontos (A/B ou C/D)
   out.push('<text x="'+X0.toFixed(1)+'" y="'+(Ybot+14)+'" font-size="13" text-anchor="middle" font-weight="bold" fill="#c62828">'+ptLabelL+'</text>');
@@ -915,168 +915,163 @@ function gerarCortesSVG(){
 
 // ── Vista 3D ──────────────────────────────────────────────────────────────────
 function gerarVista3D(){
-  if(!resultado){return;}
+  if(!resultado||!polyPts||polyPts.length<3){return;}
   const r=resultado;
   $('modal3D').classList.add('open');
   const cv=$('canvas3D');
-  const W=cv.width=600, H=cv.height=380;
+  const CW=cv.width=600,CH=cv.height=380;
   const ctx=cv.getContext('2d');
-  ctx.clearRect(0,0,W,H);
 
-  // Raios equivalentes (círculos)
-  const r_fd=Math.max(2,Math.sqrt(r.Af/Math.PI));
-  const r_na=Math.sqrt(r.Ae/Math.PI);
-  const r_cr=r_na+Math.max(1,r.p.Lc-r.p.BL*r.p.Ti);
-  const r_pe=r_cr+Math.max(0.5,r.h_at_avg*r.p.Te);
+  // Converter polyPts e buffers para metros locais (origem = centroide do polígono NA)
+  const cLat=polyPts.reduce((s,p)=>s+p.lat,0)/polyPts.length;
+  const cLng=polyPts.reduce((s,p)=>s+p.lng,0)/polyPts.length;
+  const toL=p=>[(p.lng-cLng)*Math.cos(cLat*Math.PI/180)*111320,(p.lat-cLat)*111320];
+  const gL=c=>[(c[0]-cLng)*Math.cos(cLat*Math.PI/180)*111320,(c[1]-cLat)*111320];
+
+  const naR=polyPts.map(toL);
+  const fdR=(r.fundoBuf&&r.fundoBuf.geometry)?r.fundoBuf.geometry.coordinates[0].map(gL):naR;
+  const crR=(r.cristaBuf&&r.cristaBuf.geometry)?r.cristaBuf.geometry.coordinates[0].map(gL):naR;
+  const peR=(r.peExtBuf&&r.peExtBuf.geometry)?r.peExtBuf.geometry.coordinates[0].map(gL):naR;
 
   // Alturas relativas ao fundo (z=0)
-  const z_fd=0, z_na=r.H, z_cr=r.H+r.p.BL;
-  const z_ter=Math.max(0,r.h_esc_avg); // terreno acima do fundo
+  const z_fd=0,z_na=r.H,z_cr=r.H+r.p.BL;
+  const z_ter=Math.max(0,r.H+r.p.BL-r.h_at_avg);
 
-  // Projeção oblíqua
-  const ob=0.42; // rx/ry ratio
-  const cx=W*0.50, cy=H*0.80;
-  const vEx=Math.min(6,Math.max(2.5,30/Math.max(r.H,0.5))); // exagero adaptativo
-  const hSc=Math.min((W*0.42)/r_pe,40);
-  const vSc=hSc*vEx;
+  // Bounding box de todos os anéis
+  const all=[...naR,...fdR,...crR,...peR];
+  const xs=all.map(p=>p[0]),ys=all.map(p=>p[1]);
+  const minX=Math.min(...xs),maxX=Math.max(...xs);
+  const minY=Math.min(...ys),maxY=Math.max(...ys);
+  const span=Math.max(maxX-minX,maxY-minY);
+  const cX=(minX+maxX)/2,cY=(minY+maxY)/2;
 
-  function ey(z){return cy-z*vSc;}
-  function rx(rm){return rm*hSc;}
-  function ry(rm){return rm*hSc*ob;}
+  // Projeção oblíqua (ângulo 28°, fator 0.40)
+  const oA=28*Math.PI/180,oF=0.40;
+  const oCos=oF*Math.cos(oA),oSin=oF*Math.sin(oA);
+  const vEx=Math.min(6,Math.max(2.5,30/Math.max(r.H,0.5)));
 
-  // Desenha elipse completa
-  function elips(rm,z,fill,stroke,sw,alpha){
+  // Escala adaptativa
+  const hSc=Math.min(CW*0.72/(span*(1+oCos)),CH*0.68/(span*oSin+z_cr*vEx));
+
+  // Origem: espelho d'água (NA) centrado a 60% da tela
+  const ox=CW*0.50-cX*hSc-cY*oCos*hSc;
+  const oy=CH*0.62+cY*oSin*hSc+z_na*vEx*hSc;
+  const proj=(lx,ly,z)=>({x:ox+lx*hSc+ly*oCos*hSc,y:oy-ly*oSin*hSc-z*vEx*hSc});
+
+  // Desenhar polígono projetado completo
+  const drawPoly=(ring,z,fill,stroke,sw,alpha)=>{
+    if(!ring||ring.length<3)return;
     ctx.save();if(alpha!==undefined)ctx.globalAlpha=alpha;
-    ctx.beginPath();ctx.ellipse(cx,ey(z),rx(rm),ry(rm),0,0,Math.PI*2);
-    if(fill){ctx.fillStyle=fill;ctx.fill();}
-    if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=sw||1.5;ctx.stroke();}
-    ctx.restore();
-  }
-  // Anel (donut)
-  function anel(ri,ro,z,fill,stroke){
-    ctx.save();
     ctx.beginPath();
-    ctx.ellipse(cx,ey(z),rx(ro),ry(ro),0,0,Math.PI*2);
-    ctx.ellipse(cx,ey(z),rx(ri),ry(ri),0,Math.PI*2,0,true);
-    if(fill){ctx.fillStyle=fill;ctx.fill('evenodd');}
-    if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=1.5;ctx.stroke();}
-    ctx.restore();
-  }
-  // Face frontal de cone/cilindro truncado
-  function face(rb,zb,rt,zt,fill,stroke){
-    ctx.save();
-    ctx.beginPath();
-    ctx.ellipse(cx,ey(zb),rx(rb),ry(rb),0,0,Math.PI,false);
-    ctx.lineTo(cx-rx(rt),ey(zt));
-    ctx.ellipse(cx,ey(zt),rx(rt),ry(rt),0,Math.PI,0,true);
-    ctx.lineTo(cx+rx(rb),ey(zb));
+    const p0=proj(ring[0][0],ring[0][1],z);ctx.moveTo(p0.x,p0.y);
+    for(let i=1;i<ring.length;i++){const p=proj(ring[i][0],ring[i][1],z);ctx.lineTo(p.x,p.y);}
     ctx.closePath();
     if(fill){ctx.fillStyle=fill;ctx.fill();}
-    if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=1.2;ctx.stroke();}
+    if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=sw||1;ctx.stroke();}
     ctx.restore();
-  }
+  };
 
-  // ── Fundo para trás ──
-  const bg=ctx.createLinearGradient(0,0,0,H);
+  // Clipar anel pela linha y=0 (coord. locais): back = y≥0 (parte traseira), front = y≤0
+  const clip0=(ring,back)=>{
+    const ok=p=>back?p[1]>=0:p[1]<=0;
+    const cut=(a,b)=>{const t=(0-a[1])/(b[1]-a[1]);return[a[0]+t*(b[0]-a[0]),0];};
+    const out=[];
+    for(let i=0;i<ring.length;i++){
+      const c=ring[i],n=ring[(i+1)%ring.length];
+      if(ok(c))out.push(c);
+      if(ok(c)!==ok(n))out.push(cut(c,n));
+    }
+    return out;
+  };
+
+  // Desenhar face de talude entre dois anéis (metade back ou front)
+  const drawFace=(oR,oZ,iR,iZ,fill,stroke,back)=>{
+    const a=clip0(oR,back),b=clip0(iR,back);
+    if(a.length<2||b.length<2)return;
+    ctx.save();ctx.beginPath();
+    let p=proj(a[0][0],a[0][1],oZ);ctx.moveTo(p.x,p.y);
+    for(let i=1;i<a.length;i++){p=proj(a[i][0],a[i][1],oZ);ctx.lineTo(p.x,p.y);}
+    for(let i=b.length-1;i>=0;i--){p=proj(b[i][0],b[i][1],iZ);ctx.lineTo(p.x,p.y);}
+    ctx.closePath();
+    if(fill){ctx.fillStyle=fill;ctx.fill();}
+    if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=0.8;ctx.stroke();}
+    ctx.restore();
+  };
+
+  // Desenhar anel (área entre dois anéis concêntricos) — metade back ou front
+  const drawRing=(oR,iR,z,fill,stroke,back)=>{
+    const a=clip0(oR,back),b=clip0(iR,back);
+    if(a.length<2)return;
+    ctx.save();ctx.beginPath();
+    let p=proj(a[0][0],a[0][1],z);ctx.moveTo(p.x,p.y);
+    for(let i=1;i<a.length;i++){p=proj(a[i][0],a[i][1],z);ctx.lineTo(p.x,p.y);}
+    if(b.length>=2)for(let i=b.length-1;i>=0;i--){p=proj(b[i][0],b[i][1],z);ctx.lineTo(p.x,p.y);}
+    ctx.closePath();
+    if(fill){ctx.fillStyle=fill;ctx.fill();}
+    if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=0.8;ctx.stroke();}
+    ctx.restore();
+  };
+
+  // ── FUNDO ──
+  const bg=ctx.createLinearGradient(0,0,0,CH);
   bg.addColorStop(0,'#1a2a3a');bg.addColorStop(1,'#2d3a25');
-  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle=bg;ctx.fillRect(0,0,CW,CH);
 
-  // Plano de terreno
-  elips(r_pe*1.6,z_ter,'#4e5e3a',null,0,0.6);
+  // Ordem back→front (algoritmo do pintor)
+  // 1. Plano de terreno (pé externo)
+  drawPoly(peR,z_ter,'#4e5e3a','#3a4a28',0.8);
+  // 2. Talude externo — traseira
+  drawFace(peR,z_ter,crR,z_cr,'#7a6845','#554433',true);
+  // 3. Crista (anel) — traseira
+  drawRing(crR,naR,z_cr,'#9e9e9e','#777',true);
+  // 4. Borda livre — traseira (parede vertical naR z_na→z_cr)
+  drawFace(naR,z_na,naR,z_cr,'#6a7a8a','#556070',true);
+  // 5. Talude interno — traseira
+  drawFace(naR,z_na,fdR,z_fd,'#0d5fa8',null,true);
+  // 6. Fundo do reservatório
+  drawPoly(fdR,z_fd,'#0d47a1','#1565c0',1.5);
+  // 7. Talude interno — frontal
+  drawFace(naR,z_na,fdR,z_fd,'#1976d2','#1565c0',false);
+  // 8. Espelho d'água
+  {const p0=proj(cX,cY,z_na);
+   const wg=ctx.createRadialGradient(p0.x,p0.y,0,p0.x,p0.y,span*hSc*0.48);
+   wg.addColorStop(0,'rgba(100,181,246,0.90)');wg.addColorStop(1,'rgba(21,101,192,0.85)');
+   drawPoly(naR,z_na,wg,'#42a5f5',1.5,0.88);}
+  // 9. Borda livre — frontal
+  drawFace(naR,z_na,naR,z_cr,'#7a8a9a','#556070',false);
+  // 10. Crista (anel) — frontal
+  drawRing(crR,naR,z_cr,'#b0b8c0','#888',false);
+  // 11. Talude externo — frontal
+  drawFace(peR,z_ter,crR,z_cr,'#9a8055','#554433',false);
+  // 12. Contorno do espelho d'água
+  {ctx.save();ctx.beginPath();
+   const p0=proj(naR[0][0],naR[0][1],z_na);ctx.moveTo(p0.x,p0.y);
+   for(let i=1;i<naR.length;i++){const p=proj(naR[i][0],naR[i][1],z_na);ctx.lineTo(p.x,p.y);}
+   ctx.closePath();ctx.strokeStyle='#64b5f6';ctx.lineWidth=1.8;ctx.stroke();ctx.restore();}
 
-  // Talude externo — meia traseira
-  {ctx.save();
-   ctx.beginPath();
-   ctx.ellipse(cx,ey(z_ter),rx(r_pe),ry(r_pe),0,Math.PI,0,false);
-   ctx.lineTo(cx+rx(r_cr),ey(z_cr));
-   ctx.ellipse(cx,ey(z_cr),rx(r_cr),ry(r_cr),0,0,Math.PI,true);
-   ctx.lineTo(cx-rx(r_pe),ey(z_ter));
-   ctx.closePath();
-   ctx.fillStyle='#7a6845';ctx.fill();ctx.strokeStyle='#554433';ctx.lineWidth=.8;ctx.stroke();
-   ctx.restore();}
-
-  // Crista (anel superior) — parte traseira
-  {ctx.save();
-   ctx.beginPath();
-   ctx.ellipse(cx,ey(z_cr),rx(r_cr),ry(r_cr),0,Math.PI,0,false);
-   ctx.lineTo(cx+rx(r_na),ey(z_cr));
-   ctx.ellipse(cx,ey(z_cr),rx(r_na),ry(r_na),0,0,Math.PI,true);
-   ctx.closePath();
-   ctx.fillStyle='#9e9e9e';ctx.fill();ctx.strokeStyle='#777';ctx.lineWidth=.8;ctx.stroke();
-   ctx.restore();}
-
-  // Talude interno superior (crista→NA) — parte traseira
-  {ctx.save();
-   ctx.beginPath();
-   ctx.ellipse(cx,ey(z_na),rx(r_na),ry(r_na),0,Math.PI,0,false);
-   ctx.lineTo(cx+rx(r_na),ey(z_cr));
-   ctx.ellipse(cx,ey(z_cr),rx(r_na),ry(r_na),0,0,Math.PI,true);
-   ctx.closePath();
-   ctx.fillStyle='#6a7a8a';ctx.fill();ctx.restore();}
-
-  // Corpo de água (fundo→NA) — face traseira
-  {ctx.save();
-   ctx.beginPath();
-   ctx.ellipse(cx,ey(z_fd),rx(r_fd),ry(r_fd),0,Math.PI,0,false);
-   ctx.lineTo(cx+rx(r_na),ey(z_na));
-   ctx.ellipse(cx,ey(z_na),rx(r_na),ry(r_na),0,0,Math.PI,true);
-   ctx.lineTo(cx-rx(r_fd),ey(z_fd));
-   ctx.closePath();
-   ctx.fillStyle='#0d5fa8';ctx.fill();ctx.restore();}
-
-  // Fundo
-  elips(r_fd,z_fd,'#0d47a1','#1565c0',1.5);
-
-  // Corpo de água — face frontal
-  face(r_fd,z_fd,r_na,z_na,'#1976d2','#1565c0');
-
-  // Espelho d'água
-  {const wg=ctx.createRadialGradient(cx,ey(z_na),0,cx,ey(z_na),rx(r_na));
-   wg.addColorStop(0,'rgba(100,181,246,0.9)');wg.addColorStop(1,'rgba(21,101,192,0.85)');
-   elips(r_na,z_na,wg,'#42a5f5',1.5,0.88);}
-
-  // Talude interno (frente)
-  face(r_na,z_na,r_na,z_cr,'#7a8a9a','#556070');
-
-  // Crista — anel frontal
-  {ctx.save();
-   ctx.beginPath();
-   ctx.ellipse(cx,ey(z_cr),rx(r_cr),ry(r_cr),0,0,Math.PI,false);
-   ctx.lineTo(cx-rx(r_na),ey(z_cr));
-   ctx.ellipse(cx,ey(z_cr),rx(r_na),ry(r_na),0,Math.PI,0,true);
-   ctx.closePath();
-   ctx.fillStyle='#b0b8c0';ctx.fill();ctx.strokeStyle='#888';ctx.lineWidth=1;ctx.stroke();
-   ctx.restore();}
-
-  // Talude externo — frente
-  face(r_pe,z_ter,r_cr,z_cr,'#9a8055','#554433');
-
-  // Contornos de referência
-  {const rxn=rx(r_na),ryn=ry(r_na);
-   ctx.save();ctx.beginPath();ctx.ellipse(cx,ey(z_na),rxn,ryn,0,0,Math.PI);
-   ctx.strokeStyle='#64b5f6';ctx.lineWidth=2;ctx.stroke();ctx.restore();}
-
-  // Linhas e rótulos laterais
-  const anot=[
-    {z:z_cr,  rm:r_cr,  lbl:'Crista  '+r.z_crista.toFixed(2)+' m',  c:'#ce93d8'},
-    {z:z_na,  rm:r_na,  lbl:'NA  '+r.z_na.toFixed(2)+' m',          c:'#64b5f6'},
-    {z:z_ter, rm:r_na*0.35, lbl:'Terreno  '+r.z_terreno.toFixed(2)+' m', c:'#a5d6a7'},
-    {z:z_fd,  rm:r_fd,  lbl:'Fundo  '+r.z_fundo.toFixed(2)+' m',    c:'#90caf9'},
+  // 13. Anotações laterais
+  const anots=[
+    {z:z_cr,ring:crR,lbl:'Crista '+r.z_crista.toFixed(2)+' m',c:'#ce93d8'},
+    {z:z_na,ring:naR,lbl:'NA '+r.z_na.toFixed(2)+' m',c:'#64b5f6'},
+    {z:z_ter,ring:peR,lbl:'Terreno '+r.z_terreno.toFixed(2)+' m',c:'#a5d6a7'},
+    {z:z_fd,ring:fdR,lbl:'Fundo '+r.z_fundo.toFixed(2)+' m',c:'#90caf9'},
   ];
   ctx.font='12px Arial';
-  anot.forEach(a=>{
-    const xx=cx+rx(a.rm)+8, yy=ey(a.z)+4;
-    ctx.beginPath();ctx.moveTo(cx+rx(a.rm),ey(a.z));ctx.lineTo(xx-2,yy-4);
-    ctx.strokeStyle=a.c;ctx.lineWidth=0.9;ctx.stroke();
-    ctx.strokeStyle='rgba(0,0,0,.55)';ctx.lineWidth=3;ctx.strokeText(a.lbl,xx,yy);
-    ctx.fillStyle=a.c;ctx.fillText(a.lbl,xx,yy);
+  anots.forEach(a=>{
+    if(!a.ring||!a.ring.length)return;
+    const mp=a.ring.reduce((m,p)=>p[0]>m[0]?p:m);
+    const pp=proj(mp[0],mp[1],a.z),tx=pp.x+10,ty=pp.y+4;
+    ctx.beginPath();ctx.moveTo(pp.x,pp.y);ctx.lineTo(tx-2,ty-4);
+    ctx.strokeStyle=a.c;ctx.lineWidth=1;ctx.stroke();
+    ctx.lineWidth=3;ctx.strokeStyle='rgba(0,0,0,.5)';ctx.strokeText(a.lbl,tx,ty);
+    ctx.fillStyle=a.c;ctx.fillText(a.lbl,tx,ty);
   });
 
-  // Título e nota
+  // 14. Título
   ctx.font='bold 12px Arial';ctx.fillStyle='#e2b96e';
   ctx.fillText('Vista 3D — Reservatório Escavado',12,20);
   ctx.font='10px Arial';ctx.fillStyle='#78909c';
-  ctx.fillText('Exagero vertical ×'+vEx.toFixed(1)+' — raios equivalentes (área = π·r²)',12,36);
+  ctx.fillText('Exagero vertical ×'+vEx.toFixed(1)+' — projeção oblíqua do polígono real',12,36);
 }
 
 // ── PDF ───────────────────────────────────────────────────────────────────────
