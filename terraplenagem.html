@@ -130,8 +130,8 @@ input[type=number],select,input[type=text],input[type=password]{width:100%;backg
     <div class="sec-title">2. Parâmetros do Projeto</div>
     <label>Volume útil (m³)</label>
     <input type="number" id="pVutil" value="10000" min="100" max="5000000" step="100">
-    <label>Volume morto (m³)</label>
-    <input type="number" id="pVmort" value="0" min="0" step="100">
+    <label>Altura morta — h<sub>m</sub> (m) <small style="color:#607080;">(lâmina não captável no fundo)</small></label>
+    <input type="number" id="pHmort" value="0.5" min="0" max="5" step="0.1">
     <div class="divider"></div>
     <label>Talude interno — Ti (H : 1V)</label>
     <input type="number" id="pTi" value="3" min="0.5" max="10" step="0.5">
@@ -555,7 +555,7 @@ async function dimensionar(){
 
   const p={
     Vutil:    +($('pVutil').value)||10000,
-    Vmort:    +($('pVmort').value)||0,
+    h_mort:   +($('pHmort').value)||0,
     Ti:       +($('pTi').value)||3,
     Te:       +($('pTe').value)||1.5,
     Lc:       +($('pLc').value)||5,
@@ -567,7 +567,18 @@ async function dimensionar(){
     V_caminhao: +($('pCaminhao').value)||10,
     N:        parseInt($('pGrid').value)||25,
   };
-  const Vtotal_des=p.Vutil+p.Vmort;
+  // Passe 1: bisseção sem volume morto para estimar H
+  const H1=bisectDepth(turfPoly,Ae,p.Ti,p.Vutil);
+  const Af1=bufferedArea(turfPoly,-H1*p.Ti);
+  const h_m=Math.min(p.h_mort,H1*0.9);
+  let Vmort=0;
+  if(h_m>0){
+    const Af_top=bufferedArea(turfPoly,-(H1-h_m)*p.Ti);
+    const Am_mort=bufferedArea(turfPoly,-(H1-h_m/2)*p.Ti);
+    Vmort=prismatoidVol(Af1,Am_mort,Af_top,h_m);
+  }
+  // Passe 2: corrige com volume morto real
+  const Vtotal_des=p.Vutil+Vmort;
 
   $('btnDim').disabled=true;$('btnDim').textContent='⏳ Buscando elevações…';
   setStatus('Buscando elevações — aguarde…','info');
@@ -602,7 +613,7 @@ async function dimensionar(){
     const Af=bufferedArea(turfPoly,-H*p.Ti);
     const Am=bufferedArea(turfPoly,-H*p.Ti/2);
     const Vtotal_calc=prismatoidVol(Ae,Am,Af,H);
-    const Vutil_calc=Vtotal_calc-p.Vmort;
+    const Vutil_calc=Vtotal_calc-Vmort;
 
     const h_prof=+(H+p.BL).toFixed(2);
     const h_esc_avg=Math.max(0,+(z_terreno-z_fundo).toFixed(2));
@@ -659,7 +670,7 @@ async function dimensionar(){
 
     resultado={
       p, z_terreno, z_na, z_crista, z_fundo, H,
-      Ae, Af, Am, Vtotal_calc, Vutil_calc,
+      Ae, Af, Am, Vtotal_calc, Vutil_calc, Vmort, h_m,
       h_prof, h_esc_avg, h_at_avg, comp_pct,
       Vcut, Vfill_tin, Vfill_nec, Vfill_delta, balanco,
       A_fundo, A_talude, A_borda, A_subtotal, A_sobreposi, A_sobra, A_total,
@@ -808,6 +819,7 @@ function mostrarResultados(){
 
     +cat('Volumes')
     +row('Volume total',fmt(r.Vtotal_calc)+' m³')
+    +row('Volume morto (h='+r.h_m.toFixed(2)+' m)',fmt(r.Vmort)+' m³')
     +row('Volume útil',fmt(r.Vutil_calc)+' m³')
 
     +cat('Movimentação de Terra')
@@ -1315,32 +1327,6 @@ tr:nth-child(even) td:not(.th2){background:#f7f9fb;}
         <line x1="${sbX.toFixed(1)}" y1="${(sbY+2).toFixed(1)}" x2="${sbX.toFixed(1)}" y2="${(sbY+10).toFixed(1)}" stroke="white" stroke-width="1.5"/>
         <line x1="${(sbX+sbPx).toFixed(1)}" y1="${(sbY+2).toFixed(1)}" x2="${(sbX+sbPx).toFixed(1)}" y2="${(sbY+10).toFixed(1)}" stroke="white" stroke-width="1.5"/>
         <line x1="${(sbX+sbPx/2).toFixed(1)}" y1="${(sbY+3).toFixed(1)}" x2="${(sbX+sbPx/2).toFixed(1)}" y2="${(sbY+9).toFixed(1)}" stroke="white" stroke-width="1"/>
-        ${showHA?`<g>
-          <line x1="${naMinX.toFixed(1)}" y1="${arH_y}" x2="${naMaxX.toFixed(1)}" y2="${arH_y}" stroke="#ffeb3b" stroke-width="1.5" marker-start="url(#aDimL)" marker-end="url(#aDimR)"/>
-          <line x1="${naMinX.toFixed(1)}" y1="${(arH_y-5)}" x2="${naMinX.toFixed(1)}" y2="${(arH_y+5)}" stroke="#ffeb3b" stroke-width="1"/>
-          <line x1="${naMaxX.toFixed(1)}" y1="${(arH_y-5)}" x2="${naMaxX.toFixed(1)}" y2="${(arH_y+5)}" stroke="#ffeb3b" stroke-width="1"/>
-          <rect x="${((naMinX+naMaxX)/2-naWLblW/2).toFixed(1)}" y="${(arH_y-10).toFixed(1)}" width="${naWLblW}" height="10" rx="2" fill="rgba(0,0,0,0.72)"/>
-          <text x="${((naMinX+naMaxX)/2).toFixed(1)}" y="${(arH_y-1.5).toFixed(1)}" font-size="8" font-weight="bold" fill="#ffeb3b" text-anchor="middle">${naWLbl}</text>
-        </g>`:''}
-        ${showVA?`<g>
-          <line x1="${arV_x}" y1="${naMinY.toFixed(1)}" x2="${arV_x}" y2="${naMaxY.toFixed(1)}" stroke="#ffeb3b" stroke-width="1.5" marker-start="url(#aDimL)" marker-end="url(#aDimR)"/>
-          <line x1="${(arV_x-5)}" y1="${naMinY.toFixed(1)}" x2="${(arV_x+5)}" y2="${naMinY.toFixed(1)}" stroke="#ffeb3b" stroke-width="1"/>
-          <line x1="${(arV_x-5)}" y1="${naMaxY.toFixed(1)}" x2="${(arV_x+5)}" y2="${naMaxY.toFixed(1)}" stroke="#ffeb3b" stroke-width="1"/>
-          <text x="${(arV_x+10).toFixed(1)}" y="${((naMinY+naMaxY)/2+4).toFixed(1)}" font-size="8" font-weight="bold" fill="#ffeb3b" text-anchor="middle" transform="rotate(-90,${(arV_x+10).toFixed(1)},${((naMinY+naMaxY)/2).toFixed(1)})">${naHLbl}</text>
-        </g>`:''}
-        ${showCrHA?`<g>
-          <line x1="${crMinX.toFixed(1)}" y1="${arCrH_y}" x2="${crMaxX.toFixed(1)}" y2="${arCrH_y}" stroke="white" stroke-width="1.5" marker-start="url(#aDimLw)" marker-end="url(#aDimRw)"/>
-          <line x1="${crMinX.toFixed(1)}" y1="${(arCrH_y-5)}" x2="${crMinX.toFixed(1)}" y2="${(arCrH_y+5)}" stroke="white" stroke-width="1"/>
-          <line x1="${crMaxX.toFixed(1)}" y1="${(arCrH_y-5)}" x2="${crMaxX.toFixed(1)}" y2="${(arCrH_y+5)}" stroke="white" stroke-width="1"/>
-          <rect x="${((crMinX+crMaxX)/2-crWLblW/2).toFixed(1)}" y="${(arCrH_y-10).toFixed(1)}" width="${crWLblW}" height="10" rx="2" fill="rgba(0,0,0,0.72)"/>
-          <text x="${((crMinX+crMaxX)/2).toFixed(1)}" y="${(arCrH_y-1.5).toFixed(1)}" font-size="8" font-weight="bold" fill="white" text-anchor="middle">${crWLbl}</text>
-        </g>`:''}
-        ${showCrVA?`<g>
-          <line x1="${arCrV_x}" y1="${crMinY.toFixed(1)}" x2="${arCrV_x}" y2="${crMaxY.toFixed(1)}" stroke="white" stroke-width="1.5" marker-start="url(#aDimLw)" marker-end="url(#aDimRw)"/>
-          <line x1="${(arCrV_x-5)}" y1="${crMinY.toFixed(1)}" x2="${(arCrV_x+5)}" y2="${crMinY.toFixed(1)}" stroke="white" stroke-width="1"/>
-          <line x1="${(arCrV_x-5)}" y1="${crMaxY.toFixed(1)}" x2="${(arCrV_x+5)}" y2="${crMaxY.toFixed(1)}" stroke="white" stroke-width="1"/>
-          <text x="${(arCrV_x-5).toFixed(1)}" y="${((crMinY+crMaxY)/2+4).toFixed(1)}" font-size="8" font-weight="bold" fill="white" text-anchor="middle" transform="rotate(-90,${(arCrV_x-5).toFixed(1)},${((crMinY+crMaxY)/2).toFixed(1)})">${crHLbl}</text>
-        </g>`:''}
       </svg>
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:1.5mm 5mm;margin-top:1.5mm;font-size:6.5pt;color:#333;align-items:center;">
@@ -1350,8 +1336,6 @@ tr:nth-child(even) td:not(.th2){background:#f7f9fb;}
       <span><span style="display:inline-block;width:11pt;height:0;border-top:2pt dashed #2e7d32;vertical-align:middle;margin-right:1.5mm;margin-top:3pt;"></span>Talude externo</span>
       <span style="color:#c62828;">— — A-B (aterro ${r.h_at_A.toFixed(2)} m)</span>
       <span style="color:#1565c0;">— — C-D (aterro ${r.h_at_C.toFixed(2)} m)</span>
-      <span style="background:rgba(0,0,0,0.75);color:#ffeb3b;padding:0 4px;border-radius:2px;font-size:6pt;font-weight:700;">← → amarelo: NA</span>
-      <span style="background:rgba(0,0,0,0.75);color:white;padding:0 4px;border-radius:2px;font-size:6pt;font-weight:700;">← → branco: Boca</span>
     </div>
   </div>
 
@@ -1370,7 +1354,8 @@ tr:nth-child(even) td:not(.th2){background:#f7f9fb;}
   <table>
     ${th2('Dados do Reservatório')}
     ${tr2('Volume útil',fmt(r.Vutil_calc)+' m³',true)}
-    ${tr2('Volume total (c/ morto)',fmt(r.Vtotal_calc)+' m³')}
+    ${tr2('Volume morto (h='+r.h_m.toFixed(2)+' m)',fmt(r.Vmort)+' m³')}
+    ${tr2('Volume total',fmt(r.Vtotal_calc)+' m³')}
     ${tr2('Profundidade total H',r.h_prof.toFixed(2)+' m')}
     ${tr2('Escavação média',r.h_esc_avg.toFixed(2)+' m')}
     ${tr2('Aterro médio',r.h_at_avg.toFixed(2)+' m')}
@@ -1676,6 +1661,7 @@ tr:nth-child(even) td:not([colspan]){background:#f8fafc;}
       ${tr('NA normal',r.z_na.toFixed(2)+' m')}
       ${th('Volumes')}
       ${tr('Volume total',fmt(r.Vtotal_calc)+' m³',true)}
+      ${tr('Volume morto (h='+r.h_m.toFixed(2)+' m)',fmt(r.Vmort)+' m³')}
       ${tr('Volume útil',fmt(r.Vutil_calc)+' m³',true)}
       ${th('Movimentação de Terra')}
       ${tr('Corte — TIN',fmt(r.Vcut)+' m³')}
