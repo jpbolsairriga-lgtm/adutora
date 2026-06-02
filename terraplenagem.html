@@ -227,15 +227,6 @@ input[type=number],select,input[type=text],input[type=password]{width:100%;backg
   </div>
 </div>
 
-<!-- Modal Vista 3D -->
-<div class="modal-bg" id="modal3D" onclick="if(event.target===this)this.classList.remove('open')">
-  <div class="modal" style="max-width:640px;padding:14px;">
-    <button class="modal-close" onclick="$('modal3D').classList.remove('open')">✕</button>
-    <h2>🏗 Vista Esquemática 3D</h2>
-    <canvas id="canvas3D" style="width:100%;border-radius:6px;display:block;"></canvas>
-    <p style="font-size:9.5px;color:#546e7a;margin-top:6px;text-align:center;">Aproximação cilíndrica — raios equivalentes. Exagero vertical para legibilidade.</p>
-  </div>
-</div>
 
 <!-- Modal Chave API -->
 <div class="modal-bg" id="modalChave" onclick="if(event.target===this)this.classList.remove('open')">
@@ -1027,165 +1018,239 @@ function gerarCortesSVG(){
     svgCorte('cd','CORTE C-D — MENOR ATERRO ('+r.h_at_C.toFixed(2)+' m)','C','D',r.z_t_C,r.z_t_D,r));
 }
 
-// ── Vista 3D ──────────────────────────────────────────────────────────────────
+// ── Vista 3D — Three.js WebGL ─────────────────────────────────────────────────
 function gerarVista3D(){
-  if(!resultado||!polyPts||polyPts.length<3){return;}
-  const r=resultado;
-  $('modal3D').classList.add('open');
-  const cv=$('canvas3D');
-  const CW=cv.width=600,CH=cv.height=380;
-  const ctx=cv.getContext('2d');
-
-  // Converter polyPts e buffers para metros locais (origem = centroide do polígono NA)
-  const cLat=polyPts.reduce((s,p)=>s+p.lat,0)/polyPts.length;
-  const cLng=polyPts.reduce((s,p)=>s+p.lng,0)/polyPts.length;
-  const toL=p=>[(p.lng-cLng)*Math.cos(cLat*Math.PI/180)*111320,(p.lat-cLat)*111320];
-  const gL=c=>[(c[0]-cLng)*Math.cos(cLat*Math.PI/180)*111320,(c[1]-cLat)*111320];
-
-  const naR=polyPts.map(toL);
-  const fdR=(r.fundoBuf&&r.fundoBuf.geometry)?r.fundoBuf.geometry.coordinates[0].map(gL):naR;
-  const crR=(r.cristaBuf&&r.cristaBuf.geometry)?r.cristaBuf.geometry.coordinates[0].map(gL):naR;
-  const peR=(r.peExtBuf&&r.peExtBuf.geometry)?r.peExtBuf.geometry.coordinates[0].map(gL):naR;
-
-  // Alturas relativas ao fundo (z=0)
-  const z_fd=0,z_na=r.H,z_cr=r.H+r.p.BL;
-  const z_ter=Math.max(0,r.H+r.p.BL-r.h_at_avg);
-
-  // Bounding box de todos os anéis
-  const all=[...naR,...fdR,...crR,...peR];
-  const xs=all.map(p=>p[0]),ys=all.map(p=>p[1]);
-  const minX=Math.min(...xs),maxX=Math.max(...xs);
-  const minY=Math.min(...ys),maxY=Math.max(...ys);
-  const span=Math.max(maxX-minX,maxY-minY);
-  const cX=(minX+maxX)/2,cY=(minY+maxY)/2;
-
-  // Projeção oblíqua (ângulo 28°, fator 0.40)
-  const oA=28*Math.PI/180,oF=0.40;
-  const oCos=oF*Math.cos(oA),oSin=oF*Math.sin(oA);
-  const vEx=Math.min(6,Math.max(2.5,30/Math.max(r.H,0.5)));
-
-  // Escala adaptativa
-  const hSc=Math.min(CW*0.72/(span*(1+oCos)),CH*0.68/(span*oSin+z_cr*vEx));
-
-  // Origem: espelho d'água (NA) centrado a 60% da tela
-  const ox=CW*0.50-cX*hSc-cY*oCos*hSc;
-  const oy=CH*0.62+cY*oSin*hSc+z_na*vEx*hSc;
-  const proj=(lx,ly,z)=>({x:ox+lx*hSc+ly*oCos*hSc,y:oy-ly*oSin*hSc-z*vEx*hSc});
-
-  // Desenhar polígono projetado completo
-  const drawPoly=(ring,z,fill,stroke,sw,alpha)=>{
-    if(!ring||ring.length<3)return;
-    ctx.save();if(alpha!==undefined)ctx.globalAlpha=alpha;
-    ctx.beginPath();
-    const p0=proj(ring[0][0],ring[0][1],z);ctx.moveTo(p0.x,p0.y);
-    for(let i=1;i<ring.length;i++){const p=proj(ring[i][0],ring[i][1],z);ctx.lineTo(p.x,p.y);}
-    ctx.closePath();
-    if(fill){ctx.fillStyle=fill;ctx.fill();}
-    if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=sw||1;ctx.stroke();}
-    ctx.restore();
-  };
-
-  // Clipar anel pela linha y=0 (coord. locais): back = y≥0 (parte traseira), front = y≤0
-  const clip0=(ring,back)=>{
-    const ok=p=>back?p[1]>=0:p[1]<=0;
-    const cut=(a,b)=>{const t=(0-a[1])/(b[1]-a[1]);return[a[0]+t*(b[0]-a[0]),0];};
-    const out=[];
-    for(let i=0;i<ring.length;i++){
-      const c=ring[i],n=ring[(i+1)%ring.length];
-      if(ok(c))out.push(c);
-      if(ok(c)!==ok(n))out.push(cut(c,n));
-    }
-    return out;
-  };
-
-  // Desenhar face de talude entre dois anéis (metade back ou front)
-  const drawFace=(oR,oZ,iR,iZ,fill,stroke,back)=>{
-    const a=clip0(oR,back),b=clip0(iR,back);
-    if(a.length<2||b.length<2)return;
-    ctx.save();ctx.beginPath();
-    let p=proj(a[0][0],a[0][1],oZ);ctx.moveTo(p.x,p.y);
-    for(let i=1;i<a.length;i++){p=proj(a[i][0],a[i][1],oZ);ctx.lineTo(p.x,p.y);}
-    for(let i=b.length-1;i>=0;i--){p=proj(b[i][0],b[i][1],iZ);ctx.lineTo(p.x,p.y);}
-    ctx.closePath();
-    if(fill){ctx.fillStyle=fill;ctx.fill();}
-    if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=0.8;ctx.stroke();}
-    ctx.restore();
-  };
-
-  // Desenhar anel (área entre dois anéis concêntricos) — metade back ou front
-  const drawRing=(oR,iR,z,fill,stroke,back)=>{
-    const a=clip0(oR,back),b=clip0(iR,back);
-    if(a.length<2)return;
-    ctx.save();ctx.beginPath();
-    let p=proj(a[0][0],a[0][1],z);ctx.moveTo(p.x,p.y);
-    for(let i=1;i<a.length;i++){p=proj(a[i][0],a[i][1],z);ctx.lineTo(p.x,p.y);}
-    if(b.length>=2)for(let i=b.length-1;i>=0;i--){p=proj(b[i][0],b[i][1],z);ctx.lineTo(p.x,p.y);}
-    ctx.closePath();
-    if(fill){ctx.fillStyle=fill;ctx.fill();}
-    if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=0.8;ctx.stroke();}
-    ctx.restore();
-  };
-
-  // ── FUNDO ──
-  const bg=ctx.createLinearGradient(0,0,0,CH);
-  bg.addColorStop(0,'#1a2a3a');bg.addColorStop(1,'#2d3a25');
-  ctx.fillStyle=bg;ctx.fillRect(0,0,CW,CH);
-
-  // Ordem back→front (algoritmo do pintor)
-  // 1. Plano de terreno (pé externo)
-  drawPoly(peR,z_ter,'#4e5e3a','#3a4a28',0.8);
-  // 2. Talude externo — traseira
-  drawFace(peR,z_ter,crR,z_cr,'#7a6845','#554433',true);
-  // 3. Crista (anel) — traseira
-  drawRing(crR,naR,z_cr,'#9e9e9e','#777',true);
-  // 4. Borda livre — traseira (parede vertical naR z_na→z_cr)
-  drawFace(naR,z_na,naR,z_cr,'#6a7a8a','#556070',true);
-  // 5. Talude interno — traseira
-  drawFace(naR,z_na,fdR,z_fd,'#0d5fa8',null,true);
-  // 6. Fundo do reservatório
-  drawPoly(fdR,z_fd,'#0d47a1','#1565c0',1.5);
-  // 7. Talude interno — frontal
-  drawFace(naR,z_na,fdR,z_fd,'#1976d2','#1565c0',false);
-  // 8. Espelho d'água
-  {const p0=proj(cX,cY,z_na);
-   const wg=ctx.createRadialGradient(p0.x,p0.y,0,p0.x,p0.y,span*hSc*0.48);
-   wg.addColorStop(0,'rgba(100,181,246,0.90)');wg.addColorStop(1,'rgba(21,101,192,0.85)');
-   drawPoly(naR,z_na,wg,'#42a5f5',1.5,0.88);}
-  // 9. Borda livre — frontal
-  drawFace(naR,z_na,naR,z_cr,'#7a8a9a','#556070',false);
-  // 10. Crista (anel) — frontal
-  drawRing(crR,naR,z_cr,'#b0b8c0','#888',false);
-  // 11. Talude externo — frontal
-  drawFace(peR,z_ter,crR,z_cr,'#9a8055','#554433',false);
-  // 12. Contorno do espelho d'água
-  {ctx.save();ctx.beginPath();
-   const p0=proj(naR[0][0],naR[0][1],z_na);ctx.moveTo(p0.x,p0.y);
-   for(let i=1;i<naR.length;i++){const p=proj(naR[i][0],naR[i][1],z_na);ctx.lineTo(p.x,p.y);}
-   ctx.closePath();ctx.strokeStyle='#64b5f6';ctx.lineWidth=1.8;ctx.stroke();ctx.restore();}
-
-  // 13. Anotações laterais
-  const anots=[
-    {z:z_cr,ring:crR,lbl:'Crista '+r.z_crista.toFixed(2)+' m',c:'#ce93d8'},
-    {z:z_na,ring:naR,lbl:'NA '+r.z_na.toFixed(2)+' m',c:'#64b5f6'},
-    {z:z_ter,ring:peR,lbl:'Terreno '+r.z_terreno.toFixed(2)+' m',c:'#a5d6a7'},
-    {z:z_fd,ring:fdR,lbl:'Fundo '+r.z_fundo.toFixed(2)+' m',c:'#90caf9'},
-  ];
-  ctx.font='12px Arial';
-  anots.forEach(a=>{
-    if(!a.ring||!a.ring.length)return;
-    const mp=a.ring.reduce((m,p)=>p[0]>m[0]?p:m);
-    const pp=proj(mp[0],mp[1],a.z),tx=pp.x+10,ty=pp.y+4;
-    ctx.beginPath();ctx.moveTo(pp.x,pp.y);ctx.lineTo(tx-2,ty-4);
-    ctx.strokeStyle=a.c;ctx.lineWidth=1;ctx.stroke();
-    ctx.lineWidth=3;ctx.strokeStyle='rgba(0,0,0,.5)';ctx.strokeText(a.lbl,tx,ty);
-    ctx.fillStyle=a.c;ctx.fillText(a.lbl,tx,ty);
+  if(!resultado||!polyPts||polyPts.length<3){alert('Dimensione o reservatório primeiro.');return;}
+  const r=resultado,p=r.p;
+  // Converter para metros locais
+  const cLat=polyPts.reduce((s,pt)=>s+pt.lat,0)/polyPts.length;
+  const cLng=polyPts.reduce((s,pt)=>s+pt.lng,0)/polyPts.length;
+  const mLng=Math.cos(cLat*Math.PI/180)*111320,mLat=111320;
+  const toXY=(lat,lng)=>({x:(lng-cLng)*mLng,y:(lat-cLat)*mLat});
+  function convRing(pts,ll){
+    const a=pts.map(c=>ll?toXY(c[1],c[0]):toXY(c.lat,c.lng));
+    if(a.length>1){const f=a[0],l=a[a.length-1];if(Math.hypot(f.x-l.x,f.y-l.y)<0.1)a.pop();}
+    return a;
+  }
+  function scaleOut(ring,fac){
+    let cx=0,cy=0;ring.forEach(q=>{cx+=q.x;cy+=q.y;});cx/=ring.length;cy/=ring.length;
+    return ring.map(q=>({x:cx+(q.x-cx)*fac,y:cy+(q.y-cy)*fac}));
+  }
+  const naR=convRing(polyPts,false);
+  const fdR=r.fundoBuf?convRing(r.fundoBuf.geometry.coordinates[0],true):null;
+  const crR=r.cristaBuf?convRing(r.cristaBuf.geometry.coordinates[0],true):null;
+  const peR=r.peExtBuf?convRing(r.peExtBuf.geometry.coordinates[0],true):null;
+  const outerR=peR?scaleOut(peR,1.75):crR?scaleOut(crR,2.1):scaleOut(naR,2.5);
+  const D=JSON.stringify({
+    naR,fdR,crR,peR,outerR,
+    zF:-(r.H),zN:0,zC:p.BL,
+    H:r.H,BL:p.BL,Ti:p.Ti,
+    Vutil:Math.round(r.Vutil_calc),
+    Ae:Math.round(r.Ae),
+    zFabs:r.z_fundo.toFixed(2),zNabs:r.z_na.toFixed(2),zCabs:r.z_crista.toFixed(2)
   });
+  const win=window.open('','_blank');
+  if(!win){alert('Popup bloqueado — libere popups para este site.');return;}
+  win.document.write(`<!DOCTYPE html><html lang="pt-BR"><head>
+<meta charset="UTF-8"><title>Vista 3D — Reservatório Escavado</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0d1b2a;overflow:hidden;font-family:Arial,sans-serif}
+#inf{position:fixed;top:14px;left:14px;background:rgba(5,10,18,.72);color:#ffffffcc;font-size:11.5px;
+  line-height:1.9;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,215,0,.22);pointer-events:none}
+#inf b{color:#ffd700}#inf small{color:#ffffff77;font-size:10px}
+#hint{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);
+  color:#ffffff44;font-size:10px;letter-spacing:.6px;pointer-events:none}
+#ld{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+  color:#ffd700;font-size:15px;background:#0d1b2a;z-index:10}
+</style></head><body>
+<div id="ld">&#9651; Carregando renderizador 3D…</div>
+<div id="inf" style="display:none"></div>
+<div id="hint">Arraste: rotacionar &nbsp;·&nbsp; Scroll: zoom &nbsp;·&nbsp; Botão direito: mover</div>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.152.2/examples/jsm/"}}<\/script>
+<script>window.__D=${D};<\/script>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+document.getElementById('ld').style.display='none';
+document.getElementById('inf').style.display='block';
+const D=window.__D;
 
-  // 14. Título
-  ctx.font='bold 12px Arial';ctx.fillStyle='#e2b96e';
-  ctx.fillText('Vista 3D — Reservatório Escavado',12,20);
-  ctx.font='10px Arial';ctx.fillStyle='#78909c';
-  ctx.fillText('Exagero vertical ×'+vEx.toFixed(1)+' — projeção oblíqua do polígono real',12,36);
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function closeOff(r){
+  if(r.length<2)return r;
+  const f=r[0],l=r[r.length-1];
+  return(Math.hypot(f.x-l.x,f.y-l.y)<0.01)?r.slice(0,-1):r;
+}
+function resample(ring,N){
+  ring=closeOff(ring);const n=ring.length;
+  const cum=[0];
+  for(let i=0;i<n;i++){const j=(i+1)%n;cum.push(cum[i]+Math.hypot(ring[j].x-ring[i].x,ring[j].y-ring[i].y));}
+  const tot=cum[n],out=[];
+  for(let k=0;k<N;k++){
+    const t=(k/N)*tot;
+    for(let s=0;s<n;s++){
+      if(t>=cum[s]&&t<=cum[s+1]+1e-9){
+        const u=(cum[s+1]>cum[s])?(t-cum[s])/(cum[s+1]-cum[s]):0;
+        const j=(s+1)%n;
+        out.push({x:ring[s].x*(1-u)+ring[j].x*u,y:ring[s].y*(1-u)+ring[j].y*u});
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+// Gradiente Civil 3D: marrom escuro (fundo) → âmbar (NA) → ouro brilhante (crista)
+function elevClr(z,zMin,zMax){
+  const t=Math.max(0,Math.min(1,(z-zMin)/(zMax-zMin||1)));
+  let rv,gv,bv;
+  if(t<0.42){const u=t/0.42;rv=0.28+u*0.58;gv=0.13+u*0.40;bv=0.04-u*0.02;}
+  else{const u=(t-0.42)/0.58;rv=0.86+u*0.14;gv=0.53+u*0.32;bv=0.02+u*0.01;}
+  return [Math.min(1,rv),Math.min(1,gv),Math.max(0,bv)];
+}
+
+function fanGeo(ring,z,zMin,zMax){
+  const N=ring.length;let cx=0,cy=0;
+  ring.forEach(p=>{cx+=p.x;cy+=p.y;});cx/=N;cy/=N;
+  const pos=new Float32Array((N+1)*3),clr=new Float32Array((N+1)*3),idx=[];
+  const cc=elevClr(z,zMin,zMax);
+  pos[0]=cx;pos[1]=z;pos[2]=-cy;clr[0]=cc[0];clr[1]=cc[1];clr[2]=cc[2];
+  for(let i=0;i<N;i++){
+    pos[(i+1)*3]=ring[i].x;pos[(i+1)*3+1]=z;pos[(i+1)*3+2]=-ring[i].y;
+    clr[(i+1)*3]=cc[0];clr[(i+1)*3+1]=cc[1];clr[(i+1)*3+2]=cc[2];
+    idx.push(0,(i+1)%N+1,i+1);
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  g.setAttribute('color',new THREE.BufferAttribute(clr,3));
+  g.setIndex(idx);g.computeVertexNormals();return g;
+}
+
+function stripGeo(rA,zA,rB,zB,zMin,zMax,clrOverride){
+  const N=rA.length;
+  const pos=new Float32Array(N*2*3),clr=new Float32Array(N*2*3),idx=[];
+  const cA=clrOverride||elevClr(zA,zMin,zMax);
+  const cB=clrOverride||elevClr(zB,zMin,zMax);
+  for(let i=0;i<N;i++){
+    pos[i*6]=rA[i].x;pos[i*6+1]=zA;pos[i*6+2]=-rA[i].y;
+    pos[i*6+3]=rB[i].x;pos[i*6+4]=zB;pos[i*6+5]=-rB[i].y;
+    clr[i*6]=cA[0];clr[i*6+1]=cA[1];clr[i*6+2]=cA[2];
+    clr[i*6+3]=cB[0];clr[i*6+4]=cB[1];clr[i*6+5]=cB[2];
+  }
+  for(let i=0;i<N;i++){
+    const j=(i+1)%N,a=i*2,b=i*2+1,c=j*2,d=j*2+1;
+    idx.push(a,c,b);idx.push(b,c,d);
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  g.setAttribute('color',new THREE.BufferAttribute(clr,3));
+  g.setIndex(idx);g.computeVertexNormals();return g;
+}
+
+// ── Cena ──────────────────────────────────────────────────────────────────────
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x0d1b2a);
+scene.fog=new THREE.Fog(0x0d1b2a,4000,10000);
+
+const camera=new THREE.PerspectiveCamera(38,innerWidth/innerHeight,0.5,30000);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.15;
+document.body.appendChild(renderer.domElement);
+
+// Iluminação
+scene.add(new THREE.AmbientLight(0xfff5e0,0.48));
+const sun=new THREE.DirectionalLight(0xfffae8,2.0);
+sun.position.set(400,700,500);sun.castShadow=true;
+sun.shadow.mapSize.set(2048,2048);
+const sc=sun.shadow.camera;sc.near=10;sc.far=6000;sc.left=sc.bottom=-1500;sc.right=sc.top=1500;
+scene.add(sun);
+const fill=new THREE.DirectionalLight(0x3050a0,0.30);fill.position.set(-500,300,-600);scene.add(fill);
+const rim=new THREE.DirectionalLight(0x201808,0.18);rim.position.set(0,50,-800);scene.add(rim);
+
+const controls=new OrbitControls(camera,renderer.domElement);
+controls.enableDamping=true;controls.dampingFactor=0.07;
+controls.minDistance=20;controls.maxDistance=9000;
+controls.maxPolarAngle=Math.PI*0.488;
+
+// ── Geometria ─────────────────────────────────────────────────────────────────
+const NS=96;
+const zF=D.zF,zN=D.zN,zC=D.zC,zMin=zF,zMax=zC;
+
+const naR=resample(D.naR,NS);
+const fdR=D.fdR?resample(D.fdR,NS):null;
+const crR=D.crR?resample(D.crR,NS):null;
+const peR=D.peR?resample(D.peR,NS):null;
+const outerR=D.outerR?resample(D.outerR,NS):null;
+
+const mat=new THREE.MeshPhongMaterial({vertexColors:true,side:THREE.DoubleSide,shininess:25,specular:new THREE.Color(0x331a00)});
+const matW=new THREE.MeshPhongMaterial({color:0x1565c0,transparent:true,opacity:0.50,shininess:120,specular:new THREE.Color(0x88aaff),side:THREE.DoubleSide});
+
+function addM(geo,m){const mesh=new THREE.Mesh(geo,m);mesh.castShadow=true;mesh.receiveShadow=true;scene.add(mesh);return mesh;}
+
+// 1. Fundo plano
+if(fdR)addM(fanGeo(fdR,zF,zMin,zMax),mat);
+
+// 2. Talude interno: fundo → NA
+if(fdR){
+  addM(stripGeo(fdR,zF,naR,zN,zMin,zMax),mat);
+}else{
+  let cx=0,cy=0;naR.forEach(p=>{cx+=p.x;cy+=p.y;});cx/=NS;cy/=NS;
+  addM(stripGeo(naR.map(()=>({x:cx,y:cy})),zF,naR,zN,zMin,zMax),mat);
+}
+
+// 3. Talude crista: NA → topo crista
+if(crR)addM(stripGeo(naR,zN,crR,zC,zMin,zMax),mat);
+
+// 4. Talude externo: topo crista → pé externo
+if(crR&&peR)addM(stripGeo(crR,zC,peR,zN,zMin,zMax),mat);
+
+// 5. Terreno plano (annular)
+if(peR&&outerR){
+  const tc=elevClr(zN*0.6,zMin,zMax);
+  addM(stripGeo(peR,zN,outerR,zN,zMin,zMax,tc),mat);
+}
+
+// 6. Espelho d'água
+addM(fanGeo(naR,zN+D.H*0.006,zMin,zMax),matW);
+
+// ── Bordas (linhas) ───────────────────────────────────────────────────────────
+function addLoop(ring,z,hex){
+  const pts=ring.map(p=>new THREE.Vector3(p.x,z,-p.y));pts.push(pts[0].clone());
+  scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:hex})));
+}
+if(crR)addLoop(crR,zC,0xffd700);
+addLoop(naR,zN,0x64b5f6);
+if(peR)addLoop(peR,zN,0x8d6e45);
+
+// ── Câmera inicial ────────────────────────────────────────────────────────────
+let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity;
+[...naR,...(crR||[]),...(peR||[])].forEach(p=>{if(p.x<x0)x0=p.x;if(p.x>x1)x1=p.x;if(p.y<y0)y0=p.y;if(p.y>y1)y1=p.y;});
+const cx=(x0+x1)/2,cy=(y0+y1)/2;
+const span=Math.max(x1-x0,y1-y0,D.H*5);
+camera.position.set(cx+span*0.80,span*0.58+zC*0.5,cy+span*0.95);
+camera.lookAt(cx,zC*0.25,-cy);
+controls.target.set(cx,zC*0.25,-cy);
+controls.update();
+
+// ── Painel de informações ─────────────────────────────────────────────────────
+document.getElementById('inf').innerHTML=
+  '<b style="font-size:12.5px;letter-spacing:.4px">RESERVATÓRIO ESCAVADO — VISTA 3D</b><br>'+
+  'Vol. útil: <b>'+D.Vutil.toLocaleString('pt-BR')+' m³</b><br>'+
+  'Espelho d’água: <b>'+D.Ae.toLocaleString('pt-BR')+' m²</b><br>'+
+  'Profundidade H: <b>'+D.H.toFixed(2)+' m</b> &nbsp;|&nbsp; BL: <b>'+D.BL+' m</b><br>'+
+  '<small>NA: '+D.zNabs+' m &nbsp; Crista: '+D.zCabs+' m &nbsp; Fundo: '+D.zFabs+' m</small>';
+
+// ── Loop de renderização ──────────────────────────────────────────────────────
+(function animate(){requestAnimationFrame(animate);controls.update();renderer.render(scene,camera);})();
+window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+<\/script></body></html>`);
+  win.document.close();
 }
 
 // ── Planta Técnica ────────────────────────────────────────────────────────────
