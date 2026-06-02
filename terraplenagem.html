@@ -1068,10 +1068,10 @@ body{background:#0d1b2a;overflow:hidden;font-family:Arial,sans-serif}
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.152.2/examples/jsm/"}}<\/script>
 <script>window.__D=${D};<\/script>
 <script type="module">
-import * as THREE from 'three';
-import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
-document.getElementById('ld').style.display='none';
-document.getElementById('inf').style.display='block';
+import * as THREE from ‘three’;
+import {OrbitControls} from ‘three/addons/controls/OrbitControls.js’;
+document.getElementById(‘ld’).style.display=’none’;
+document.getElementById(‘inf’).style.display=’block’;
 const D=window.__D;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1098,58 +1098,41 @@ function resample(ring,N){
   }
   return out;
 }
-
-// Gradiente Civil 3D: marrom escuro (fundo) → âmbar (NA) → ouro brilhante (crista)
-function elevClr(z,zMin,zMax){
-  const t=Math.max(0,Math.min(1,(z-zMin)/(zMax-zMin||1)));
-  let rv,gv,bv;
-  if(t<0.42){const u=t/0.42;rv=0.28+u*0.58;gv=0.13+u*0.40;bv=0.04-u*0.02;}
-  else{const u=(t-0.42)/0.58;rv=0.86+u*0.14;gv=0.53+u*0.32;bv=0.02+u*0.01;}
-  return [Math.min(1,rv),Math.min(1,gv),Math.max(0,bv)];
-}
-
-function fanGeo(ring,z,zMin,zMax){
+// Fan simples (sem vertex colors)
+function fanGeo(ring,y){
   const N=ring.length;let cx=0,cy=0;
   ring.forEach(p=>{cx+=p.x;cy+=p.y;});cx/=N;cy/=N;
-  const pos=new Float32Array((N+1)*3),clr=new Float32Array((N+1)*3),idx=[];
-  const cc=elevClr(z,zMin,zMax);
-  pos[0]=cx;pos[1]=z;pos[2]=-cy;clr[0]=cc[0];clr[1]=cc[1];clr[2]=cc[2];
+  const pos=new Float32Array((N+1)*3),idx=[];
+  pos[0]=cx;pos[1]=y;pos[2]=-cy;
   for(let i=0;i<N;i++){
-    pos[(i+1)*3]=ring[i].x;pos[(i+1)*3+1]=z;pos[(i+1)*3+2]=-ring[i].y;
-    clr[(i+1)*3]=cc[0];clr[(i+1)*3+1]=cc[1];clr[(i+1)*3+2]=cc[2];
+    pos[(i+1)*3]=ring[i].x;pos[(i+1)*3+1]=y;pos[(i+1)*3+2]=-ring[i].y;
     idx.push(0,(i+1)%N+1,i+1);
   }
   const g=new THREE.BufferGeometry();
-  g.setAttribute('position',new THREE.BufferAttribute(pos,3));
-  g.setAttribute('color',new THREE.BufferAttribute(clr,3));
+  g.setAttribute(‘position’,new THREE.BufferAttribute(pos,3));
   g.setIndex(idx);g.computeVertexNormals();return g;
 }
-
-function stripGeo(rA,zA,rB,zB,zMin,zMax,clrOverride){
+// Strip simples (sem vertex colors)
+function stripGeo(rA,yA,rB,yB){
   const N=rA.length;
-  const pos=new Float32Array(N*2*3),clr=new Float32Array(N*2*3),idx=[];
-  const cA=clrOverride||elevClr(zA,zMin,zMax);
-  const cB=clrOverride||elevClr(zB,zMin,zMax);
+  const pos=new Float32Array(N*2*3),idx=[];
   for(let i=0;i<N;i++){
-    pos[i*6]=rA[i].x;pos[i*6+1]=zA;pos[i*6+2]=-rA[i].y;
-    pos[i*6+3]=rB[i].x;pos[i*6+4]=zB;pos[i*6+5]=-rB[i].y;
-    clr[i*6]=cA[0];clr[i*6+1]=cA[1];clr[i*6+2]=cA[2];
-    clr[i*6+3]=cB[0];clr[i*6+4]=cB[1];clr[i*6+5]=cB[2];
+    pos[i*6]=rA[i].x;pos[i*6+1]=yA;pos[i*6+2]=-rA[i].y;
+    pos[i*6+3]=rB[i].x;pos[i*6+4]=yB;pos[i*6+5]=-rB[i].y;
   }
   for(let i=0;i<N;i++){
     const j=(i+1)%N,a=i*2,b=i*2+1,c=j*2,d=j*2+1;
     idx.push(a,c,b);idx.push(b,c,d);
   }
   const g=new THREE.BufferGeometry();
-  g.setAttribute('position',new THREE.BufferAttribute(pos,3));
-  g.setAttribute('color',new THREE.BufferAttribute(clr,3));
+  g.setAttribute(‘position’,new THREE.BufferAttribute(pos,3));
   g.setIndex(idx);g.computeVertexNormals();return g;
 }
 
 // ── Cena ──────────────────────────────────────────────────────────────────────
 const scene=new THREE.Scene();
 scene.background=new THREE.Color(0x0d1b2a);
-scene.fog=new THREE.Fog(0x0d1b2a,4000,10000);
+scene.fog=new THREE.Fog(0x0d1b2a,5000,12000);
 
 const camera=new THREE.PerspectiveCamera(38,innerWidth/innerHeight,0.5,30000);
 const renderer=new THREE.WebGLRenderer({antialias:true});
@@ -1158,95 +1141,117 @@ renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 renderer.shadowMap.enabled=true;
 renderer.shadowMap.type=THREE.PCFSoftShadowMap;
 renderer.toneMapping=THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure=1.15;
+renderer.toneMappingExposure=1.1;
 document.body.appendChild(renderer.domElement);
 
-// Iluminação
-scene.add(new THREE.AmbientLight(0xfff5e0,0.48));
-const sun=new THREE.DirectionalLight(0xfffae8,2.0);
-sun.position.set(400,700,500);sun.castShadow=true;
-sun.shadow.mapSize.set(2048,2048);
-const sc=sun.shadow.camera;sc.near=10;sc.far=6000;sc.left=sc.bottom=-1500;sc.right=sc.top=1500;
+// Iluminação oblíqua: sol a ~40° de altura — realça profundidade do corte
+scene.add(new THREE.AmbientLight(0xfff5e0,0.38));
+const sun=new THREE.DirectionalLight(0xfffae8,2.4);
+sun.position.set(1,1.1,0.7).normalize().multiplyScalar(800);
+sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);
+const sc=sun.shadow.camera;sc.near=10;sc.far=7000;sc.left=sc.bottom=-2000;sc.right=sc.top=2000;
 scene.add(sun);
-const fill=new THREE.DirectionalLight(0x3050a0,0.30);fill.position.set(-500,300,-600);scene.add(fill);
-const rim=new THREE.DirectionalLight(0x201808,0.18);rim.position.set(0,50,-800);scene.add(rim);
+const fill=new THREE.DirectionalLight(0x2040a0,0.22);fill.position.set(-1,0.4,-1).normalize().multiplyScalar(600);scene.add(fill);
+const back=new THREE.DirectionalLight(0x100c04,0.12);back.position.set(0,0.15,-1).normalize().multiplyScalar(400);scene.add(back);
 
 const controls=new OrbitControls(camera,renderer.domElement);
 controls.enableDamping=true;controls.dampingFactor=0.07;
 controls.minDistance=20;controls.maxDistance=9000;
-controls.maxPolarAngle=Math.PI*0.488;
+controls.maxPolarAngle=Math.PI*0.490;
+
+// ── Material único dourado estilo Civil 3D ────────────────────────────────────
+const mat=new THREE.MeshPhongMaterial({
+  color:0xD4A017,shininess:32,
+  specular:new THREE.Color(0x553300),
+  side:THREE.DoubleSide
+});
+function addM(geo){const m=new THREE.Mesh(geo,mat);m.castShadow=true;m.receiveShadow=true;scene.add(m);return m;}
 
 // ── Geometria ─────────────────────────────────────────────────────────────────
 const NS=96;
-const zF=D.zF,zN=D.zN,zC=D.zC,zMin=zF,zMax=zC;
+const zF=D.zF,zN=D.zN,zC=D.zC;
 
 const naR=resample(D.naR,NS);
 const fdR=D.fdR?resample(D.fdR,NS):null;
 const crR=D.crR?resample(D.crR,NS):null;
 const peR=D.peR?resample(D.peR,NS):null;
-const outerR=D.outerR?resample(D.outerR,NS):null;
-
-const mat=new THREE.MeshPhongMaterial({vertexColors:true,side:THREE.DoubleSide,shininess:25,specular:new THREE.Color(0x331a00)});
-const matW=new THREE.MeshPhongMaterial({color:0x1565c0,transparent:true,opacity:0.50,shininess:120,specular:new THREE.Color(0x88aaff),side:THREE.DoubleSide});
-
-function addM(geo,m){const mesh=new THREE.Mesh(geo,m);mesh.castShadow=true;mesh.receiveShadow=true;scene.add(mesh);return mesh;}
 
 // 1. Fundo plano
-if(fdR)addM(fanGeo(fdR,zF,zMin,zMax),mat);
+if(fdR)addM(fanGeo(fdR,zF));
 
 // 2. Talude interno: fundo → NA
 if(fdR){
-  addM(stripGeo(fdR,zF,naR,zN,zMin,zMax),mat);
+  addM(stripGeo(fdR,zF,naR,zN));
 }else{
-  let cx=0,cy=0;naR.forEach(p=>{cx+=p.x;cy+=p.y;});cx/=NS;cy/=NS;
-  addM(stripGeo(naR.map(()=>({x:cx,y:cy})),zF,naR,zN,zMin,zMax),mat);
+  let cx0=0,cy0=0;naR.forEach(p=>{cx0+=p.x;cy0+=p.y;});cx0/=NS;cy0/=NS;
+  addM(stripGeo(naR.map(()=>({x:cx0,y:cy0})),zF,naR,zN));
 }
 
-// 3. Talude crista: NA → topo crista
-if(crR)addM(stripGeo(naR,zN,crR,zC,zMin,zMax),mat);
+// 3. Crista berm: NA(zN) → crista topo(zC)
+if(crR)addM(stripGeo(naR,zN,crR,zC));
 
-// 4. Talude externo: topo crista → pé externo
-if(crR&&peR)addM(stripGeo(crR,zC,peR,zN,zMin,zMax),mat);
+// 4. Talude externo: crista topo(zC) → pé externo(zN)
+if(crR&&peR)addM(stripGeo(crR,zC,peR,zN));
 
-// 5. Terreno plano (annular)
-if(peR&&outerR){
-  const tc=elevClr(zN*0.6,zMin,zMax);
-  addM(stripGeo(peR,zN,outerR,zN,zMin,zMax,tc),mat);
-}
-
-// 6. Espelho d'água
-addM(fanGeo(naR,zN+D.H*0.006,zMin,zMax),matW);
-
-// ── Bordas (linhas) ───────────────────────────────────────────────────────────
-function addLoop(ring,z,hex){
-  const pts=ring.map(p=>new THREE.Vector3(p.x,z,-p.y));pts.push(pts[0].clone());
-  scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:hex})));
-}
-if(crR)addLoop(crR,zC,0xffd700);
-addLoop(naR,zN,0x64b5f6);
-if(peR)addLoop(peR,zN,0x8d6e45);
-
-// ── Câmera inicial ────────────────────────────────────────────────────────────
+// 5. Terreno com buraco real (ShapeGeometry) — corte genuíno no terreno
 let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity;
-[...naR,...(crR||[]),...(peR||[])].forEach(p=>{if(p.x<x0)x0=p.x;if(p.x>x1)x1=p.x;if(p.y<y0)y0=p.y;if(p.y>y1)y1=p.y;});
+[...naR,...(crR||[]),...(peR||[])].forEach(p=>{
+  if(p.x<x0)x0=p.x;if(p.x>x1)x1=p.x;if(p.y<y0)y0=p.y;if(p.y>y1)y1=p.y;
+});
 const cx=(x0+x1)/2,cy=(y0+y1)/2;
 const span=Math.max(x1-x0,y1-y0,D.H*5);
-camera.position.set(cx+span*0.80,span*0.58+zC*0.5,cy+span*0.95);
-camera.lookAt(cx,zC*0.25,-cy);
-controls.target.set(cx,zC*0.25,-cy);
+const ext=span*2.5;
+// Contorno externo do terreno (retângulo CCW no plano XY da Shape)
+const terrShape=new THREE.Shape();
+terrShape.moveTo(cx-ext,cy-ext);
+terrShape.lineTo(cx+ext,cy-ext);
+terrShape.lineTo(cx+ext,cy+ext);
+terrShape.lineTo(cx-ext,cy+ext);
+terrShape.closePath();
+// Buraco = pé externo do reservatório (CW — sentido invertido do GIS)
+const hRing=peR||crR||naR;
+const hole=new THREE.Path();
+const hRev=[...hRing].reverse();
+hole.moveTo(hRev[0].x,hRev[0].y);
+for(let i=1;i<hRev.length;i++)hole.lineTo(hRev[i].x,hRev[i].y);
+hole.closePath();
+terrShape.holes.push(hole);
+const terrGeo=new THREE.ShapeGeometry(terrShape,1);
+terrGeo.rotateX(-Math.PI/2); // XY → horizontal XZ
+terrGeo.translate(0,zN,0);   // altura do terreno
+addM(terrGeo);
+
+// ── Bordas ────────────────────────────────────────────────────────────────────
+function addLoop(ring,y,hex,lw){
+  const pts=ring.map(p=>new THREE.Vector3(p.x,y,-p.y));pts.push(pts[0].clone());
+  const lm=new THREE.LineBasicMaterial({color:hex});
+  scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lm));
+}
+if(crR)addLoop(crR,zC,0xffd700);
+if(peR)addLoop(peR,zN,0xa07830);
+
+// ── Câmera inicial ────────────────────────────────────────────────────────────
+camera.position.set(cx+span*0.80,span*0.60+zC,-(cy)+span*0.95);
+camera.lookAt(cx,0,-cy);
+controls.target.set(cx,0,-cy);
 controls.update();
+// Ajustar sombras ao span do modelo
+sun.position.set(span+200,span*1.1+200,span*0.7+200);
+sun.shadow.camera.left=-span*1.5;sun.shadow.camera.right=span*1.5;
+sun.shadow.camera.bottom=-span*1.5;sun.shadow.camera.top=span*1.5;
+sun.shadow.camera.updateProjectionMatrix();
 
 // ── Painel de informações ─────────────────────────────────────────────────────
-document.getElementById('inf').innerHTML=
-  '<b style="font-size:12.5px;letter-spacing:.4px">RESERVATÓRIO ESCAVADO — VISTA 3D</b><br>'+
-  'Vol. útil: <b>'+D.Vutil.toLocaleString('pt-BR')+' m³</b><br>'+
-  'Espelho d’água: <b>'+D.Ae.toLocaleString('pt-BR')+' m²</b><br>'+
-  'Profundidade H: <b>'+D.H.toFixed(2)+' m</b> &nbsp;|&nbsp; BL: <b>'+D.BL+' m</b><br>'+
-  '<small>NA: '+D.zNabs+' m &nbsp; Crista: '+D.zCabs+' m &nbsp; Fundo: '+D.zFabs+' m</small>';
+document.getElementById(‘inf’).innerHTML=
+  ‘<b style="font-size:12.5px;letter-spacing:.4px">RESERVATÓRIO ESCAVADO — VISTA 3D</b><br>’+
+  ‘Vol. útil: <b>’+D.Vutil.toLocaleString(‘pt-BR’)+’ m³</b><br>’+
+  ‘Espelho d’água: <b>’+D.Ae.toLocaleString(‘pt-BR’)+’ m²</b><br>’+
+  ‘Profundidade H: <b>’+D.H.toFixed(2)+’ m</b> &nbsp;|&nbsp; BL: <b>’+D.BL+’ m</b><br>’+
+  ‘<small>NA: ‘+D.zNabs+’ m &nbsp; Crista: ‘+D.zCabs+’ m &nbsp; Fundo: ‘+D.zFabs+’ m</small>’;
 
 // ── Loop de renderização ──────────────────────────────────────────────────────
 (function animate(){requestAnimationFrame(animate);controls.update();renderer.render(scene,camera);})();
-window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+window.addEventListener(‘resize’,()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
 <\/script></body></html>`);
   win.document.close();
 }
