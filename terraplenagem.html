@@ -893,28 +893,32 @@ function svgCorte(id, titleStr, ptLabelL, ptLabelR, z_tL, z_tR, r){
   var out=['<svg viewBox="0 0 '+W+' '+SH+'" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block;background:#fff;font-family:Arial,sans-serif;">'];
 
   out.push('<defs>');
-  // Hachura azul diagonal
-  out.push('<pattern id="ph'+uid+'" patternUnits="userSpaceOnUse" width="9" height="9" patternTransform="rotate(-45 0 0)"><line x1="4.5" y1="0" x2="4.5" y2="9" stroke="#aac6e8" stroke-width="3.6"/></pattern>');
+  // CORTE: fundo rosa + hachura 45°
+  out.push('<pattern id="hC'+uid+'" patternUnits="userSpaceOnUse" width="9" height="9" patternTransform="rotate(45 0 0)"><rect width="9" height="9" fill="#fdecea"/><line x1="4.5" y1="0" x2="4.5" y2="9" stroke="#e57373" stroke-width="2.8"/></pattern>');
+  // ATERRO: fundo azul-claro + hachura -45°
+  out.push('<pattern id="hA'+uid+'" patternUnits="userSpaceOnUse" width="9" height="9" patternTransform="rotate(-45 0 0)"><rect width="9" height="9" fill="#e8f0fe"/><line x1="4.5" y1="0" x2="4.5" y2="9" stroke="#5c85d6" stroke-width="2.8"/></pattern>');
   // Marcadores de seta vermelha
   out.push('<marker id="arR'+uid+'" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><polygon points="0 0,7 3.5,0 7" fill="#c62828"/></marker>');
   out.push('<marker id="arL'+uid+'" markerWidth="7" markerHeight="7" refX="1" refY="3.5" orient="auto"><polygon points="7 0,0 3.5,7 7" fill="#c62828"/></marker>');
+  // Clip abaixo do terreno → CORTE
+  out.push('<clipPath id="clipC'+uid+'"><polygon points="'+X0.toFixed(1)+','+YtL.toFixed(1)+' '+X7.toFixed(1)+','+YtR.toFixed(1)+' '+W+','+SH+' 0,'+SH+'"/></clipPath>');
+  // Clip acima do terreno → ATERRO
+  out.push('<clipPath id="clipA'+uid+'"><polygon points="0,0 '+W+',0 '+X7.toFixed(1)+','+YtR.toFixed(1)+' '+X0.toFixed(1)+','+YtL.toFixed(1)+'"/></clipPath>');
   out.push('</defs>');
   out.push('<rect width="'+W+'" height="'+SH+'" fill="#fff"/>');
 
-  // 1. Zona de água primeiro (fundo: opaca, para a hachura nunca sobrepor)
-  var waterD=mk([[XNL,Yn],[X3,Yf],[X4,Yf],[XNR,Yn]],true);
-  out.push('<path d="'+waterD+'" fill="#c8e6f5" stroke="none"/>');
+  // 1. Corpo — CORTE (rosa, clip abaixo do terreno = área escavada)
+  var bodyD=mk([[X0,YtL],[X1,Yc],[X2,Yc],[X3,Yf],[X4,Yf],[X5,Yc],[X6,Yc],[X7,YtR]],true);
+  out.push('<path d="'+bodyD+'" fill="url(#hC'+uid+')" clip-path="url(#clipC'+uid+')" stroke="none"/>');
 
-  // 2. Corpo hachurado com buraco na zona de água (evenodd = sem hachura na água)
-  var bodyD=mk([[X0,YtL],[X1,Yc],[X2,Yc],[X3,Yf],[X4,Yf],[X5,Yc],[X6,Yc],[X7,YtR]],true)
-    +' '+mk([[XNL,Yn],[X3,Yf],[X4,Yf],[XNR,Yn]],true);
-  out.push('<path d="'+bodyD+'" fill="url(#ph'+uid+')" fill-rule="evenodd" stroke="none"/>');
+  // 2. Corpo — ATERRO (azul, clip acima do terreno = área aterrada)
+  out.push('<path d="'+bodyD+'" fill="url(#hA'+uid+')" clip-path="url(#clipA'+uid+')" stroke="none"/>');
 
-  // 3. Linha de terreno natural (dourada) — de A até B completa
+  // 3. Linha de terreno natural (dourada)
   out.push('<line x1="'+X0.toFixed(1)+'" y1="'+YtL.toFixed(1)+'" x2="'+X7.toFixed(1)+'" y2="'+YtR.toFixed(1)+'" stroke="#c4963a" stroke-width="2.5"/>');
 
-  // 3b. Contorno da zona de água (desenhado por cima da hachura — borda clara e sem sangramento)
-  out.push('<path d="'+waterD+'" fill="none" stroke="#64b5f6" stroke-width="1.2"/>');
+  // 3b. Linha de NA — nível de alagamento (sem polígono de água, apenas linha)
+  out.push('<line x1="'+XNL.toFixed(1)+'" y1="'+Yn.toFixed(1)+'" x2="'+XNR.toFixed(1)+'" y2="'+Yn.toFixed(1)+'" stroke="#1565c0" stroke-width="2.2" stroke-dasharray="10,4"/>');
 
   // 4. Perfil do talude (contorno azul escuro)
   var pts=[X0,YtL,X1,Yc,X2,Yc,X3,Yf,X4,Yf,X5,Yc,X6,Yc,X7,YtR];
@@ -1002,17 +1006,24 @@ function svgCorte(id, titleStr, ptLabelL, ptLabelR, z_tL, z_tR, r){
   // 10. Título
   out.push('<text x="'+pl_+'" y="'+(pt_-14)+'" font-size="11.5" font-weight="bold" fill="#1a237e">'+titleStr+'</text>');
 
-  // 11. Legenda horizontal no topo direito (fora da área de plot)
-  var ll=320,lt=6;
-  out.push('<rect x="'+(ll-4)+'" y="'+lt+'" width="350" height="18" rx="3" fill="rgba(255,255,255,0.88)" stroke="#ccc" stroke-width="0.5"/>');
-  out.push('<rect x="'+(ll+2)+'" y="'+(lt+4)+'" width="12" height="9" fill="url(#ph'+uid+')" stroke="#1565c0" stroke-width="0.5"/>');
-  out.push('<text x="'+(ll+17)+'" y="'+(lt+13)+'" font-size="9" fill="#333">Estrutura</text>');
-  out.push('<rect x="'+(ll+84)+'" y="'+(lt+4)+'" width="12" height="9" fill="#c8e6f5" stroke="#64b5f6" stroke-width="0.5"/>');
-  out.push('<text x="'+(ll+99)+'" y="'+(lt+13)+'" font-size="9" fill="#333">Água</text>');
-  out.push('<line x1="'+(ll+162)+'" y1="'+(lt+9)+'" x2="'+(ll+176)+'" y2="'+(lt+9)+'" stroke="#c4963a" stroke-width="2.2"/>');
-  out.push('<text x="'+(ll+179)+'" y="'+(lt+13)+'" font-size="9" fill="#333">Terreno nat.</text>');
-  out.push('<line x1="'+(ll+252)+'" y1="'+(lt+9)+'" x2="'+(ll+266)+'" y2="'+(lt+9)+'" stroke="#1a237e" stroke-width="2.4"/>');
-  out.push('<text x="'+(ll+269)+'" y="'+(lt+13)+'" font-size="9" fill="#333">Perfil talude</text>');
+  // 11. Legenda horizontal no topo direito
+  var ll=230,lt=6;
+  out.push('<rect x="'+(ll-4)+'" y="'+lt+'" width="470" height="18" rx="3" fill="rgba(255,255,255,0.88)" stroke="#ccc" stroke-width="0.5"/>');
+  // Corte
+  out.push('<rect x="'+(ll+2)+'" y="'+(lt+4)+'" width="12" height="9" fill="url(#hC'+uid+')" stroke="#e57373" stroke-width="0.5"/>');
+  out.push('<text x="'+(ll+17)+'" y="'+(lt+13)+'" font-size="9" fill="#333">Corte</text>');
+  // Aterro
+  out.push('<rect x="'+(ll+62)+'" y="'+(lt+4)+'" width="12" height="9" fill="url(#hA'+uid+')" stroke="#5c85d6" stroke-width="0.5"/>');
+  out.push('<text x="'+(ll+77)+'" y="'+(lt+13)+'" font-size="9" fill="#333">Aterro</text>');
+  // Terreno nat.
+  out.push('<line x1="'+(ll+134)+'" y1="'+(lt+9)+'" x2="'+(ll+148)+'" y2="'+(lt+9)+'" stroke="#c4963a" stroke-width="2.2"/>');
+  out.push('<text x="'+(ll+151)+'" y="'+(lt+13)+'" font-size="9" fill="#333">Terreno nat.</text>');
+  // NA
+  out.push('<line x1="'+(ll+236)+'" y1="'+(lt+9)+'" x2="'+(ll+252)+'" y2="'+(lt+9)+'" stroke="#1565c0" stroke-width="2" stroke-dasharray="6,3"/>');
+  out.push('<text x="'+(ll+255)+'" y="'+(lt+13)+'" font-size="9" fill="#333">NA</text>');
+  // Perfil talude
+  out.push('<line x1="'+(ll+290)+'" y1="'+(lt+9)+'" x2="'+(ll+304)+'" y2="'+(lt+9)+'" stroke="#1a237e" stroke-width="2.4"/>');
+  out.push('<text x="'+(ll+307)+'" y="'+(lt+13)+'" font-size="9" fill="#333">Perfil talude</text>');
 
   // 12. Rótulos dos pontos (A/B ou C/D)
   out.push('<text x="'+X0.toFixed(1)+'" y="'+(Ybot+14)+'" font-size="13" text-anchor="middle" font-weight="bold" fill="#c62828">'+ptLabelL+'</text>');
