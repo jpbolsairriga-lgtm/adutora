@@ -129,7 +129,8 @@ input[type=number],select,input[type=text],input[type=password]{width:100%;backg
   <div class="sec">
     <div class="sec-title">2. Parâmetros do Projeto</div>
     <label>Volume útil (m³)</label>
-    <input type="number" id="pVutil" value="10000" min="100" max="5000000" step="100">
+    <input type="number" id="pVutil" value="10000" min="100" max="5000000" step="100" oninput="updateVutilHint()">
+    <div id="vutilHint" style="font-size:10px;color:#81d4fa;margin:-3px 0 5px;line-height:1.6;"></div>
     <label>Altura morta — h<sub>m</sub> (m) <small style="color:#607080;">(lâmina não captável no fundo)</small></label>
     <input type="number" id="pHmort" value="0.5" min="0" max="5" step="0.1">
     <div class="divider"></div>
@@ -250,6 +251,19 @@ input[type=number],select,input[type=text],input[type=password]{width:100%;backg
 <script>
 // ── Utilitários ───────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
+
+function updateVutilHint(){
+  const v=+($('pVutil').value)||0;
+  const h=$('vutilHint'); if(!h)return;
+  if(v<=0){h.textContent='';return;}
+  const parts=[2,3,4,5].map(H=>{
+    // Aproximação para reservatório quadrado: V ≈ H * Ae * 0.93
+    const L=Math.round(Math.sqrt(v/(H*0.93)));
+    return H+'m prof.: ~'+L+'×'+L+' m';
+  });
+  h.innerHTML='<span style="color:#78909c;">Ref. (reserv. quadrado):</span> '+parts.join(' &nbsp;|&nbsp; ');
+}
+
 function setStatus(msg, tipo=''){const el=$('status');if(el){el.textContent=msg;el.className=tipo;}}
 function fmt(n,d=0){return(+n).toLocaleString('pt-BR',{minimumFractionDigits:d,maximumFractionDigits:d});}
 function haversineM(a,b){const R=6371000,dLat=(b.lat-a.lat)*Math.PI/180,dLng=(b.lng-a.lng)*Math.PI/180;const s=Math.sin(dLat/2)**2+Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.sin(dLng/2)**2;return R*2*Math.asin(Math.sqrt(s));}
@@ -276,6 +290,7 @@ function _ativarMutant(){
 function salvarKey(){const k=$('gmKey').value.trim();if(!k)return;localStorage.setItem('mapskey_terra',k);ativarGoogleMaps(k);}
 const savedKey=localStorage.getItem('mapskey_terra');
 if(savedKey){$('gmKey').value=savedKey;$('keyStatus').textContent='Carregando…';$('keyStatus').style.color='#81d4fa';ativarGoogleMaps(savedKey);}
+updateVutilHint();
 
 // ── Estado ────────────────────────────────────────────────────────────────────
 let modo='idle';
@@ -886,16 +901,20 @@ function svgCorte(id, titleStr, ptLabelL, ptLabelR, z_tL, z_tR, r){
   out.push('</defs>');
   out.push('<rect width="'+W+'" height="'+SH+'" fill="#fff"/>');
 
-  // 1. Corpo principal (polígono fechado via linha de terreno)
-  var bodyD=mk([[X0,YtL],[X1,Yc],[X2,Yc],[X3,Yf],[X4,Yf],[X5,Yc],[X6,Yc],[X7,YtR]],true);
-  out.push('<path d="'+bodyD+'" fill="url(#ph'+uid+')" stroke="none"/>');
-
-  // 2. Zona de água (NA até fundo, interior do reservatório)
+  // 1. Zona de água primeiro (fundo: opaca, para a hachura nunca sobrepor)
   var waterD=mk([[XNL,Yn],[X3,Yf],[X4,Yf],[XNR,Yn]],true);
-  out.push('<path d="'+waterD+'" fill="#c8e6f5" opacity="0.85" stroke="#64b5f6" stroke-width="1"/>');
+  out.push('<path d="'+waterD+'" fill="#c8e6f5" stroke="none"/>');
+
+  // 2. Corpo hachurado com buraco na zona de água (evenodd = sem hachura na água)
+  var bodyD=mk([[X0,YtL],[X1,Yc],[X2,Yc],[X3,Yf],[X4,Yf],[X5,Yc],[X6,Yc],[X7,YtR]],true)
+    +' '+mk([[XNL,Yn],[X3,Yf],[X4,Yf],[XNR,Yn]],true);
+  out.push('<path d="'+bodyD+'" fill="url(#ph'+uid+')" fill-rule="evenodd" stroke="none"/>');
 
   // 3. Linha de terreno natural (dourada) — de A até B completa
   out.push('<line x1="'+X0.toFixed(1)+'" y1="'+YtL.toFixed(1)+'" x2="'+X7.toFixed(1)+'" y2="'+YtR.toFixed(1)+'" stroke="#c4963a" stroke-width="2.5"/>');
+
+  // 3b. Contorno da zona de água (desenhado por cima da hachura — borda clara e sem sangramento)
+  out.push('<path d="'+waterD+'" fill="none" stroke="#64b5f6" stroke-width="1.2"/>');
 
   // 4. Perfil do talude (contorno azul escuro)
   var pts=[X0,YtL,X1,Yc,X2,Yc,X3,Yf,X4,Yf,X5,Yc,X6,Yc,X7,YtR];
@@ -1066,13 +1085,12 @@ body{background:#0d1b2a;overflow:hidden;font-family:Arial,sans-serif}
 <div id="ld">&#9651; Carregando renderizador 3D…</div>
 <div id="inf" style="display:none"></div>
 <div id="hint">Arraste: rotacionar &nbsp;·&nbsp; Scroll: zoom &nbsp;·&nbsp; Botão direito: mover</div>
-<script>window.__D=${D};<\/script>
-<script type="module">
-import * as THREE from ‘https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js’;
-import {OrbitControls} from ‘https://cdn.jsdelivr.net/npm/three@0.152.2/examples/jsm/controls/OrbitControls.js’;
+<script src="https://cdn.jsdelivr.net/npm/three@0.127.0/build/three.min.js"><\/script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.127.0/examples/js/controls/OrbitControls.js"><\/script>
+<script>
 document.getElementById(‘ld’).style.display=’none’;
 document.getElementById(‘inf’).style.display=’block’;
-const D=window.__D;
+const D=${D};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function closeOff(r){
@@ -1154,7 +1172,7 @@ scene.add(sun);
 const fill=new THREE.DirectionalLight(0x2040a0,0.22);fill.position.set(-1,0.4,-1).normalize().multiplyScalar(600);scene.add(fill);
 const back=new THREE.DirectionalLight(0x100c04,0.12);back.position.set(0,0.15,-1).normalize().multiplyScalar(400);scene.add(back);
 
-const controls=new OrbitControls(camera,renderer.domElement);
+const controls=new THREE.OrbitControls(camera,renderer.domElement);
 controls.enableDamping=true;controls.dampingFactor=0.07;
 controls.minDistance=20;controls.maxDistance=9000;
 controls.maxPolarAngle=Math.PI*0.490;
@@ -1555,7 +1573,6 @@ tr:nth-child(even) td:not(.th2){background:#f7f9fb;}
   <button onclick="window.print()" style="background:#003d5c;color:#fff;border:none;border-radius:6px;padding:9px 26px;font-size:12pt;font-weight:700;cursor:pointer;margin-right:8px;">🖨️ Imprimir / PDF</button>
   <button onclick="window.close()" style="background:#546e7a;color:#fff;border:none;border-radius:6px;padding:9px 18px;font-size:11pt;cursor:pointer;">✕ Fechar</button>
 </div>
-<script>setTimeout(()=>window.print(),900);<\/script>
 </body></html>`);
   win.document.close();
 }
