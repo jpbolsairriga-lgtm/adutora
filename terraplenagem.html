@@ -143,7 +143,7 @@ input[type=number],select,input[type=text],input[type=password]{width:100%;backg
     <label>Borda livre (m)</label>
     <input type="number" id="pBL" value="0.5" min="0.1" max="3" step="0.1">
     <div class="divider"></div>
-    <label>Altura NA acima do terreno (m) <span style="color:#546e7a;font-size:9px;">0 = totalmente escavado</span></label>
+    <label>Ajuste de cota NA (m) <span style="color:#546e7a;font-size:9px;">0 = NA na cota mais alta do perímetro</span></label>
     <input type="number" id="pNaAbove" value="0" min="-5" max="20" step="0.1">
     <div class="divider"></div>
     <div class="row2">
@@ -266,12 +266,15 @@ function updateVutilHint(){
   const v=+($('pVutil').value)||0;
   const h=$('vutilHint'); if(!h)return;
   if(v<=0){h.textContent='';return;}
+  const Ti=2; // talude 1:2 — 1 m vertical abre 2 m horizontais (cada lado)
   const parts=[2,3,4,5].map(H=>{
-    // Aproximação para reservatório quadrado: V ≈ H * Ae * 0.93
-    const L=Math.round(Math.sqrt(v/(H*0.93)));
-    return H+'m prof.: ~'+L+'×'+L+' m';
+    // Prismatóide retangular: V = H/6 * (L² + 4*(L-H·Ti)² + (L-2H·Ti)²)
+    let lo=H*Ti*2+2,hi=3000;
+    for(let k=0;k<60;k++){const L=(lo+hi)/2;const Ae=L*L,Am=Math.max(0,L-H*Ti)**2,Af=Math.max(0,L-2*H*Ti)**2;const vol=H/6*(Ae+4*Am+Af);if(vol<v)lo=L;else hi=L;}
+    const L=Math.round((lo+hi)/2);
+    return H+'m: ~'+L+'×'+L+' m';
   });
-  h.innerHTML='<span style="color:#78909c;">Ref. (reserv. quadrado):</span> '+parts.join(' &nbsp;|&nbsp; ');
+  h.innerHTML='<span style="color:#78909c;">Ref. (retângulo Ti=1:2):</span> '+parts.join(' &nbsp;|&nbsp; ');
 }
 
 function setStatus(msg, tipo=''){const el=$('status');if(el){el.textContent=msg;el.className=tipo;}}
@@ -606,10 +609,9 @@ async function dimensionar(){
     // Cotas
     const z_terreno=perimCells.reduce((s,c)=>s+c.elev,0)/perimCells.length;
     const z_terreno_max=perimCells.reduce((s,c)=>Math.max(s,c.elev),-Infinity);
-    const z_na=+(z_terreno+p.h_na_ab).toFixed(2);
-    // Crista deve estar acima do ponto mais alto do perímetro + borda livre
-    // (evita que chuva sobre terreno alto supere o talude e entre no reservatório)
-    const z_crista=+(Math.max(z_na,z_terreno_max)+p.BL).toFixed(2);
+    // NA sobe até o ponto mais alto do perímetro (reservatório cheio = BL abaixo da crista)
+    const z_na=+(z_terreno_max+p.h_na_ab).toFixed(2);
+    const z_crista=+(z_na+p.BL).toFixed(2);
 
     setStatus('Calculando geometria…','info');
     const Ae=turf.area(turfPoly);
@@ -1065,9 +1067,9 @@ function fecharVista3D(){
   $('modal3d').style.display='none';
   if(_3d_raf){cancelAnimationFrame(_3d_raf);_3d_raf=null;}
   if(_3d_renderer){_3d_renderer.dispose();_3d_renderer=null;}
-  const cv=$('canvas3d');
-  // Limpar canvas para próxima abertura
-  const ctx=cv.getContext('2d');if(ctx)ctx.clearRect(0,0,cv.width,cv.height);
+  // Substituir canvas: dispose() perde o contexto WebGL; canvas novo garante contexto limpo
+  const modal=$('modal3d'),old=$('canvas3d');
+  if(old){const nc=document.createElement('canvas');nc.id='canvas3d';nc.style.cssText='width:100%;height:100%;display:block;';modal.replaceChild(nc,old);}
 }
 function gerarVista3D(){
   if(!resultado||!polyPts||polyPts.length<3){alert('Dimensione o reservatório primeiro.');return;}
@@ -1103,6 +1105,8 @@ function gerarVista3D(){
   if(_3d_raf){cancelAnimationFrame(_3d_raf);_3d_raf=null;}
   if(_3d_renderer){_3d_renderer.dispose();_3d_renderer=null;}
   $('modal3d').style.display='block';$('m3d-inf').style.display='none';
+  // Aguarda 1 frame para o canvas ser exibido antes de criar contexto WebGL
+  requestAnimationFrame(function(){if($('modal3d').style.display==='none')return;try{
   const W3=window.innerWidth,H3=window.innerHeight;
   const cv=$('canvas3d');cv.width=W3;cv.height=H3;
 
@@ -1157,6 +1161,7 @@ function gerarVista3D(){
     +'<small>NA: '+D.zNabs+' m &nbsp; Crista: '+D.zCabs+' m &nbsp; Fundo: '+D.zFabs+' m</small>';
   window.addEventListener('resize',function _rdr3Resize(){if(!_3d_renderer){window.removeEventListener('resize',_rdr3Resize);return;}cam3.aspect=window.innerWidth/window.innerHeight;cam3.updateProjectionMatrix();_3d_renderer.setSize(window.innerWidth,window.innerHeight);});
   (function _animate(){_3d_raf=requestAnimationFrame(_animate);ctl3.update();rdr3.render(scene3,cam3);})();
+  }catch(e){console.error('Vista 3D:',e);$('m3d-inf').style.display='block';$('m3d-inf').innerHTML='<span style="color:#ef9a9a;font-size:12px;font-weight:bold;">Erro 3D: '+e.message+'</span>';}});
 }
 
 // ── Planta Técnica ────────────────────────────────────────────────────────────
