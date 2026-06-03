@@ -192,6 +192,7 @@ input[type=number],select,input[type=text],input[type=password]{width:100%;backg
     <div id="boxRes"></div>
     <div style="margin-top:8px;display:flex;flex-direction:column;gap:4px;">
       <button class="btn btn-sec" onclick="$('modalCortes').classList.add('open')">📊 Cortes Transversais</button>
+      <button class="btn" style="background:#4a148c;color:#fff;" onclick="equalizarTerra()">⚖ Equalizar Corte/Aterro</button>
       <button class="btn" style="background:#1b5e20;color:#fff;" onclick="gerarVista3D()">🏗 Vista 3D</button>
       <button class="btn" style="background:#37474f;color:#fff;" onclick="gerarPlantaTecnica()">📋 Planta Técnica</button>
       <button class="btn" style="background:#2e7d32;color:#fff;" onclick="gerarKML()">🗺️ Exportar KML</button>
@@ -517,6 +518,75 @@ function calcAterro(perimPts,z_crista,Lc,Te){
     Vfill+=(Lc*h+Te*h*h/2)*segLen;
   }
   return Vfill;
+}
+
+// ── Equalizar Corte/Aterro — bisseção no z_na (Civil 3D mass balance) ────────
+function equalizarTerra(){
+  if(!resultado||!gridCells.length||!perimCells.length){alert('Dimensione o reservatório primeiro.');return;}
+  const r=resultado,p=r.p,H=r.H;
+
+  // Pré-calcula distâncias ao contorno uma única vez (independentes de z_na)
+  const boundary=turf.polygonToLine(turfPoly);
+  const cellDists=gridCells.map(cell=>{
+    const near=turf.nearestPointOnLine(boundary,turf.point([cell.lng,cell.lat]));
+    return near.properties.dist*1000;
+  });
+  function calcCorteRapido(z_na,z_fundo){
+    let Vc=0;
+    for(let i=0;i<gridCells.length;i++){
+      const d=cellDists[i];
+      const zf=(d>=H*p.Ti)?z_fundo:(z_na-d/p.Ti);
+      Vc+=Math.max(0,gridCells[i].elev-zf)*gridCells[i].areaM2;
+    }
+    return Vc;
+  }
+  // f(z_na) = Vcut - Vfill_nec → positivo = sobra, negativo = falta
+  // f decresce com z_na (NA alto → mais aterro, menos corte)
+  function delta(z_na){
+    return calcCorteRapido(z_na,z_na-H)-calcAterro(perimCells,z_na+p.BL,p.Lc,p.Te)*p.Fc;
+  }
+
+  const z_max=perimCells.reduce((s,c)=>Math.max(s,c.elev),-Infinity);
+  const z_min=perimCells.reduce((s,c)=>Math.min(s,c.elev),Infinity);
+  const lo0=z_min-3, hi0=z_max+3;
+  const fLo=delta(lo0), fHi=delta(hi0);
+
+  if(fLo<=0){setStatus('⚠ Corte insuficiente mesmo no nível mínimo — terreno côncavo. Resultado mantido.','err');return;}
+  if(fHi>=0){setStatus('⚠ Excesso de corte em qualquer nível — nível máximo já era suficiente.','ok');return;}
+
+  // Bisseção: f(lo0)>0, f(hi0)<0
+  let lo=lo0,hi=hi0;
+  for(let k=0;k<60;k++){const mid=(lo+hi)/2;if(delta(mid)>0)lo=mid;else hi=mid;}
+  const z_na_eq=+((lo+hi)/2).toFixed(2);
+  const z_cr_eq=+(z_na_eq+p.BL).toFixed(2);
+  const z_fd_eq=+(z_na_eq-H).toFixed(2);
+
+  // Recalcular valores derivados
+  const h_at_avg=Math.max(0,+(z_cr_eq-r.z_terreno).toFixed(2));
+  const h_esc_avg=Math.max(0,+(r.z_terreno-z_fd_eq).toFixed(2));
+  const Vcut=calcCorteRapido(z_na_eq,z_fd_eq);
+  const Vfill_tin=calcAterro(perimCells,z_cr_eq,p.Lc,p.Te);
+  const Vfill_nec=Vfill_tin*p.Fc;
+  const balanco=+(Vcut-Vfill_nec).toFixed(0);
+  const V_bota=Math.max(0,balanco);
+  const peExtBuf=r.cristaBuf?(buildVariablePeExt(r.cristaBuf,perimCells,z_cr_eq,p.Te)||bufferedPoly(r.cristaBuf,h_at_avg*p.Te)):null;
+  const A_pe_total=peExtBuf?turf.area(peExtBuf):r.Ae;
+  const V_limpeza=A_pe_total*p.h_limp;
+  const n_bota=V_bota>0?Math.ceil(V_bota/p.V_caminhao):0;
+  const n_limp=Math.ceil(V_limpeza/p.V_caminhao);
+
+  Object.assign(resultado,{
+    z_na:z_na_eq,z_crista:z_cr_eq,z_fundo:z_fd_eq,
+    h_at_avg,h_esc_avg,
+    Vcut,Vfill_tin,Vfill_nec,Vfill_delta:Vfill_nec-Vfill_tin,balanco,
+    peExtBuf,A_pe_total,V_limpeza,V_bota,n_bota,n_limp,
+    h_at_A:Math.max(0,z_cr_eq-r.z_t_A),
+    h_at_C:Math.max(0,z_cr_eq-r.z_t_C),
+  });
+
+  mostrarResultados();desenharOverlays();marcarCortes();gerarCortesSVG();
+  const dif=(z_na_eq-z_max).toFixed(2);
+  setStatus('⚖ Equalizado: NA='+z_na_eq+' m ('+dif+' m vs cota máx). Corte ≈ Aterro — saldo: '+balanco.toLocaleString('pt-BR')+' m³.','ok');
 }
 
 // ── Limpar overlays ───────────────────────────────────────────────────────────
