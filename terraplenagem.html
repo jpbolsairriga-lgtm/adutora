@@ -267,15 +267,20 @@ function updateVutilHint(){
   const v=+($('pVutil').value)||0;
   const h=$('vutilHint'); if(!h)return;
   if(v<=0){h.textContent='';return;}
-  const Ti=2; // talude 1:2 — 1 m vertical abre 2 m horizontais (cada lado)
+  const Ti=2, ratio=1.5; // proporção 3:2 (lado longo × lado curto), talude 1:2
   const parts=[2,3,4,5].map(H=>{
-    // Prismatóide retangular: V = H/6 * (L² + 4*(L-H·Ti)² + (L-2H·Ti)²)
-    let lo=H*Ti*2+2,hi=3000;
-    for(let k=0;k<60;k++){const L=(lo+hi)/2;const Ae=L*L,Am=Math.max(0,L-H*Ti)**2,Af=Math.max(0,L-2*H*Ti)**2;const vol=H/6*(Ae+4*Am+Af);if(vol<v)lo=L;else hi=L;}
-    const L=Math.round((lo+hi)/2);
-    return '<span style="white-space:nowrap">'+H+'m: ~'+L+'×'+L+'m</span>';
+    // Prismatóide L×W com W=L/ratio e talude Ti em todos os lados
+    // Ae=L×W (NA), Am=(L-H·Ti)×(W-H·Ti), Af=(L-2H·Ti)×(W-2H·Ti)
+    let lo=2*H*Ti*ratio+2,hi=4000;
+    for(let k=0;k<60;k++){
+      const L=(lo+hi)/2,W=L/ratio;
+      const Ae=L*W,Am=Math.max(0,L-H*Ti)*Math.max(0,W-H*Ti),Af=Math.max(0,L-2*H*Ti)*Math.max(0,W-2*H*Ti);
+      if(H/6*(Ae+4*Am+Af)<v)lo=L;else hi=L;
+    }
+    const L=Math.round((lo+hi)/2),W=Math.round(L/ratio);
+    return '<span style="white-space:nowrap">'+H+'m: ~'+L+'×'+W+'m</span>';
   });
-  h.innerHTML='<span style="color:#78909c;">Ref. (retângulo Ti=1:2):</span> '+parts.join(' &nbsp;|&nbsp; ');
+  h.innerHTML='<span style="color:#78909c;">Ref. (3:2, Ti=1:2):</span> '+parts.join(' &nbsp;|&nbsp; ');
 }
 
 function setStatus(msg, tipo=''){const el=$('status');if(el){el.textContent=msg;el.className=tipo;}}
@@ -940,7 +945,7 @@ function mostrarResultados(){
 }
 
 // ── SVG Corte Transversal (seção completa A→B) ───────────────────────────────
-function svgCorte(id, titleStr, ptLabelL, ptLabelR, z_tL, z_tR, r){
+function svgCorte(id, titleStr, ptLabelL, ptLabelR, z_tL, z_tR, r, terrainProfile){
   var p=r.p, Ti=p.Ti, Te=p.Te, Lc=p.Lc, BL=p.BL;
   var H=r.H, zNa=r.z_na, zCr=r.z_crista, zFd=r.z_fundo;
   var h_atL=Math.max(0,zCr-z_tL), h_atR=Math.max(0,zCr-z_tR);
@@ -967,6 +972,17 @@ function svgCorte(id, titleStr, ptLabelL, ptLabelR, z_tL, z_tR, r){
   var XNL=sx(xNaL),XNR=sx(xNaR),XTL=sx(xTL),XTR=sx(xTR);
   var Yc=sy(zCr),Yn=sy(zNa),Yf=sy(zFd),YtL=sy(z_tL),YtR=sy(z_tR),Ybot=pt_+plotH;
 
+  // Poligonal de terreno: plana até x2 (z_tL), perfil amostrado de x2 a x5, plana até x7 (z_tR)
+  var tPts=[[X0,YtL],[X2,YtL]];
+  if(terrainProfile&&terrainProfile.length>0){
+    terrainProfile.forEach(function(tp){
+      if(tp.frac>0&&tp.frac<1) tPts.push([sx(x2+tp.frac*(x5-x2)),sy(tp.elev)]);
+    });
+  }
+  tPts.push([X5,YtR],[X7,YtR]);
+  var tPtsStr=tPts.map(function(p){return p[0].toFixed(1)+','+p[1].toFixed(1);}).join(' ');
+  var tPtsRevStr=[...tPts].reverse().map(function(p){return p[0].toFixed(1)+','+p[1].toFixed(1);}).join(' ');
+
   function mk(segs,close){
     return segs.map(function(s,i){return(i?'L':'M')+s[0].toFixed(1)+','+s[1].toFixed(1);}).join(' ')+(close?' Z':'');
   }
@@ -982,10 +998,10 @@ function svgCorte(id, titleStr, ptLabelL, ptLabelR, z_tL, z_tR, r){
   // Marcadores de seta vermelha
   out.push('<marker id="arR'+uid+'" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><polygon points="0 0,7 3.5,0 7" fill="#c62828"/></marker>');
   out.push('<marker id="arL'+uid+'" markerWidth="7" markerHeight="7" refX="1" refY="3.5" orient="auto"><polygon points="7 0,0 3.5,7 7" fill="#c62828"/></marker>');
-  // Clip abaixo do terreno → CORTE
-  out.push('<clipPath id="clipC'+uid+'"><polygon points="'+X0.toFixed(1)+','+YtL.toFixed(1)+' '+X7.toFixed(1)+','+YtR.toFixed(1)+' '+W+','+SH+' 0,'+SH+'"/></clipPath>');
+  // Clip abaixo do terreno → CORTE (segue a poligonal de terreno)
+  out.push('<clipPath id="clipC'+uid+'"><polygon points="'+tPtsStr+' '+W+','+SH+' 0,'+SH+'"/></clipPath>');
   // Clip acima do terreno → ATERRO
-  out.push('<clipPath id="clipA'+uid+'"><polygon points="0,0 '+W+',0 '+X7.toFixed(1)+','+YtR.toFixed(1)+' '+X0.toFixed(1)+','+YtL.toFixed(1)+'"/></clipPath>');
+  out.push('<clipPath id="clipA'+uid+'"><polygon points="0,0 '+W+',0 '+tPtsRevStr+'"/></clipPath>');
   out.push('</defs>');
   out.push('<rect width="'+W+'" height="'+SH+'" fill="#fff"/>');
 
@@ -996,11 +1012,17 @@ function svgCorte(id, titleStr, ptLabelL, ptLabelR, z_tL, z_tR, r){
   // 2. Corpo — ATERRO (azul, clip acima do terreno = área aterrada)
   out.push('<path d="'+bodyD+'" fill="url(#hA'+uid+')" clip-path="url(#clipA'+uid+')" stroke="none"/>');
 
-  // 3. Linha de terreno natural (dourada)
-  out.push('<line x1="'+X0.toFixed(1)+'" y1="'+YtL.toFixed(1)+'" x2="'+X7.toFixed(1)+'" y2="'+YtR.toFixed(1)+'" stroke="#c4963a" stroke-width="2.5"/>');
+  // 3. Linha de terreno natural (dourada) — poligonal com ondulação real
+  out.push('<polyline points="'+tPtsStr+'" fill="none" stroke="#c4963a" stroke-width="2.5" stroke-linejoin="round"/>');
 
-  // 3b. Linha de NA — nível de alagamento (sem polígono de água, apenas linha)
+  // 3b. Linha de NA — nível de alagamento
   out.push('<line x1="'+XNL.toFixed(1)+'" y1="'+Yn.toFixed(1)+'" x2="'+XNR.toFixed(1)+'" y2="'+Yn.toFixed(1)+'" stroke="#1565c0" stroke-width="2.2" stroke-dasharray="10,4"/>');
+
+  // 3c. Volume morto
+  if(r.h_m>0.05){
+    var XMortL=sx(x3-r.h_m*Ti),XMortR=sx(x4+r.h_m*Ti),Ymort=sy(zFd+r.h_m);
+    out.push('<line x1="'+XMortL.toFixed(1)+'" y1="'+Ymort.toFixed(1)+'" x2="'+XMortR.toFixed(1)+'" y2="'+Ymort.toFixed(1)+'" stroke="#f57f17" stroke-width="2" stroke-dasharray="14,5"/>');
+  }
 
   // 4. Perfil do talude (contorno azul escuro)
   var pts=[X0,YtL,X1,Yc,X2,Yc,X3,Yf,X4,Yf,X5,Yc,X6,Yc,X7,YtR];
@@ -1013,6 +1035,7 @@ function svgCorte(id, titleStr, ptLabelL, ptLabelR, z_tL, z_tR, r){
     {z:zNa,c:'#1565c0',d:'12,5',lbl:zNa.toFixed(2)+' NA norm.'},
     {z:zFd,c:'#00838f',d:'6,4',lbl:zFd.toFixed(2)+' Fundo'}
   ];
+  if(r.h_m>0.05) refs.push({z:zFd+r.h_m,c:'#f57f17',d:'14,5',lbl:(zFd+r.h_m).toFixed(2)+' V. morto'});
   refs.forEach(function(rf){
     var y=sy(rf.z); if(y<pt_-8||y>Ybot+8)return;
     out.push('<line x1="'+pl_+'" y1="'+y.toFixed(1)+'" x2="'+(W-pr_+2)+'" y2="'+y.toFixed(1)+'" stroke="'+rf.c+'" stroke-width="1" stroke-dasharray="'+rf.d+'"/>');
@@ -1090,7 +1113,8 @@ function svgCorte(id, titleStr, ptLabelL, ptLabelR, z_tL, z_tR, r){
 
   // 11. Legenda horizontal no topo direito
   var ll=230,lt=6;
-  out.push('<rect x="'+(ll-4)+'" y="'+lt+'" width="470" height="18" rx="3" fill="rgba(255,255,255,0.88)" stroke="#ccc" stroke-width="0.5"/>');
+  var legW=r.h_m>0.05?530:470;
+  out.push('<rect x="'+(ll-4)+'" y="'+lt+'" width="'+legW+'" height="18" rx="3" fill="rgba(255,255,255,0.88)" stroke="#ccc" stroke-width="0.5"/>');
   // Corte
   out.push('<rect x="'+(ll+2)+'" y="'+(lt+4)+'" width="12" height="9" fill="url(#hC'+uid+')" stroke="#e57373" stroke-width="0.5"/>');
   out.push('<text x="'+(ll+17)+'" y="'+(lt+13)+'" font-size="9" fill="#333">Corte</text>');
@@ -1106,6 +1130,11 @@ function svgCorte(id, titleStr, ptLabelL, ptLabelR, z_tL, z_tR, r){
   // Perfil talude
   out.push('<line x1="'+(ll+290)+'" y1="'+(lt+9)+'" x2="'+(ll+304)+'" y2="'+(lt+9)+'" stroke="#1a237e" stroke-width="2.4"/>');
   out.push('<text x="'+(ll+307)+'" y="'+(lt+13)+'" font-size="9" fill="#333">Perfil talude</text>');
+  // V. morto (condicional)
+  if(r.h_m>0.05){
+    out.push('<line x1="'+(ll+400)+'" y1="'+(lt+9)+'" x2="'+(ll+414)+'" y2="'+(lt+9)+'" stroke="#f57f17" stroke-width="2" stroke-dasharray="7,3"/>');
+    out.push('<text x="'+(ll+417)+'" y="'+(lt+13)+'" font-size="9" fill="#333">V. morto</text>');
+  }
 
   // 12. Rótulos dos pontos (A/B ou C/D)
   out.push('<text x="'+X0.toFixed(1)+'" y="'+(Ybot+14)+'" font-size="13" text-anchor="middle" font-weight="bold" fill="#c62828">'+ptLabelL+'</text>');
@@ -1125,10 +1154,26 @@ function gerarCortesSVG(){
     w.innerHTML='<div style="font-size:11px;font-weight:700;color:#e2b96e;margin-bottom:6px;">'+hdr+'</div>'+svgHtml;
     cc.appendChild(w);
   }
+  // Amostra elevações ao longo do transecto (ptL→ptR) usando nearest-neighbor em gridCells+perimCells
+  function sampleTransect(ptL,ptR,N){
+    const allC=[...gridCells,...perimCells];
+    const out=[];
+    for(let i=0;i<N;i++){
+      const frac=i/(N-1);
+      const lat2=ptL.lat+(ptR.lat-ptL.lat)*frac;
+      const lng2=ptL.lng+(ptR.lng-ptL.lng)*frac;
+      let best=Infinity,elev=r.z_na;
+      for(const c of allC){const d=(c.lat-lat2)**2+(c.lng-lng2)**2;if(d<best){best=d;elev=c.elev;}}
+      out.push({frac,elev});
+    }
+    return out;
+  }
+  const profAB=sampleTransect(r.pt_A,r.pt_B,24);
+  const profCD=sampleTransect(r.pt_C,r.pt_D,24);
   addCorte('CORTE A-B — MAIOR ATERRO ('+r.h_at_A.toFixed(2)+' m)',
-    svgCorte('ab','CORTE A-B — MAIOR ATERRO ('+r.h_at_A.toFixed(2)+' m)','A','B',r.z_t_A,r.z_t_B,r));
+    svgCorte('ab','CORTE A-B — MAIOR ATERRO ('+r.h_at_A.toFixed(2)+' m)','A','B',r.z_t_A,r.z_t_B,r,profAB));
   addCorte('CORTE C-D — MENOR ATERRO ('+r.h_at_C.toFixed(2)+' m)',
-    svgCorte('cd','CORTE C-D — MENOR ATERRO ('+r.h_at_C.toFixed(2)+' m)','C','D',r.z_t_C,r.z_t_D,r));
+    svgCorte('cd','CORTE C-D — MENOR ATERRO ('+r.h_at_C.toFixed(2)+' m)','C','D',r.z_t_C,r.z_t_D,r,profCD));
 }
 
 // ── Vista 3D — Three.js WebGL (modal inline) ──────────────────────────────────
@@ -1213,10 +1258,40 @@ function gerarVista3D(){
   let bx0=Infinity,bx1=-Infinity,by0=Infinity,by1=-Infinity;
   [...naR3,...(crR3||[]),...(peR3||[])].forEach(q=>{if(q.x<bx0)bx0=q.x;if(q.x>bx1)bx1=q.x;if(q.y<by0)by0=q.y;if(q.y>by1)by1=q.y;});
   const bcx=(bx0+bx1)/2,bcy=(by0+by1)/2,span=Math.max(bx1-bx0,by1-by0,D.H*5),ext=span*1.4;
-  const ts=new THREE.Shape();ts.moveTo(bcx-ext,bcy-ext);ts.lineTo(bcx+ext,bcy-ext);ts.lineTo(bcx+ext,bcy+ext);ts.lineTo(bcx-ext,bcy+ext);ts.closePath();
-  const hRing=peR3||crR3||naR3,hole=new THREE.Path(),hRev=[...hRing].reverse();
-  hole.moveTo(hRev[0].x,hRev[0].y);for(let i=1;i<hRev.length;i++)hole.lineTo(hRev[i].x,hRev[i].y);hole.closePath();ts.holes.push(hole);
-  const tGeo=new THREE.ShapeGeometry(ts,1);tGeo.rotateX(-Math.PI/2);tGeo.translate(0,zN,0);addM3(tGeo);
+  // Terreno externo com elevação real — grade NGT×NGT, pula quads totalmente internos ao reservatório
+  const NGT=44, innerPolyGeo=r.peExtBuf||r.cristaBuf||turfPoly;
+  const gxStep=(2*ext)/NGT, gyStep=(2*ext)/NGT;
+  const allCellsTerr=[...gridCells,...perimCells];
+  const terrV=[];
+  for(let jj=0;jj<=NGT;jj++){
+    for(let ii=0;ii<=NGT;ii++){
+      const gx=(bcx-ext)+ii*gxStep,gy=(bcy-ext)+jj*gyStep;
+      const lat2=cLat+gy/mLat,lng2=cLng+gx/mLng;
+      const ins=turf.booleanPointInPolygon([lng2,lat2],innerPolyGeo);
+      let yEl=zN;
+      if(!ins){
+        let best=Infinity,el2=r.z_na;
+        for(const c of allCellsTerr){const d=(c.lat-lat2)**2+(c.lng-lng2)**2;if(d<best){best=d;el2=c.elev;}}
+        yEl=el2-r.z_na;
+      }
+      terrV.push({gx,gy,yEl,ins});
+    }
+  }
+  const tPos=[],tIdx=[];
+  const tVI=(ii,jj)=>jj*(NGT+1)+ii;
+  for(let jj=0;jj<NGT;jj++){
+    for(let ii=0;ii<NGT;ii++){
+      const va=terrV[tVI(ii,jj)],vb=terrV[tVI(ii+1,jj)],vc=terrV[tVI(ii,jj+1)],vd=terrV[tVI(ii+1,jj+1)];
+      if(va.ins&&vb.ins&&vc.ins&&vd.ins)continue;
+      const b=tPos.length/3;
+      tPos.push(va.gx,va.yEl,-va.gy,vb.gx,vb.yEl,-vb.gy,vc.gx,vc.yEl,-vc.gy,vd.gx,vd.yEl,-vd.gy);
+      tIdx.push(b,b+1,b+2,b+1,b+3,b+2);
+    }
+  }
+  const tGeo=new THREE.BufferGeometry();
+  tGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(tPos),3));
+  tGeo.setIndex(tIdx);tGeo.computeVertexNormals();
+  addM3(tGeo);
   function addLoop3(ring,y,hex){const pts=ring.map(q=>new THREE.Vector3(q.x,y,-q.y));pts.push(pts[0].clone());scene3.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:hex})));}
   if(crR3)addLoop3(crR3,zC,0xffd700);if(peR3)addLoop3(peR3,zN,0xa07830);
   cam3.position.set(bcx+span*0.55,span*0.50+zC,-(bcy)+span*0.68);
