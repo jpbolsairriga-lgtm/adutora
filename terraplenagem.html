@@ -748,13 +748,14 @@ async function dimensionar(){
     const n_bota=V_bota>0?Math.ceil(V_bota/p.V_caminhao):0;
     const n_limp=Math.ceil(V_limpeza/p.V_caminhao);
 
-    // Cross-section: A = max aterro, C = min aterro
-    let idx_A=0,idx_C=0;
-    let minEl=Infinity,maxEl=-Infinity;
-    perimCells.forEach((pt,i)=>{if(pt.elev<minEl){minEl=pt.elev;idx_A=i;}if(pt.elev>maxEl){maxEl=pt.elev;idx_C=i;}});
-    const centroid=turf.centroid(turfPoly).geometry.coordinates;
-    function findOpp(idx){const pt=perimCells[idx];const dLat=pt.lat-centroid[1],dLng=pt.lng-centroid[0];let best=0,bestDot=-Infinity;perimCells.forEach((p2,i)=>{const d=-(p2.lat-centroid[1])*dLat-(p2.lng-centroid[0])*dLng;if(d>bestDot){bestDot=d;best=i;}});return best;}
-    const idx_B=findOpp(idx_A),idx_D=findOpp(idx_C);
+    // Cross-section: A-B = eixo longitudinal (maior distância), C-D = eixo transversal (perpendicular)
+    let maxDist2=0,idx_A=0,idx_B=0;
+    for(let _i=0;_i<perimCells.length;_i++){for(let _j=_i+1;_j<perimCells.length;_j++){const _d=haversineM(perimCells[_i],perimCells[_j]);if(_d>maxDist2){maxDist2=_d;idx_A=_i;idx_B=_j;}}}
+    // Perpendicular ao eixo A-B
+    const _dLa=perimCells[idx_B].lat-perimCells[idx_A].lat,_dLg=perimCells[idx_B].lng-perimCells[idx_A].lng;
+    const perpPj=(pt)=>pt.lat*(-_dLg)+pt.lng*_dLa;
+    let minPP=Infinity,maxPP=-Infinity,idx_C=0,idx_D=0;
+    perimCells.forEach((pt,i)=>{const p=perpPj(pt);if(p<minPP){minPP=p;idx_C=i;}if(p>maxPP){maxPP=p;idx_D=i;}});
     const z_t_A=perimCells[idx_A].elev;
     const z_t_B=perimCells[idx_B].elev;
     const z_t_C=perimCells[idx_C].elev;
@@ -855,8 +856,8 @@ function desenharOverlays(){
     +`<div><span style="display:inline-block;width:16px;height:8px;background:#0d47a1;border:1.5px solid #1565c0;vertical-align:middle;margin-right:5px;"></span>Fundo</div>`
     +`<div><span style="display:inline-block;width:16px;height:3px;background:#8d6e45;vertical-align:middle;margin-right:5px;margin-top:3px;"></span>Crista</div>`
     +`<div><span style="display:inline-block;width:16px;height:0;border-top:2px dashed #1b5e20;vertical-align:middle;margin-right:5px;margin-top:5px;"></span>Talude externo</div>`
-    +`<div style="color:#c62828;">— — A-B (maior aterro)</div>`
-    +`<div style="color:#1565c0;">— — C-D (menor aterro)</div>`;
+    +`<div style="color:#c62828;">— — A-B (longitudinal)</div>`
+    +`<div style="color:#1565c0;">— — C-D (transversal)</div>`;
   leg.style.display='block';
   document.getElementById('northArrow').style.display='flex';
 }
@@ -1170,10 +1171,10 @@ function gerarCortesSVG(){
   }
   const profAB=sampleTransect(r.pt_A,r.pt_B,24);
   const profCD=sampleTransect(r.pt_C,r.pt_D,24);
-  addCorte('CORTE A-B — MAIOR ATERRO ('+r.h_at_A.toFixed(2)+' m)',
-    svgCorte('ab','CORTE A-B — MAIOR ATERRO ('+r.h_at_A.toFixed(2)+' m)','A','B',r.z_t_A,r.z_t_B,r,profAB));
-  addCorte('CORTE C-D — MENOR ATERRO ('+r.h_at_C.toFixed(2)+' m)',
-    svgCorte('cd','CORTE C-D — MENOR ATERRO ('+r.h_at_C.toFixed(2)+' m)','C','D',r.z_t_C,r.z_t_D,r,profCD));
+  addCorte('CORTE A-B — LONGITUDINAL ('+r.h_at_A.toFixed(2)+' m)',
+    svgCorte('ab','CORTE A-B — LONGITUDINAL ('+r.h_at_A.toFixed(2)+' m)','A','B',r.z_t_A,r.z_t_B,r,profAB));
+  addCorte('CORTE C-D — TRANSVERSAL ('+r.h_at_C.toFixed(2)+' m)',
+    svgCorte('cd','CORTE C-D — TRANSVERSAL ('+r.h_at_C.toFixed(2)+' m)','C','D',r.z_t_C,r.z_t_D,r,profCD));
 }
 
 // ── Vista 3D — Three.js WebGL (modal inline) ──────────────────────────────────
@@ -1258,7 +1259,7 @@ function gerarVista3D(){
   let bx0=Infinity,bx1=-Infinity,by0=Infinity,by1=-Infinity;
   [...naR3,...(crR3||[]),...(peR3||[])].forEach(q=>{if(q.x<bx0)bx0=q.x;if(q.x>bx1)bx1=q.x;if(q.y<by0)by0=q.y;if(q.y>by1)by1=q.y;});
   const bcx=(bx0+bx1)/2,bcy=(by0+by1)/2,span=Math.max(bx1-bx0,by1-by0,D.H*5),ext=span*1.4;
-  // Terreno externo com elevação real — grade NGT×NGT, pula quads totalmente internos ao reservatório
+  // Terreno com elevação real — grade NGT×NGT; todos os vértices recebem cota real (evita espículas no contorno)
   const NGT=44, innerPolyGeo=r.peExtBuf||r.cristaBuf||turfPoly;
   const gxStep=(2*ext)/NGT, gyStep=(2*ext)/NGT;
   const allCellsTerr=[...gridCells,...perimCells];
@@ -1268,12 +1269,10 @@ function gerarVista3D(){
       const gx=(bcx-ext)+ii*gxStep,gy=(bcy-ext)+jj*gyStep;
       const lat2=cLat+gy/mLat,lng2=cLng+gx/mLng;
       const ins=turf.booleanPointInPolygon([lng2,lat2],innerPolyGeo);
-      let yEl=zN;
-      if(!ins){
-        let best=Infinity,el2=r.z_na;
-        for(const c of allCellsTerr){const d=(c.lat-lat2)**2+(c.lng-lng2)**2;if(d<best){best=d;el2=c.elev;}}
-        yEl=el2-r.z_na;
-      }
+      // Cota real para TODOS os vértices — inclusive os internos — para suavizar quads de fronteira
+      let best=Infinity,el2=r.z_na;
+      for(const c of allCellsTerr){const d=(c.lat-lat2)**2+(c.lng-lng2)**2;if(d<best){best=d;el2=c.elev;}}
+      const yEl=el2-r.z_na;
       terrV.push({gx,gy,yEl,ins});
     }
   }
@@ -1369,8 +1368,8 @@ function gerarPlantaTecnica(){
   const showVA=naMaxX<MW-16&&(naMaxY-naMinY)>25;
   const naWLbl=naW_m+' m', naHLbl=naH_m+' m';
   const naWLblW=naWLbl.length*5+8, naHLblW=naHLbl.length*5+8;
-  const svgAB=svgCorte('pt','CORTE A-B — MAIOR ATERRO ('+r.h_at_A.toFixed(2)+' m)','A','B',r.z_t_A,r.z_t_B,r);
-  const svgCD=svgCorte('ptcd','CORTE C-D — MENOR ATERRO ('+r.h_at_C.toFixed(2)+' m)','C','D',r.z_t_C,r.z_t_D,r);
+  const svgAB=svgCorte('pt','CORTE A-B — LONGITUDINAL ('+r.h_at_A.toFixed(2)+' m)','A','B',r.z_t_A,r.z_t_B,r);
+  const svgCD=svgCorte('ptcd','CORTE C-D — TRANSVERSAL ('+r.h_at_C.toFixed(2)+' m)','C','D',r.z_t_C,r.z_t_D,r);
   let crMinX=MW,crMaxX=0,crMinY=MH,crMaxY=0;
   if(r.cristaBuf){r.cristaBuf.geometry.coordinates[0].forEach(c=>{const px=toPx2(c[1],c[0]);if(px.x<crMinX)crMinX=px.x;if(px.x>crMaxX)crMaxX=px.x;if(px.y<crMinY)crMinY=px.y;if(px.y>crMaxY)crMaxY=px.y;});}
   const crW_m=Math.round((crMaxX-crMinX)*mPerPx),crH_m=Math.round((crMaxY-crMinY)*mPerPx);
@@ -1455,8 +1454,8 @@ tr:nth-child(even) td:not(.th2){background:#f7f9fb;}
       <span><span style="display:inline-block;width:11pt;height:6.5pt;background:#0d47a1;border:1px solid #0d47a1;vertical-align:middle;margin-right:1.5mm;"></span>Fundo (${r.z_fundo.toFixed(2)} m)</span>
       <span><span style="display:inline-block;width:11pt;height:6.5pt;background:#c8b47a;border:1px solid #8d6e45;opacity:.8;vertical-align:middle;margin-right:1.5mm;"></span>Crista / Boca (${r.z_crista.toFixed(2)} m)</span>
       <span><span style="display:inline-block;width:11pt;height:0;border-top:2pt dashed #2e7d32;vertical-align:middle;margin-right:1.5mm;margin-top:3pt;"></span>Talude externo</span>
-      <span style="color:#c62828;">— — A-B (aterro ${r.h_at_A.toFixed(2)} m)</span>
-      <span style="color:#1565c0;">— — C-D (aterro ${r.h_at_C.toFixed(2)} m)</span>
+      <span style="color:#c62828;">— — A-B longitudinal (aterro ${r.h_at_A.toFixed(2)} m)</span>
+      <span style="color:#1565c0;">— — C-D transversal (aterro ${r.h_at_C.toFixed(2)} m)</span>
     </div>
   </div>
 
@@ -1518,8 +1517,8 @@ tr:nth-child(even) td:not(.th2){background:#f7f9fb;}
     ${tr2('Cota terreno ponto B',r.z_t_B.toFixed(2)+' m')}
     ${tr2('Cota terreno ponto C',r.z_t_C.toFixed(2)+' m')}
     ${tr2('Cota terreno ponto D',r.z_t_D.toFixed(2)+' m')}
-    ${tr2('Aterro A-B (maior)',r.h_at_A.toFixed(2)+' m',true,'#c62828')}
-    ${tr2('Aterro C-D (menor)',r.h_at_C.toFixed(2)+' m',true,'#1565c0')}
+    ${tr2('Aterro A-B (long.)',r.h_at_A.toFixed(2)+' m',true,'#c62828')}
+    ${tr2('Aterro C-D (trans.)',r.h_at_C.toFixed(2)+' m',true,'#1565c0')}
   </table>
 </div>
 <div style="display:flex;gap:4mm;margin-top:4mm;border-top:0.8pt solid #ccc;padding-top:2mm;">
@@ -1563,7 +1562,7 @@ tr:nth-child(even) td:not(.th2){background:#f7f9fb;}
   <div><span style="color:#607080;">Borda livre</span><br><strong>${r.p.BL.toFixed(1)} m</strong></div>
   <div><span style="color:#607080;">Cota terreno A</span><br><strong>${r.z_t_A.toFixed(2)} m</strong></div>
   <div><span style="color:#607080;">Cota terreno B</span><br><strong>${r.z_t_B.toFixed(2)} m</strong></div>
-  <div><span style="color:#607080;">Aterro A-B (maior)</span><br><strong style="color:#c62828;">${r.h_at_A.toFixed(2)} m</strong></div>
+  <div><span style="color:#607080;">Aterro A-B (long.)</span><br><strong style="color:#c62828;">${r.h_at_A.toFixed(2)} m</strong></div>
   <div><span style="color:#607080;">Volume corte</span><br><strong>${fmt(r.Vcut)} m³</strong></div>
 </div>
 <div style="margin-top:2mm;text-align:right;font-size:6pt;color:#999;">
@@ -1592,7 +1591,7 @@ tr:nth-child(even) td:not(.th2){background:#f7f9fb;}
   <div><span style="color:#607080;">Borda livre</span><br><strong>${r.p.BL.toFixed(1)} m</strong></div>
   <div><span style="color:#607080;">Cota terreno C</span><br><strong>${r.z_t_C.toFixed(2)} m</strong></div>
   <div><span style="color:#607080;">Cota terreno D</span><br><strong>${r.z_t_D.toFixed(2)} m</strong></div>
-  <div><span style="color:#607080;">Aterro C-D (menor)</span><br><strong style="color:#1565c0;">${r.h_at_C.toFixed(2)} m</strong></div>
+  <div><span style="color:#607080;">Aterro C-D (trans.)</span><br><strong style="color:#1565c0;">${r.h_at_C.toFixed(2)} m</strong></div>
   <div><span style="color:#607080;">Volume aterro</span><br><strong>${fmt(r.Vfill_nec)} m³</strong></div>
 </div>
 <div style="margin-top:2mm;text-align:right;font-size:6pt;color:#999;">
@@ -1686,8 +1685,8 @@ function gerarPDF(){
   const balancoTxt=(r.balanco>0?'+':'')+fmt(r.balanco)+' m³ '+(r.balanco>0?'(excedente)':'(importar)');
 
   // Cross-section SVGs
-  const svgAB=svgCorte('pab','CORTE A-B — MAIOR ATERRO ('+r.h_at_A.toFixed(2)+' m)','A','B',r.z_t_A,r.z_t_B,r);
-  const svgCD=svgCorte('pcd','CORTE C-D — MENOR ATERRO ('+r.h_at_C.toFixed(2)+' m)','C','D',r.z_t_C,r.z_t_D,r);
+  const svgAB=svgCorte('pab','CORTE A-B — LONGITUDINAL ('+r.h_at_A.toFixed(2)+' m)','A','B',r.z_t_A,r.z_t_B,r);
+  const svgCD=svgCorte('pcd','CORTE C-D — TRANSVERSAL ('+r.h_at_C.toFixed(2)+' m)','C','D',r.z_t_C,r.z_t_D,r);
 
   function tr(lbl,val,bold=false,color=''){return`<tr><td>${lbl}</td><td style="text-align:right;font-weight:${bold?'700':'500'};color:${color||'#1a2535'}">${val}</td></tr>`;}
   function th(t){return`<tr><td colspan="2" style="background:#003d5c;color:#fff;font-size:7.5pt;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:3px 6px;">${t}</td></tr>`;}
@@ -1754,8 +1753,8 @@ tr:nth-child(even) td:not([colspan]){background:#f8fafc;}
       <span><span class="lsq" style="background:#0d47a1;border:1px solid #0d47a1;"></span>Fundo</span>
       <span><span class="lsq" style="height:2pt;background:#9c27b0;"></span>Crista</span>
       <span><span class="lsq" style="height:0;border-top:2pt dashed #6a1b9a;"></span>Pé externo</span>
-      <span style="color:#c62828;">— — A-B (maior aterro)</span>
-      <span style="color:#1565c0;">— — C-D (menor aterro)</span>
+      <span style="color:#c62828;">— — A-B (longitudinal)</span>
+      <span style="color:#1565c0;">— — C-D (transversal)</span>
     </div>
   </div>
 
@@ -1817,7 +1816,7 @@ tr:nth-child(even) td:not([colspan]){background:#f8fafc;}
 <div class="page" style="page-break-before:always;">
 <div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1.5pt solid #003d5c;padding-bottom:2mm;margin-bottom:4mm;">
   <div>
-    <div style="font-size:12pt;font-weight:900;color:#003d5c;">CORTE A-B — MAIOR ATERRO (${r.h_at_A.toFixed(2)} m)</div>
+    <div style="font-size:12pt;font-weight:900;color:#003d5c;">CORTE A-B — LONGITUDINAL (${r.h_at_A.toFixed(2)} m)</div>
     <div style="font-size:7.5pt;color:#607080;">${prop} &nbsp;·&nbsp; ${cliente} &nbsp;·&nbsp; ${consultor}</div>
   </div>
   <div style="text-align:right;font-size:7.5pt;color:#607080;"><strong style="color:#003d5c;">Bolsa Irriga®</strong> &nbsp;·&nbsp; ${date} &nbsp;·&nbsp; Folha 02/03</div>
@@ -1830,7 +1829,7 @@ ${svgAB}
 <div class="page" style="page-break-before:always;">
 <div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1.5pt solid #003d5c;padding-bottom:2mm;margin-bottom:4mm;">
   <div>
-    <div style="font-size:12pt;font-weight:900;color:#003d5c;">CORTE C-D — MENOR ATERRO (${r.h_at_C.toFixed(2)} m)</div>
+    <div style="font-size:12pt;font-weight:900;color:#003d5c;">CORTE C-D — TRANSVERSAL (${r.h_at_C.toFixed(2)} m)</div>
     <div style="font-size:7.5pt;color:#607080;">${prop} &nbsp;·&nbsp; ${cliente} &nbsp;·&nbsp; ${consultor}</div>
   </div>
   <div style="text-align:right;font-size:7.5pt;color:#607080;"><strong style="color:#003d5c;">Bolsa Irriga®</strong> &nbsp;·&nbsp; ${date} &nbsp;·&nbsp; Folha 03/03</div>
