@@ -750,23 +750,30 @@ async function dimensionar(){
 
     // Cross-section: A-B = longitudinal, C-D = transversal — ambos passam pelo centroide
     const _cent=turf.centroid(turfPoly).geometry.coordinates; // [lng,lat]
-    // Direção longitudinal = par de perimCells mais distante
-    let _maxD2=0,_pA=perimCells[0],_pB=perimCells[0];
-    for(let _i=0;_i<perimCells.length;_i++){for(let _j=_i+1;_j<perimCells.length;_j++){const _d=haversineM(perimCells[_i],perimCells[_j]);if(_d>_maxD2){_maxD2=_d;_pA=perimCells[_i];_pB=perimCells[_j];}}}
-    const _dR=Math.sqrt((_pB.lat-_pA.lat)**2+(_pB.lng-_pA.lng)**2)||1e-9;
-    const _uLa=(_pB.lat-_pA.lat)/_dR,_uLg=(_pB.lng-_pA.lng)/_dR;
+    const _cLng=_cent[0],_cLat=_cent[1];
+    // PCA nos perimCells → eixo principal real do polígono
+    {let _sxx=0,_syy=0,_sxy=0;
+    perimCells.forEach(pt=>{const dx=pt.lng-_cLng,dy=pt.lat-_cLat;_sxx+=dx*dx;_syy+=dy*dy;_sxy+=dx*dy;});
+    const _disc2=Math.sqrt(Math.max(0,(_sxx-_syy)**2+4*_sxy*_sxy));
+    const _lam=(_sxx+_syy+_disc2)/2;
+    const _v1x=_sxy,_v1y=_lam-_sxx,_v2x=_lam-_syy,_v2y=_sxy;
+    const _use1=(_v1x*_v1x+_v1y*_v1y>=_v2x*_v2x+_v2y*_v2y);
+    let _ex=_use1?_v1x:_v2x,_ey=_use1?_v1y:_v2y;
+    if(Math.abs(_ex)+Math.abs(_ey)<1e-12){_ex=1;_ey=0;}
+    const _eL=Math.sqrt(_ex*_ex+_ey*_ey);
+    var _uLg=_ex/_eL,_uLa=_ey/_eL;}
     // Linha pelo centroide → intersecções com borda do polígono
     const _BIG=0.05;
-    function _cutLine(uLat,uLng){
-      const ln=turf.lineString([[_cent[0]-uLng*_BIG,_cent[1]-uLat*_BIG],[_cent[0]+uLng*_BIG,_cent[1]+uLat*_BIG]]);
+    function _cutLine(dLng,dLat){
+      const ln=turf.lineString([[_cLng-dLng*_BIG,_cLat-dLat*_BIG],[_cLng+dLng*_BIG,_cLat+dLat*_BIG]]);
       const xs=turf.lineIntersect(ln,turf.polygonToLine(turfPoly)).features;
       if(xs.length<2) return null;
       const c0=xs[0].geometry.coordinates,c1=xs[xs.length-1].geometry.coordinates;
       function _elAt(lat2,lng2){let b=Infinity,el=z_na;perimCells.forEach(c=>{const d=(c.lat-lat2)**2+(c.lng-lng2)**2;if(d<b){b=d;el=c.elev;}});return el;}
       return {ptL:{lat:c0[1],lng:c0[0]},ptR:{lat:c1[1],lng:c1[0]},z_tL:_elAt(c0[1],c0[0]),z_tR:_elAt(c1[1],c1[0])};
     }
-    const _lc=_cutLine(_uLa,_uLg)||{ptL:perimCells[0],ptR:perimCells[0],z_tL:z_na,z_tR:z_na};
-    const _tc=_cutLine(-_uLg,_uLa)||{ptL:perimCells[0],ptR:perimCells[0],z_tL:z_na,z_tR:z_na};
+    const _lc=_cutLine(_uLg,_uLa)||{ptL:perimCells[0],ptR:perimCells[0],z_tL:z_na,z_tR:z_na};
+    const _tc=_cutLine(-_uLa,_uLg)||{ptL:perimCells[0],ptR:perimCells[0],z_tL:z_na,z_tR:z_na};
     const z_t_A=_lc.z_tL,z_t_B=_lc.z_tR,z_t_C=_tc.z_tL,z_t_D=_tc.z_tR;
     const h_at_A=Math.max(0,z_crista-z_t_A);
     const h_at_C=Math.max(0,z_crista-z_t_C);
@@ -1269,7 +1276,7 @@ function gerarVista3D(){
   if(crR3){
     const peBase=peR3||_resample(scaleOut(crR3,1.3),NS);
     const _N=crR3.length,_p=new Float32Array(_N*2*3),_ix=[];
-    for(let _i=0;_i<_N;_i++){const _yb=terrY(peBase[_i].x,peBase[_i].y);_p[_i*6]=crR3[_i].x;_p[_i*6+1]=zC;_p[_i*6+2]=-crR3[_i].y;_p[_i*6+3]=peBase[_i].x;_p[_i*6+4]=_yb;_p[_i*6+5]=-peBase[_i].y;}
+    for(let _i=0;_i<_N;_i++){const _yb=Math.min(terrY(peBase[_i].x,peBase[_i].y),zC-0.05);_p[_i*6]=crR3[_i].x;_p[_i*6+1]=zC;_p[_i*6+2]=-crR3[_i].y;_p[_i*6+3]=peBase[_i].x;_p[_i*6+4]=_yb;_p[_i*6+5]=-peBase[_i].y;}
     for(let _i=0;_i<_N;_i++){const _j=(_i+1)%_N,_a=_i*2,_b=_i*2+1,_c=_j*2,_d=_j*2+1;_ix.push(_a,_c,_b,_b,_c,_d);}
     const _eg=new THREE.BufferGeometry();_eg.setAttribute('position',new THREE.BufferAttribute(_p,3));_eg.setIndex(_ix);_eg.computeVertexNormals();addM3(_eg);
   }
