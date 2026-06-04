@@ -748,18 +748,26 @@ async function dimensionar(){
     const n_bota=V_bota>0?Math.ceil(V_bota/p.V_caminhao):0;
     const n_limp=Math.ceil(V_limpeza/p.V_caminhao);
 
-    // Cross-section: A-B = eixo longitudinal (maior distância), C-D = eixo transversal (perpendicular)
-    let maxDist2=0,idx_A=0,idx_B=0;
-    for(let _i=0;_i<perimCells.length;_i++){for(let _j=_i+1;_j<perimCells.length;_j++){const _d=haversineM(perimCells[_i],perimCells[_j]);if(_d>maxDist2){maxDist2=_d;idx_A=_i;idx_B=_j;}}}
-    // Perpendicular ao eixo A-B
-    const _dLa=perimCells[idx_B].lat-perimCells[idx_A].lat,_dLg=perimCells[idx_B].lng-perimCells[idx_A].lng;
-    const perpPj=(pt)=>pt.lat*(-_dLg)+pt.lng*_dLa;
-    let minPP=Infinity,maxPP=-Infinity,idx_C=0,idx_D=0;
-    perimCells.forEach((pt,i)=>{const p=perpPj(pt);if(p<minPP){minPP=p;idx_C=i;}if(p>maxPP){maxPP=p;idx_D=i;}});
-    const z_t_A=perimCells[idx_A].elev;
-    const z_t_B=perimCells[idx_B].elev;
-    const z_t_C=perimCells[idx_C].elev;
-    const z_t_D=perimCells[idx_D].elev;
+    // Cross-section: A-B = longitudinal, C-D = transversal — ambos passam pelo centroide
+    const _cent=turf.centroid(turfPoly).geometry.coordinates; // [lng,lat]
+    // Direção longitudinal = par de perimCells mais distante
+    let _maxD2=0,_pA=perimCells[0],_pB=perimCells[0];
+    for(let _i=0;_i<perimCells.length;_i++){for(let _j=_i+1;_j<perimCells.length;_j++){const _d=haversineM(perimCells[_i],perimCells[_j]);if(_d>_maxD2){_maxD2=_d;_pA=perimCells[_i];_pB=perimCells[_j];}}}
+    const _dR=Math.sqrt((_pB.lat-_pA.lat)**2+(_pB.lng-_pA.lng)**2)||1e-9;
+    const _uLa=(_pB.lat-_pA.lat)/_dR,_uLg=(_pB.lng-_pA.lng)/_dR;
+    // Linha pelo centroide → intersecções com borda do polígono
+    const _BIG=0.05;
+    function _cutLine(uLat,uLng){
+      const ln=turf.lineString([[_cent[0]-uLng*_BIG,_cent[1]-uLat*_BIG],[_cent[0]+uLng*_BIG,_cent[1]+uLat*_BIG]]);
+      const xs=turf.lineIntersect(ln,turf.polygonToLine(turfPoly)).features;
+      if(xs.length<2) return null;
+      const c0=xs[0].geometry.coordinates,c1=xs[xs.length-1].geometry.coordinates;
+      function _elAt(lat2,lng2){let b=Infinity,el=z_na;perimCells.forEach(c=>{const d=(c.lat-lat2)**2+(c.lng-lng2)**2;if(d<b){b=d;el=c.elev;}});return el;}
+      return {ptL:{lat:c0[1],lng:c0[0]},ptR:{lat:c1[1],lng:c1[0]},z_tL:_elAt(c0[1],c0[0]),z_tR:_elAt(c1[1],c1[0])};
+    }
+    const _lc=_cutLine(_uLa,_uLg)||{ptL:perimCells[0],ptR:perimCells[0],z_tL:z_na,z_tR:z_na};
+    const _tc=_cutLine(-_uLg,_uLa)||{ptL:perimCells[0],ptR:perimCells[0],z_tL:z_na,z_tR:z_na};
+    const z_t_A=_lc.z_tL,z_t_B=_lc.z_tR,z_t_C=_tc.z_tL,z_t_D=_tc.z_tR;
     const h_at_A=Math.max(0,z_crista-z_t_A);
     const h_at_C=Math.max(0,z_crista-z_t_C);
 
@@ -771,8 +779,7 @@ async function dimensionar(){
       A_fundo, A_talude, A_borda, A_subtotal, A_sobreposi, A_sobra, A_total,
       Perim_na, Perim_fd,
       z_t_A, z_t_B, z_t_C, z_t_D, h_at_A, h_at_C,
-      pt_A: perimCells[idx_A], pt_B: perimCells[idx_B],
-      pt_C: perimCells[idx_C], pt_D: perimCells[idx_D],
+      pt_A:_lc.ptL, pt_B:_lc.ptR, pt_C:_tc.ptL, pt_D:_tc.ptR,
       fundoBuf, cristaBuf, peExtBuf,
       A_pe_total, V_limpeza, V_bota, n_bota, n_limp,
     };
@@ -1252,28 +1259,33 @@ function gerarVista3D(){
   const NS=96,zF=D.zF,zN=D.zN,zC=D.zC;
   const naR3=_resample(D.naR,NS),fdR3=D.fdR?_resample(D.fdR,NS):null;
   const crR3=D.crR?_resample(D.crR,NS):null,peR3=D.peR?_resample(D.peR,NS):null;
+  // Cache de células para lookup de elevação — usado no talude externo e na grade de terreno
+  const allCellsTerr=[...gridCells,...perimCells];
+  function terrY(gx,gy){let b=Infinity,el=r.z_na;const lt=cLat+gy/mLat,lg=cLng+gx/mLng;for(const c of allCellsTerr){const d=(c.lat-lt)**2+(c.lng-lg)**2;if(d<b){b=d;el=c.elev;}}return el-r.z_na;}
   if(fdR3)addM3(_fanGeo(fdR3,zF));
   if(fdR3){addM3(_stripGeo(fdR3,zF,naR3,zN));}else{let cx0=0,cy0=0;naR3.forEach(q=>{cx0+=q.x;cy0+=q.y;});cx0/=NS;cy0/=NS;addM3(_stripGeo(naR3.map(()=>({x:cx0,y:cy0})),zF,naR3,zN));}
   if(crR3)addM3(_stripGeo(naR3,zN,crR3,zC));
-  if(crR3&&peR3)addM3(_stripGeo(crR3,zC,peR3,zN));
+  // Talude externo: pé na cota real do terreno (corrige triangulos e cria rampa correta)
+  if(crR3){
+    const peBase=peR3||_resample(scaleOut(crR3,1.3),NS);
+    const _N=crR3.length,_p=new Float32Array(_N*2*3),_ix=[];
+    for(let _i=0;_i<_N;_i++){const _yb=terrY(peBase[_i].x,peBase[_i].y);_p[_i*6]=crR3[_i].x;_p[_i*6+1]=zC;_p[_i*6+2]=-crR3[_i].y;_p[_i*6+3]=peBase[_i].x;_p[_i*6+4]=_yb;_p[_i*6+5]=-peBase[_i].y;}
+    for(let _i=0;_i<_N;_i++){const _j=(_i+1)%_N,_a=_i*2,_b=_i*2+1,_c=_j*2,_d=_j*2+1;_ix.push(_a,_c,_b,_b,_c,_d);}
+    const _eg=new THREE.BufferGeometry();_eg.setAttribute('position',new THREE.BufferAttribute(_p,3));_eg.setIndex(_ix);_eg.computeVertexNormals();addM3(_eg);
+  }
   let bx0=Infinity,bx1=-Infinity,by0=Infinity,by1=-Infinity;
   [...naR3,...(crR3||[]),...(peR3||[])].forEach(q=>{if(q.x<bx0)bx0=q.x;if(q.x>bx1)bx1=q.x;if(q.y<by0)by0=q.y;if(q.y>by1)by1=q.y;});
   const bcx=(bx0+bx1)/2,bcy=(by0+by1)/2,span=Math.max(bx1-bx0,by1-by0,D.H*5),ext=span*1.4;
-  // Terreno com elevação real — grade NGT×NGT; todos os vértices recebem cota real (evita espículas no contorno)
+  // Grade de terreno NGT×NGT com elevação real; todos os vértices usam cota real
   const NGT=44, innerPolyGeo=r.peExtBuf||r.cristaBuf||turfPoly;
   const gxStep=(2*ext)/NGT, gyStep=(2*ext)/NGT;
-  const allCellsTerr=[...gridCells,...perimCells];
   const terrV=[];
   for(let jj=0;jj<=NGT;jj++){
     for(let ii=0;ii<=NGT;ii++){
       const gx=(bcx-ext)+ii*gxStep,gy=(bcy-ext)+jj*gyStep;
-      const lat2=cLat+gy/mLat,lng2=cLng+gx/mLng;
+      const lng2=cLng+gx/mLng,lat2=cLat+gy/mLat;
       const ins=turf.booleanPointInPolygon([lng2,lat2],innerPolyGeo);
-      // Cota real para TODOS os vértices — inclusive os internos — para suavizar quads de fronteira
-      let best=Infinity,el2=r.z_na;
-      for(const c of allCellsTerr){const d=(c.lat-lat2)**2+(c.lng-lng2)**2;if(d<best){best=d;el2=c.elev;}}
-      const yEl=el2-r.z_na;
-      terrV.push({gx,gy,yEl,ins});
+      terrV.push({gx,gy,yEl:terrY(gx,gy),ins});
     }
   }
   const tPos=[],tIdx=[];
