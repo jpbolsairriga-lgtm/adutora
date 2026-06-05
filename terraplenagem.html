@@ -196,6 +196,7 @@ input[type=number],select,input[type=text],input[type=password]{width:100%;backg
       <button class="btn" style="background:#1b5e20;color:#fff;" onclick="gerarVista3D()">🏗 Vista 3D</button>
       <button class="btn" style="background:#37474f;color:#fff;" onclick="gerarPlantaTecnica()">📋 Planta Técnica</button>
       <button class="btn" style="background:#2e7d32;color:#fff;" onclick="gerarKML()">🗺️ Exportar KML</button>
+      <button class="btn" style="background:#1565c0;color:#fff;" onclick="gerarKML3D()">🌍 KML 3D — Google Earth</button>
       <button class="btn btn-pdf" onclick="gerarPDF()">📄 Relatório PDF</button>
     </div>
   </div>
@@ -1657,6 +1658,135 @@ function gerarKML(){
   var a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
   a.download=prop.replace(/[^\w]/g,'_')+'_reservatorio.kml';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+}
+
+// ── KML 3D ────────────────────────────────────────────────────────────────────
+function gerarKML3D(){
+  if(!resultado||!polyPts||polyPts.length<3){alert('Dimensione o reservatório primeiro.');return;}
+  const r=resultado;
+  const prop=$('rProp').value.trim()||'Reservatorio';
+
+  function toRing(pts){
+    let ring=pts.map(p=>Array.isArray(p)?[p[0],p[1]]:[p.lng,p.lat]);
+    if(ring[0][0]!==ring[ring.length-1][0]||ring[0][1]!==ring[ring.length-1][1])ring.push([...ring[0]]);
+    return ring;
+  }
+  function geoRing(c){return c.map(p=>[p[0],p[1]]);}
+
+  // Resample ring to N uniformly spaced pts (open ring = no closing duplicate)
+  function resample(ring,N){
+    const pts=(ring[0][0]===ring[ring.length-1][0]&&ring[0][1]===ring[ring.length-1][1])
+      ?ring.slice(0,-1):ring;
+    const n=pts.length;
+    const acc=[0];
+    for(let i=0;i<n;i++){
+      const a=pts[i],b=pts[(i+1)%n];
+      const dx=(b[0]-a[0])*111320*Math.cos(a[1]*Math.PI/180);
+      const dy=(b[1]-a[1])*111320;
+      acc.push(acc[i]+Math.sqrt(dx*dx+dy*dy));
+    }
+    const total=acc[n];
+    const out=[];
+    for(let k=0;k<N;k++){
+      const t=k/N*total;
+      let i=0;while(i<n-1&&acc[i+1]<t)i++;
+      const seg=acc[i+1]-acc[i];
+      const f=seg<1e-10?0:(t-acc[i])/seg;
+      const a=pts[i],b=pts[(i+1)%n];
+      out.push([a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f]);
+    }
+    return out;
+  }
+
+  // Rotate rMov so its [0] aligns angularly with rRef[0]
+  function alignRing(rRef,rMov){
+    let rx=0,ry=0;rRef.forEach(p=>{rx+=p[0];ry+=p[1];});rx/=rRef.length;ry/=rRef.length;
+    let cx=0,cy=0;rMov.forEach(p=>{cx+=p[0];cy+=p[1];});cx/=rMov.length;cy/=rMov.length;
+    const refAng=Math.atan2(rRef[0][1]-ry,rRef[0][0]-rx);
+    let best=0,bestD=Infinity;
+    for(let i=0;i<rMov.length;i++){
+      const a=Math.atan2(rMov[i][1]-cy,rMov[i][0]-cx);
+      let d=Math.abs(a-refAng);if(d>Math.PI)d=2*Math.PI-d;
+      if(d<bestD){bestD=d;best=i;}
+    }
+    return [...rMov.slice(best),...rMov.slice(0,best)];
+  }
+
+  function coordStr(pts){return pts.map(p=>p[0].toFixed(7)+','+p[1].toFixed(7)+','+p[2].toFixed(2)).join(' ');}
+
+  function pm(name,coords,lnClr,fillClr){
+    return '<Placemark><name>'+name+'</name>'+
+      '<Style><LineStyle><color>'+lnClr+'</color><width>1</width></LineStyle>'+
+      '<PolyStyle><color>'+fillClr+'</color><outline>0</outline></PolyStyle></Style>'+
+      '<Polygon><extrude>0</extrude><altitudeMode>absolute</altitudeMode>'+
+      '<outerBoundaryIs><LinearRing><coordinates>'+coordStr(coords)+'</coordinates></LinearRing></outerBoundaryIs>'+
+      '</Polygon></Placemark>';
+  }
+
+  function discFolder(name,ring,z,lnClr,fillClr){
+    const c=ring.map(p=>[p[0],p[1],z]);c.push(c[0]);
+    return '<Folder><name>'+name+'</name>'+pm(name,c,lnClr,fillClr)+'</Folder>';
+  }
+
+  function stripFolder(name,rA,zA,rB,zB,lnClr,fillClr){
+    const n=rA.length;
+    let out='<Folder><name>'+name+'</name>';
+    for(let i=0;i<n;i++){
+      const j=(i+1)%n;
+      const zA0=Array.isArray(zA)?zA[i]:zA, zA1=Array.isArray(zA)?zA[j]:zA;
+      const zB0=Array.isArray(zB)?zB[i]:zB, zB1=Array.isArray(zB)?zB[j]:zB;
+      const q=[[rA[i][0],rA[i][1],zA0],[rA[j][0],rA[j][1],zA1],
+               [rB[j][0],rB[j][1],zB1],[rB[i][0],rB[i][1],zB0],
+               [rA[i][0],rA[i][1],zA0]];
+      out+=pm('p'+i,q,lnClr,fillClr);
+    }
+    return out+'</Folder>';
+  }
+
+  const N=72;
+  const naR=resample(toRing(polyPts),N);
+  const fdR=r.fundoBuf?resample(geoRing(r.fundoBuf.geometry.coordinates[0]),N):null;
+  const crR=r.cristaBuf?resample(geoRing(r.cristaBuf.geometry.coordinates[0]),N):null;
+  const peR=r.peExtBuf?resample(geoRing(r.peExtBuf.geometry.coordinates[0]),N):null;
+
+  const naA=naR;
+  const fdA=fdR?alignRing(naA,fdR):null;
+  const crA=crR?alignRing(naA,crR):null;
+  const peA=peR?alignRing(crA||naA,peR):null;
+
+  const z_pe=r.z_terreno; // nível do terreno natural ≈ cota do pé do talude externo
+
+  var kml='<?xml version="1.0" encoding="UTF-8"?>\n'+
+    '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>\n'+
+    '<name>'+prop+' — Reservatório 3D</name>\n';
+
+  // Fundo
+  const fdBase=fdA||naA;
+  kml+=discFolder('Fundo ('+r.z_fundo.toFixed(1)+'m)',fdBase,r.z_fundo,'ff5d4037','dd8d6e63');
+
+  // Talude interno (fundo → espelho)
+  if(fdA)kml+=stripFolder('Talude Interno',fdA,r.z_fundo,naA,r.z_na,'ff5d4037','cc8d6e63');
+
+  // Borda livre (espelho → crista)
+  if(crA)kml+=stripFolder('Borda Livre',naA,r.z_na,crA,r.z_crista,'ff37474f','aa607d8b');
+
+  // Espelho d'água
+  {const c=naA.map(p=>[p[0],p[1],r.z_na]);c.push(c[0]);
+  kml+='<Folder><name>Espelho d\'Água ('+r.z_na.toFixed(1)+'m)</name>'+pm("Espelho d'Água",c,'ffc06515','661e88e5')+'</Folder>';}
+
+  // Talude externo (crista → pé)
+  if(crA&&peA)kml+=stripFolder('Talude Externo',crA,r.z_crista,peA,z_pe,'ff2e7d32','994caf50');
+
+  // Tampa do aterro (anel plano entre crista e pé ao nível z_crista, simplificação)
+  // Omitida: o talude externo já representa visualmente o volume de aterro
+
+  kml+='</Document></kml>';
+
+  var blob=new Blob([kml],{type:'application/vnd.google-earth.kml+xml'});
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=prop.replace(/[^\w]/g,'_')+'_3d.kml';
   document.body.appendChild(a);a.click();document.body.removeChild(a);
 }
 
