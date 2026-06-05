@@ -71,6 +71,9 @@ input[type=number],select,input[type=text],input[type=password]{width:100%;backg
 #mapLegend{display:none;position:absolute;bottom:28px;left:8px;background:rgba(12,22,48,.92);border:1px solid #1e4a7a;border-radius:6px;padding:7px 10px;font-size:10.5px;color:#e0e0e0;z-index:500;line-height:1.9;min-width:170px;}
 #northArrow{display:none;position:absolute;top:10px;right:10px;background:rgba(12,22,48,.88);border-radius:50%;width:36px;height:36px;z-index:500;align-items:center;justify-content:center;flex-direction:column;font-size:9px;color:#e0e0e0;font-weight:700;line-height:1;}
 #drawTip{display:none;position:absolute;background:rgba(0,0,0,.82);color:#fff;font-size:12px;font-weight:700;padding:4px 11px;border-radius:5px;pointer-events:none;z-index:800;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.4);}
+.modo-btn{flex:1;padding:7px 4px;border:1px solid #1e4a7a;border-radius:5px;background:#0f3460;color:#90a4ae;font-size:11px;font-weight:600;cursor:pointer;text-align:center;}
+.modo-btn.ativo{background:#1565c0;color:#fff;border-color:#1565c0;}
+.modo-btn:hover:not(.ativo){background:#1e4a7a;color:#e0e0e0;}
 </style>
 </head>
 <body>
@@ -82,6 +85,15 @@ input[type=number],select,input[type=text],input[type=password]{width:100%;backg
       <h1>Reservatório Escavado <span style="font-size:9px;color:#78909c;font-weight:400">Terraplenagem</span></h1>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
+  </div>
+
+  <!-- Tipo de Cálculo -->
+  <div class="sec">
+    <div class="sec-title">Tipo de Cálculo</div>
+    <div style="display:flex;gap:6px;">
+      <button id="btnModo1" class="modo-btn ativo" onclick="setCalcMode(1)">📐 Polígono no Mapa</button>
+      <button id="btnModo2" class="modo-btn" onclick="setCalcMode(2)">📂 Importar KML</button>
+    </div>
   </div>
 
   <!-- Google Maps Key -->
@@ -110,9 +122,20 @@ input[type=number],select,input[type=text],input[type=password]{width:100%;backg
   <!-- 1. Espelho -->
   <div class="sec">
     <div class="sec-title">1. Espelho d'Água (Contorno NA)</div>
-    <button class="btn btn-poly" id="btnPoly" onclick="iniciarPoligono()">◼ Desenhar Contorno</button>
-    <button class="btn btn-finish" id="btnFechar" onclick="fecharPoligono()">✓ Fechar Contorno</button>
-    <button class="btn btn-clr" id="btnLimparPoly" onclick="limparPoligono()" style="display:none;">✕ Limpar</button>
+    <!-- Modo 1: desenhar no mapa -->
+    <div id="secDesenho">
+      <button class="btn btn-poly" id="btnPoly" onclick="iniciarPoligono()">◼ Desenhar Contorno</button>
+      <button class="btn btn-finish" id="btnFechar" onclick="fecharPoligono()">✓ Fechar Contorno</button>
+      <button class="btn btn-clr" id="btnLimparPoly" onclick="limparPoligono()" style="display:none;">✕ Limpar</button>
+    </div>
+    <!-- Modo 2: importar KML -->
+    <div id="secImportarKML" style="display:none;">
+      <button class="btn btn-poly" onclick="document.getElementById('kmlFileInput').click()">📂 Abrir arquivo KML</button>
+      <input type="file" id="kmlFileInput" accept=".kml,.kmz" style="display:none;" onchange="importarKML(this)">
+      <button class="btn btn-clr" id="btnLimparKML" onclick="limparPoligono()" style="display:none;">✕ Limpar KML</button>
+      <div id="kmlNome" style="display:none;margin-top:4px;font-size:10px;color:#81d4fa;padding:3px 6px;background:#0f3460;border-radius:4px;word-break:break-all;"></div>
+    </div>
+    <!-- Info comum -->
     <div id="polyInfo" style="display:none;margin-top:5px;background:#0f3460;border-radius:4px;padding:5px 9px;font-size:11px;">
       <div style="display:flex;justify-content:space-between;margin-bottom:2px;">
         <span style="color:#78909c;">Área espelho:</span>
@@ -128,9 +151,17 @@ input[type=number],select,input[type=text],input[type=password]{width:100%;backg
   <!-- 2. Parâmetros -->
   <div class="sec">
     <div class="sec-title">2. Parâmetros do Projeto</div>
-    <label>Volume útil (m³)</label>
-    <input type="number" id="pVutil" value="10000" min="100" max="5000000" step="100" oninput="updateVutilHint()">
-    <div id="vutilHint" style="font-size:10px;color:#81d4fa;margin:-3px 0 5px;line-height:1.6;"></div>
+    <!-- Modo 1: volume útil como entrada -->
+    <div id="secVutil">
+      <label>Volume útil (m³)</label>
+      <input type="number" id="pVutil" value="10000" min="100" max="5000000" step="100" oninput="updateVutilHint()">
+      <div id="vutilHint" style="font-size:10px;color:#81d4fa;margin:-3px 0 5px;line-height:1.6;"></div>
+    </div>
+    <!-- Modo 2: profundidade H como entrada, volume é saída -->
+    <div id="secHdireto" style="display:none;">
+      <label>Profundidade H (m) <span style="color:#546e7a;font-size:9px;">altura útil de escavação</span></label>
+      <input type="number" id="pHdireto" value="3.0" min="0.5" max="30" step="0.1">
+    </div>
     <label>Altura morta — h<sub>m</sub> (m) <small style="color:#607080;">(lâmina não captável no fundo)</small></label>
     <input type="number" id="pHmort" value="0.5" min="0" max="5" step="0.1">
     <div class="divider"></div>
@@ -313,6 +344,7 @@ updateVutilHint();
 
 // ── Estado ────────────────────────────────────────────────────────────────────
 let modo='idle';
+let calcMode=1;
 let polyPts=[],polyMarkers=[],polyLayer=null,polyTempLine=null,rubberLine=null;
 let turfPoly=null;
 let gridCells=[],perimCells=[];
@@ -377,6 +409,66 @@ function updatePolyDisplay(){
     const p=$('iPolyPerim');if(p)p.textContent=calcPolyPerim().toFixed(0)+' m';
   }
 }
+// ── Alternância de modo ────────────────────────────────────────────────────────
+function setCalcMode(m){
+  calcMode=m;
+  $('btnModo1').classList.toggle('ativo',m===1);
+  $('btnModo2').classList.toggle('ativo',m===2);
+  $('secDesenho').style.display=m===1?'block':'none';
+  $('secImportarKML').style.display=m===2?'block':'none';
+  $('secVutil').style.display=m===1?'block':'none';
+  $('secHdireto').style.display=m===2?'block':'none';
+  limparPoligono();
+  setStatus(m===1?'Desenhe o contorno do espelho d\'água para começar.':'Importe um KML com o limite do reservatório.','');
+}
+
+// ── Importar KML ───────────────────────────────────────────────────────────────
+function parseKMLPoly(text){
+  // Tenta encontrar a primeira sequência <coordinates>
+  const match=text.match(/<coordinates[^>]*>([\s\S]*?)<\/coordinates>/i);
+  if(!match)return null;
+  const raw=match[1].trim();
+  const pts=raw.split(/\s+/).filter(s=>s.includes(',')).map(s=>{
+    const parts=s.split(',');
+    const lng=parseFloat(parts[0]),lat=parseFloat(parts[1]);
+    return(isFinite(lng)&&isFinite(lat))?{lat,lng}:null;
+  }).filter(Boolean);
+  if(pts.length<3)return null;
+  // Remove ponto de fechamento duplicado se houver
+  const last=pts[pts.length-1];
+  if(Math.abs(pts[0].lat-last.lat)<1e-9&&Math.abs(pts[0].lng-last.lng)<1e-9)pts.pop();
+  return pts.length>=3?pts:null;
+}
+
+function importarKML(input){
+  const file=input.files[0];
+  if(!file)return;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    const pts=parseKMLPoly(e.target.result);
+    if(!pts){setStatus('KML inválido ou sem polígono encontrado.','err');return;}
+    // Limpa estado anterior
+    polyMarkers.forEach(m=>m.remove());polyMarkers=[];
+    if(polyLayer){polyLayer.remove();polyLayer=null;}
+    polyPts=pts;
+    buildTurfPoly();
+    if(!turfPoly){setStatus('Polígono KML inválido (menos de 3 pontos).','err');return;}
+    polyLayer=L.polygon(polyPts,{color:'#29b6f6',fillColor:'#64b5f6',fillOpacity:.25,weight:2}).addTo(map);
+    map.fitBounds(polyLayer.getBounds(),{padding:[30,30]});
+    $('btnLimparKML').style.display='flex';
+    $('kmlNome').style.display='block';
+    $('kmlNome').textContent='📄 '+file.name+' — '+pts.length+' vértices';
+    $('polyInfo').style.display='block';
+    const ha=(turf.area(turfPoly)/10000).toFixed(2);
+    $('iPolyArea').textContent=ha+' ha ('+fmt(turf.area(turfPoly))+' m²)';
+    $('btnDim').disabled=false;atualizarGridInfo();
+    setStatus('KML carregado ('+pts.length+' vértices). Ajuste os parâmetros e clique em Dimensionar.','ok');
+    // Reseta o input para permitir reimportar o mesmo arquivo
+    input.value='';
+  };
+  reader.readAsText(file);
+}
+
 function fecharPoligono(){
   if(polyPts.length<3){setStatus('Mínimo 3 pontos.','err');return;}
   if(polyTempLine){polyTempLine.remove();polyTempLine=null;}
@@ -399,13 +491,17 @@ function limparPoligono(){
   if(polyLayer){polyLayer.remove();polyLayer=null;}
   if(polyTempLine){polyTempLine.remove();polyTempLine=null;}
   turfPoly=null;
-  $('btnLimparPoly').style.display='none';$('polyInfo').style.display='none';
+  $('btnLimparPoly').style.display='none';
+  $('btnLimparKML').style.display='none';
+  $('polyInfo').style.display='none';
+  $('kmlNome').style.display='none';
   $('btnDim').disabled=true;$('secRes').style.display='none';$('secPDF').style.display='none';
   gridCells=[];perimCells=[];resultado=null;
   limparOverlays();limparCorteMarkers();
   $('mapLegend').style.display='none';
   document.getElementById('northArrow').style.display='none';
-  setStatus('Desenhe o contorno do espelho d\'água para começar.','');
+  if(calcMode===1)setStatus('Desenhe o contorno do espelho d\'água para começar.','');
+  else setStatus('Importe um KML com o limite do reservatório.','');
 }
 function buildTurfPoly(){
   if(polyPts.length<3){turfPoly=null;return;}
@@ -648,7 +744,7 @@ async function dimensionar(){
   if(!window.google||!window.google.maps){setStatus('Ative o Google Maps (chave API) para buscar elevações.','err');return;}
 
   const p={
-    Vutil:    +($('pVutil').value)||10000,
+    Vutil:    calcMode===1?(+($('pVutil').value)||10000):0,
     h_mort:   +($('pHmort').value)||0,
     Ti:       +($('pTi').value)||3,
     Te:       +($('pTe').value)||1.5,
@@ -690,24 +786,35 @@ async function dimensionar(){
 
     setStatus('Calculando geometria…','info');
     const Ae=turf.area(turfPoly);
-    // Passe 1: estima H ignorando volume morto
-    const H1=bisectDepth(turfPoly,Ae,p.Ti,p.Vutil);
-    const Af1=bufferedArea(turfPoly,-H1*p.Ti);
-    const h_m=Math.min(p.h_mort,H1*0.9);
-    let Vmort=0;
-    if(h_m>0){
-      const Af_top=bufferedArea(turfPoly,-(H1-h_m)*p.Ti);
-      const Am_mort=bufferedArea(turfPoly,-(H1-h_m/2)*p.Ti);
-      Vmort=prismatoidVol(Af1,Am_mort,Af_top,h_m);
+    let H,h_m,Vmort=0,Af,Am,Vtotal_calc,Vutil_calc,z_fundo;
+    if(calcMode===1){
+      // Passe 1: estima H ignorando volume morto
+      const H1=bisectDepth(turfPoly,Ae,p.Ti,p.Vutil);
+      const Af1=bufferedArea(turfPoly,-H1*p.Ti);
+      h_m=Math.min(p.h_mort,H1*0.9);
+      if(h_m>0){
+        const Af_top=bufferedArea(turfPoly,-(H1-h_m)*p.Ti);
+        const Am_mort=bufferedArea(turfPoly,-(H1-h_m/2)*p.Ti);
+        Vmort=prismatoidVol(Af1,Am_mort,Af_top,h_m);
+      }
+      // Passe 2: H correto com volume morto incluído
+      H=bisectDepth(turfPoly,Ae,p.Ti,p.Vutil+Vmort);
+    }else{
+      // Modo 2: H fornecido diretamente, volume é calculado
+      H=+($('pHdireto').value)||3;
+      h_m=Math.min(p.h_mort,H*0.9);
+      if(h_m>0){
+        const Af_hm=bufferedArea(turfPoly,-H*p.Ti);
+        const Af_top=bufferedArea(turfPoly,-(H-h_m)*p.Ti);
+        const Am_mort=bufferedArea(turfPoly,-(H-h_m/2)*p.Ti);
+        Vmort=prismatoidVol(Af_hm,Am_mort,Af_top,h_m);
+      }
     }
-    // Passe 2: H correto com volume morto incluído
-    const H=bisectDepth(turfPoly,Ae,p.Ti,p.Vutil+Vmort);
-    const z_fundo=+(z_na-H).toFixed(2);
-
-    const Af=bufferedArea(turfPoly,-H*p.Ti);
-    const Am=bufferedArea(turfPoly,-H*p.Ti/2);
-    const Vtotal_calc=prismatoidVol(Ae,Am,Af,H);
-    const Vutil_calc=Vtotal_calc-Vmort;
+    z_fundo=+(z_na-H).toFixed(2);
+    Af=bufferedArea(turfPoly,-H*p.Ti);
+    Am=bufferedArea(turfPoly,-H*p.Ti/2);
+    Vtotal_calc=prismatoidVol(Ae,Am,Af,H);
+    Vutil_calc=Vtotal_calc-Vmort;
 
     const h_prof=+(H+p.BL).toFixed(2);
     const h_esc_avg=Math.max(0,+(z_terreno-z_fundo).toFixed(2));
