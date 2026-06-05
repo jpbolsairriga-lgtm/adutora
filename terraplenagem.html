@@ -1273,10 +1273,8 @@ function gerarVista3D(){
   if(fdR3){addM3(_stripGeo(fdR3,zF,naR3,zN));}else{let cx0=0,cy0=0;naR3.forEach(q=>{cx0+=q.x;cy0+=q.y;});cx0/=NS;cy0/=NS;addM3(_stripGeo(naR3.map(()=>({x:cx0,y:cy0})),zF,naR3,zN));}
   if(crR3)addM3(_stripGeo(naR3,zN,crR3,zC));
   // Talude externo: pé na cota real do terreno (corrige triangulos e cria rampa correta)
-  let _peBase3d=null;
   if(crR3){
-    _peBase3d=peR3||_resample(scaleOut(crR3,1.3),NS);
-    const peBase=_peBase3d;
+    const peBase=peR3||_resample(scaleOut(crR3,1.3),NS);
     const _N=crR3.length,_p=new Float32Array(_N*2*3),_ix=[];
     for(let _i=0;_i<_N;_i++){const _yb=Math.min(terrY(peBase[_i].x,peBase[_i].y),zC-0.05);_p[_i*6]=crR3[_i].x;_p[_i*6+1]=zC;_p[_i*6+2]=-crR3[_i].y;_p[_i*6+3]=peBase[_i].x;_p[_i*6+4]=_yb;_p[_i*6+5]=-peBase[_i].y;}
     for(let _i=0;_i<_N;_i++){const _j=(_i+1)%_N,_a=_i*2,_b=_i*2+1,_c=_j*2,_d=_j*2+1;_ix.push(_a,_c,_b,_b,_c,_d);}
@@ -1285,16 +1283,33 @@ function gerarVista3D(){
   let bx0=Infinity,bx1=-Infinity,by0=Infinity,by1=-Infinity;
   [...naR3,...(crR3||[]),...(peR3||[])].forEach(q=>{if(q.x<bx0)bx0=q.x;if(q.x>bx1)bx1=q.x;if(q.y<by0)by0=q.y;if(q.y>by1)by1=q.y;});
   const bcx=(bx0+bx1)/2,bcy=(by0+by1)/2,span=Math.max(bx1-bx0,by1-by0,D.H*5),ext=span*1.4;
-  // Plano de terreno com furo exato no anel do pé — anel revertido para winding CW (furo correto)
-  {const _ring=_peBase3d||(crR3?crR3:naR3);
-  const _shp=new THREE.Shape();
-  _shp.moveTo(bcx-ext*2,bcy-ext*2);_shp.lineTo(bcx+ext*2,bcy-ext*2);_shp.lineTo(bcx+ext*2,bcy+ext*2);_shp.lineTo(bcx-ext*2,bcy+ext*2);_shp.closePath();
-  const _h=new THREE.Path();
-  const _rr=_ring.slice().reverse();
-  _rr.forEach((q,i)=>{if(i===0)_h.moveTo(q.x,q.y);else _h.lineTo(q.x,q.y);});
-  _h.closePath();_shp.holes.push(_h);
-  const _fg=new THREE.ShapeGeometry(_shp);_fg.rotateX(-Math.PI/2);
-  const _fm=new THREE.Mesh(_fg,mat3);_fm.position.y=0;scene3.add(_fm);}
+  // Grade de terreno NGT×NGT com elevação real; todos os vértices usam cota real
+  const NGT=44, innerPolyGeo=r.peExtBuf||r.cristaBuf||turfPoly;
+  const gxStep=(2*ext)/NGT, gyStep=(2*ext)/NGT;
+  const terrV=[];
+  for(let jj=0;jj<=NGT;jj++){
+    for(let ii=0;ii<=NGT;ii++){
+      const gx=(bcx-ext)+ii*gxStep,gy=(bcy-ext)+jj*gyStep;
+      const lng2=cLng+gx/mLng,lat2=cLat+gy/mLat;
+      const ins=turf.booleanPointInPolygon([lng2,lat2],innerPolyGeo);
+      terrV.push({gx,gy,yEl:ins?zC:terrY(gx,gy),ins});
+    }
+  }
+  const tPos=[],tIdx=[];
+  const tVI=(ii,jj)=>jj*(NGT+1)+ii;
+  for(let jj=0;jj<NGT;jj++){
+    for(let ii=0;ii<NGT;ii++){
+      const va=terrV[tVI(ii,jj)],vb=terrV[tVI(ii+1,jj)],vc=terrV[tVI(ii,jj+1)],vd=terrV[tVI(ii+1,jj+1)];
+      if(va.ins&&vb.ins&&vc.ins&&vd.ins)continue;
+      const b=tPos.length/3;
+      tPos.push(va.gx,va.yEl,-va.gy,vb.gx,vb.yEl,-vb.gy,vc.gx,vc.yEl,-vc.gy,vd.gx,vd.yEl,-vd.gy);
+      tIdx.push(b,b+1,b+2,b+1,b+3,b+2);
+    }
+  }
+  const tGeo=new THREE.BufferGeometry();
+  tGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(tPos),3));
+  tGeo.setIndex(tIdx);tGeo.computeVertexNormals();
+  addM3(tGeo);
   cam3.position.set(bcx+span*0.55,span*0.50+zC,-(bcy)+span*0.68);
   cam3.lookAt(bcx,-D.H*0.25,-bcy);ctl3.target.set(bcx,-D.H*0.25,-bcy);ctl3.update();
   sun3.position.set(span+200,span*1.1+200,span*0.7+200);
