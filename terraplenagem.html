@@ -1266,11 +1266,6 @@ function gerarVista3D(){
   const NS=96,zF=D.zF,zN=D.zN,zC=D.zC;
   const naR3=_resample(D.naR,NS),fdR3=D.fdR?_resample(D.fdR,NS):null;
   const crR3=D.crR?_resample(D.crR,NS):null,peR3=D.peR?_resample(D.peR,NS):null;
-  // Alinhar todos os anéis angularmente com naR3 — elimina painéis torcidos (dentes)
-  {const _rX=naR3.reduce((s,q)=>s+q.x,0)/NS,_rY=naR3.reduce((s,q)=>s+q.y,0)/NS;
-  const _rA=Math.atan2(naR3[0].y-_rY,naR3[0].x-_rX);
-  function _rotR(r){if(!r||r.length<2)return;let bk=0,bd=1e9;for(let k=0;k<r.length;k++){let d=Math.abs(Math.atan2(r[k].y-_rY,r[k].x-_rX)-_rA);if(d>Math.PI)d=2*Math.PI-d;if(d<bd){bd=d;bk=k;}}if(bk===0)return;const tmp=[...r.slice(bk),...r.slice(0,bk)];for(let i=0;i<tmp.length;i++)r[i]=tmp[i];}
-  if(fdR3)_rotR(fdR3);if(crR3)_rotR(crR3);if(peR3)_rotR(peR3);}
   // Cache de células para lookup de elevação — usado no talude externo e na grade de terreno
   const allCellsTerr=[...gridCells,...perimCells];
   function terrY(gx,gy){let b=Infinity,el=r.z_na;const lt=cLat+gy/mLat,lg=cLng+gx/mLng;for(const c of allCellsTerr){const d=(c.lat-lt)**2+(c.lng-lg)**2;if(d<b){b=d;el=c.elev;}}return el-r.z_na;}
@@ -1291,8 +1286,8 @@ function gerarVista3D(){
   [...naR3,...(crR3||[]),...(peR3||[])].forEach(q=>{if(q.x<bx0)bx0=q.x;if(q.x>bx1)bx1=q.x;if(q.y<by0)by0=q.y;if(q.y>by1)by1=q.y;});
   const bcx=(bx0+bx1)/2,bcy=(by0+by1)/2,span=Math.max(bx1-bx0,by1-by0,D.H*5),ext=span*1.4;
   const NGT=44;
-  // innerPolyGeo = crista: vértices internos fixados em zC para quads de borda subirem (não tampam o interior)
-  const innerPolyGeo=r.cristaBuf||turfPoly;
+  const _fallbackBuf=r.p.BL*r.p.Ti+r.p.Lc+r.h_at_avg*r.p.Te+2;
+  const innerPolyGeo=r.peExtBuf||(r.cristaBuf&&turf.area(r.cristaBuf)>turf.area(turfPoly)*0.5?r.cristaBuf:null)||bufferedPoly(turfPoly,_fallbackBuf)||turfPoly;
   const gxStep=(2*ext)/NGT, gyStep=(2*ext)/NGT;
   const terrV=[];
   for(let jj=0;jj<=NGT;jj++){
@@ -1300,7 +1295,7 @@ function gerarVista3D(){
       const gx=(bcx-ext)+ii*gxStep,gy=(bcy-ext)+jj*gyStep;
       const lng2=cLng+gx/mLng,lat2=cLat+gy/mLat;
       const ins=turf.booleanPointInPolygon([lng2,lat2],innerPolyGeo);
-      terrV.push({gx,gy,yEl:ins?zC:terrY(gx,gy),ins});
+      terrV.push({gx,gy,yEl:terrY(gx,gy),ins});
     }
   }
   const tPos=[],tIdx=[];
