@@ -1283,35 +1283,13 @@ function gerarVista3D(){
   let bx0=Infinity,bx1=-Infinity,by0=Infinity,by1=-Infinity;
   [...naR3,...(crR3||[]),...(peR3||[])].forEach(q=>{if(q.x<bx0)bx0=q.x;if(q.x>bx1)bx1=q.x;if(q.y<by0)by0=q.y;if(q.y>by1)by1=q.y;});
   const bcx=(bx0+bx1)/2,bcy=(by0+by1)/2,span=Math.max(bx1-bx0,by1-by0,D.H*5),ext=span*1.4;
-  // Grade de terreno NGT×NGT com elevação real; todos os vértices usam cota real
-  const NGT=44, innerPolyGeo=r.peExtBuf||r.cristaBuf||turfPoly;
-  const gxStep=(2*ext)/NGT, gyStep=(2*ext)/NGT;
-  const terrV=[];
-  for(let jj=0;jj<=NGT;jj++){
-    for(let ii=0;ii<=NGT;ii++){
-      const gx=(bcx-ext)+ii*gxStep,gy=(bcy-ext)+jj*gyStep;
-      const lng2=cLng+gx/mLng,lat2=cLat+gy/mLat;
-      const ins=turf.booleanPointInPolygon([lng2,lat2],innerPolyGeo);
-      const rawEl=terrY(gx,gy);
-      const insCr=ins&&(r.cristaBuf?turf.booleanPointInPolygon([lng2,lat2],r.cristaBuf):turf.booleanPointInPolygon([lng2,lat2],turfPoly));
-      terrV.push({gx,gy,yEl:insCr?Math.min(rawEl,zC):rawEl,ins});
-    }
-  }
-  const tPos=[],tIdx=[];
-  const tVI=(ii,jj)=>jj*(NGT+1)+ii;
-  for(let jj=0;jj<NGT;jj++){
-    for(let ii=0;ii<NGT;ii++){
-      const va=terrV[tVI(ii,jj)],vb=terrV[tVI(ii+1,jj)],vc=terrV[tVI(ii,jj+1)],vd=terrV[tVI(ii+1,jj+1)];
-      if(va.ins&&vb.ins&&vc.ins&&vd.ins)continue;
-      const b=tPos.length/3;
-      tPos.push(va.gx,va.yEl,-va.gy,vb.gx,vb.yEl,-vb.gy,vc.gx,vc.yEl,-vc.gy,vd.gx,vd.yEl,-vd.gy);
-      tIdx.push(b,b+1,b+2,b+1,b+3,b+2);
-    }
-  }
-  const tGeo=new THREE.BufferGeometry();
-  tGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(tPos),3));
-  tGeo.setIndex(tIdx);tGeo.computeVertexNormals();
-  addM3(tGeo);
+  // Plano de terreno com furo exato no anel do pé (ShapeGeometry — sem grid, sem borda problemática)
+  {const _ring=_peBase3d||(crR3?crR3:null);
+  const _shp=new THREE.Shape();
+  _shp.moveTo(bcx-ext*2,bcy-ext*2);_shp.lineTo(bcx+ext*2,bcy-ext*2);_shp.lineTo(bcx+ext*2,bcy+ext*2);_shp.lineTo(bcx-ext*2,bcy+ext*2);_shp.closePath();
+  if(_ring){const _h=new THREE.Path();_ring.forEach((q,i)=>{if(i===0)_h.moveTo(q.x,q.y);else _h.lineTo(q.x,q.y);});_h.closePath();_shp.holes.push(_h);}
+  const _fg=new THREE.ShapeGeometry(_shp);_fg.rotateX(-Math.PI/2);
+  const _fm=new THREE.Mesh(_fg,mat3);_fm.position.y=0;scene3.add(_fm);}
   cam3.position.set(bcx+span*0.55,span*0.50+zC,-(bcy)+span*0.68);
   cam3.lookAt(bcx,-D.H*0.25,-bcy);ctl3.target.set(bcx,-D.H*0.25,-bcy);ctl3.update();
   sun3.position.set(span+200,span*1.1+200,span*0.7+200);
