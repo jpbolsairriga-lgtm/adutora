@@ -1755,7 +1755,13 @@ function gerarKML3D(){
   const crA=crR?alignRing(naA,crR):null;
   const peA=peR?alignRing(crA||naA,peR):null;
 
-  const z_pe=r.z_terreno; // nível do terreno natural ≈ cota do pé do talude externo
+  // Elevação por vértice do pé externo: nearest-neighbor nos perimCells (dados reais do Google)
+  function elevNN(lng,lat){
+    let best=Infinity,el=r.z_terreno;
+    perimCells.forEach(c=>{const d=(c.lat-lat)**2+(c.lng-lng)**2;if(d<best){best=d;el=c.elev;}});
+    return el;
+  }
+  const peZ=peA?peA.map(p=>elevNN(p[0],p[1])):null;
 
   var kml='<?xml version="1.0" encoding="UTF-8"?>\n'+
     '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>\n'+
@@ -1775,8 +1781,8 @@ function gerarKML3D(){
   {const c=naA.map(p=>[p[0],p[1],r.z_na]);c.push(c[0]);
   kml+='<Folder><name>Espelho d\'Água ('+r.z_na.toFixed(1)+'m)</name>'+pm("Espelho d'Água",c,'ffc06515','661e88e5')+'</Folder>';}
 
-  // Talude externo (crista → pé)
-  if(crA&&peA)kml+=stripFolder('Talude Externo',crA,r.z_crista,peA,z_pe,'ff2e7d32','994caf50');
+  // Talude externo (crista → pé) — pé com elevação real por vértice
+  if(crA&&peA&&peZ)kml+=stripFolder('Talude Externo',crA,r.z_crista,peA,peZ,'ff2e7d32','994caf50');
 
   // Tampa do aterro (anel plano entre crista e pé ao nível z_crista, simplificação)
   // Omitida: o talude externo já representa visualmente o volume de aterro
