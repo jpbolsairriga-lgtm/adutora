@@ -1273,8 +1273,10 @@ function gerarVista3D(){
   if(fdR3){addM3(_stripGeo(fdR3,zF,naR3,zN));}else{let cx0=0,cy0=0;naR3.forEach(q=>{cx0+=q.x;cy0+=q.y;});cx0/=NS;cy0/=NS;addM3(_stripGeo(naR3.map(()=>({x:cx0,y:cy0})),zF,naR3,zN));}
   if(crR3)addM3(_stripGeo(naR3,zN,crR3,zC));
   // Talude externo: pé na cota real do terreno (corrige triangulos e cria rampa correta)
+  let _peBase3d=null;
   if(crR3){
-    const peBase=peR3||_resample(scaleOut(crR3,1.3),NS);
+    _peBase3d=peR3||_resample(scaleOut(crR3,1.3),NS);
+    const peBase=_peBase3d;
     const _N=crR3.length,_p=new Float32Array(_N*2*3),_ix=[];
     for(let _i=0;_i<_N;_i++){const _yb=Math.min(terrY(peBase[_i].x,peBase[_i].y),zC-0.05);_p[_i*6]=crR3[_i].x;_p[_i*6+1]=zC;_p[_i*6+2]=-crR3[_i].y;_p[_i*6+3]=peBase[_i].x;_p[_i*6+4]=_yb;_p[_i*6+5]=-peBase[_i].y;}
     for(let _i=0;_i<_N;_i++){const _j=(_i+1)%_N,_a=_i*2,_b=_i*2+1,_c=_j*2,_d=_j*2+1;_ix.push(_a,_c,_b,_b,_c,_d);}
@@ -1283,13 +1285,14 @@ function gerarVista3D(){
   let bx0=Infinity,bx1=-Infinity,by0=Infinity,by1=-Infinity;
   [...naR3,...(crR3||[]),...(peR3||[])].forEach(q=>{if(q.x<bx0)bx0=q.x;if(q.x>bx1)bx1=q.x;if(q.y<by0)by0=q.y;if(q.y>by1)by1=q.y;});
   const bcx=(bx0+bx1)/2,bcy=(by0+by1)/2,span=Math.max(bx1-bx0,by1-by0,D.H*5),ext=span*1.4;
-  // Grade de terreno NGT×NGT com elevação real; todos os vértices usam cota real
-  // innerPolyGeo precisa cobrir pelo menos o anel da crista para o buraco ser grande o suficiente.
-  // cristaBuf pode ser negativo (Lc-BL*Ti < 0) e encolher turfPoly; peExtBuf pode ser nulo.
-  // Fallback garante expansão mínima = BL*Ti + Lc + h_at*Te + 2m, cobrindo sempre a crista.
+  // innerPolyGeo derivado de peBase (base real do talude externo) para que o buraco no terreno
+  // bata exatamente com o footprint do talude — sem gap, sem back-face visível (dentes).
   const NGT=44;
-  const _fallbackBuf=r.p.BL*r.p.Ti+r.p.Lc+r.h_at_avg*r.p.Te+2;
-  const innerPolyGeo=r.peExtBuf||(r.cristaBuf&&turf.area(r.cristaBuf)>turf.area(turfPoly)*0.5?r.cristaBuf:null)||bufferedPoly(turfPoly,_fallbackBuf)||turfPoly;
+  let innerPolyGeo=r.peExtBuf||null;
+  if(!innerPolyGeo&&_peBase3d){
+    try{const _c=_peBase3d.map(q=>[cLng+q.x/mLng,cLat+q.y/mLat]);_c.push(_c[0]);innerPolyGeo=turf.polygon([_c]);}catch(e){}
+  }
+  if(!innerPolyGeo) innerPolyGeo=r.cristaBuf||bufferedPoly(turfPoly,r.p.BL*r.p.Ti+r.p.Lc+r.h_at_avg*r.p.Te+2)||turfPoly;
   const gxStep=(2*ext)/NGT, gyStep=(2*ext)/NGT;
   const terrV=[];
   for(let jj=0;jj<=NGT;jj++){
