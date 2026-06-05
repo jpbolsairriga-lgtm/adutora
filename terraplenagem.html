@@ -1263,59 +1263,37 @@ function gerarVista3D(){
   const mat3=new THREE.MeshPhongMaterial({color:0xD4A017,shininess:32,specular:new THREE.Color(0x553300),side:THREE.DoubleSide});
   function addM3(geo){const m=new THREE.Mesh(geo,mat3);m.castShadow=true;m.receiveShadow=true;scene3.add(m);return m;}
 
+  // ── VISTA 3D: geometria pura, sem grade de terreno ──────────────────
   const NS=96,zF=D.zF,zN=D.zN,zC=D.zC;
   const naR3=_resample(D.naR,NS),fdR3=D.fdR?_resample(D.fdR,NS):null;
   const crR3=D.crR?_resample(D.crR,NS):null,peR3=D.peR?_resample(D.peR,NS):null;
-  // Cache de células para lookup de elevação — usado no talude externo e na grade de terreno
   const allCellsTerr=[...gridCells,...perimCells];
   function terrY(gx,gy){let b=Infinity,el=r.z_na;const lt=cLat+gy/mLat,lg=cLng+gx/mLng;for(const c of allCellsTerr){const d=(c.lat-lt)**2+(c.lng-lg)**2;if(d<b){b=d;el=c.elev;}}return el-r.z_na;}
-  if(fdR3)addM3(_fanGeo(fdR3,zF));
-  if(fdR3){addM3(_stripGeo(fdR3,zF,naR3,zN));}else{let cx0=0,cy0=0;naR3.forEach(q=>{cx0+=q.x;cy0+=q.y;});cx0/=NS;cy0/=NS;addM3(_stripGeo(naR3.map(()=>({x:cx0,y:cy0})),zF,naR3,zN));}
-  if(crR3)addM3(_stripGeo(naR3,zN,crR3,zC));
-  // Talude externo: pé na cota real do terreno (corrige triangulos e cria rampa correta)
-  if(crR3){
-    const peBase=peR3||_resample(scaleOut(crR3,1.3),NS);
-    const _N=crR3.length,_p=new Float32Array(_N*2*3),_ix=[];
-    for(let _i=0;_i<_N;_i++){const _yb=Math.min(terrY(peBase[_i].x,peBase[_i].y),zC-0.05);_p[_i*6]=crR3[_i].x;_p[_i*6+1]=zC;_p[_i*6+2]=-crR3[_i].y;_p[_i*6+3]=peBase[_i].x;_p[_i*6+4]=_yb;_p[_i*6+5]=-peBase[_i].y;}
-    for(let _i=0;_i<_N;_i++){const _j=(_i+1)%_N,_a=_i*2,_b=_i*2+1,_c=_j*2,_d=_j*2+1;_ix.push(_a,_c,_b,_b,_c,_d);}
-    const _eg=new THREE.BufferGeometry();_eg.setAttribute('position',new THREE.BufferAttribute(_p,3));_eg.setIndex(_ix);_eg.computeVertexNormals();addM3(_eg);
-  }
+  // Bounding box e parâmetros de câmera
   let bx0=Infinity,bx1=-Infinity,by0=Infinity,by1=-Infinity;
   [...naR3,...(crR3||[]),...(peR3||[])].forEach(q=>{if(q.x<bx0)bx0=q.x;if(q.x>bx1)bx1=q.x;if(q.y<by0)by0=q.y;if(q.y>by1)by1=q.y;});
-  const bcx=(bx0+bx1)/2,bcy=(by0+by1)/2,span=Math.max(bx1-bx0,by1-by0,D.H*5),ext=span*0.9;
-  // NGT alto para célula < Te×H — garante que crista fique no buraco, não na faixa de borda
-  const NGT=Math.min(120,Math.max(80,Math.ceil(2*ext/1.5))), innerPolyGeo=r.peExtBuf||r.cristaBuf||turfPoly;
-  const gxStep=(2*ext)/NGT, gyStep=(2*ext)/NGT;
-  const terrV=[];
-  for(let jj=0;jj<=NGT;jj++){
-    for(let ii=0;ii<=NGT;ii++){
-      const gx=(bcx-ext)+ii*gxStep,gy=(bcy-ext)+jj*gyStep;
-      const lng2=cLng+gx/mLng,lat2=cLat+gy/mLat;
-      const ins=turf.booleanPointInPolygon([lng2,lat2],innerPolyGeo);
-      terrV.push({gx,gy,yEl:ins?zC:terrY(gx,gy),ins});
-    }
-  }
-  const tPos=[],tIdx=[];
-  const tVI=(ii,jj)=>jj*(NGT+1)+ii;
-  for(let jj=0;jj<NGT;jj++){
-    for(let ii=0;ii<NGT;ii++){
-      const va=terrV[tVI(ii,jj)],vb=terrV[tVI(ii+1,jj)],vc=terrV[tVI(ii,jj+1)],vd=terrV[tVI(ii+1,jj+1)];
-      if(va.ins&&vb.ins&&vc.ins&&vd.ins)continue;
-      const b=tPos.length/3;
-      tPos.push(va.gx,va.yEl,-va.gy,vb.gx,vb.yEl,-vb.gy,vc.gx,vc.yEl,-vc.gy,vd.gx,vd.yEl,-vd.gy);
-      tIdx.push(b,b+1,b+2,b+1,b+3,b+2);
-    }
-  }
-  const tGeo=new THREE.BufferGeometry();
-  tGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(tPos),3));
-  tGeo.setIndex(tIdx);tGeo.computeVertexNormals();
-  addM3(tGeo);
-  // Exagero vertical: reservatório raso (H<<span) fica visível com escala Y ampliada
-  const vExag=Math.max(1,Math.min(10,span/(D.H*5)));
-  scene3.scale.set(1,vExag,1);
-  cam3.position.set(bcx+span*0.55,(span*0.50+zC)*vExag,-(bcy)+span*0.68);
-  cam3.lookAt(bcx,-D.H*0.25*vExag,-bcy);ctl3.target.set(bcx,-D.H*0.25*vExag,-bcy);ctl3.update();
-  sun3.position.set(span+200,(span*1.1+200)*vExag,span*0.7+200);
+  const bcx=(bx0+bx1)/2,bcy=(by0+by1)/2,span=Math.max(bx1-bx0,by1-by0,D.H*5);
+  // Exagero vertical aplicado direto nos Y — evita artefatos de scene.scale
+  const vExag=Math.max(2,Math.min(10,span/(D.H*5)));
+  function yv(v){return v*vExag;}
+  const peBase=peR3||_resample(scaleOut(crR3||naR3,1.5),NS);
+  // 1. Fundo (disco)
+  if(fdR3)addM3(_fanGeo(fdR3,yv(zF)));
+  // 2. Talude fundo→NA
+  if(fdR3)addM3(_stripGeo(fdR3,yv(zF),naR3,yv(zN)));
+  else{const cR=naR3.map(()=>({x:bcx,y:bcy}));addM3(_stripGeo(cR,yv(zF),naR3,yv(zN)));}
+  // 3. Talude interno NA→crista
+  if(crR3)addM3(_stripGeo(naR3,yv(zN),crR3,yv(zC)));
+  // 4. Talude externo crista→pé (cota real do terreno por vértice)
+  if(crR3){const _N=NS,_p=new Float32Array(_N*2*3),_ix=[];
+    for(let _i=0;_i<_N;_i++){const _yb=yv(Math.min(terrY(peBase[_i].x,peBase[_i].y),zC-0.05));_p[_i*6]=crR3[_i].x;_p[_i*6+1]=yv(zC);_p[_i*6+2]=-crR3[_i].y;_p[_i*6+3]=peBase[_i].x;_p[_i*6+4]=_yb;_p[_i*6+5]=-peBase[_i].y;}
+    for(let _i=0;_i<_N;_i++){const _j=(_i+1)%_N,_a=_i*2,_b=_i*2+1,_c=_j*2,_d=_j*2+1;_ix.push(_a,_c,_b,_b,_c,_d);}
+    const _eg=new THREE.BufferGeometry();_eg.setAttribute('position',new THREE.BufferAttribute(_p,3));_eg.setIndex(_ix);_eg.computeVertexNormals();addM3(_eg);}
+  // 5. Anel de terreno plano ao redor (sem grade, sem furo, sem artefatos)
+  addM3(_stripGeo(peBase,0,_resample(scaleOut(peBase,2.0),NS),0));
+  cam3.position.set(bcx+span*0.55,span*0.5+yv(zC),-(bcy)+span*0.68);
+  cam3.lookAt(bcx,yv(-D.H*0.3),-bcy);ctl3.target.set(bcx,yv(-D.H*0.3),-bcy);ctl3.update();
+  sun3.position.set(span+200,span*1.1+200,span*0.7+200);
   sc3.left=-span*1.5;sc3.right=span*1.5;sc3.bottom=-span*1.5;sc3.top=span*1.5;sc3.updateProjectionMatrix();
   $('m3d-inf').style.display='block';
   $('m3d-inf').innerHTML='<b style="font-size:12.5px;letter-spacing:.4px">RESERVATÓRIO ESCAVADO — VISTA 3D</b><br>'
