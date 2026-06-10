@@ -727,17 +727,19 @@ function tick() { return new Promise(r => setTimeout(r, 0)); }
 
 // ══════════════════════════════════════════════════════════
 // EXTEND CURVES TO POLYGON BOUNDARY
-// Cada extremidade é extrapolada em linha reta até cruzar
-// o limite do talhão, garantindo cobertura total da área.
+// Usa o ângulo global das linhas (não direção local ruidosa)
+// para extender cada extremidade até o limite do talhão.
 // ══════════════════════════════════════════════════════════
-function extendCurvesToBoundary(curves, tPoly) {
+function extendCurvesToBoundary(curves, tPoly, angleDeg) {
   let polyLine;
   try { polyLine = turf.polygonToLine(tPoly); } catch(e) { return curves; }
-  const EXT = 0.008; // ~900 m em graus — cobre qualquer talhão agrícola
+  const EXT = 0.008; // ~900 m — suficiente para qualquer talhão
+  const rad = angleDeg * Math.PI / 180;
+  // Direção em lng/lat: eixo-y pixel (para baixo) = lat decrescente
+  const rx = Math.cos(rad), ry = -Math.sin(rad);
 
-  function hitBoundary(from, dir) {
-    // Lança raio de from na direção dir e retorna o ponto onde cruza a borda
-    const far = [from[0] + dir[0]*EXT, from[1] + dir[1]*EXT];
+  function snap(from, dlng, dlat) {
+    const far = [from[0] + dlng*EXT, from[1] + dlat*EXT];
     let hits;
     try { hits = turf.lineIntersect(turf.lineString([from, far]), polyLine); }
     catch(e) { return null; }
@@ -752,21 +754,13 @@ function extendCurvesToBoundary(curves, tPoly) {
   }
 
   return curves.map(coords => {
-    if (coords.length < 4) return coords;
+    if (coords.length < 2) return coords;
     const n = coords.length;
-
-    // Direção na ponta final: média dos últimos N pontos
-    const tail = Math.max(0, n - 6);
-    const de = [coords[n-1][0]-coords[tail][0], coords[n-1][1]-coords[tail][1]];
-    const dm = Math.hypot(de[0], de[1]) || 1;
-    const endPt = hitBoundary(coords[n-1], [de[0]/dm, de[1]/dm]) || coords[n-1];
-
-    // Direção na ponta inicial: inversa
-    const head = Math.min(n-1, 5);
-    const ds = [coords[0][0]-coords[head][0], coords[0][1]-coords[head][1]];
-    const sm = Math.hypot(ds[0], ds[1]) || 1;
-    const startPt = hitBoundary(coords[0], [ds[0]/sm, ds[1]/sm]) || coords[0];
-
+    // Orientação: a curva aponta em +r ou −r?
+    const dot = (coords[n-1][0]-coords[0][0])*rx + (coords[n-1][1]-coords[0][1])*ry;
+    const [ex, ey] = dot >= 0 ? [rx, ry] : [-rx, -ry];
+    const endPt   = snap(coords[n-1],  ex,  ey) || coords[n-1];
+    const startPt = snap(coords[0],   -ex, -ey) || coords[0];
     return [startPt, ...coords.slice(1, n-1), endPt];
   });
 }
@@ -824,14 +818,11 @@ async function restituir() {
 
     setStatus(`Rastreando linhas (ângulo ${angleDeg.toFixed(0)}°, espaçamento ~${spacingM.toFixed(1)} m)...`, 'running'); await tick();
 
-    const rawCurves = await traceCurvedRows(gray, mask, w, h, angleDeg, spacingPx);
-
-    setStatus('Fechando lacunas...', 'running'); await tick();
-    const curves = gapClose(rawCurves, spacingPx * 2.5);
+    const curves = await traceCurvedRows(gray, mask, w, h, angleDeg, spacingPx);
 
     setStatus('Convertendo para coordenadas...', 'running'); await tick();
     generatedCurves = curvesToLatLng(curves, txMin, tyMin, analysisZoom, turfPoly);
-    generatedCurves = extendCurvesToBoundary(generatedCurves, turfPoly);
+    generatedCurves = extendCurvesToBoundary(generatedCurves, turfPoly, angleDeg);
     drawCurves(generatedCurves);
 
     const area = turf.area(turfPoly) / 10000;
@@ -883,10 +874,9 @@ async function aplicarManual() {
 
   setStatus('Reaplicando com ângulo/espaçamento manual...', 'running'); await tick();
 
-  const rawCurves = await traceCurvedRows(gray, mask, w, h, angleDeg, spacingPx);
-  const curves = gapClose(rawCurves, spacingPx * 2.5);
+  const curves = await traceCurvedRows(gray, mask, w, h, angleDeg, spacingPx);
   generatedCurves = curvesToLatLng(curves, txMin, tyMin, zoom, turfPoly);
-  generatedCurves = extendCurvesToBoundary(generatedCurves, turfPoly);
+  generatedCurves = extendCurvesToBoundary(generatedCurves, turfPoly, angleDeg);
   drawCurves(generatedCurves);
 
   document.getElementById('resAngle').textContent = angleDeg.toFixed(1) + '°';
