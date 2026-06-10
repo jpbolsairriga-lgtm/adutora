@@ -165,44 +165,60 @@ let generatedCurves = [];
 // ══════════════════════════════════════════════════════════
 // MAP INIT
 // ══════════════════════════════════════════════════════════
+let esriLayer = null;
+
 function initMap() {
   map = L.map('map', { zoomControl: false, center: [-19.5, -46.0], zoom: 13 });
   L.control.zoom({ position: 'topright' }).addTo(map);
+
+  // ESRI sempre carrega como base — é também a fonte usada na análise
+  esriLayer = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { attribution: 'ESRI World Imagery', maxZoom: 20 }
+  ).addTo(map);
+
   const key = localStorage.getItem('mapskey_rest') || '';
   document.getElementById('apiKey').value = key;
-  if (key) applyGoogleMap(key); else addEsriLayer();
+  if (key) applyGoogleMap(key);
 }
 
 function applyGoogleMap(key) {
   if (typeof google !== 'undefined' && google.maps) {
-    if (!googleLayer) googleLayer = L.gridLayer.googleMutant({ type: 'satellite', maxZoom: 21 }).addTo(map);
-    return;
+    _gmapLoaded(); return;
   }
   if (document.querySelector('script[data-gmaps]')) return;
   const s = document.createElement('script');
   s.setAttribute('data-gmaps', '1');
   s.src = `https://maps.googleapis.com/maps/api/js?key=${key}&callback=_gmapLoaded`;
-  s.onerror = () => { if (!googleLayer) addEsriLayer(); };
+  // se falhar, ESRI já está visível — não precisa de fallback
   document.head.appendChild(s);
 }
 
 window._gmapLoaded = function() {
-  if (googleLayer) map.removeLayer(googleLayer);
+  if (googleLayer) { map.removeLayer(googleLayer); googleLayer = null; }
+  // Remove ESRI para não duplicar tiles
+  if (esriLayer) { map.removeLayer(esriLayer); }
   googleLayer = L.gridLayer.googleMutant({ type: 'satellite', maxZoom: 21 }).addTo(map);
 };
 
 function addEsriLayer() {
-  if (!map.hasLayer) return;
-  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    { attribution: 'ESRI', maxZoom: 20 }).addTo(map);
+  if (!esriLayer || !map.hasLayer(esriLayer)) {
+    esriLayer = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      { attribution: 'ESRI World Imagery', maxZoom: 20 }
+    ).addTo(map);
+  }
 }
 
 function saveKey() {
   const k = document.getElementById('apiKey').value.trim();
   localStorage.setItem('mapskey_rest', k);
   if (k) {
-    if (googleLayer) { map.removeLayer(googleLayer); googleLayer = null; }
     applyGoogleMap(k);
+  } else {
+    // Sem chave: garante que ESRI está visível
+    if (googleLayer) { map.removeLayer(googleLayer); googleLayer = null; }
+    addEsriLayer();
   }
 }
 
