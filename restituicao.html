@@ -1,0 +1,854 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Restituição de Linhas de Plantio — Bolsa Irriga</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;display:flex;height:100vh;overflow:hidden;background:#1a2535}
+#sidebar{width:300px;min-width:300px;background:#1e2d3d;color:#e0e6ed;display:flex;flex-direction:column;overflow-y:auto;z-index:10;box-shadow:2px 0 12px rgba(0,0,0,.4)}
+#map{flex:1;z-index:1}
+.s-head{background:#162130;padding:14px 16px;border-bottom:1px solid #2a3f54}
+.s-head h1{font-size:1rem;font-weight:700;color:#7ec8e3}
+.s-head p{font-size:.73rem;color:#8899aa;margin-top:2px}
+.s-section{padding:12px 14px;border-bottom:1px solid #243447}
+.s-label{font-size:.72rem;color:#7a9bb5;text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px;font-weight:600}
+input[type=text],input[type=number]{width:100%;background:#243447;border:1px solid #2e4460;border-radius:6px;color:#e0e6ed;padding:7px 10px;font-size:.82rem;outline:none}
+input:focus{border-color:#4a9eca}
+.btn{width:100%;padding:8px 12px;border-radius:7px;border:none;cursor:pointer;font-size:.82rem;font-weight:600;transition:background .18s}
+.btn-primary{background:#1976d2;color:#fff}
+.btn-primary:hover{background:#1565c0}
+.btn-primary:disabled{background:#2a3f54;color:#5a7a99;cursor:not-allowed}
+.btn-success{background:#2e7d32;color:#fff}
+.btn-success:hover{background:#1b5e20}
+.btn-success:disabled{background:#2a3f54;color:#5a7a99;cursor:not-allowed}
+.btn-warn{background:#e65100;color:#fff}
+.btn-warn:hover{background:#bf360c}
+.btn-outline{background:transparent;color:#7ec8e3;border:1px solid #7ec8e3}
+.btn-outline:hover{background:#1a3a52}
+.btn-sm{font-size:.75rem;padding:6px 10px}
+.btn-row{display:flex;gap:6px}
+.btn-row .btn{flex:1}
+.status-box{background:#162130;border-radius:8px;padding:10px 12px;font-size:.78rem;color:#8899aa;min-height:36px;line-height:1.5;word-break:break-word}
+.status-box.running{color:#64b5f6}
+.status-box.ok{color:#81c784}
+.status-box.error{color:#ef9a9a}
+.result-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.result-card{background:#162130;border-radius:7px;padding:8px 10px;text-align:center}
+.result-card .val{font-size:1.1rem;font-weight:700;color:#7ec8e3}
+.result-card .lbl{font-size:.67rem;color:#6a8aa5;margin-top:2px}
+.slider-row{display:flex;align-items:center;gap:8px;margin-top:6px}
+.slider-row input[type=range]{flex:1;accent-color:#4a9eca}
+.slider-row span{min-width:44px;text-align:right;font-size:.82rem;color:#e0e6ed}
+.conf-badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:.7rem;font-weight:700}
+.conf-high{background:#1b5e20;color:#a5d6a7}
+.conf-mid{background:#e65100;color:#ffccbc}
+.conf-low{background:#b71c1c;color:#ffcdd2}
+.zoom-pills{display:flex;gap:6px;margin-top:4px}
+.zpill{flex:1;padding:5px;text-align:center;border-radius:6px;cursor:pointer;font-size:.78rem;font-weight:600;background:#243447;color:#8899aa;border:1px solid #2e4460;transition:all .15s}
+.zpill.active{background:#1565c0;color:#fff;border-color:#1976d2}
+.mt4{margin-top:4px}
+.mt8{margin-top:8px}
+.hidden{display:none!important}
+#poly-hint{font-size:.72rem;color:#5a7a99;margin-top:5px;line-height:1.4}
+</style>
+</head>
+<body>
+<div id="sidebar">
+  <div class="s-head">
+    <h1>Restituição de Plantio</h1>
+    <p>Detecção automática de linhas por imagem de satélite</p>
+  </div>
+
+  <!-- API Key -->
+  <div class="s-section">
+    <div class="s-label">Chave API Google Maps</div>
+    <input type="text" id="apiKey" placeholder="AIza..." oninput="saveKey()">
+  </div>
+
+  <!-- Buscar cidade -->
+  <div class="s-section">
+    <div class="s-label">Buscar localização</div>
+    <div class="btn-row mt4">
+      <input type="text" id="searchInput" placeholder="Cidade ou endereço" style="flex:1;width:auto" onkeydown="if(event.key==='Enter')buscar()">
+      <button class="btn btn-outline btn-sm" onclick="buscar()" style="width:auto;padding:6px 12px">Ir</button>
+    </div>
+  </div>
+
+  <!-- Ferramentas -->
+  <div class="s-section">
+    <div class="s-label">Ferramentas</div>
+    <div class="btn-row mt4">
+      <button class="btn btn-outline btn-sm" id="btnDraw" onclick="toggleDraw()">✏ Desenhar Talhão</button>
+      <button class="btn btn-outline btn-sm" onclick="clearAll()">✕ Limpar</button>
+    </div>
+    <div class="btn-row mt4">
+      <button class="btn btn-outline btn-sm" onclick="document.getElementById('kmlInput').click()">📂 Importar KML</button>
+    </div>
+    <input type="file" id="kmlInput" accept=".kml" style="display:none" onchange="importKML(this)">
+    <p id="poly-hint">Clique no mapa para desenhar o contorno do talhão. Duplo clique para fechar.</p>
+  </div>
+
+  <!-- Resolução -->
+  <div class="s-section">
+    <div class="s-label">Resolução da análise (zoom)</div>
+    <div class="zoom-pills">
+      <div class="zpill" id="z17" onclick="setZoom(17)">17 <br><span style="font-weight:400;font-size:.65rem">~1.2 m/px</span></div>
+      <div class="zpill active" id="z18" onclick="setZoom(18)">18 <br><span style="font-weight:400;font-size:.65rem">~0.6 m/px</span></div>
+      <div class="zpill" id="z19" onclick="setZoom(19)">19 <br><span style="font-weight:400;font-size:.65rem">~0.3 m/px</span></div>
+    </div>
+  </div>
+
+  <!-- Botão analisar -->
+  <div class="s-section">
+    <button class="btn btn-primary" id="btnAnalyse" disabled onclick="restituir()">🔍 Analisar e Restituir Linhas</button>
+  </div>
+
+  <!-- Status -->
+  <div class="s-section">
+    <div class="s-label">Status</div>
+    <div class="status-box" id="statusBox">Aguardando contorno do talhão...</div>
+  </div>
+
+  <!-- Resultados -->
+  <div class="s-section hidden" id="secResults">
+    <div class="s-label">Resultado detectado <span id="confBadge" class="conf-badge"></span></div>
+    <div class="result-grid mt4">
+      <div class="result-card"><div class="val" id="resAngle">—</div><div class="lbl">Ângulo (°)</div></div>
+      <div class="result-card"><div class="val" id="resSpacing">—</div><div class="lbl">Espaçamento (m)</div></div>
+      <div class="result-card"><div class="val" id="resLines">—</div><div class="lbl">Linhas geradas</div></div>
+      <div class="result-card"><div class="val" id="resArea">—</div><div class="lbl">Área (ha)</div></div>
+    </div>
+  </div>
+
+  <!-- Ajuste manual -->
+  <div class="s-section hidden" id="secManual">
+    <div class="s-label">Ajuste manual</div>
+    <div style="margin-top:6px;font-size:.75rem;color:#8899aa">Ângulo das linhas (°)</div>
+    <div class="slider-row">
+      <input type="range" id="slAngle" min="0" max="179" step="1" value="0" oninput="updateManual()">
+      <span id="lblAngle">0°</span>
+    </div>
+    <div style="margin-top:8px;font-size:.75rem;color:#8899aa">Espaçamento (m)</div>
+    <div class="slider-row">
+      <input type="range" id="slSpacing" min="1" max="10" step="0.1" value="3" oninput="updateManual()">
+      <span id="lblSpacing">3.0 m</span>
+    </div>
+    <button class="btn btn-warn btn-sm mt8" onclick="aplicarManual()">↺ Reaplicar com esses valores</button>
+  </div>
+
+  <!-- Export -->
+  <div class="s-section">
+    <button class="btn btn-success" id="btnKml" disabled onclick="exportKML()">⬇ Exportar KML</button>
+  </div>
+</div>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.gridlayer.googlemutant@0.14.4/dist/Leaflet.GoogleMutant.js"></script>
+<script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+<script>
+// ══════════════════════════════════════════════════════════
+// STATE
+// ══════════════════════════════════════════════════════════
+let map, googleLayer;
+let drawing = false;
+let polyPts = [];      // [{lat,lng}]
+let turfPoly = null;
+let polyLayer = null;
+let tempMarkers = [];
+let lineLayer = null;
+let analysisZoom = 18;
+let detectedAngle = 0;
+let detectedSpacing = 3;
+const TILE_SIZE = 256;
+
+// ══════════════════════════════════════════════════════════
+// MAP INIT
+// ══════════════════════════════════════════════════════════
+function initMap() {
+  map = L.map('map', { zoomControl: false, center: [-19.5, -46.0], zoom: 13 });
+  L.control.zoom({ position: 'topright' }).addTo(map);
+
+  const key = localStorage.getItem('mapskey_rest') || '';
+  document.getElementById('apiKey').value = key;
+  applyBasemap(key);
+}
+
+function applyBasemap(key) {
+  if (googleLayer) { map.removeLayer(googleLayer); googleLayer = null; }
+  if (key) {
+    try {
+      const script = document.createElement('script');
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${key}`;
+      script.onload = () => {
+        googleLayer = L.gridLayer.googleMutant({ type: 'satellite', maxZoom: 21 }).addTo(map);
+      };
+      document.head.appendChild(script);
+    } catch(e) { addEsriLayer(); }
+  } else { addEsriLayer(); }
+}
+
+function addEsriLayer() {
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { attribution: 'ESRI', maxZoom: 20 }).addTo(map);
+}
+
+function saveKey() {
+  const k = document.getElementById('apiKey').value.trim();
+  localStorage.setItem('mapskey_rest', k);
+  applyBasemap(k);
+}
+
+// ══════════════════════════════════════════════════════════
+// BUSCAR
+// ══════════════════════════════════════════════════════════
+async function buscar() {
+  const q = document.getElementById('searchInput').value.trim();
+  if (!q) return;
+  const key = localStorage.getItem('mapskey_rest') || '';
+  try {
+    if (key) {
+      const r = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q)}&key=${key}`);
+      const d = await r.json();
+      if (d.results && d.results[0]) {
+        const { lat, lng } = d.results[0].geometry.location;
+        map.setView([lat, lng], 16);
+        return;
+      }
+    }
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}`, { headers: { 'Accept-Language': 'pt-BR' } });
+    const d = await r.json();
+    if (d[0]) map.setView([parseFloat(d[0].lat), parseFloat(d[0].lon)], 16);
+  } catch(e) {}
+}
+
+// ══════════════════════════════════════════════════════════
+// DRAW POLYGON
+// ══════════════════════════════════════════════════════════
+function toggleDraw() {
+  drawing = !drawing;
+  const btn = document.getElementById('btnDraw');
+  if (drawing) {
+    btn.style.background = '#1565c0';
+    btn.style.color = '#fff';
+    map.getContainer().style.cursor = 'crosshair';
+    document.getElementById('poly-hint').textContent = 'Clique para adicionar pontos. Duplo clique para fechar.';
+  } else {
+    btn.style.background = '';
+    btn.style.color = '';
+    map.getContainer().style.cursor = '';
+    document.getElementById('poly-hint').textContent = 'Clique no mapa para desenhar o contorno do talhão. Duplo clique para fechar.';
+  }
+}
+
+map_click_handler = null;
+map_dblclick_handler = null;
+
+function setupMapHandlers() {
+  map.on('click', e => {
+    if (!drawing) return;
+    polyPts.push({ lat: e.latlng.lat, lng: e.latlng.lng });
+    updatePolyPreview();
+  });
+  map.on('dblclick', e => {
+    if (!drawing) return;
+    if (polyPts.length >= 3) closePoly();
+  });
+}
+
+function updatePolyPreview() {
+  clearMarkers();
+  if (polyPts.length < 1) return;
+  polyPts.forEach(p => {
+    const m = L.circleMarker([p.lat, p.lng], { radius: 4, color: '#fff', fillColor: '#4a9eca', fillOpacity: 1, weight: 1.5 }).addTo(map);
+    tempMarkers.push(m);
+  });
+  if (polyLayer) { map.removeLayer(polyLayer); polyLayer = null; }
+  if (polyPts.length >= 2) {
+    polyLayer = L.polygon(polyPts.map(p => [p.lat, p.lng]),
+      { color: '#7ec8e3', fillColor: '#7ec8e3', fillOpacity: .15, weight: 2, dashArray: '6,4' }).addTo(map);
+  }
+}
+
+function closePoly() {
+  if (polyPts.length < 3) return;
+  drawing = false;
+  const btn = document.getElementById('btnDraw');
+  btn.style.background = '';
+  btn.style.color = '';
+  map.getContainer().style.cursor = '';
+
+  clearMarkers();
+  if (polyLayer) { map.removeLayer(polyLayer); polyLayer = null; }
+
+  const coords = polyPts.map(p => [p.lng, p.lat]);
+  coords.push(coords[0]);
+  turfPoly = turf.polygon([coords]);
+
+  polyLayer = L.polygon(polyPts.map(p => [p.lat, p.lng]),
+    { color: '#7ec8e3', fillColor: '#4a9eca', fillOpacity: .15, weight: 2 }).addTo(map);
+
+  const area = turf.area(turfPoly) / 10000;
+  document.getElementById('poly-hint').textContent = `Talhão: ${area.toFixed(2)} ha`;
+  document.getElementById('btnAnalyse').disabled = false;
+  setStatus('Talhão definido. Clique em "Analisar e Restituir Linhas".', '');
+}
+
+function clearMarkers() {
+  tempMarkers.forEach(m => map.removeLayer(m));
+  tempMarkers = [];
+}
+
+function clearAll() {
+  drawing = false;
+  polyPts = [];
+  turfPoly = null;
+  clearMarkers();
+  if (polyLayer) { map.removeLayer(polyLayer); polyLayer = null; }
+  if (lineLayer) { map.removeLayer(lineLayer); lineLayer = null; }
+  document.getElementById('btnAnalyse').disabled = true;
+  document.getElementById('btnKml').disabled = true;
+  document.getElementById('secResults').classList.add('hidden');
+  document.getElementById('secManual').classList.add('hidden');
+  document.getElementById('btnDraw').style.background = '';
+  document.getElementById('btnDraw').style.color = '';
+  map.getContainer().style.cursor = '';
+  document.getElementById('poly-hint').textContent = 'Clique no mapa para desenhar o contorno do talhão. Duplo clique para fechar.';
+  setStatus('Aguardando contorno do talhão...', '');
+}
+
+// ══════════════════════════════════════════════════════════
+// IMPORT KML
+// ══════════════════════════════════════════════════════════
+function importKML(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(e.target.result, 'text/xml');
+      const coords = doc.querySelector('coordinates');
+      if (!coords) throw new Error('Sem coordenadas no KML');
+      const raw = coords.textContent.trim().split(/\s+/);
+      polyPts = raw.map(c => {
+        const parts = c.split(',');
+        return { lat: parseFloat(parts[1]), lng: parseFloat(parts[0]) };
+      }).filter(p => !isNaN(p.lat) && !isNaN(p.lng));
+      if (polyPts.length < 3) throw new Error('Menos de 3 pontos no KML');
+      polyPts.pop(); // remove repeated first point if present
+      closePoly();
+      map.fitBounds(polyLayer.getBounds(), { padding: [30, 30] });
+    } catch(err) {
+      setStatus('Erro ao importar KML: ' + err.message, 'error');
+    }
+    input.value = '';
+  };
+  reader.readAsText(file);
+}
+
+// ══════════════════════════════════════════════════════════
+// ZOOM SELECTOR
+// ══════════════════════════════════════════════════════════
+function setZoom(z) {
+  analysisZoom = z;
+  [17, 18, 19].forEach(n => {
+    document.getElementById('z' + n).classList.toggle('active', n === z);
+  });
+}
+
+// ══════════════════════════════════════════════════════════
+// STATUS
+// ══════════════════════════════════════════════════════════
+function setStatus(msg, type) {
+  const el = document.getElementById('statusBox');
+  el.textContent = msg;
+  el.className = 'status-box' + (type ? ' ' + type : '');
+}
+
+// ══════════════════════════════════════════════════════════
+// TILE UTILITIES
+// ══════════════════════════════════════════════════════════
+function lngToTileX(lng, zoom) {
+  return Math.floor((lng + 180) / 360 * Math.pow(2, zoom));
+}
+function latToTileY(lat, zoom) {
+  const lr = lat * Math.PI / 180;
+  return Math.floor((1 - Math.log(Math.tan(lr) + 1 / Math.cos(lr)) / Math.PI) / 2 * Math.pow(2, zoom));
+}
+function tileXToLng(tx, zoom) {
+  return tx / Math.pow(2, zoom) * 360 - 180;
+}
+function tileYToLat(ty, zoom) {
+  const n = Math.PI - 2 * Math.PI * ty / Math.pow(2, zoom);
+  return 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+}
+function lngLatToPixel(lng, lat, txMin, tyMin, zoom) {
+  const n = Math.pow(2, zoom);
+  const px = (lng + 180) / 360 * n * TILE_SIZE - txMin * TILE_SIZE;
+  const lr = lat * Math.PI / 180;
+  const py = (1 - Math.log(Math.tan(lr) + 1 / Math.cos(lr)) / Math.PI) / 2 * n * TILE_SIZE - tyMin * TILE_SIZE;
+  return [px, py];
+}
+function pixelToLngLat(px, py, txMin, tyMin, zoom) {
+  const n = Math.pow(2, zoom);
+  const lng = (px + txMin * TILE_SIZE) / (n * TILE_SIZE) * 360 - 180;
+  const ty = (py + tyMin * TILE_SIZE) / (n * TILE_SIZE);
+  const lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * ty))) * 180 / Math.PI;
+  return [lng, lat];
+}
+function metersPerPixel(lat, zoom) {
+  return 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
+}
+
+// ══════════════════════════════════════════════════════════
+// IMAGE FETCHING (ESRI World Imagery — suporta CORS)
+// ══════════════════════════════════════════════════════════
+async function fetchTiles(bounds, zoom) {
+  const txMin = lngToTileX(bounds.west, zoom);
+  const txMax = lngToTileX(bounds.east, zoom);
+  const tyMin = latToTileY(bounds.north, zoom);
+  const tyMax = latToTileY(bounds.south, zoom);
+
+  const cols = txMax - txMin + 1;
+  const rows = tyMax - tyMin + 1;
+
+  if (cols * rows > 64) throw new Error(`Área muito grande para zoom ${zoom} (${cols * rows} tiles). Reduza a área ou use zoom menor.`);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = cols * TILE_SIZE;
+  canvas.height = rows * TILE_SIZE;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+  const loads = [];
+  for (let tx = txMin; tx <= txMax; tx++) {
+    for (let ty = tyMin; ty <= tyMax; ty++) {
+      loads.push(
+        loadTile(tx, ty, zoom).then(img => {
+          ctx.drawImage(img, (tx - txMin) * TILE_SIZE, (ty - tyMin) * TILE_SIZE);
+        })
+      );
+    }
+  }
+  await Promise.all(loads);
+  return { canvas, txMin, tyMin, zoom };
+}
+
+function loadTile(tx, ty, zoom) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error(`Falha ao carregar tile ${zoom}/${ty}/${tx}`));
+    img.src = `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${zoom}/${ty}/${tx}`;
+  });
+}
+
+// ══════════════════════════════════════════════════════════
+// IMAGE ANALYSIS
+// ══════════════════════════════════════════════════════════
+
+// Cria máscara booleana do polígono sobre o canvas de tiles
+function createMask(width, height, pts, txMin, tyMin, zoom) {
+  const mc = document.createElement('canvas');
+  mc.width = width; mc.height = height;
+  const mctx = mc.getContext('2d');
+  mctx.fillStyle = '#000';
+  mctx.fillRect(0, 0, width, height);
+  mctx.fillStyle = '#fff';
+  mctx.beginPath();
+  pts.forEach((p, i) => {
+    const [px, py] = lngLatToPixel(p.lng, p.lat, txMin, tyMin, zoom);
+    i === 0 ? mctx.moveTo(px, py) : mctx.lineTo(px, py);
+  });
+  mctx.closePath();
+  mctx.fill();
+  const md = mctx.getImageData(0, 0, width, height).data;
+  const mask = new Uint8Array(width * height);
+  for (let i = 0; i < width * height; i++) mask[i] = md[i * 4] > 128 ? 1 : 0;
+  return mask;
+}
+
+// Converte para escala de cinza (só dentro da máscara, resto = -1)
+function toGray(imgData, mask) {
+  const { data, width, height } = imgData;
+  const gray = new Float32Array(width * height);
+  for (let i = 0; i < width * height; i++) {
+    if (!mask[i]) { gray[i] = -1; continue; }
+    gray[i] = 0.299 * data[i*4] + 0.587 * data[i*4+1] + 0.114 * data[i*4+2];
+  }
+  return gray;
+}
+
+// Filtro Sobel — retorna ângulos do gradiente (em graus 0-180) com magnitude
+function sobelGradients(gray, width, height, mask) {
+  const kx = [-1,0,1,-2,0,2,-1,0,1];
+  const ky = [-1,-2,-1, 0, 0, 0, 1, 2, 1];
+  const angles = new Float32Array(width * height);
+  const mags   = new Float32Array(width * height);
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const idx = y * width + x;
+      if (!mask[idx]) continue;
+      let gx = 0, gy = 0;
+      for (let ky2 = -1; ky2 <= 1; ky2++) {
+        for (let kx2 = -1; kx2 <= 1; kx2++) {
+          const ni = (y + ky2) * width + (x + kx2);
+          if (gray[ni] < 0) continue;
+          const ki = (ky2 + 1) * 3 + (kx2 + 1);
+          gx += kx[ki] * gray[ni];
+          gy += ky[ki] * gray[ni];
+        }
+      }
+      const mag = Math.sqrt(gx * gx + gy * gy);
+      mags[idx] = mag;
+      if (mag > 5) {
+        let a = Math.atan2(gy, gx) * 180 / Math.PI;
+        if (a < 0) a += 180;
+        angles[idx] = a % 180;
+      }
+    }
+  }
+  return { angles, mags };
+}
+
+// Histograma de ângulos ponderado por magnitude → ângulo do gradiente dominante
+function dominantGradientAngle(angles, mags, width, height, mask) {
+  const hist = new Float64Array(180);
+  for (let i = 0; i < width * height; i++) {
+    if (!mask[i] || mags[i] < 5) continue;
+    const a = Math.floor(angles[i]) % 180;
+    hist[a] += mags[i];
+  }
+  // Suavizar histograma (janela 5)
+  const smooth = new Float64Array(180);
+  for (let a = 0; a < 180; a++) {
+    for (let d = -2; d <= 2; d++) smooth[a] += hist[(a + d + 180) % 180];
+    smooth[a] /= 5;
+  }
+  let peak = 0, peakVal = 0;
+  for (let a = 0; a < 180; a++) {
+    if (smooth[a] > peakVal) { peakVal = smooth[a]; peak = a; }
+  }
+  // Ângulo das LINHAS é perpendicular ao gradiente dominante
+  return (peak + 90) % 180;
+}
+
+// Projeção direcional: projeta pixels na direção PERPENDICULAR ao ângulo das linhas
+function projectPerpendicular(gray, width, height, mask, angleDeg) {
+  const rad = angleDeg * Math.PI / 180;
+  // Direção perpendicular às linhas (eixo de separação entre linhas)
+  const px = -Math.sin(rad);
+  const py =  Math.cos(rad);
+  const projLen = Math.ceil(Math.abs(width * Math.abs(px)) + Math.abs(height * Math.abs(py))) + 2;
+  const proj = new Float64Array(projLen);
+  const cnt  = new Int32Array(projLen);
+  const cx = width / 2, cy = height / 2;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!mask[y * width + x] || gray[y * width + x] < 0) continue;
+      const p = Math.round((x - cx) * px + (y - cy) * py) + Math.floor(projLen / 2);
+      if (p >= 0 && p < projLen) { proj[p] += gray[y * width + x]; cnt[p]++; }
+    }
+  }
+  const result = new Float64Array(projLen);
+  for (let i = 0; i < projLen; i++) if (cnt[i] > 0) result[i] = proj[i] / cnt[i];
+  return result;
+}
+
+// Autocorrelação para encontrar o espaçamento periódico
+function findSpacing(signal, minPx = 2, maxPx = 100) {
+  const n = signal.length;
+  let sum = 0, cnt = 0;
+  for (let i = 0; i < n; i++) if (signal[i] > 0) { sum += signal[i]; cnt++; }
+  if (cnt < 10) return { spacingPx: 0, score: 0 };
+  const mean = sum / cnt;
+  const centered = new Float64Array(n);
+  for (let i = 0; i < n; i++) centered[i] = signal[i] > 0 ? signal[i] - mean : 0;
+  let variance = 0;
+  for (let i = 0; i < n; i++) variance += centered[i] * centered[i];
+  variance /= cnt;
+  if (variance < 1) return { spacingPx: 0, score: 0 };
+
+  let bestScore = -Infinity, bestLag = 0;
+  const maxLag = Math.min(maxPx, Math.floor(n / 3));
+  for (let lag = minPx; lag <= maxLag; lag++) {
+    let corr = 0, c2 = 0;
+    for (let i = 0; i < n - lag; i++) {
+      if (centered[i] !== 0 && centered[i + lag] !== 0) { corr += centered[i] * centered[i + lag]; c2++; }
+    }
+    if (c2 > 0) {
+      const nc = corr / c2 / variance;
+      if (nc > bestScore) { bestScore = nc; bestLag = lag; }
+    }
+  }
+  return { spacingPx: bestLag, score: bestScore };
+}
+
+// Tenta 3 ângulos próximos para refinar
+async function refineAngle(gray, width, height, mask, baseAngle, mpp) {
+  let best = { angle: baseAngle, spacingPx: 0, score: -Infinity };
+  const minSpPx = Math.max(2, Math.floor(1.5 / mpp));  // espaçamento mín 1.5m
+  const maxSpPx = Math.min(100, Math.ceil(12 / mpp));   // espaçamento máx 12m
+
+  for (let da = -5; da <= 5; da += 1) {
+    const a = (baseAngle + da + 360) % 180;
+    const proj = projectPerpendicular(gray, width, height, mask, a);
+    const { spacingPx, score } = findSpacing(proj, minSpPx, maxSpPx);
+    if (score > best.score && spacingPx > 0) best = { angle: a, spacingPx, score };
+    if (da % 3 === 0) await tick();
+  }
+  return best;
+}
+
+function tick() { return new Promise(r => setTimeout(r, 0)); }
+
+// ══════════════════════════════════════════════════════════
+// LINE GENERATION (pixel space → lat/lng + clip)
+// ══════════════════════════════════════════════════════════
+let generatedLines = [];
+
+function generateLines(polyPtsArr, turfP, txMin, tyMin, zoom, angleDeg, spacingPx) {
+  const bbox = turf.bbox(turfP);
+  const center = turf.centroid(turfP).geometry.coordinates;
+  const [cx, cy] = lngLatToPixel(center[0], center[1], txMin, tyMin, zoom);
+
+  const rad = angleDeg * Math.PI / 180;
+  const dLx =  Math.cos(rad), dLy = Math.sin(rad);  // along-line direction
+  const dPx = -Math.sin(rad), dPy = Math.cos(rad);  // across-line (perpendicular)
+
+  // Diagonal extent in pixels
+  const corners = [
+    lngLatToPixel(bbox[0], bbox[1], txMin, tyMin, zoom),
+    lngLatToPixel(bbox[2], bbox[1], txMin, tyMin, zoom),
+    lngLatToPixel(bbox[0], bbox[3], txMin, tyMin, zoom),
+    lngLatToPixel(bbox[2], bbox[3], txMin, tyMin, zoom),
+  ];
+  const perpOffsets = corners.map(([px, py]) => (px - cx) * dPx + (py - cy) * dPy);
+  const minPerp = Math.min(...perpOffsets) - spacingPx;
+  const maxPerp = Math.max(...perpOffsets) + spacingPx;
+  const lineExt = 3000; // px — extensão bem maior que qualquer talhão
+
+  const polyLine = turf.polygonToLine(turfP);
+  const lines = [];
+
+  for (let offset = minPerp; offset <= maxPerp; offset += spacingPx) {
+    // Ponto na linha
+    const px0 = cx + offset * dPx;
+    const py0 = cy + offset * dPy;
+    // Endpoints (muito além do polígono)
+    const [lng1, lat1] = pixelToLngLat(px0 - dLx * lineExt, py0 - dLy * lineExt, txMin, tyMin, zoom);
+    const [lng2, lat2] = pixelToLngLat(px0 + dLx * lineExt, py0 + dLy * lineExt, txMin, tyMin, zoom);
+
+    const seg = turf.lineString([[lng1, lat1], [lng2, lat2]]);
+    try {
+      const inters = turf.lineIntersect(seg, polyLine);
+      const pts = inters.features.map(f => f.geometry.coordinates);
+      if (pts.length < 2) continue;
+      // Ordenar ao longo da linha
+      pts.sort((a, b) => {
+        const ta = (a[0] - lng1) * (lng2 - lng1) + (a[1] - lat1) * (lat2 - lat1);
+        const tb = (b[0] - lng1) * (lng2 - lng1) + (b[1] - lat1) * (lat2 - lat1);
+        return ta - tb;
+      });
+      for (let j = 0; j < pts.length - 1; j += 2) {
+        const midLng = (pts[j][0] + pts[j+1][0]) / 2;
+        const midLat = (pts[j][1] + pts[j+1][1]) / 2;
+        if (turf.booleanPointInPolygon(turf.point([midLng, midLat]), turfP)) {
+          lines.push([pts[j], pts[j + 1]]);
+        }
+      }
+    } catch(e) {}
+  }
+  return lines;
+}
+
+function drawLines(lines) {
+  if (lineLayer) { map.removeLayer(lineLayer); lineLayer = null; }
+  if (!lines.length) return;
+  const geojson = {
+    type: 'FeatureCollection',
+    features: lines.map(([a, b]) => ({
+      type: 'Feature',
+      geometry: { type: 'LineString', coordinates: [a, b] }
+    }))
+  };
+  lineLayer = L.geoJSON(geojson, { style: { color: '#76ff03', weight: 1.2, opacity: .8 } }).addTo(map);
+}
+
+// ══════════════════════════════════════════════════════════
+// MAIN: RESTITUIR
+// ══════════════════════════════════════════════════════════
+async function restituir() {
+  if (!turfPoly) return;
+  document.getElementById('btnAnalyse').disabled = true;
+  document.getElementById('secResults').classList.add('hidden');
+  document.getElementById('secManual').classList.add('hidden');
+  document.getElementById('btnKml').disabled = true;
+
+  try {
+    const bbox = turf.bbox(turfPoly);
+    const bounds = { west: bbox[0], south: bbox[1], east: bbox[2], north: bbox[3] };
+    const lat0 = (bounds.south + bounds.north) / 2;
+    const mpp = metersPerPixel(lat0, analysisZoom);
+
+    setStatus(`Baixando imagem de satélite (zoom ${analysisZoom})...`, 'running');
+    await tick();
+
+    let tileData;
+    try {
+      tileData = await fetchTiles(bounds, analysisZoom);
+    } catch(e) {
+      throw new Error('Falha ao baixar imagem: ' + e.message);
+    }
+
+    const { canvas, txMin, tyMin, zoom } = tileData;
+    const { width, height } = canvas;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+    setStatus('Criando máscara do polígono...', 'running');
+    await tick();
+    const mask = createMask(width, height, polyPts, txMin, tyMin, zoom);
+    const imgData = ctx.getImageData(0, 0, width, height);
+    const gray = toGray(imgData, mask);
+
+    setStatus('Detectando ângulo das linhas (gradiente Sobel)...', 'running');
+    await tick();
+    const { angles, mags } = sobelGradients(gray, width, height, mask);
+    const baseAngle = dominantGradientAngle(angles, mags, width, height, mask);
+
+    setStatus('Refinando ângulo e detectando espaçamento...', 'running');
+    await tick();
+    const { angle, spacingPx, score } = await refineAngle(gray, width, height, mask, baseAngle, mpp);
+
+    const spacingM = spacingPx * mpp;
+    detectedAngle = angle;
+    detectedSpacing = spacingM;
+
+    const confidence = Math.min(1, Math.max(0, score));
+    const confLevel = confidence > 0.3 ? 'high' : confidence > 0.12 ? 'mid' : 'low';
+    const confLabel = confidence > 0.3 ? 'Boa' : confidence > 0.12 ? 'Fraca' : 'Baixa';
+
+    setStatus('Gerando linhas de plantio...', 'running');
+    await tick();
+    generatedLines = generateLines(polyPts, turfPoly, txMin, tyMin, zoom, angle, spacingPx);
+    drawLines(generatedLines);
+
+    const area = turf.area(turfPoly) / 10000;
+
+    // Resultados
+    document.getElementById('resAngle').textContent = angle.toFixed(1) + '°';
+    document.getElementById('resSpacing').textContent = spacingM.toFixed(1);
+    document.getElementById('resLines').textContent = generatedLines.length;
+    document.getElementById('resArea').textContent = area.toFixed(2);
+    const badge = document.getElementById('confBadge');
+    badge.textContent = 'Confiança: ' + confLabel;
+    badge.className = 'conf-badge conf-' + confLevel;
+    document.getElementById('secResults').classList.remove('hidden');
+
+    // Sliders de ajuste
+    document.getElementById('slAngle').value = Math.round(angle);
+    document.getElementById('lblAngle').textContent = Math.round(angle) + '°';
+    document.getElementById('slSpacing').value = spacingM.toFixed(1);
+    document.getElementById('lblSpacing').textContent = spacingM.toFixed(1) + ' m';
+    document.getElementById('secManual').classList.remove('hidden');
+
+    document.getElementById('btnKml').disabled = false;
+
+    if (confLevel === 'low') {
+      setStatus(`Confiança baixa — ajuste manualmente o ângulo e espaçamento. Detectado: ${angle.toFixed(1)}° / ${spacingM.toFixed(1)} m`, 'error');
+    } else {
+      setStatus(`Concluído! ${generatedLines.length} linhas geradas (${angle.toFixed(1)}° · ${spacingM.toFixed(1)} m)`, 'ok');
+    }
+  } catch(err) {
+    setStatus('Erro: ' + err.message, 'error');
+  }
+
+  document.getElementById('btnAnalyse').disabled = false;
+}
+
+// ══════════════════════════════════════════════════════════
+// AJUSTE MANUAL
+// ══════════════════════════════════════════════════════════
+function updateManual() {
+  const a = parseInt(document.getElementById('slAngle').value);
+  const s = parseFloat(document.getElementById('slSpacing').value);
+  document.getElementById('lblAngle').textContent = a + '°';
+  document.getElementById('lblSpacing').textContent = s.toFixed(1) + ' m';
+}
+
+async function aplicarManual() {
+  if (!turfPoly) return;
+  const angleDeg = parseFloat(document.getElementById('slAngle').value);
+  const spacingM = parseFloat(document.getElementById('slSpacing').value);
+
+  setStatus('Reaplicando linhas...', 'running');
+  await tick();
+
+  const bbox = turf.bbox(turfPoly);
+  const bounds = { west: bbox[0], south: bbox[1], east: bbox[2], north: bbox[3] };
+  const lat0 = (bounds.south + bounds.north) / 2;
+  const mpp = metersPerPixel(lat0, analysisZoom);
+  const spacingPx = spacingM / mpp;
+
+  const txMin = lngToTileX(bounds.west, analysisZoom);
+  const tyMin = latToTileY(bounds.north, analysisZoom);
+
+  generatedLines = generateLines(polyPts, turfPoly, txMin, tyMin, analysisZoom, angleDeg, spacingPx);
+  drawLines(generatedLines);
+
+  document.getElementById('resAngle').textContent = angleDeg.toFixed(1) + '°';
+  document.getElementById('resSpacing').textContent = spacingM.toFixed(1);
+  document.getElementById('resLines').textContent = generatedLines.length;
+  document.getElementById('btnKml').disabled = false;
+
+  setStatus(`${generatedLines.length} linhas geradas (${angleDeg}° · ${spacingM} m)`, 'ok');
+}
+
+// ══════════════════════════════════════════════════════════
+// EXPORT KML
+// ══════════════════════════════════════════════════════════
+function exportKML() {
+  if (!generatedLines.length) return;
+  const placemarks = generatedLines.map(([a, b], i) => `
+  <Placemark><name>Linha ${i+1}</name>
+    <LineString><coordinates>${a[0]},${a[1]},0 ${b[0]},${b[1]},0</coordinates></LineString>
+  </Placemark>`).join('');
+
+  let polyKML = '';
+  if (turfPoly) {
+    const coords = polyPts.map(p => `${p.lng},${p.lat},0`).join(' ') + ` ${polyPts[0].lng},${polyPts[0].lat},0`;
+    polyKML = `
+  <Placemark><name>Talhão</name>
+    <Polygon><outerBoundaryIs><LinearRing><coordinates>${coords}</coordinates></LinearRing></outerBoundaryIs></Polygon>
+  </Placemark>`;
+  }
+
+  const kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document><name>Restituição de Linhas de Plantio</name>
+<Folder><name>Linhas de Plantio</name>${placemarks}
+</Folder>
+<Folder><name>Talhão</name>${polyKML}
+</Folder>
+</Document></kml>`;
+
+  const blob = new Blob([kml], { type: 'application/vnd.google-earth.kml+xml' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'restituicao_linhas.kml';
+  a.click();
+}
+
+// ══════════════════════════════════════════════════════════
+// BOOT
+// ══════════════════════════════════════════════════════════
+initMap();
+setupMapHandlers();
+</script>
+</body>
+</html>
