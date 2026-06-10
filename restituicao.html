@@ -236,26 +236,33 @@ function toggleDraw() {
     btn.style.background = '#1565c0';
     btn.style.color = '#fff';
     map.getContainer().style.cursor = 'crosshair';
-    document.getElementById('poly-hint').textContent = 'Clique para adicionar pontos. Duplo clique para fechar.';
+    map.doubleClickZoom.disable();
+    document.getElementById('poly-hint').textContent = 'Clique para adicionar pontos. Duplo clique no último ponto para fechar.';
   } else {
     btn.style.background = '';
     btn.style.color = '';
     map.getContainer().style.cursor = '';
+    map.doubleClickZoom.enable();
     document.getElementById('poly-hint').textContent = 'Clique no mapa para desenhar o contorno do talhão. Duplo clique para fechar.';
   }
 }
 
-map_click_handler = null;
-map_dblclick_handler = null;
+let _clickTimer = null;
 
 function setupMapHandlers() {
+  // Usa timer de 220ms para distinguir clique simples de duplo clique
   map.on('click', e => {
     if (!drawing) return;
-    polyPts.push({ lat: e.latlng.lat, lng: e.latlng.lng });
-    updatePolyPreview();
+    clearTimeout(_clickTimer);
+    _clickTimer = setTimeout(() => {
+      polyPts.push({ lat: e.latlng.lat, lng: e.latlng.lng });
+      updatePolyPreview();
+    }, 220);
   });
   map.on('dblclick', e => {
     if (!drawing) return;
+    clearTimeout(_clickTimer); // cancela os cliques pendentes do duplo clique
+    L.DomEvent.stop(e);
     if (polyPts.length >= 3) closePoly();
   });
 }
@@ -281,6 +288,7 @@ function closePoly() {
   btn.style.background = '';
   btn.style.color = '';
   map.getContainer().style.cursor = '';
+  map.doubleClickZoom.enable();
 
   clearMarkers();
   if (polyLayer) { map.removeLayer(polyLayer); polyLayer = null; }
