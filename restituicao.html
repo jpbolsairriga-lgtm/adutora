@@ -726,6 +726,52 @@ function curvesToLatLng(curves, txMin, tyMin, zoom, tPoly) {
 function tick() { return new Promise(r => setTimeout(r, 0)); }
 
 // ══════════════════════════════════════════════════════════
+// EXTEND CURVES TO POLYGON BOUNDARY
+// Cada extremidade é extrapolada em linha reta até cruzar
+// o limite do talhão, garantindo cobertura total da área.
+// ══════════════════════════════════════════════════════════
+function extendCurvesToBoundary(curves, tPoly) {
+  let polyLine;
+  try { polyLine = turf.polygonToLine(tPoly); } catch(e) { return curves; }
+  const EXT = 0.008; // ~900 m em graus — cobre qualquer talhão agrícola
+
+  function hitBoundary(from, dir) {
+    // Lança raio de from na direção dir e retorna o ponto onde cruza a borda
+    const far = [from[0] + dir[0]*EXT, from[1] + dir[1]*EXT];
+    let hits;
+    try { hits = turf.lineIntersect(turf.lineString([from, far]), polyLine); }
+    catch(e) { return null; }
+    if (!hits.features.length) return null;
+    let best = null, bd = Infinity;
+    hits.features.forEach(f => {
+      const h = f.geometry.coordinates;
+      const d = Math.hypot(h[0]-from[0], h[1]-from[1]);
+      if (d > 1e-9 && d < bd) { bd = d; best = h; }
+    });
+    return best;
+  }
+
+  return curves.map(coords => {
+    if (coords.length < 4) return coords;
+    const n = coords.length;
+
+    // Direção na ponta final: média dos últimos N pontos
+    const tail = Math.max(0, n - 6);
+    const de = [coords[n-1][0]-coords[tail][0], coords[n-1][1]-coords[tail][1]];
+    const dm = Math.hypot(de[0], de[1]) || 1;
+    const endPt = hitBoundary(coords[n-1], [de[0]/dm, de[1]/dm]) || coords[n-1];
+
+    // Direção na ponta inicial: inversa
+    const head = Math.min(n-1, 5);
+    const ds = [coords[0][0]-coords[head][0], coords[0][1]-coords[head][1]];
+    const sm = Math.hypot(ds[0], ds[1]) || 1;
+    const startPt = hitBoundary(coords[0], [ds[0]/sm, ds[1]/sm]) || coords[0];
+
+    return [startPt, ...coords.slice(1, n-1), endPt];
+  });
+}
+
+// ══════════════════════════════════════════════════════════
 // DISPLAY
 // ══════════════════════════════════════════════════════════
 function drawCurves(curves) {
@@ -785,6 +831,7 @@ async function restituir() {
 
     setStatus('Convertendo para coordenadas...', 'running'); await tick();
     generatedCurves = curvesToLatLng(curves, txMin, tyMin, analysisZoom, turfPoly);
+    generatedCurves = extendCurvesToBoundary(generatedCurves, turfPoly);
     drawCurves(generatedCurves);
 
     const area = turf.area(turfPoly) / 10000;
@@ -839,6 +886,7 @@ async function aplicarManual() {
   const rawCurves = await traceCurvedRows(gray, mask, w, h, angleDeg, spacingPx);
   const curves = gapClose(rawCurves, spacingPx * 2.5);
   generatedCurves = curvesToLatLng(curves, txMin, tyMin, zoom, turfPoly);
+  generatedCurves = extendCurvesToBoundary(generatedCurves, turfPoly);
   drawCurves(generatedCurves);
 
   document.getElementById('resAngle').textContent = angleDeg.toFixed(1) + '°';
