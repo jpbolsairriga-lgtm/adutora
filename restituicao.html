@@ -509,196 +509,168 @@ function detectSpacing(gray, mask, w, h, angleDeg, minPx, maxPx) {
 }
 
 // ══════════════════════════════════════════════════════════
-// CURVE TRACING
+// DETECÇÃO POR ESQUELETIZAÇÃO (espelha pipeline Python)
+// ExG mask → Otsu → morph → Zhang-Suen thin → trace → filtro
 // ══════════════════════════════════════════════════════════
 
-// Pré-computa imagem de "ridge" usando 2ª derivada perpendicular às linhas.
-// Linhas escuras (cafezeiro) têm valor ALTO nessa imagem.
-function computeRidgeImage(gray, mask, w, h, angleDeg) {
-  const rad = angleDeg * Math.PI / 180;
-  const perpX = -Math.sin(rad), perpY = Math.cos(rad);
-  const step = 2;
-  const ridge = new Float32Array(w * h).fill(-1);
-  for (let y = 2; y < h-2; y++) {
-    for (let x = 2; x < w-2; x++) {
-      if (!mask[y*w+x]) continue;
-      const xm = Math.round(x - step*perpX), ym = Math.round(y - step*perpY);
-      const xp = Math.round(x + step*perpX), yp = Math.round(y + step*perpY);
-      if (xm<0||xm>=w||ym<0||ym>=h||xp<0||xp>=w||yp<0||yp>=h) { ridge[y*w+x]=0; continue; }
-      if (!mask[ym*w+xm]||!mask[yp*w+xp]) { ridge[y*w+x]=0; continue; }
-      const gc=gray[y*w+x], gm=gray[ym*w+xm], gp=gray[yp*w+xp];
-      if (gc<0||gm<0||gp<0) { ridge[y*w+x]=0; continue; }
-      // 2ª derivada positiva = centro escuro com bordas claras = linha de café
-      ridge[y*w+x] = Math.max(0, gm + gp - 2*gc);
-    }
+function otsuThreshold(vals) {
+  if (vals.length < 2) return vals[0] || 0;
+  const bins = 256;
+  let mn = Infinity, mx = -Infinity;
+  for (const v of vals) { if (v < mn) mn = v; if (v > mx) mx = v; }
+  if (mx === mn) return mn;
+  const hist = new Float64Array(bins);
+  for (const v of vals) hist[Math.round((v-mn)/(mx-mn)*(bins-1))]++;
+  let sum = 0; for (let i=0;i<bins;i++) sum += i*hist[i];
+  let sumB=0, wB=0, best=0, thr=0; const n=vals.length;
+  for (let t=0;t<bins;t++) {
+    wB += hist[t]; if (!wB) continue;
+    const wF=n-wB; if (!wF) break;
+    sumB += t*hist[t];
+    const v = wB*wF*(sumB/wB - (sum-sumB)/wF)**2;
+    if (v > best) { best=v; thr=t; }
   }
-  // Normaliza para 0-255
-  let rmax = 0;
-  for (let i = 0; i < w*h; i++) if (ridge[i] > rmax) rmax = ridge[i];
-  if (rmax > 0) for (let i = 0; i < w*h; i++) if (ridge[i] >= 0) ridge[i] = ridge[i]/rmax*255;
-  return ridge;
+  return mn + thr/(bins-1)*(mx-mn);
 }
 
-// Smooth1D com null-passthrough
-function smooth1D(arr, r) {
-  return arr.map((_, i) => {
-    if (arr[i] === null) return null;
-    let s = 0, n = 0;
-    for (let j = Math.max(0,i-r); j <= Math.min(arr.length-1,i+r); j++)
-      if (arr[j] !== null) { s += arr[j]; n++; }
-    return n ? s/n : null;
-  });
+// Máscara binária: 1 = copa de café (Excess Green Index com Otsu)
+function buildVegMask(imageData, polyMask, w, h) {
+  const d = imageData.data;
+  const scores = [];
+  for (let i=0;i<w*h;i++) {
+    if (!polyMask[i]) continue;
+    scores.push(2*d[i*4+1] - d[i*4] - d[i*4+2]);
+  }
+  const thr = otsuThreshold(scores);
+  const vm = new Uint8Array(w*h);
+  for (let i=0;i<w*h;i++) {
+    if (polyMask[i] && 2*d[i*4+1] - d[i*4] - d[i*4+2] > thr) vm[i]=1;
+  }
+  return vm;
 }
 
-// Máximos locais com filtro de proeminência (usa imagem de ridge onde linhas são altas)
-function findMaxima(arr, halfW, promThresh) {
-  const n = arr.length;
-  const maxima = [];
-  for (let i = 1; i < n - 1; i++) {
-    if (arr[i] === null || arr[i-1] === null || arr[i+1] === null) continue;
-    if (arr[i] <= arr[i-1] || arr[i] <= arr[i+1]) continue;
-    let lv = arr[i], rv = arr[i];
-    for (let j = i-1; j >= Math.max(0,i-halfW); j--) { if (arr[j]===null) break; lv = Math.min(lv,arr[j]); }
-    for (let j = i+1; j <= Math.min(n-1,i+halfW); j++) { if (arr[j]===null) break; rv = Math.min(rv,arr[j]); }
-    const prom = arr[i] - Math.max(lv, rv);
-    if (prom < promThresh) continue;
-    if (maxima.length && i - maxima[maxima.length-1] < halfW * 0.7) {
-      if (arr[i] > arr[maxima[maxima.length-1]]) maxima[maxima.length-1] = i;
-    } else {
-      maxima.push(i);
+function morphDilate(mask, w, h, r) {
+  const out = new Uint8Array(w*h);
+  for (let y=0;y<h;y++) for (let x=0;x<w;x++) {
+    if (!mask[y*w+x]) continue;
+    for (let dy=-r;dy<=r;dy++) for (let dx=-r;dx<=r;dx++) {
+      const ny=y+dy, nx=x+dx;
+      if (ny>=0&&ny<h&&nx>=0&&nx<w) out[ny*w+nx]=1;
     }
   }
-  return maxima;
+  return out;
 }
 
-// Rastreamento de curvas com:
-//  - imagem de ridge (2ª deriv) para sinal mais robusto
-//  - ponte de lacunas: mantém curva ativa por até maxMiss passos sem detecção
-async function traceCurvedRows(gray, mask, w, h, angleDeg, spacingPx) {
-  const rad = angleDeg * Math.PI / 180;
-  const cosA = Math.cos(rad), sinA = Math.sin(rad);
-  const perpX = -sinA, perpY = cosA;
-  const cx = w/2, cy = h/2;
-
-  // Pré-computa ridge image
-  const ridge = computeRidgeImage(gray, mask, w, h, angleDeg);
-
-  const scanStep = Math.max(2, Math.round(spacingPx / 6));
-  const halfW    = Math.round(spacingPx * 0.5);
-  const promThr  = 8;    // proeminência mínima na imagem de ridge (0-255)
-  const maxGap   = spacingPx * 0.7;
-  const maxMiss  = Math.max(5, Math.round(spacingPx * 1.5 / scanStep)); // lacunas permitidas
-  const minPts   = Math.max(6, Math.round(15 / scanStep));
-  const ext      = Math.sqrt(w*w + h*h) / 2 + 2;
-
-  const scans = [];
-  let progress = 0;
-
-  for (let s = -ext; s <= ext; s += scanStep) {
-    const scx = cx + s * cosA, scy = cy + s * sinA;
-    const profile = [], tArr = [];
-    for (let t = -ext; t <= ext; t += 1) {
-      const px = Math.round(scx + t * perpX);
-      const py = Math.round(scy + t * perpY);
-      if (px < 0 || px >= w || py < 0 || py >= h) { profile.push(null); tArr.push(t); continue; }
-      const idx = py * w + px;
-      profile.push((!mask[idx] || ridge[idx] < 0) ? null : ridge[idx]);
-      tArr.push(t);
-    }
-    const smoothed = smooth1D(profile, 2);
-    const peakIdx = findMaxima(smoothed, halfW, promThr);
-    const rowPts = peakIdx.map(i => ({ x: scx + tArr[i]*perpX, y: scy + tArr[i]*perpY, t: tArr[i] }));
-    scans.push({ rowPts });
-    if (++progress % 40 === 0) await tick();
+function morphErode(mask, w, h, r) {
+  const out = new Uint8Array(w*h);
+  for (let y=r;y<h-r;y++) for (let x=r;x<w-r;x++) {
+    let ok=1;
+    outer: for (let dy=-r;dy<=r;dy++) for (let dx=-r;dx<=r;dx++)
+      if (!mask[(y+dy)*w+(x+dx)]) { ok=0; break outer; }
+    out[y*w+x]=ok;
   }
+  return out;
+}
 
-  if (!scans.length) return [];
-  let active = scans[0].rowPts.map(p => ({ pts: [p], miss: 0, lastT: p.t }));
-  const done = [];
-
-  for (let i = 1; i < scans.length; i++) {
-    const pts = scans[i].rowPts;
-    const nextActive = [];
-    const used = new Set();
-
-    active.forEach(track => {
-      const lastT = track.lastT;
-      let bd = maxGap+1, bj = -1;
-      pts.forEach((p, j) => {
-        if (!used.has(j)) {
-          const d = Math.abs(p.t - lastT);
-          if (d < bd) { bd = d; bj = j; }
-        }
-      });
-      if (bj >= 0 && bd <= maxGap) {
-        track.pts.push(pts[bj]); track.miss = 0; track.lastT = pts[bj].t;
-        used.add(bj); nextActive.push(track);
-      } else if (track.miss < maxMiss) {
-        // Ponte: mantém posição interpolada para não perder a curva em lacunas curtas
-        track.miss++;
-        nextActive.push(track);
-      } else {
-        if (track.pts.length >= minPts) done.push(track.pts);
+// Zhang-Suen morphological thinning — reduz regiões a linhas de 1 pixel
+async function zhangSuenThin(mask, w, h) {
+  const s = new Uint8Array(mask);
+  const del = new Uint8Array(w*h);
+  const g = (y,x,dy,dx) => {
+    const ny=y+dy, nx=x+dx;
+    return (ny>=0&&ny<h&&nx>=0&&nx<w) ? s[ny*w+nx] : 0;
+  };
+  for (let iter=0; iter<120; iter++) {
+    let chg=false;
+    for (let pass=0; pass<2; pass++) {
+      del.fill(0);
+      for (let y=1;y<h-1;y++) for (let x=1;x<w-1;x++) {
+        if (!s[y*w+x]) continue;
+        const P2=g(y,x,-1,0), P3=g(y,x,-1,1), P4=g(y,x,0,1), P5=g(y,x,1,1),
+              P6=g(y,x,1,0),  P7=g(y,x,1,-1), P8=g(y,x,0,-1), P9=g(y,x,-1,-1);
+        const B=P2+P3+P4+P5+P6+P7+P8+P9;
+        if (B<2||B>6) continue;
+        const sq=[P2,P3,P4,P5,P6,P7,P8,P9,P2];
+        let A=0; for(let k=0;k<8;k++) if(!sq[k]&&sq[k+1]) A++;
+        if (A!==1) continue;
+        if (pass===0) { if (P2*P4*P6||P4*P6*P8) continue; }
+        else          { if (P2*P4*P8||P2*P6*P8) continue; }
+        del[y*w+x]=1;
       }
-    });
-
-    pts.forEach((p, j) => { if (!used.has(j)) nextActive.push({ pts: [p], miss: 0, lastT: p.t }); });
-    active = nextActive;
-    if (i % 40 === 0) await tick();
-  }
-  active.forEach(t => { if (t.pts.length >= minPts) done.push(t.pts); });
-  return done;
-}
-
-// ══════════════════════════════════════════════════════════
-// GAP CLOSING — conecta fragmentos próximos com direções compatíveis
-// ══════════════════════════════════════════════════════════
-function gapClose(pixCurves, maxGapPx) {
-  if (pixCurves.length < 2) return pixCurves;
-
-  // Coleta endpoints com direção
-  const eps = [];
-  pixCurves.forEach((pts, ci) => {
-    if (pts.length < 2) return;
-    const dx0=pts[1].x-pts[0].x, dy0=pts[1].y-pts[0].y, m0=Math.hypot(dx0,dy0)||1;
-    eps.push({ ci, end:0, x:pts[0].x, y:pts[0].y, dx:-dx0/m0, dy:-dy0/m0 });
-    const n=pts.length-1, dx1=pts[n].x-pts[n-1].x, dy1=pts[n].y-pts[n-1].y, m1=Math.hypot(dx1,dy1)||1;
-    eps.push({ ci, end:1, x:pts[n].x, y:pts[n].y, dx:dx1/m1, dy:dy1/m1 });
-  });
-
-  const used = new Set();
-  const merges = [];
-  for (let i = 0; i < eps.length; i++) {
-    if (used.has(i)) continue;
-    const e1 = eps[i]; let bd=maxGapPx+1, bj=-1;
-    for (let j = 0; j < eps.length; j++) {
-      if (j===i||used.has(j)||eps[j].ci===e1.ci) continue;
-      const dx=eps[j].x-e1.x, dy=eps[j].y-e1.y, dist=Math.hypot(dx,dy);
-      if (dist>maxGapPx||dist<1) continue;
-      if (e1.dx*(dx/dist)+e1.dy*(dy/dist) < 0.35) continue;   // e1 aponta para e2
-      if (eps[j].dx*(-dx/dist)+eps[j].dy*(-dy/dist) < 0.35) continue; // e2 aponta de volta
-      if (dist<bd) { bd=dist; bj=j; }
+      for (let i=0;i<w*h;i++) if(del[i]){s[i]=0;chg=true;}
     }
-    if (bj>=0) { merges.push([i,bj]); used.add(i); used.add(bj); }
+    if (!chg) break;
+    if (iter%10===0) await tick();
   }
-
-  const curves = pixCurves.map(c => [...c]);
-  const removed = new Set();
-  merges.forEach(([i,j]) => {
-    const e1=eps[i], e2=eps[j];
-    const c1=curves[e1.ci], c2=curves[e2.ci];
-    if (!c1||!c2||removed.has(e1.ci)||removed.has(e2.ci)) return;
-    const nb=Math.max(2,Math.round(Math.hypot(e1.x-e2.x,e1.y-e2.y)/2));
-    const bridge=Array.from({length:nb},(_,k)=>({ x:e1.x+(e2.x-e1.x)*k/(nb-1), y:e1.y+(e2.y-e1.y)*k/(nb-1), t:0 }));
-    let merged;
-    if (e1.end===1&&e2.end===0)      merged=[...c1,...bridge,...c2];
-    else if (e1.end===1&&e2.end===1) merged=[...c1,...bridge,...[...c2].reverse()];
-    else if (e1.end===0&&e2.end===0) merged=[...[...c1].reverse(),...bridge,...c2];
-    else                             merged=[...[...c1].reverse(),...bridge,...[...c2].reverse()];
-    curves[e1.ci]=merged; curves[e2.ci]=null; removed.add(e2.ci);
-  });
-  return curves.filter(c=>c!==null);
+  return s;
 }
+
+// Rastreia pixels do esqueleto em polilíneas (igual ao raster_to_vector do Python)
+function traceSkeleton(skel, w, h, minLen) {
+  const visited = new Uint8Array(w*h);
+  const polys = [];
+  const dirs=[[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
+  const nbrs = idx => {
+    const y=Math.floor(idx/w), x=idx%w, r=[];
+    dirs.forEach(([dy,dx])=>{ const ny=y+dy,nx=x+dx;
+      if(ny>=0&&ny<h&&nx>=0&&nx<w&&skel[ny*w+nx]) r.push(ny*w+nx); });
+    return r;
+  };
+  const deg = new Int32Array(w*h);
+  for (let i=0;i<w*h;i++) if(skel[i]) deg[i]=nbrs(i).length;
+
+  const trace = start => {
+    const path=[start]; visited[start]=1; let cur=start;
+    while(true){
+      const free=nbrs(cur).filter(n=>!visited[n]);
+      if(!free.length) break;
+      free.sort((a,b)=>Math.abs(deg[a]-2)-Math.abs(deg[b]-2));
+      const next=free[0];
+      path.push(next); visited[next]=1; cur=next;
+      if(deg[cur]!==2) break;
+    }
+    return path;
+  };
+  for (let i=0;i<w*h;i++)
+    if(skel[i]&&deg[i]===1&&!visited[i]){
+      const p=trace(i);
+      if(p.length>=minLen) polys.push(p.map(id=>({x:id%w,y:Math.floor(id/w)})));
+    }
+  for (let i=0;i<w*h;i++)
+    if(skel[i]&&!visited[i]){
+      const p=trace(i);
+      if(p.length>=minLen) polys.push(p.map(id=>({x:id%w,y:Math.floor(id/w)})));
+    }
+  return polys;
+}
+
+// Descarta linhas que desviam mais de maxDev° do ângulo dominante
+function filterByAngle(pixCurves, angleDeg, maxDev) {
+  return pixCurves.filter(pts => {
+    if (pts.length<2) return false;
+    const n=pts.length-1;
+    let a=Math.atan2(pts[n].y-pts[0].y, pts[n].x-pts[0].x)*180/Math.PI;
+    if(a<0) a+=180;
+    let d=Math.abs(a-angleDeg); if(d>90) d=180-d;
+    return d<=maxDev;
+  });
+}
+
+// Pipeline principal: substitui traceCurvedRows
+async function detectAndTraceRows(imageData, polyMask, w, h, angleDeg) {
+  setStatus('Máscara de vegetação (ExG + Otsu)...', 'running'); await tick();
+  let vm = buildVegMask(imageData, polyMask, w, h);
+  setStatus('Limpeza morfológica...', 'running'); await tick();
+  vm = morphDilate(vm, w, h, 1);
+  vm = morphErode(vm, w, h, 2);
+  setStatus('Esqueletização (Zhang-Suen)...', 'running'); await tick();
+  const skel = await zhangSuenThin(vm, w, h);
+  setStatus('Rastreando polilíneas...', 'running'); await tick();
+  const minLen = Math.max(8, Math.round(Math.min(w,h)/50));
+  const raw = traceSkeleton(skel, w, h, minLen);
+  return filterByAngle(raw, angleDeg, 30);
+}
+
 
 // Suaviza curva em pixels com média móvel
 function smoothCurve(pts, w) {
@@ -802,8 +774,9 @@ async function restituir() {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
     setStatus('Criando máscara...', 'running'); await tick();
+    const imageData = ctx.getImageData(0, 0, w, h);
     const mask = buildMask(w, h, polyPts, txMin, tyMin, zoom);
-    const gray = toGray(ctx.getImageData(0, 0, w, h), mask);
+    const gray = toGray(imageData, mask);
 
     setStatus('Detectando ângulo médio das linhas...', 'running'); await tick();
     const angleDeg = detectAngle(gray, mask, w, h);
@@ -814,11 +787,9 @@ async function restituir() {
     const spacingM = spacingPx * m;
 
     // Cache para ajuste manual
-    cachedImg = { gray, mask, w, h, txMin, tyMin, zoom: analysisZoom, m };
+    cachedImg = { imageData, mask, w, h, txMin, tyMin, zoom: analysisZoom, m };
 
-    setStatus(`Rastreando linhas (ângulo ${angleDeg.toFixed(0)}°, espaçamento ~${spacingM.toFixed(1)} m)...`, 'running'); await tick();
-
-    const curves = await traceCurvedRows(gray, mask, w, h, angleDeg, spacingPx);
+    const curves = await detectAndTraceRows(imageData, mask, w, h, angleDeg);
 
     setStatus('Convertendo para coordenadas...', 'running'); await tick();
     generatedCurves = curvesToLatLng(curves, txMin, tyMin, analysisZoom, turfPoly);
@@ -867,14 +838,13 @@ function updateManualLabels() {
 
 async function aplicarManual() {
   if (!cachedImg || !turfPoly) return;
-  const { gray, mask, w, h, txMin, tyMin, zoom, m } = cachedImg;
+  const { imageData, mask, w, h, txMin, tyMin, zoom } = cachedImg;
   const angleDeg = parseFloat(document.getElementById('slAngle').value);
   const spacingM = parseFloat(document.getElementById('slSpacing').value);
-  const spacingPx = spacingM / m;
 
-  setStatus('Reaplicando com ângulo/espaçamento manual...', 'running'); await tick();
+  setStatus('Reaplicando com ângulo manual...', 'running'); await tick();
 
-  const curves = await traceCurvedRows(gray, mask, w, h, angleDeg, spacingPx);
+  const curves = await detectAndTraceRows(imageData, mask, w, h, angleDeg);
   generatedCurves = curvesToLatLng(curves, txMin, tyMin, zoom, turfPoly);
   generatedCurves = extendCurvesToBoundary(generatedCurves, turfPoly, angleDeg);
   drawCurves(generatedCurves);
