@@ -62,13 +62,11 @@ input:focus{border-color:#4a9eca}
     <p>Detecção automática de linhas por imagem de satélite</p>
   </div>
 
-  <!-- API Key -->
   <div class="s-section">
     <div class="s-label">Chave API Google Maps</div>
     <input type="text" id="apiKey" placeholder="AIza..." oninput="saveKey()">
   </div>
 
-  <!-- Buscar cidade -->
   <div class="s-section">
     <div class="s-label">Buscar localização</div>
     <div class="btn-row mt4">
@@ -77,7 +75,6 @@ input:focus{border-color:#4a9eca}
     </div>
   </div>
 
-  <!-- Ferramentas -->
   <div class="s-section">
     <div class="s-label">Ferramentas</div>
     <div class="btn-row mt4">
@@ -88,58 +85,52 @@ input:focus{border-color:#4a9eca}
       <button class="btn btn-outline btn-sm" onclick="document.getElementById('kmlInput').click()">📂 Importar KML</button>
     </div>
     <input type="file" id="kmlInput" accept=".kml" style="display:none" onchange="importKML(this)">
-    <p id="poly-hint">Clique no mapa para desenhar o contorno do talhão. Duplo clique para fechar.</p>
+    <p id="poly-hint">Clique no mapa para adicionar pontos. Duplo clique para fechar.</p>
   </div>
 
-  <!-- Resolução -->
   <div class="s-section">
     <div class="s-label">Resolução da análise (zoom)</div>
     <div class="zoom-pills">
-      <div class="zpill" id="z17" onclick="setZoom(17)">17 <br><span style="font-weight:400;font-size:.65rem">~1.2 m/px</span></div>
-      <div class="zpill active" id="z18" onclick="setZoom(18)">18 <br><span style="font-weight:400;font-size:.65rem">~0.6 m/px</span></div>
-      <div class="zpill" id="z19" onclick="setZoom(19)">19 <br><span style="font-weight:400;font-size:.65rem">~0.3 m/px</span></div>
+      <div class="zpill" id="z17" onclick="setZoom(17)">17<br><span style="font-weight:400;font-size:.65rem">~1.2 m/px</span></div>
+      <div class="zpill active" id="z18" onclick="setZoom(18)">18<br><span style="font-weight:400;font-size:.65rem">~0.6 m/px</span></div>
+      <div class="zpill" id="z19" onclick="setZoom(19)">19<br><span style="font-weight:400;font-size:.65rem">~0.3 m/px</span></div>
     </div>
   </div>
 
-  <!-- Botão analisar -->
   <div class="s-section">
     <button class="btn btn-primary" id="btnAnalyse" disabled onclick="restituir()">🔍 Analisar e Restituir Linhas</button>
   </div>
 
-  <!-- Status -->
   <div class="s-section">
     <div class="s-label">Status</div>
     <div class="status-box" id="statusBox">Aguardando contorno do talhão...</div>
   </div>
 
-  <!-- Resultados -->
   <div class="s-section hidden" id="secResults">
-    <div class="s-label">Resultado detectado <span id="confBadge" class="conf-badge"></span></div>
+    <div class="s-label">Resultado <span id="confBadge" class="conf-badge"></span></div>
     <div class="result-grid mt4">
-      <div class="result-card"><div class="val" id="resAngle">—</div><div class="lbl">Ângulo (°)</div></div>
+      <div class="result-card"><div class="val" id="resAngle">—</div><div class="lbl">Ângulo médio (°)</div></div>
       <div class="result-card"><div class="val" id="resSpacing">—</div><div class="lbl">Espaçamento (m)</div></div>
-      <div class="result-card"><div class="val" id="resLines">—</div><div class="lbl">Linhas geradas</div></div>
+      <div class="result-card"><div class="val" id="resLines">—</div><div class="lbl">Linhas rastreadas</div></div>
       <div class="result-card"><div class="val" id="resArea">—</div><div class="lbl">Área (ha)</div></div>
     </div>
   </div>
 
-  <!-- Ajuste manual -->
   <div class="s-section hidden" id="secManual">
     <div class="s-label">Ajuste manual</div>
-    <div style="margin-top:6px;font-size:.75rem;color:#8899aa">Ângulo das linhas (°)</div>
+    <div style="margin-top:6px;font-size:.75rem;color:#8899aa">Ângulo médio das linhas (°)</div>
     <div class="slider-row">
-      <input type="range" id="slAngle" min="0" max="179" step="1" value="0" oninput="updateManual()">
+      <input type="range" id="slAngle" min="0" max="179" step="1" value="0" oninput="updateManualLabels()">
       <span id="lblAngle">0°</span>
     </div>
-    <div style="margin-top:8px;font-size:.75rem;color:#8899aa">Espaçamento (m)</div>
+    <div style="margin-top:8px;font-size:.75rem;color:#8899aa">Espaçamento mín. entre linhas (m)</div>
     <div class="slider-row">
-      <input type="range" id="slSpacing" min="1" max="10" step="0.1" value="3" oninput="updateManual()">
+      <input type="range" id="slSpacing" min="1" max="10" step="0.1" value="3" oninput="updateManualLabels()">
       <span id="lblSpacing">3.0 m</span>
     </div>
     <button class="btn btn-warn btn-sm mt8" onclick="aplicarManual()">↺ Reaplicar com esses valores</button>
   </div>
 
-  <!-- Export -->
   <div class="s-section">
     <button class="btn btn-success" id="btnKml" disabled onclick="exportKML()">⬇ Exportar KML</button>
   </div>
@@ -156,15 +147,20 @@ input:focus{border-color:#4a9eca}
 // ══════════════════════════════════════════════════════════
 let map, googleLayer;
 let drawing = false;
-let polyPts = [];      // [{lat,lng}]
+let polyPts = [];
 let turfPoly = null;
 let polyLayer = null;
 let tempMarkers = [];
 let lineLayer = null;
 let analysisZoom = 18;
-let detectedAngle = 0;
-let detectedSpacing = 3;
+let _clickTimer = null;
 const TILE_SIZE = 256;
+
+// Cache da imagem processada para reuso no ajuste manual
+let cachedImg = null; // { gray, mask, width, height, txMin, tyMin, zoom, mpp }
+
+// Curvas geradas (array de arrays de [lng,lat])
+let generatedCurves = [];
 
 // ══════════════════════════════════════════════════════════
 // MAP INIT
@@ -172,27 +168,31 @@ const TILE_SIZE = 256;
 function initMap() {
   map = L.map('map', { zoomControl: false, center: [-19.5, -46.0], zoom: 13 });
   L.control.zoom({ position: 'topright' }).addTo(map);
-
   const key = localStorage.getItem('mapskey_rest') || '';
   document.getElementById('apiKey').value = key;
-  applyBasemap(key);
+  if (key) applyGoogleMap(key); else addEsriLayer();
 }
 
-function applyBasemap(key) {
-  if (googleLayer) { map.removeLayer(googleLayer); googleLayer = null; }
-  if (key) {
-    try {
-      const script = document.createElement('script');
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${key}`;
-      script.onload = () => {
-        googleLayer = L.gridLayer.googleMutant({ type: 'satellite', maxZoom: 21 }).addTo(map);
-      };
-      document.head.appendChild(script);
-    } catch(e) { addEsriLayer(); }
-  } else { addEsriLayer(); }
+function applyGoogleMap(key) {
+  if (typeof google !== 'undefined' && google.maps) {
+    if (!googleLayer) googleLayer = L.gridLayer.googleMutant({ type: 'satellite', maxZoom: 21 }).addTo(map);
+    return;
+  }
+  if (document.querySelector('script[data-gmaps]')) return;
+  const s = document.createElement('script');
+  s.setAttribute('data-gmaps', '1');
+  s.src = `https://maps.googleapis.com/maps/api/js?key=${key}&callback=_gmapLoaded`;
+  s.onerror = () => { if (!googleLayer) addEsriLayer(); };
+  document.head.appendChild(s);
 }
+
+window._gmapLoaded = function() {
+  if (googleLayer) map.removeLayer(googleLayer);
+  googleLayer = L.gridLayer.googleMutant({ type: 'satellite', maxZoom: 21 }).addTo(map);
+};
 
 function addEsriLayer() {
+  if (!map.hasLayer) return;
   L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     { attribution: 'ESRI', maxZoom: 20 }).addTo(map);
 }
@@ -200,7 +200,10 @@ function addEsriLayer() {
 function saveKey() {
   const k = document.getElementById('apiKey').value.trim();
   localStorage.setItem('mapskey_rest', k);
-  applyBasemap(k);
+  if (k) {
+    if (googleLayer) { map.removeLayer(googleLayer); googleLayer = null; }
+    applyGoogleMap(k);
+  }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -216,13 +219,12 @@ async function buscar() {
       const d = await r.json();
       if (d.results && d.results[0]) {
         const { lat, lng } = d.results[0].geometry.location;
-        map.setView([lat, lng], 16);
-        return;
+        map.setView([lat, lng], 17); return;
       }
     }
     const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}`, { headers: { 'Accept-Language': 'pt-BR' } });
     const d = await r.json();
-    if (d[0]) map.setView([parseFloat(d[0].lat), parseFloat(d[0].lon)], 16);
+    if (d[0]) map.setView([+d[0].lat, +d[0].lon], 17);
   } catch(e) {}
 }
 
@@ -233,24 +235,18 @@ function toggleDraw() {
   drawing = !drawing;
   const btn = document.getElementById('btnDraw');
   if (drawing) {
-    btn.style.background = '#1565c0';
-    btn.style.color = '#fff';
+    btn.style.background = '#1565c0'; btn.style.color = '#fff';
     map.getContainer().style.cursor = 'crosshair';
     map.doubleClickZoom.disable();
-    document.getElementById('poly-hint').textContent = 'Clique para adicionar pontos. Duplo clique no último ponto para fechar.';
+    document.getElementById('poly-hint').textContent = 'Clique para adicionar pontos. Duplo clique para fechar.';
   } else {
-    btn.style.background = '';
-    btn.style.color = '';
+    btn.style.background = ''; btn.style.color = '';
     map.getContainer().style.cursor = '';
     map.doubleClickZoom.enable();
-    document.getElementById('poly-hint').textContent = 'Clique no mapa para desenhar o contorno do talhão. Duplo clique para fechar.';
   }
 }
 
-let _clickTimer = null;
-
 function setupMapHandlers() {
-  // Usa timer de 220ms para distinguir clique simples de duplo clique
   map.on('click', e => {
     if (!drawing) return;
     clearTimeout(_clickTimer);
@@ -261,7 +257,7 @@ function setupMapHandlers() {
   });
   map.on('dblclick', e => {
     if (!drawing) return;
-    clearTimeout(_clickTimer); // cancela os cliques pendentes do duplo clique
+    clearTimeout(_clickTimer);
     L.DomEvent.stop(e);
     if (polyPts.length >= 3) closePoly();
   });
@@ -269,52 +265,40 @@ function setupMapHandlers() {
 
 function updatePolyPreview() {
   clearMarkers();
-  if (polyPts.length < 1) return;
   polyPts.forEach(p => {
     const m = L.circleMarker([p.lat, p.lng], { radius: 4, color: '#fff', fillColor: '#4a9eca', fillOpacity: 1, weight: 1.5 }).addTo(map);
     tempMarkers.push(m);
   });
   if (polyLayer) { map.removeLayer(polyLayer); polyLayer = null; }
-  if (polyPts.length >= 2) {
+  if (polyPts.length >= 2)
     polyLayer = L.polygon(polyPts.map(p => [p.lat, p.lng]),
       { color: '#7ec8e3', fillColor: '#7ec8e3', fillOpacity: .15, weight: 2, dashArray: '6,4' }).addTo(map);
-  }
 }
 
 function closePoly() {
   if (polyPts.length < 3) return;
   drawing = false;
-  const btn = document.getElementById('btnDraw');
-  btn.style.background = '';
-  btn.style.color = '';
+  document.getElementById('btnDraw').style.background = '';
+  document.getElementById('btnDraw').style.color = '';
   map.getContainer().style.cursor = '';
   map.doubleClickZoom.enable();
-
   clearMarkers();
   if (polyLayer) { map.removeLayer(polyLayer); polyLayer = null; }
-
   const coords = polyPts.map(p => [p.lng, p.lat]);
   coords.push(coords[0]);
   turfPoly = turf.polygon([coords]);
-
   polyLayer = L.polygon(polyPts.map(p => [p.lat, p.lng]),
     { color: '#7ec8e3', fillColor: '#4a9eca', fillOpacity: .15, weight: 2 }).addTo(map);
-
   const area = turf.area(turfPoly) / 10000;
   document.getElementById('poly-hint').textContent = `Talhão: ${area.toFixed(2)} ha`;
   document.getElementById('btnAnalyse').disabled = false;
   setStatus('Talhão definido. Clique em "Analisar e Restituir Linhas".', '');
 }
 
-function clearMarkers() {
-  tempMarkers.forEach(m => map.removeLayer(m));
-  tempMarkers = [];
-}
+function clearMarkers() { tempMarkers.forEach(m => map.removeLayer(m)); tempMarkers = []; }
 
 function clearAll() {
-  drawing = false;
-  polyPts = [];
-  turfPoly = null;
+  drawing = false; polyPts = []; turfPoly = null; cachedImg = null; generatedCurves = [];
   clearMarkers();
   if (polyLayer) { map.removeLayer(polyLayer); polyLayer = null; }
   if (lineLayer) { map.removeLayer(lineLayer); lineLayer = null; }
@@ -325,7 +309,8 @@ function clearAll() {
   document.getElementById('btnDraw').style.background = '';
   document.getElementById('btnDraw').style.color = '';
   map.getContainer().style.cursor = '';
-  document.getElementById('poly-hint').textContent = 'Clique no mapa para desenhar o contorno do talhão. Duplo clique para fechar.';
+  map.doubleClickZoom.enable();
+  document.getElementById('poly-hint').textContent = 'Clique no mapa para adicionar pontos. Duplo clique para fechar.';
   setStatus('Aguardando contorno do talhão...', '');
 }
 
@@ -333,27 +318,22 @@ function clearAll() {
 // IMPORT KML
 // ══════════════════════════════════════════════════════════
 function importKML(input) {
-  const file = input.files[0];
-  if (!file) return;
+  const file = input.files[0]; if (!file) return;
   const reader = new FileReader();
   reader.onload = e => {
     try {
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(e.target.result, 'text/xml');
+      const doc = new DOMParser().parseFromString(e.target.result, 'text/xml');
       const coords = doc.querySelector('coordinates');
       if (!coords) throw new Error('Sem coordenadas no KML');
-      const raw = coords.textContent.trim().split(/\s+/);
-      polyPts = raw.map(c => {
-        const parts = c.split(',');
-        return { lat: parseFloat(parts[1]), lng: parseFloat(parts[0]) };
-      }).filter(p => !isNaN(p.lat) && !isNaN(p.lng));
-      if (polyPts.length < 3) throw new Error('Menos de 3 pontos no KML');
-      polyPts.pop(); // remove repeated first point if present
+      polyPts = coords.textContent.trim().split(/\s+/).map(c => {
+        const [lng, lat] = c.split(',').map(Number);
+        return { lat, lng };
+      }).filter(p => !isNaN(p.lat));
+      if (polyPts.length < 3) throw new Error('Menos de 3 pontos');
+      polyPts.pop();
       closePoly();
       map.fitBounds(polyLayer.getBounds(), { padding: [30, 30] });
-    } catch(err) {
-      setStatus('Erro ao importar KML: ' + err.message, 'error');
-    }
+    } catch(err) { setStatus('Erro KML: ' + err.message, 'error'); }
     input.value = '';
   };
   reader.readAsText(file);
@@ -364,14 +344,9 @@ function importKML(input) {
 // ══════════════════════════════════════════════════════════
 function setZoom(z) {
   analysisZoom = z;
-  [17, 18, 19].forEach(n => {
-    document.getElementById('z' + n).classList.toggle('active', n === z);
-  });
+  [17, 18, 19].forEach(n => document.getElementById('z' + n).classList.toggle('active', n === z));
 }
 
-// ══════════════════════════════════════════════════════════
-// STATUS
-// ══════════════════════════════════════════════════════════
 function setStatus(msg, type) {
   const el = document.getElementById('statusBox');
   el.textContent = msg;
@@ -381,311 +356,294 @@ function setStatus(msg, type) {
 // ══════════════════════════════════════════════════════════
 // TILE UTILITIES
 // ══════════════════════════════════════════════════════════
-function lngToTileX(lng, zoom) {
-  return Math.floor((lng + 180) / 360 * Math.pow(2, zoom));
-}
-function latToTileY(lat, zoom) {
+function lng2tx(lng, z) { return Math.floor((lng + 180) / 360 * (1 << z)); }
+function lat2ty(lat, z) {
   const lr = lat * Math.PI / 180;
-  return Math.floor((1 - Math.log(Math.tan(lr) + 1 / Math.cos(lr)) / Math.PI) / 2 * Math.pow(2, zoom));
+  return Math.floor((1 - Math.log(Math.tan(lr) + 1 / Math.cos(lr)) / Math.PI) / 2 * (1 << z));
 }
-function tileXToLng(tx, zoom) {
-  return tx / Math.pow(2, zoom) * 360 - 180;
-}
-function tileYToLat(ty, zoom) {
-  const n = Math.PI - 2 * Math.PI * ty / Math.pow(2, zoom);
-  return 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
-}
-function lngLatToPixel(lng, lat, txMin, tyMin, zoom) {
-  const n = Math.pow(2, zoom);
-  const px = (lng + 180) / 360 * n * TILE_SIZE - txMin * TILE_SIZE;
+function lngLatToPx(lng, lat, txMin, tyMin, z) {
+  const n = 1 << z;
   const lr = lat * Math.PI / 180;
-  const py = (1 - Math.log(Math.tan(lr) + 1 / Math.cos(lr)) / Math.PI) / 2 * n * TILE_SIZE - tyMin * TILE_SIZE;
-  return [px, py];
+  return [
+    (lng + 180) / 360 * n * TILE_SIZE - txMin * TILE_SIZE,
+    (1 - Math.log(Math.tan(lr) + 1 / Math.cos(lr)) / Math.PI) / 2 * n * TILE_SIZE - tyMin * TILE_SIZE
+  ];
 }
-function pixelToLngLat(px, py, txMin, tyMin, zoom) {
-  const n = Math.pow(2, zoom);
+function pxToLngLat(px, py, txMin, tyMin, z) {
+  const n = 1 << z;
   const lng = (px + txMin * TILE_SIZE) / (n * TILE_SIZE) * 360 - 180;
   const ty = (py + tyMin * TILE_SIZE) / (n * TILE_SIZE);
-  const lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * ty))) * 180 / Math.PI;
-  return [lng, lat];
+  return [lng, Math.atan(Math.sinh(Math.PI * (1 - 2 * ty))) * 180 / Math.PI];
 }
-function metersPerPixel(lat, zoom) {
-  return 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
-}
+function mpp(lat, z) { return 156543.03392 * Math.cos(lat * Math.PI / 180) / (1 << z); }
 
 // ══════════════════════════════════════════════════════════
-// IMAGE FETCHING (ESRI World Imagery — suporta CORS)
+// TILE FETCHING  (ESRI World Imagery — CORS habilitado)
 // ══════════════════════════════════════════════════════════
 async function fetchTiles(bounds, zoom) {
-  const txMin = lngToTileX(bounds.west, zoom);
-  const txMax = lngToTileX(bounds.east, zoom);
-  const tyMin = latToTileY(bounds.north, zoom);
-  const tyMax = latToTileY(bounds.south, zoom);
-
-  const cols = txMax - txMin + 1;
-  const rows = tyMax - tyMin + 1;
-
-  if (cols * rows > 64) throw new Error(`Área muito grande para zoom ${zoom} (${cols * rows} tiles). Reduza a área ou use zoom menor.`);
-
+  const txMin = lng2tx(bounds.west, zoom), txMax = lng2tx(bounds.east, zoom);
+  const tyMin = lat2ty(bounds.north, zoom), tyMax = lat2ty(bounds.south, zoom);
+  const cols = txMax - txMin + 1, rows = tyMax - tyMin + 1;
+  if (cols * rows > 81) throw new Error(`Área muito grande (${cols * rows} tiles). Reduza a área ou use zoom menor.`);
   const canvas = document.createElement('canvas');
-  canvas.width = cols * TILE_SIZE;
-  canvas.height = rows * TILE_SIZE;
+  canvas.width = cols * TILE_SIZE; canvas.height = rows * TILE_SIZE;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-
-  const loads = [];
-  for (let tx = txMin; tx <= txMax; tx++) {
-    for (let ty = tyMin; ty <= tyMax; ty++) {
-      loads.push(
-        loadTile(tx, ty, zoom).then(img => {
-          ctx.drawImage(img, (tx - txMin) * TILE_SIZE, (ty - tyMin) * TILE_SIZE);
-        })
-      );
-    }
-  }
-  await Promise.all(loads);
+  await Promise.all(
+    Array.from({ length: cols }, (_, ci) =>
+      Array.from({ length: rows }, (_, ri) => {
+        const tx = txMin + ci, ty = tyMin + ri;
+        return new Promise((res, rej) => {
+          const img = new Image(); img.crossOrigin = 'anonymous';
+          img.onload = () => { ctx.drawImage(img, ci * TILE_SIZE, ri * TILE_SIZE); res(); };
+          img.onerror = rej;
+          img.src = `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${zoom}/${ty}/${tx}`;
+        });
+      })
+    ).flat()
+  );
   return { canvas, txMin, tyMin, zoom };
 }
 
-function loadTile(tx, ty, zoom) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error(`Falha ao carregar tile ${zoom}/${ty}/${tx}`));
-    img.src = `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${zoom}/${ty}/${tx}`;
-  });
-}
-
 // ══════════════════════════════════════════════════════════
-// IMAGE ANALYSIS
+// IMAGE PRE-PROCESSING
 // ══════════════════════════════════════════════════════════
-
-// Cria máscara booleana do polígono sobre o canvas de tiles
-function createMask(width, height, pts, txMin, tyMin, zoom) {
-  const mc = document.createElement('canvas');
-  mc.width = width; mc.height = height;
+function buildMask(w, h, pts, txMin, tyMin, z) {
+  const mc = document.createElement('canvas'); mc.width = w; mc.height = h;
   const mctx = mc.getContext('2d');
-  mctx.fillStyle = '#000';
-  mctx.fillRect(0, 0, width, height);
-  mctx.fillStyle = '#fff';
-  mctx.beginPath();
+  mctx.fillStyle = '#000'; mctx.fillRect(0, 0, w, h);
+  mctx.fillStyle = '#fff'; mctx.beginPath();
   pts.forEach((p, i) => {
-    const [px, py] = lngLatToPixel(p.lng, p.lat, txMin, tyMin, zoom);
+    const [px, py] = lngLatToPx(p.lng, p.lat, txMin, tyMin, z);
     i === 0 ? mctx.moveTo(px, py) : mctx.lineTo(px, py);
   });
-  mctx.closePath();
-  mctx.fill();
-  const md = mctx.getImageData(0, 0, width, height).data;
-  const mask = new Uint8Array(width * height);
-  for (let i = 0; i < width * height; i++) mask[i] = md[i * 4] > 128 ? 1 : 0;
+  mctx.closePath(); mctx.fill();
+  const md = mctx.getImageData(0, 0, w, h).data;
+  const mask = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) mask[i] = md[i * 4] > 128 ? 1 : 0;
   return mask;
 }
 
-// Converte para escala de cinza (só dentro da máscara, resto = -1)
 function toGray(imgData, mask) {
-  const { data, width, height } = imgData;
-  const gray = new Float32Array(width * height);
-  for (let i = 0; i < width * height; i++) {
-    if (!mask[i]) { gray[i] = -1; continue; }
-    gray[i] = 0.299 * data[i*4] + 0.587 * data[i*4+1] + 0.114 * data[i*4+2];
-  }
+  const { data, width: w, height: h } = imgData;
+  const gray = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++)
+    gray[i] = mask[i] ? 0.299 * data[i*4] + 0.587 * data[i*4+1] + 0.114 * data[i*4+2] : -1;
   return gray;
 }
 
-// Filtro Sobel — retorna ângulos do gradiente (em graus 0-180) com magnitude
-function sobelGradients(gray, width, height, mask) {
-  const kx = [-1,0,1,-2,0,2,-1,0,1];
-  const ky = [-1,-2,-1, 0, 0, 0, 1, 2, 1];
-  const angles = new Float32Array(width * height);
-  const mags   = new Float32Array(width * height);
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
-      const idx = y * width + x;
-      if (!mask[idx]) continue;
-      let gx = 0, gy = 0;
-      for (let ky2 = -1; ky2 <= 1; ky2++) {
-        for (let kx2 = -1; kx2 <= 1; kx2++) {
-          const ni = (y + ky2) * width + (x + kx2);
-          if (gray[ni] < 0) continue;
-          const ki = (ky2 + 1) * 3 + (kx2 + 1);
-          gx += kx[ki] * gray[ni];
-          gy += ky[ki] * gray[ni];
-        }
-      }
-      const mag = Math.sqrt(gx * gx + gy * gy);
-      mags[idx] = mag;
-      if (mag > 5) {
-        let a = Math.atan2(gy, gx) * 180 / Math.PI;
-        if (a < 0) a += 180;
-        angles[idx] = a % 180;
-      }
-    }
-  }
-  return { angles, mags };
-}
-
-// Histograma de ângulos ponderado por magnitude → ângulo do gradiente dominante
-function dominantGradientAngle(angles, mags, width, height, mask) {
+// ══════════════════════════════════════════════════════════
+// ANGLE DETECTION (Sobel + gradient histogram)
+// ══════════════════════════════════════════════════════════
+function detectAngle(gray, mask, w, h) {
   const hist = new Float64Array(180);
-  for (let i = 0; i < width * height; i++) {
-    if (!mask[i] || mags[i] < 5) continue;
-    const a = Math.floor(angles[i]) % 180;
-    hist[a] += mags[i];
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      if (!mask[y * w + x]) continue;
+      const get = (dy, dx) => { const v = gray[(y+dy)*w+(x+dx)]; return v < 0 ? 0 : v; };
+      const gx = -get(-1,-1) + get(-1,1) - 2*get(0,-1) + 2*get(0,1) - get(1,-1) + get(1,1);
+      const gy = -get(-1,-1) - 2*get(-1,0) - get(-1,1) + get(1,-1) + 2*get(1,0) + get(1,1);
+      const mag = Math.sqrt(gx*gx + gy*gy);
+      if (mag < 8) continue;
+      let a = Math.atan2(gy, gx) * 180 / Math.PI;
+      if (a < 0) a += 180;
+      hist[Math.floor(a) % 180] += mag;
+    }
   }
-  // Suavizar histograma (janela 5)
-  const smooth = new Float64Array(180);
-  for (let a = 0; a < 180; a++) {
-    for (let d = -2; d <= 2; d++) smooth[a] += hist[(a + d + 180) % 180];
-    smooth[a] /= 5;
-  }
-  let peak = 0, peakVal = 0;
-  for (let a = 0; a < 180; a++) {
-    if (smooth[a] > peakVal) { peakVal = smooth[a]; peak = a; }
-  }
-  // Ângulo das LINHAS é perpendicular ao gradiente dominante
-  return (peak + 90) % 180;
+  // Suavizar
+  const s = new Float64Array(180);
+  for (let a = 0; a < 180; a++)
+    for (let d = -3; d <= 3; d++) s[a] += hist[(a + d + 180) % 180] / 7;
+  let peak = 0, pv = 0;
+  for (let a = 0; a < 180; a++) if (s[a] > pv) { pv = s[a]; peak = a; }
+  return (peak + 90) % 180; // gradiente ⊥ às linhas → linhas = peak+90
 }
 
-// Projeção direcional: projeta pixels na direção PERPENDICULAR ao ângulo das linhas
-function projectPerpendicular(gray, width, height, mask, angleDeg) {
+// Também detecta espaçamento via autocorrelação da projeção
+function detectSpacing(gray, mask, w, h, angleDeg, minPx, maxPx) {
   const rad = angleDeg * Math.PI / 180;
-  // Direção perpendicular às linhas (eixo de separação entre linhas)
-  const px = -Math.sin(rad);
-  const py =  Math.cos(rad);
-  const projLen = Math.ceil(Math.abs(width * Math.abs(px)) + Math.abs(height * Math.abs(py))) + 2;
-  const proj = new Float64Array(projLen);
-  const cnt  = new Int32Array(projLen);
-  const cx = width / 2, cy = height / 2;
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      if (!mask[y * width + x] || gray[y * width + x] < 0) continue;
-      const p = Math.round((x - cx) * px + (y - cy) * py) + Math.floor(projLen / 2);
-      if (p >= 0 && p < projLen) { proj[p] += gray[y * width + x]; cnt[p]++; }
+  const perpX = -Math.sin(rad), perpY = Math.cos(rad);
+  const cx = w / 2, cy = h / 2;
+  const projLen = Math.ceil(Math.abs(w * Math.abs(perpX)) + Math.abs(h * Math.abs(perpY))) + 2;
+  const proj = new Float64Array(projLen); const cnt = new Int32Array(projLen);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (!mask[y*w+x] || gray[y*w+x] < 0) continue;
+      const p = Math.round((x-cx)*perpX + (y-cy)*perpY) + (projLen>>1);
+      if (p >= 0 && p < projLen) { proj[p] += gray[y*w+x]; cnt[p]++; }
     }
   }
-  const result = new Float64Array(projLen);
-  for (let i = 0; i < projLen; i++) if (cnt[i] > 0) result[i] = proj[i] / cnt[i];
-  return result;
+  const sig = new Float64Array(projLen);
+  for (let i = 0; i < projLen; i++) if (cnt[i] > 0) sig[i] = proj[i] / cnt[i];
+  // Autocorrelação
+  let sum = 0, c = 0;
+  for (let i = 0; i < projLen; i++) if (sig[i] > 0) { sum += sig[i]; c++; }
+  if (c < 5) return { spacingPx: 5, score: 0 };
+  const mean = sum / c;
+  const cen = sig.map(v => v > 0 ? v - mean : 0);
+  let vari = 0; cen.forEach(v => vari += v*v); vari /= c;
+  if (vari < 1) return { spacingPx: 5, score: 0 };
+  let bsc = -1, blag = minPx;
+  for (let lag = minPx; lag <= Math.min(maxPx, projLen>>1); lag++) {
+    let co = 0, n2 = 0;
+    for (let i = 0; i < projLen - lag; i++)
+      if (cen[i] && cen[i+lag]) { co += cen[i]*cen[i+lag]; n2++; }
+    if (n2 > 0) { const nc = co / n2 / vari; if (nc > bsc) { bsc = nc; blag = lag; } }
+  }
+  return { spacingPx: blag, score: bsc };
 }
 
-// Autocorrelação para encontrar o espaçamento periódico
-function findSpacing(signal, minPx = 2, maxPx = 100) {
-  const n = signal.length;
-  let sum = 0, cnt = 0;
-  for (let i = 0; i < n; i++) if (signal[i] > 0) { sum += signal[i]; cnt++; }
-  if (cnt < 10) return { spacingPx: 0, score: 0 };
-  const mean = sum / cnt;
-  const centered = new Float64Array(n);
-  for (let i = 0; i < n; i++) centered[i] = signal[i] > 0 ? signal[i] - mean : 0;
-  let variance = 0;
-  for (let i = 0; i < n; i++) variance += centered[i] * centered[i];
-  variance /= cnt;
-  if (variance < 1) return { spacingPx: 0, score: 0 };
-
-  let bestScore = -Infinity, bestLag = 0;
-  const maxLag = Math.min(maxPx, Math.floor(n / 3));
-  for (let lag = minPx; lag <= maxLag; lag++) {
-    let corr = 0, c2 = 0;
-    for (let i = 0; i < n - lag; i++) {
-      if (centered[i] !== 0 && centered[i + lag] !== 0) { corr += centered[i] * centered[i + lag]; c2++; }
-    }
-    if (c2 > 0) {
-      const nc = corr / c2 / variance;
-      if (nc > bestScore) { bestScore = nc; bestLag = lag; }
-    }
-  }
-  return { spacingPx: bestLag, score: bestScore };
+// ══════════════════════════════════════════════════════════
+// CURVE TRACING  ← núcleo do novo algoritmo
+// ══════════════════════════════════════════════════════════
+// Smooth1D com null-passthrough
+function smooth1D(arr, r) {
+  return arr.map((_, i) => {
+    if (arr[i] === null) return null;
+    let s = 0, n = 0;
+    for (let j = Math.max(0,i-r); j <= Math.min(arr.length-1,i+r); j++)
+      if (arr[j] !== null) { s += arr[j]; n++; }
+    return n ? s/n : null;
+  });
 }
 
-// Tenta 3 ângulos próximos para refinar
-async function refineAngle(gray, width, height, mask, baseAngle, mpp) {
-  let best = { angle: baseAngle, spacingPx: 0, score: -Infinity };
-  const minSpPx = Math.max(2, Math.floor(1.5 / mpp));  // espaçamento mín 1.5m
-  const maxSpPx = Math.min(100, Math.ceil(12 / mpp));   // espaçamento máx 12m
-
-  for (let da = -5; da <= 5; da += 1) {
-    const a = (baseAngle + da + 360) % 180;
-    const proj = projectPerpendicular(gray, width, height, mask, a);
-    const { spacingPx, score } = findSpacing(proj, minSpPx, maxSpPx);
-    if (score > best.score && spacingPx > 0) best = { angle: a, spacingPx, score };
-    if (da % 3 === 0) await tick();
+// Mínimos locais com filtro de proeminência e espaçamento mínimo
+function findMinima(arr, halfW, promThresh) {
+  const n = arr.length;
+  const minima = [];
+  for (let i = 1; i < n - 1; i++) {
+    if (arr[i] === null || arr[i-1] === null || arr[i+1] === null) continue;
+    if (arr[i] >= arr[i-1] || arr[i] >= arr[i+1]) continue;
+    // Proeminência
+    let lm = arr[i], rm = arr[i];
+    for (let j = i-1; j >= Math.max(0,i-halfW); j--) { if (arr[j]===null) break; lm = Math.max(lm,arr[j]); }
+    for (let j = i+1; j <= Math.min(n-1,i+halfW); j++) { if (arr[j]===null) break; rm = Math.max(rm,arr[j]); }
+    const prom = Math.min(lm, rm) - arr[i];
+    if (prom < promThresh) continue;
+    // Espaçamento mínimo do anterior
+    if (minima.length && i - minima[minima.length-1] < halfW * 0.7) {
+      // Manter o mais fundo
+      const prev = minima[minima.length-1];
+      if (arr[i] < arr[prev]) minima[minima.length-1] = i;
+    } else {
+      minima.push(i);
+    }
   }
-  return best;
+  return minima;
+}
+
+// Rastreamento de curvas: para cada scanline ao longo das linhas,
+// amostra o perfil perpendicular e rastreia mínimos entre scanlines
+async function traceCurvedRows(gray, mask, w, h, angleDeg, spacingPx) {
+  const rad = angleDeg * Math.PI / 180;
+  const cosA = Math.cos(rad), sinA = Math.sin(rad);   // direção ao longo das linhas
+  const perpX = -sinA, perpY = cosA;                   // perpendicular (separação entre linhas)
+  const cx = w/2, cy = h/2;
+
+  const scanStep = Math.max(2, Math.round(spacingPx / 6));
+  const halfW    = Math.round(spacingPx * 0.5);
+  const promThr  = 4;   // proeminência mínima (diferença de brilho)
+  const maxGap   = spacingPx * 0.65; // max deslocamento perpendicular entre scanlines vizinhas
+  const minPts   = Math.max(6, Math.round(20 / scanStep)); // pontos mínimos para aceitar uma curva
+  const ext      = Math.sqrt(w*w + h*h) / 2 + 2;
+
+  const scans = [];
+  let progress = 0;
+  const totalS = Math.ceil(2 * ext / scanStep);
+
+  for (let s = -ext; s <= ext; s += scanStep) {
+    const scx = cx + s * cosA, scy = cy + s * sinA;
+
+    // Amostra o perfil perpendicular nesta posição
+    const profile = [], tArr = [];
+    for (let t = -ext; t <= ext; t += 1) {
+      const px = Math.round(scx + t * perpX);
+      const py = Math.round(scy + t * perpY);
+      if (px < 0 || px >= w || py < 0 || py >= h) { profile.push(null); tArr.push(t); continue; }
+      const idx = py * w + px;
+      profile.push((!mask[idx] || gray[idx] < 0) ? null : gray[idx]);
+      tArr.push(t);
+    }
+
+    const smoothed = smooth1D(profile, 2);
+    const minimaIdx = findMinima(smoothed, halfW, promThr);
+    const rowPts = minimaIdx.map(i => ({ x: scx + tArr[i]*perpX, y: scy + tArr[i]*perpY, t: tArr[i] }));
+    scans.push({ rowPts });
+
+    progress++;
+    if (progress % 40 === 0) await tick();
+  }
+
+  // Rastrear curvas entre scanlines
+  if (!scans.length) return [];
+  let active = scans[0].rowPts.map(p => [p]);
+  const done = [];
+
+  for (let i = 1; i < scans.length; i++) {
+    const pts = scans[i].rowPts;
+    const nextActive = [];
+    const used = new Set();
+
+    active.forEach(curve => {
+      const last = curve[curve.length-1];
+      let bd = maxGap+1, bj = -1;
+      pts.forEach((p, j) => {
+        if (!used.has(j)) {
+          const d = Math.abs(p.t - last.t);
+          if (d < bd) { bd = d; bj = j; }
+        }
+      });
+      if (bj >= 0 && bd <= maxGap) {
+        curve.push(pts[bj]); used.add(bj); nextActive.push(curve);
+      } else {
+        if (curve.length >= minPts) done.push(curve);
+      }
+    });
+
+    pts.forEach((p, j) => { if (!used.has(j)) nextActive.push([p]); });
+    active = nextActive;
+    if (i % 40 === 0) await tick();
+  }
+  active.forEach(c => { if (c.length >= minPts) done.push(c); });
+  return done;
+}
+
+// Suaviza curva em pixels com média móvel
+function smoothCurve(pts, w) {
+  const n = pts.length;
+  return pts.map((_, i) => {
+    const a = Math.max(0, i-w), b = Math.min(n-1, i+w);
+    let sx = 0, sy = 0; for (let j = a; j <= b; j++) { sx += pts[j].x; sy += pts[j].y; }
+    const cnt = b-a+1; return { x: sx/cnt, y: sy/cnt };
+  });
+}
+
+// Converte curvas de pixels para [lng,lat] e filtra fora do polígono
+function curvesToLatLng(curves, txMin, tyMin, zoom, tPoly) {
+  return curves.map(pts => {
+    const sm = smoothCurve(pts, 4);
+    return sm
+      .map(p => pxToLngLat(p.x, p.y, txMin, tyMin, zoom))
+      .filter(([lng, lat]) => {
+        try { return turf.booleanPointInPolygon(turf.point([lng, lat]), tPoly); }
+        catch(e) { return false; }
+      });
+  }).filter(c => c.length >= 3);
 }
 
 function tick() { return new Promise(r => setTimeout(r, 0)); }
 
 // ══════════════════════════════════════════════════════════
-// LINE GENERATION (pixel space → lat/lng + clip)
+// DISPLAY
 // ══════════════════════════════════════════════════════════
-let generatedLines = [];
-
-function generateLines(polyPtsArr, turfP, txMin, tyMin, zoom, angleDeg, spacingPx) {
-  const bbox = turf.bbox(turfP);
-  const center = turf.centroid(turfP).geometry.coordinates;
-  const [cx, cy] = lngLatToPixel(center[0], center[1], txMin, tyMin, zoom);
-
-  const rad = angleDeg * Math.PI / 180;
-  const dLx =  Math.cos(rad), dLy = Math.sin(rad);  // along-line direction
-  const dPx = -Math.sin(rad), dPy = Math.cos(rad);  // across-line (perpendicular)
-
-  // Diagonal extent in pixels
-  const corners = [
-    lngLatToPixel(bbox[0], bbox[1], txMin, tyMin, zoom),
-    lngLatToPixel(bbox[2], bbox[1], txMin, tyMin, zoom),
-    lngLatToPixel(bbox[0], bbox[3], txMin, tyMin, zoom),
-    lngLatToPixel(bbox[2], bbox[3], txMin, tyMin, zoom),
-  ];
-  const perpOffsets = corners.map(([px, py]) => (px - cx) * dPx + (py - cy) * dPy);
-  const minPerp = Math.min(...perpOffsets) - spacingPx;
-  const maxPerp = Math.max(...perpOffsets) + spacingPx;
-  const lineExt = 3000; // px — extensão bem maior que qualquer talhão
-
-  const polyLine = turf.polygonToLine(turfP);
-  const lines = [];
-
-  for (let offset = minPerp; offset <= maxPerp; offset += spacingPx) {
-    // Ponto na linha
-    const px0 = cx + offset * dPx;
-    const py0 = cy + offset * dPy;
-    // Endpoints (muito além do polígono)
-    const [lng1, lat1] = pixelToLngLat(px0 - dLx * lineExt, py0 - dLy * lineExt, txMin, tyMin, zoom);
-    const [lng2, lat2] = pixelToLngLat(px0 + dLx * lineExt, py0 + dLy * lineExt, txMin, tyMin, zoom);
-
-    const seg = turf.lineString([[lng1, lat1], [lng2, lat2]]);
-    try {
-      const inters = turf.lineIntersect(seg, polyLine);
-      const pts = inters.features.map(f => f.geometry.coordinates);
-      if (pts.length < 2) continue;
-      // Ordenar ao longo da linha
-      pts.sort((a, b) => {
-        const ta = (a[0] - lng1) * (lng2 - lng1) + (a[1] - lat1) * (lat2 - lat1);
-        const tb = (b[0] - lng1) * (lng2 - lng1) + (b[1] - lat1) * (lat2 - lat1);
-        return ta - tb;
-      });
-      for (let j = 0; j < pts.length - 1; j += 2) {
-        const midLng = (pts[j][0] + pts[j+1][0]) / 2;
-        const midLat = (pts[j][1] + pts[j+1][1]) / 2;
-        if (turf.booleanPointInPolygon(turf.point([midLng, midLat]), turfP)) {
-          lines.push([pts[j], pts[j + 1]]);
-        }
-      }
-    } catch(e) {}
-  }
-  return lines;
-}
-
-function drawLines(lines) {
+function drawCurves(curves) {
   if (lineLayer) { map.removeLayer(lineLayer); lineLayer = null; }
-  if (!lines.length) return;
-  const geojson = {
-    type: 'FeatureCollection',
-    features: lines.map(([a, b]) => ({
-      type: 'Feature',
-      geometry: { type: 'LineString', coordinates: [a, b] }
-    }))
-  };
-  lineLayer = L.geoJSON(geojson, { style: { color: '#76ff03', weight: 1.2, opacity: .8 } }).addTo(map);
+  if (!curves.length) return;
+  lineLayer = L.featureGroup();
+  curves.forEach(coords => {
+    const lls = coords.map(([lng, lat]) => [lat, lng]);
+    L.polyline(lls, { color: '#76ff03', weight: 1.5, opacity: .85 }).addTo(lineLayer);
+  });
+  lineLayer.addTo(map);
 }
 
 // ══════════════════════════════════════════════════════════
@@ -702,152 +660,118 @@ async function restituir() {
     const bbox = turf.bbox(turfPoly);
     const bounds = { west: bbox[0], south: bbox[1], east: bbox[2], north: bbox[3] };
     const lat0 = (bounds.south + bounds.north) / 2;
-    const mpp = metersPerPixel(lat0, analysisZoom);
+    const m = mpp(lat0, analysisZoom);
 
-    setStatus(`Baixando imagem de satélite (zoom ${analysisZoom})...`, 'running');
-    await tick();
+    setStatus(`Baixando imagem (zoom ${analysisZoom}, ESRI)...`, 'running'); await tick();
 
-    let tileData;
-    try {
-      tileData = await fetchTiles(bounds, analysisZoom);
-    } catch(e) {
-      throw new Error('Falha ao baixar imagem: ' + e.message);
-    }
-
-    const { canvas, txMin, tyMin, zoom } = tileData;
-    const { width, height } = canvas;
+    const { canvas, txMin, tyMin, zoom } = await fetchTiles(bounds, analysisZoom);
+    const { width: w, height: h } = canvas;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-    setStatus('Criando máscara do polígono...', 'running');
-    await tick();
-    const mask = createMask(width, height, polyPts, txMin, tyMin, zoom);
-    const imgData = ctx.getImageData(0, 0, width, height);
-    const gray = toGray(imgData, mask);
+    setStatus('Criando máscara...', 'running'); await tick();
+    const mask = buildMask(w, h, polyPts, txMin, tyMin, zoom);
+    const gray = toGray(ctx.getImageData(0, 0, w, h), mask);
 
-    setStatus('Detectando ângulo das linhas (gradiente Sobel)...', 'running');
-    await tick();
-    const { angles, mags } = sobelGradients(gray, width, height, mask);
-    const baseAngle = dominantGradientAngle(angles, mags, width, height, mask);
+    setStatus('Detectando ângulo médio das linhas...', 'running'); await tick();
+    const angleDeg = detectAngle(gray, mask, w, h);
 
-    setStatus('Refinando ângulo e detectando espaçamento...', 'running');
-    await tick();
-    const { angle, spacingPx, score } = await refineAngle(gray, width, height, mask, baseAngle, mpp);
+    const minSpPx = Math.max(2, Math.floor(1.5 / m));
+    const maxSpPx = Math.min(120, Math.ceil(10 / m));
+    const { spacingPx, score } = detectSpacing(gray, mask, w, h, angleDeg, minSpPx, maxSpPx);
+    const spacingM = spacingPx * m;
 
-    const spacingM = spacingPx * mpp;
-    detectedAngle = angle;
-    detectedSpacing = spacingM;
+    // Cache para ajuste manual
+    cachedImg = { gray, mask, w, h, txMin, tyMin, zoom: analysisZoom, m };
 
-    const confidence = Math.min(1, Math.max(0, score));
-    const confLevel = confidence > 0.3 ? 'high' : confidence > 0.12 ? 'mid' : 'low';
-    const confLabel = confidence > 0.3 ? 'Boa' : confidence > 0.12 ? 'Fraca' : 'Baixa';
+    setStatus(`Rastreando linhas (ângulo ${angleDeg.toFixed(0)}°, espaçamento ~${spacingM.toFixed(1)} m)...`, 'running'); await tick();
 
-    setStatus('Gerando linhas de plantio...', 'running');
-    await tick();
-    generatedLines = generateLines(polyPts, turfPoly, txMin, tyMin, zoom, angle, spacingPx);
-    drawLines(generatedLines);
+    const curves = await traceCurvedRows(gray, mask, w, h, angleDeg, spacingPx);
+
+    setStatus('Convertendo para coordenadas...', 'running'); await tick();
+    generatedCurves = curvesToLatLng(curves, txMin, tyMin, analysisZoom, turfPoly);
+    drawCurves(generatedCurves);
 
     const area = turf.area(turfPoly) / 10000;
+    const confidence = Math.min(1, Math.max(0, score));
+    const confLevel = confidence > 0.25 ? 'high' : confidence > 0.1 ? 'mid' : 'low';
+    const confLabel = confidence > 0.25 ? 'Boa' : confidence > 0.1 ? 'Fraca' : 'Baixa';
 
-    // Resultados
-    document.getElementById('resAngle').textContent = angle.toFixed(1) + '°';
+    document.getElementById('resAngle').textContent = angleDeg.toFixed(1) + '°';
     document.getElementById('resSpacing').textContent = spacingM.toFixed(1);
-    document.getElementById('resLines').textContent = generatedLines.length;
+    document.getElementById('resLines').textContent = generatedCurves.length;
     document.getElementById('resArea').textContent = area.toFixed(2);
     const badge = document.getElementById('confBadge');
     badge.textContent = 'Confiança: ' + confLabel;
     badge.className = 'conf-badge conf-' + confLevel;
     document.getElementById('secResults').classList.remove('hidden');
 
-    // Sliders de ajuste
-    document.getElementById('slAngle').value = Math.round(angle);
-    document.getElementById('lblAngle').textContent = Math.round(angle) + '°';
-    document.getElementById('slSpacing').value = spacingM.toFixed(1);
+    document.getElementById('slAngle').value = Math.round(angleDeg);
+    document.getElementById('lblAngle').textContent = Math.round(angleDeg) + '°';
+    document.getElementById('slSpacing').value = Math.max(1, Math.min(10, spacingM)).toFixed(1);
     document.getElementById('lblSpacing').textContent = spacingM.toFixed(1) + ' m';
     document.getElementById('secManual').classList.remove('hidden');
-
     document.getElementById('btnKml').disabled = false;
 
-    if (confLevel === 'low') {
-      setStatus(`Confiança baixa — ajuste manualmente o ângulo e espaçamento. Detectado: ${angle.toFixed(1)}° / ${spacingM.toFixed(1)} m`, 'error');
-    } else {
-      setStatus(`Concluído! ${generatedLines.length} linhas geradas (${angle.toFixed(1)}° · ${spacingM.toFixed(1)} m)`, 'ok');
-    }
+    const msg = confLevel === 'low'
+      ? `Confiança baixa — ajuste manualmente. ${generatedCurves.length} linhas geradas.`
+      : `Concluído! ${generatedCurves.length} linhas (${angleDeg.toFixed(1)}° · ${spacingM.toFixed(1)} m)`;
+    setStatus(msg, confLevel === 'low' ? 'error' : 'ok');
   } catch(err) {
     setStatus('Erro: ' + err.message, 'error');
+    console.error(err);
   }
-
   document.getElementById('btnAnalyse').disabled = false;
 }
 
 // ══════════════════════════════════════════════════════════
 // AJUSTE MANUAL
 // ══════════════════════════════════════════════════════════
-function updateManual() {
-  const a = parseInt(document.getElementById('slAngle').value);
-  const s = parseFloat(document.getElementById('slSpacing').value);
-  document.getElementById('lblAngle').textContent = a + '°';
-  document.getElementById('lblSpacing').textContent = s.toFixed(1) + ' m';
+function updateManualLabels() {
+  document.getElementById('lblAngle').textContent = document.getElementById('slAngle').value + '°';
+  document.getElementById('lblSpacing').textContent = parseFloat(document.getElementById('slSpacing').value).toFixed(1) + ' m';
 }
 
 async function aplicarManual() {
-  if (!turfPoly) return;
+  if (!cachedImg || !turfPoly) return;
+  const { gray, mask, w, h, txMin, tyMin, zoom, m } = cachedImg;
   const angleDeg = parseFloat(document.getElementById('slAngle').value);
   const spacingM = parseFloat(document.getElementById('slSpacing').value);
+  const spacingPx = spacingM / m;
 
-  setStatus('Reaplicando linhas...', 'running');
-  await tick();
+  setStatus('Reaplicando com ângulo/espaçamento manual...', 'running'); await tick();
 
-  const bbox = turf.bbox(turfPoly);
-  const bounds = { west: bbox[0], south: bbox[1], east: bbox[2], north: bbox[3] };
-  const lat0 = (bounds.south + bounds.north) / 2;
-  const mpp = metersPerPixel(lat0, analysisZoom);
-  const spacingPx = spacingM / mpp;
-
-  const txMin = lngToTileX(bounds.west, analysisZoom);
-  const tyMin = latToTileY(bounds.north, analysisZoom);
-
-  generatedLines = generateLines(polyPts, turfPoly, txMin, tyMin, analysisZoom, angleDeg, spacingPx);
-  drawLines(generatedLines);
+  const curves = await traceCurvedRows(gray, mask, w, h, angleDeg, spacingPx);
+  generatedCurves = curvesToLatLng(curves, txMin, tyMin, zoom, turfPoly);
+  drawCurves(generatedCurves);
 
   document.getElementById('resAngle').textContent = angleDeg.toFixed(1) + '°';
   document.getElementById('resSpacing').textContent = spacingM.toFixed(1);
-  document.getElementById('resLines').textContent = generatedLines.length;
+  document.getElementById('resLines').textContent = generatedCurves.length;
   document.getElementById('btnKml').disabled = false;
-
-  setStatus(`${generatedLines.length} linhas geradas (${angleDeg}° · ${spacingM} m)`, 'ok');
+  setStatus(`${generatedCurves.length} linhas (${angleDeg}° · ${spacingM} m)`, 'ok');
 }
 
 // ══════════════════════════════════════════════════════════
 // EXPORT KML
 // ══════════════════════════════════════════════════════════
 function exportKML() {
-  if (!generatedLines.length) return;
-  const placemarks = generatedLines.map(([a, b], i) => `
-  <Placemark><name>Linha ${i+1}</name>
-    <LineString><coordinates>${a[0]},${a[1]},0 ${b[0]},${b[1]},0</coordinates></LineString>
-  </Placemark>`).join('');
+  if (!generatedCurves.length) return;
+  const placemarks = generatedCurves.map((coords, i) => {
+    const cs = coords.map(([lng, lat]) => `${lng.toFixed(8)},${lat.toFixed(8)},0`).join(' ');
+    return `\n  <Placemark><name>Linha ${i+1}</name>\n    <LineString><tessellate>1</tessellate><coordinates>${cs}</coordinates></LineString>\n  </Placemark>`;
+  }).join('');
 
   let polyKML = '';
   if (turfPoly) {
-    const coords = polyPts.map(p => `${p.lng},${p.lat},0`).join(' ') + ` ${polyPts[0].lng},${polyPts[0].lat},0`;
-    polyKML = `
-  <Placemark><name>Talhão</name>
-    <Polygon><outerBoundaryIs><LinearRing><coordinates>${coords}</coordinates></LinearRing></outerBoundaryIs></Polygon>
-  </Placemark>`;
+    const cs = polyPts.map(p => `${p.lng.toFixed(8)},${p.lat.toFixed(8)},0`).join(' ')
+      + ` ${polyPts[0].lng.toFixed(8)},${polyPts[0].lat.toFixed(8)},0`;
+    polyKML = `\n  <Placemark><name>Talhão</name>\n    <Polygon><outerBoundaryIs><LinearRing><coordinates>${cs}</coordinates></LinearRing></outerBoundaryIs></Polygon>\n  </Placemark>`;
   }
 
-  const kml = `<?xml version="1.0" encoding="UTF-8"?>
-<kml xmlns="http://www.opengis.net/kml/2.2">
-<Document><name>Restituição de Linhas de Plantio</name>
-<Folder><name>Linhas de Plantio</name>${placemarks}
-</Folder>
-<Folder><name>Talhão</name>${polyKML}
-</Folder>
-</Document></kml>`;
+  const kml = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document><name>Restituição de Linhas de Plantio</name>\n<Folder><name>Linhas de Plantio</name>${placemarks}\n</Folder>\n<Folder><name>Talhão</name>${polyKML}\n</Folder>\n</Document></kml>`;
 
-  const blob = new Blob([kml], { type: 'application/vnd.google-earth.kml+xml' });
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
+  a.href = URL.createObjectURL(new Blob([kml], { type: 'application/vnd.google-earth.kml+xml' }));
   a.download = 'restituicao_linhas.kml';
   a.click();
 }
