@@ -121,7 +121,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v2.3 · 11/06/2026</span></h1>
+      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v2.4 · 11/06/2026</span></h1>
       <p>Régime Permanente &middot; Celeridade &middot; Joukowsky &middot; Envelope Sobre/Subpressão &middot; Risco de Cavitação</p>
     </div>
   </div>
@@ -166,6 +166,13 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
         <button class="btn" style="background:#5e35b1;color:#fff;width:100%;margin-bottom:.3rem" onclick="$('kmlInput').click()">&#128194; Importar KML da Adutora</button>
         <small style="color:var(--mu);display:block">Arquivo KML com LineString do percurso</small>
         <div id="kmlStatus" style="display:none;font-size:.72rem;margin-top:.35rem;padding:.35rem .6rem;border-radius:6px"></div>
+      </div>
+      <div style="border-top:1px solid var(--bdr);padding-top:.6rem;margin-top:.4rem">
+        <label style="margin-bottom:.35rem;display:block">Curvas de nível (KML)</label>
+        <input type="file" id="contoursInput" accept=".kml" style="display:none" onchange="handleContoursKML(event)">
+        <button class="btn" style="background:#00695c;color:#fff;width:100%;margin-bottom:.3rem" onclick="$('contoursInput').click()">&#127968; Importar Curvas de N&#237;vel</button>
+        <small style="color:var(--mu);display:block">KML com curvas de n&#237;vel &mdash; QGIS, Google Earth ou Civil 3D</small>
+        <div id="contoursStatus" style="display:none;font-size:.72rem;margin-top:.35rem;padding:.35rem .6rem;border-radius:6px"></div>
       </div>
       <div id="capDiv" style="display:none;border-top:1px solid var(--bdr);padding-top:.6rem">
         <label style="margin-bottom:.3rem;display:block;color:#2e7d32">&#10003; Valores Capturados</label>
@@ -325,6 +332,25 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
 </div>
 </div>
 
+<!-- Modal Tabela MOC -->
+<div id="mocTableModal" onclick="if(event.target===this)this.style.display='none'" style="position:fixed;inset:0;background:rgba(0,0,0,.58);z-index:300;display:none;align-items:flex-start;justify-content:center;padding:1rem;overflow-y:auto">
+  <div style="background:#fff;border-radius:14px;width:min(1140px,98vw);display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.35);max-height:92vh">
+    <div style="background:linear-gradient(135deg,#1a0030,#7b1fa2);color:#fff;padding:.8rem 1.1rem;border-radius:14px 14px 0 0;display:flex;align-items:center;gap:.65rem;flex-shrink:0">
+      <span style="font-size:1.1rem">&#128203;</span>
+      <span style="font-size:.95rem;font-weight:900;flex:1">Tabela de Resultados — Perfil Piezom&#233;trico (MOC)</span>
+      <button onclick="exportarCSV()" style="background:#2e7d32;border:none;color:#fff;border-radius:7px;padding:.3rem 1rem;cursor:pointer;font-weight:700;font-size:.8rem">&#11015; CSV</button>
+      <button onclick="document.getElementById('mocTableModal').style.display='none'" style="background:rgba(255,255,255,.18);border:none;color:#fff;border-radius:7px;padding:.3rem .85rem;cursor:pointer;font-weight:900;font-size:1rem">&#10005;</button>
+    </div>
+    <div style="overflow:auto;flex:1">
+      <table id="mocTable" style="width:100%;border-collapse:collapse;font-size:.79rem;font-family:'Segoe UI',system-ui;white-space:nowrap">
+        <thead id="mocTableHead"></thead>
+        <tbody id="mocTableBody"></tbody>
+      </table>
+    </div>
+    <div id="mocTableFooter" style="padding:.4rem 1rem;font-size:.7rem;color:#607080;border-top:1px solid #d0e4f0;background:#f8fbff;border-radius:0 0 14px 14px;flex-shrink:0"></div>
+  </div>
+</div>
+
 <script>
 // ── Utilidades ────────────────────────────────────────────────────────
 const $=id=>document.getElementById(id);
@@ -448,7 +474,7 @@ function pressurePointsProfile(multi,profile){
 }
 
 let _multi=null,_nominal=null,_cotaMax=null,_perfilSamples=null,_profileData=null,_transiente=null;
-let _mocResult=null,_mocAnim=null;
+let _mocResult=null,_mocAnim=null,_contourData=null;
 
 // ═══ MOC — Método das Características ════════════════════════════════
 function _mocResample(N,L){
@@ -969,7 +995,7 @@ function buildTransienteCard(a,tc,dH_inst,dH_eff,VMax,tClose,tc2){
       <th>Celeridade (a)</th><th>Velocidade</th><th>ΔH Joukowsky</th><th>Comprimento</th>
     </tr></thead><tbody>${segRows}</tbody></table></div>
 
-    <div class="ct tr">📊 Envelope de Pressão Transitória — MOC (por trecho)</div>
+    <div class="ct tr">&#128202; Envelope de Press&#227;o Transit&#243;ria &mdash; MOC (por trecho)<button onclick="mostrarTabelaMOC()" style="margin-left:auto;background:#5e35b1;color:#fff;border:none;border-radius:7px;padding:.22rem .85rem;font-size:.76rem;font-weight:700;cursor:pointer;white-space:nowrap">&#128203; Tabela</button></div>
     <canvas id="c-transiente" width="900" height="360" style="width:100%;max-width:900px;display:block;margin:0 auto"></canvas>
 
     <div class="ct tr" style="margin-top:1.1rem">📈 Animação de Alturas Piezométricas</div>
@@ -1004,7 +1030,7 @@ function drawTransiente(dH_eff){
   const ctx=cv.getContext('2d');
   const W=cv.width,Hc=cv.height;
   ctx.clearRect(0,0,W,Hc);ctx.fillStyle='#f8fbff';ctx.fillRect(0,0,W,Hc);
-  const mg={t:52,b:58,l:68,r:24},cW=W-mg.l-mg.r,cH=Hc-mg.t-mg.b;
+  const mg={t:52,b:58,l:68,r:96},cW=W-mg.l-mg.r,cH=Hc-mg.t-mg.b;
 
   // Usa envelopes MOC se disponíveis; caso contrário, ΔH uniforme
   const useMOC=_mocResult!=null;
@@ -1104,6 +1130,42 @@ function drawTransiente(dH_eff){
   ctx.fillStyle='#c62828';ctx.fillText(`+${Math.round(dhSob)} m (sobrepressão)`,ax,ayBase);
   ctx.fillStyle='#e07b00';ctx.fillText(`−${Math.round(dhSub)} m (subpressão)`,ax,ayBase+15);
   if(hasCav){ctx.fillStyle='#b71c1c';ctx.fillText('⚠ Risco de cavitação',ax,ayBase+30);}
+
+  // ── Eixo de pressão manométrica (direita) ──────────────────────────
+  const zRef=combined[0].z;
+  const lim_r=getLimits();
+  const pRMin=yMin-zRef,pRMax=yMax-zRef,pRRange=pRMax-pRMin;
+  const rawStep=pRRange/5;
+  const tickStep=rawStep<=10?10:rawStep<=20?20:rawStep<=50?50:rawStep<=100?100:200;
+  const firstTick=Math.ceil(pRMin/tickStep)*tickStep;
+  // Linha borda eixo direito
+  ctx.strokeStyle='rgba(80,100,120,.3)';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(mg.l+cW,mg.t);ctx.lineTo(mg.l+cW,mg.t+cH);ctx.stroke();
+  // Ticks numéricos
+  ctx.font='9.5px Segoe UI';ctx.fillStyle='#607080';ctx.textAlign='left';
+  for(let p=firstTick;p<=pRMax+0.1;p+=tickStep){
+    const yT=py(p+zRef);
+    if(yT<mg.t-2||yT>mg.t+cH+2)continue;
+    ctx.strokeStyle='rgba(80,100,120,.3)';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(mg.l+cW,yT);ctx.lineTo(mg.l+cW+5,yT);ctx.stroke();
+    ctx.fillStyle='#607080';ctx.fillText(Math.round(p)+' mca',mg.l+cW+8,yT+3.5);
+  }
+  // Linhas de limite PN (horizontais coloridas)
+  const pnLimOrd=[60,80,125,145,180];
+  ctx.font='bold 8px Segoe UI';
+  for(const pn of pnLimOrd){
+    const H_lim=zRef+lim_r[pn];
+    if(H_lim<yMin-1||H_lim>yMax+1)continue;
+    const yL=py(H_lim);
+    ctx.strokeStyle=PN_COLOR[pn];ctx.lineWidth=1;ctx.setLineDash([5,4]);
+    ctx.beginPath();ctx.moveTo(mg.l,yL);ctx.lineTo(mg.l+cW,yL);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle=PN_COLOR[pn];ctx.textAlign='left';
+    ctx.fillText(`PN${pn} ${lim_r[pn]}mca`,mg.l+cW+8,yL-1.5);
+  }
+  // Rótulo eixo direito
+  ctx.save();ctx.translate(W-5,mg.t+cH/2);ctx.rotate(-Math.PI/2);
+  ctx.font='10px Segoe UI';ctx.fillStyle='#607080';ctx.textAlign='center';
+  ctx.fillText('Pressão manométrica ref. sucção (mca)',0,0);ctx.restore();
 }
 
 // ── Google Maps ───────────────────────────────────────────────────
@@ -1243,6 +1305,148 @@ function handleKMLFile(e){
   const f=e.target.files?.[0];if(f)importarKML(f);
   e.target.value='';
 }
+
+// ── Curvas de nível KML ───────────────────────────────────────────────
+function setContoursStatus(msg,type){
+  const el=$('contoursStatus');if(!el)return;
+  el.style.display='block';el.textContent=msg;
+  el.style.background=type==='ok'?'#e8f5e9':type==='err'?'#ffebee':'#e3f2fd';
+  el.style.color=type==='ok'?'#2e7d32':type==='err'?'#c62828':'#1565c0';
+}
+function parseKMLContours(kmlText){
+  const doc=new DOMParser().parseFromString(kmlText,'text/xml');
+  const pms=doc.getElementsByTagName('Placemark');
+  const contours=[];
+  for(let i=0;i<pms.length;i++){
+    const pm=pms[i];
+    const coordEls=pm.getElementsByTagName('coordinates');
+    if(!coordEls.length)continue;
+    for(let j=0;j<coordEls.length;j++){
+      const el=coordEls[j];
+      const pts=[],zvs=[];
+      for(const tok of el.textContent.trim().split(/\s+/)){
+        const p=tok.split(',');if(p.length<2)continue;
+        const lng=parseFloat(p[0]),lat=parseFloat(p[1]);
+        if(isNaN(lat)||isNaN(lng))continue;
+        pts.push({lat,lng});
+        if(p.length>=3){const z=parseFloat(p[2]);if(!isNaN(z)&&Math.abs(z)>0.01)zvs.push(z);}
+      }
+      if(pts.length<2)continue;
+      let elev=zvs.length?(zvs.reduce((a,b)=>a+b,0)/zvs.length):NaN;
+      if(isNaN(elev)){
+        const nameEls=pm.getElementsByTagName('name');
+        if(nameEls.length){
+          const m=nameEls[0].textContent.replace(',','.').match(/-?(\d+(?:\.\d+)?)/);
+          if(m)elev=parseFloat(m[0]);
+        }
+      }
+      if(!isNaN(elev))contours.push({elev,pts});
+    }
+  }
+  contours.sort((a,b)=>a.elev-b.elev);
+  return contours.length>=2?contours:null;
+}
+function _distPtSeg(lat,lng,p1,p2){
+  const dx=p2.lng-p1.lng,dy=p2.lat-p1.lat,len2=dx*dx+dy*dy;
+  if(len2===0){const dl=lat-p1.lat,dg=lng-p1.lng;return Math.sqrt(dl*dl+dg*dg);}
+  const t=Math.max(0,Math.min(1,((lng-p1.lng)*dx+(lat-p1.lat)*dy)/len2));
+  const rl=lat-(p1.lat+t*dy),rg=lng-(p1.lng+t*dx);
+  return Math.sqrt(rl*rl+rg*rg);
+}
+function interpolateFromContours(lat,lng,contours){
+  let totalW=0,totalE=0;
+  for(const c of contours){
+    let minD=Infinity;
+    for(let i=0;i<c.pts.length-1;i++){const d=_distPtSeg(lat,lng,c.pts[i],c.pts[i+1]);if(d<minD)minD=d;}
+    if(minD<1e-10)return c.elev;
+    const w=1/(minD*minD);totalW+=w;totalE+=w*c.elev;
+  }
+  return totalW>0?totalE/totalW:NaN;
+}
+function gerarPerfilDeContornos(){
+  if(!_perfilSamples){setContoursStatus('⚠ Trace ou importe o percurso da adutora primeiro.','err');return;}
+  if(!_contourData){setContoursStatus('⚠ Importe as curvas de nível primeiro.','err');return;}
+  setContoursStatus('Interpolando elevações das curvas...','info');
+  try{
+    const samples=_perfilSamples.map(s=>({
+      elevation:interpolateFromContours(s.location.lat,s.location.lng,_contourData),
+      location:s.location
+    }));
+    const nanCount=samples.filter(s=>isNaN(s.elevation)).length;
+    if(nanCount>samples.length*0.5){setContoursStatus('⚠ Mais de 50% dos pontos sem elevação. Verifique se as curvas cobrem toda a adutora.','err');return;}
+    for(let i=0;i<samples.length;i++){
+      if(!isNaN(samples[i].elevation))continue;
+      for(let d=1;d<samples.length;d++){
+        if(i-d>=0&&!isNaN(samples[i-d].elevation)){samples[i].elevation=samples[i-d].elevation;break;}
+        if(i+d<samples.length&&!isNaN(samples[i+d].elevation)){samples[i].elevation=samples[i+d].elevation;break;}
+      }
+    }
+    preencherDaAdutora(samples);
+    desenharPerfilElevacao(samples);
+    setContoursStatus(`✓ Perfil gerado de ${_contourData.length} curvas de nível (${_contourData[0].elev.toFixed(0)}–${_contourData[_contourData.length-1].elev.toFixed(0)} m).`,'ok');
+  }catch(e){setContoursStatus('⚠ Erro: '+e.message,'err');}
+}
+async function handleContoursKML(e){
+  const f=e.target.files?.[0];e.target.value='';if(!f)return;
+  setContoursStatus('Lendo curvas de nível...','info');
+  try{
+    const text=await f.text();
+    const contours=parseKMLContours(text);
+    if(!contours){setContoursStatus('⚠ Nenhuma curva encontrada. Verifique se os Placemarks têm nome com elevação ou coordenada Z.','err');return;}
+    _contourData=contours;
+    setContoursStatus(`✓ ${contours.length} curvas lidas (${contours[0].elev.toFixed(0)}–${contours[contours.length-1].elev.toFixed(0)} m). Calculando perfil...`,'ok');
+    gerarPerfilDeContornos();
+  }catch(err){setContoursStatus('⚠ Erro: '+err.message,'err');}
+}
+
+// ── Tabela de resultados MOC ──────────────────────────────────────────
+function mostrarTabelaMOC(){
+  if(!_mocResult){alert('Execute o cálculo de transiente hidráulico primeiro.');return;}
+  const{N,L,dx,z,H_ss,Hmax,Hmin}=_mocResult;
+  const segs=_multi?.segs||[];
+  function getPNAt(d){for(const s of segs)if(d>=s.from-0.5&&d<=s.to+0.5)return s.pn;return segs[segs.length-1]?.pn||'—';}
+  $('mocTableHead').innerHTML=`<tr style="background:#f4f7fb">
+    ${['Nó','Dist. (m)','Cota (m)','HGL (m)','P regime (mca)','Hmax (m)','Hmin (m)','ΔH+ (m)','ΔH− (m)','PN','Cavitação'].map(h=>`<th style="padding:.42rem .7rem;border:1px solid #cdd8e4;font-size:.74rem;font-weight:800;text-align:center;white-space:nowrap">${h}</th>`).join('')}
+  </tr>`;
+  const step=Math.max(1,Math.floor(N/100));let rows='',cavCount=0;
+  for(let i=0;i<N;i+=step){
+    const d=i*dx,pn=getPNAt(d),P=H_ss[i]-z[i],dHp=Hmax[i]-H_ss[i],dHm=H_ss[i]-Hmin[i];
+    const cav=Hmin[i]<z[i];if(cav)cavCount++;
+    const bg=cav?'background:#fff5f5':i%2===0?'background:#fff':'background:#f8fbff';
+    rows+=`<tr style="${bg}">
+      <td style="padding:.3rem .65rem;border:1px solid #e4ecf0;text-align:center;color:#8090a0;font-size:.74rem">${i}</td>
+      <td style="padding:.3rem .65rem;border:1px solid #e4ecf0;text-align:right">${fmt(d,1)}</td>
+      <td style="padding:.3rem .65rem;border:1px solid #e4ecf0;text-align:right">${fmt(z[i],2)}</td>
+      <td style="padding:.3rem .65rem;border:1px solid #e4ecf0;text-align:right">${fmt(H_ss[i],2)}</td>
+      <td style="padding:.3rem .65rem;border:1px solid #e4ecf0;text-align:right;font-weight:700;color:#003d5c">${fmt(P,2)}</td>
+      <td style="padding:.3rem .65rem;border:1px solid #e4ecf0;text-align:right;color:#00962a;font-weight:700">${fmt(Hmax[i],2)}</td>
+      <td style="padding:.3rem .65rem;border:1px solid #e4ecf0;text-align:right;color:#d32f2f;font-weight:700">${fmt(Hmin[i],2)}</td>
+      <td style="padding:.3rem .65rem;border:1px solid #e4ecf0;text-align:right;color:#c62828">+${fmt(dHp,2)}</td>
+      <td style="padding:.3rem .65rem;border:1px solid #e4ecf0;text-align:right;color:#e07b00">−${fmt(dHm,2)}</td>
+      <td style="padding:.3rem .65rem;border:1px solid #e4ecf0;text-align:center"><span class="pn-badge ${PN_CSS[pn]||''}">PN ${pn}</span></td>
+      <td style="padding:.3rem .65rem;border:1px solid #e4ecf0;text-align:center;font-weight:700;color:${cav?'#c62828':'#2e7d32'}">${cav?'⚠ SIM':'✓ Não'}</td>
+    </tr>`;
+  }
+  $('mocTableBody').innerHTML=rows;
+  const shown=Math.ceil(N/step);
+  $('mocTableFooter').textContent=`${shown} linhas exibidas de ${N} nós · Passo: ${step} · Comprimento: ${fmt(L,0)} m · ${cavCount>0?'⚠ '+cavCount+' nó(s) com risco de cavitação':'✓ Sem cavitação'}`;
+  $('mocTableModal').style.display='flex';
+}
+function exportarCSV(){
+  if(!_mocResult){alert('Sem resultados para exportar.');return;}
+  const{N,dx,z,H_ss,Hmax,Hmin}=_mocResult;
+  const segs=_multi?.segs||[];
+  function getPNAt(d){for(const s of segs)if(d>=s.from-0.5&&d<=s.to+0.5)return s.pn;return segs[segs.length-1]?.pn||'';}
+  const lines=['﻿Nó;Distância (m);Cota (m);HGL (m);P regime (mca);Hmax (m);Hmin (m);ΔH+ (m);ΔH- (m);PN;Cavitação'];
+  for(let i=0;i<N;i++){
+    const d=i*dx,pn=getPNAt(d),P=H_ss[i]-z[i];
+    lines.push(`${i};${d.toFixed(2)};${z[i].toFixed(2)};${H_ss[i].toFixed(2)};${P.toFixed(2)};${Hmax[i].toFixed(2)};${Hmin[i].toFixed(2)};${(Hmax[i]-H_ss[i]).toFixed(2)};${(H_ss[i]-Hmin[i]).toFixed(2)};${pn};${Hmin[i]<z[i]?'SIM':'Não'}`);
+  }
+  const blob=new Blob([lines.join('\r\n')],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='transiente_perfil.csv';document.body.appendChild(a);a.click();document.body.removeChild(a);
+}
+
 async function gerarPerfil(){
   if(tracePoints.length<2)return;
   const nSamples=Math.min(512,Math.max(100,tracePoints.length*25));
