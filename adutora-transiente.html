@@ -1141,14 +1141,22 @@ function setKMLStatus(msg,type){
 }
 function parseKMLCoords(kmlText){
   const doc=new DOMParser().parseFromString(kmlText,'text/xml');
-  // Tenta <LineString><coordinates> ou <coordinates> direto
-  const el=doc.querySelector('LineString coordinates')||doc.querySelector('coordinates');
-  if(!el)return null;
+  // getElementsByTagName ignora namespace (funciona com xmlns="...")
+  const coordEls=doc.getElementsByTagName('coordinates');
+  if(!coordEls.length)return null;
+  // Prefere coordinates dentro de LineString; senão usa a mais longa
+  let bestEl=null,bestLen=0;
+  for(let i=0;i<coordEls.length;i++){
+    const el=coordEls[i];
+    const parentName=(el.parentElement||{}).localName||'';
+    if(parentName==='LineString'){bestEl=el;break;}
+    if(el.textContent.length>bestLen){bestLen=el.textContent.length;bestEl=el;}
+  }
+  if(!bestEl)return null;
   const pts=[];
-  for(const tok of el.textContent.trim().split(/[\s,]+(?=[^,\s])/)){
-    // cada token é "lng,lat" ou "lng,lat,alt"
-    const p=tok.trim().split(',');
-    if(p.length<2)continue;
+  // Coordenadas KML: "lng,lat,alt lng,lat,alt ..." separadas por espaço
+  for(const tok of bestEl.textContent.trim().split(/\s+/)){
+    const p=tok.split(',');if(p.length<2)continue;
     const lng=parseFloat(p[0]),lat=parseFloat(p[1]);
     if(!isNaN(lat)&&!isNaN(lng))pts.push({lat,lng});
   }
