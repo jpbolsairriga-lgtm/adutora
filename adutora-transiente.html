@@ -121,7 +121,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v2.5 · 11/06/2026</span></h1>
+      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v2.6 · 11/06/2026</span></h1>
       <p>Régime Permanente &middot; Celeridade &middot; Joukowsky &middot; Envelope Sobre/Subpressão &middot; Risco de Cavitação</p>
     </div>
   </div>
@@ -304,6 +304,39 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="sbox info" style="font-size:.78rem">
     &#9432; Configure o material e tipo de evento. O cálculo atualiza automaticamente após gerar o perfil e calcular a adutora.
     Fórmula: <b>a = √(K/ρ) / √(1 + K·D/(E·e))</b> &nbsp;|&nbsp; <b>ΔH = a·V/g</b> (Joukowsky)
+  </div>
+</div>
+
+<!-- ═══ PROTEÇÕES CONTRA TRANSIENTE ═══ -->
+<div class="card" style="border-color:#81c784">
+  <div class="ct" style="color:#2e7d32;border-bottom-color:#c8e6c9">&#128737; Prote&#231;&#245;es contra Transiente Hidr&#225;ulico</div>
+  <div class="g4" style="margin-bottom:.7rem">
+    <div class="fg">
+      <label>C&#226;mara de ar &mdash; volume</label>
+      <div class="iu"><input type="number" id="prot_vessel_vol" min="0" step="100" placeholder="0 = desativada" onchange="calcTransiente()"><span class="u">L</span></div>
+      <small>Na sa&#237;da da bomba. Típico: 0,5–3% do vol. da adutora</small>
+    </div>
+    <div class="fg">
+      <label>C&#226;mara de ar &mdash; press&#227;o de pr&#233;-carga</label>
+      <div class="iu"><input type="number" id="prot_vessel_p0" min="0" step="5" placeholder="Auto (= P regime)" onchange="calcTransiente()"><span class="u">mca</span></div>
+      <small>Pressão do ar na câmara em regime permanente</small>
+    </div>
+    <div class="fg">
+      <label>Ventosas de admissão</label>
+      <select id="prot_airvalves" onchange="calcTransiente()">
+        <option value="0">N&#227;o instaladas</option>
+        <option value="1">Nos pontos altos do perfil (auto)</option>
+      </select>
+      <small>Limita subpress&#227;o a 0 mca nos pontos altos</small>
+    </div>
+    <div class="fg">
+      <label>Volante de in&#233;rcia &mdash; t parada</label>
+      <div class="iu"><input type="number" id="prot_flywheel" min="0" step="0.5" placeholder="usa tClose" onchange="calcTransiente()"><span class="u">s</span></div>
+      <small>Sobrescreve o tempo de parada da bomba</small>
+    </div>
+  </div>
+  <div class="sbox info" style="font-size:.76rem">
+    &#9432; Configure as prote&#231;&#245;es e o envelope MOC ser&#225; recalculado automaticamente. <b>C&#226;mara de ar</b>: atenua a queda de press&#227;o injetando &#225;gua na tubula&#231;&#227;o quando a press&#227;o cai. <b>Ventosas</b>: impedem subpress&#227;o abaixo de 0 mca nos pontos altos. <b>Volante de in&#233;rcia</b>: aumenta o tempo de parada reduzindo ΔH.
   </div>
 </div>
 
@@ -499,38 +532,37 @@ function _mocResampleP(ptsP,N,L){
 function runMOC(){
   if(!_profileData||!_multi||!_transiente)return;
   const N=150,L=gv('L');
-  const Q0=(gv('Q')*(1+(gv('slackQ')||0)/100))/3600; // m³/s
-  const tClose_raw=_transiente.tClose||0;
-  const tClose_eff=tClose_raw>0?tClose_raw:1e-9;
+  const Q0=(gv('Q')*(1+(gv('slackQ')||0)/100))/3600;
   const evtType=$('evtTrans').value;
 
-  // ── Celeridade e impedância POR NÓ (segmento PN correspondente) ──
+  // ── Proteções ──────────────────────────────────────────────────────
+  const flywheelT=parseFloat($('prot_flywheel')?.value)||0;
+  const tClose_raw=flywheelT>0?flywheelT:(_transiente.tClose||0);
+  const tClose_eff=tClose_raw>0?tClose_raw:1e-9;
+  const useAirValves=($('prot_airvalves')?.value||'0')==='1';
+  const vesselVol_L=parseFloat($('prot_vessel_vol')?.value)||0;
+  const Va0=vesselVol_L/1000; // m³
+
+  // ── Celeridade e impedância POR NÓ ──────────────────────────────────
   const a_nd=new Float64Array(N), B_nd=new Float64Array(N);
   const segs=_multi.segs, nSegs=segs.length;
   for(let i=0;i<N;i++){
-    const d=i*(L/(N-1));
-    let pipe=null;
-    for(let s=0;s<nSegs;s++){
-      if(d>=segs[s].from-0.01&&d<=segs[s].to+0.01){pipe=_multi.pipeByPN[segs[s].pn];break;}
-    }
+    const d=i*(L/(N-1));let pipe=null;
+    for(let s=0;s<nSegs;s++){if(d>=segs[s].from-0.01&&d<=segs[s].to+0.01){pipe=_multi.pipeByPN[segs[s].pn];break;}}
     if(!pipe)pipe=_multi.pipeByPN[segs[nSegs-1].pn];
-    const D_m=pipe[3]/1000, e_m=pipe[2]/1000;
-    const A_m=Math.PI*D_m*D_m/4;
+    const D_m=pipe[3]/1000,A_m=Math.PI*D_m*D_m/4;
     a_nd[i]=calcCeleridade(pipe[3],pipe[2],_transiente.E);
     B_nd[i]=a_nd[i]/(9.81*A_m);
   }
-  // dt global: Courant = 1 para o segmento mais rígido (maior a)
   let a_max=0;for(let i=0;i<N;i++)if(a_nd[i]>a_max)a_max=a_nd[i];
   const dx=L/(N-1), dt=dx/a_max;
 
-  // ── Regime permanente ──
+  // ── Regime permanente ──────────────────────────────────────────────
   const ptsP=pressurePointsProfile(_multi,_profileData);
   const z=_mocResample(N,L);
   const P_ss=_mocResampleP(ptsP,N,L);
   const H_ss=new Float64Array(N);
   for(let i=0;i<N;i++) H_ss[i]=z[i]+P_ss[i];
-
-  // Atrito por trecho (da perda de carga estacionária)
   const R=new Float64Array(N-1);
   for(let i=0;i<N-1;i++) R[i]=Q0>1e-9?Math.max(0,H_ss[i]-H_ss[i+1])/(Q0*Q0):0;
 
@@ -538,22 +570,57 @@ function runMOC(){
   const H=new Float64Array(H_ss), Q=new Float64Array(N).fill(Q0);
   const Hmax=new Float64Array(H_ss), Hmin=new Float64Array(H_ss);
 
-  // 8 ciclos completos, snap a cada 2 passos → onda nítida na animação
+  // ── Estado da câmara de ar (nó 2, saída da bomba) ──────────────────
+  const n_v=Math.min(2,N-3);
+  let Va=Va0;
+  // Pressão inicial da câmara = campo manual ou regime permanente no nó
+  const p0_input=parseFloat($('prot_vessel_p0')?.value)||0;
+  const P_air0=Va0>0?(p0_input>0?p0_input:Math.max(1,H_ss[n_v]-z[n_v])):0;
+
+  // ── Ventosas: identifica pontos altos do terreno ───────────────────
+  const highPts=[];
+  if(useAirValves){
+    for(let i=2;i<N-2;i++)if(z[i]>z[i-1]&&z[i]>=z[i+1])highPts.push(i);
+    // Garante pelo menos 1 ponto alto se perfil monotônico: nó mais alto
+    if(highPts.length===0){
+      let hIdx=0;for(let i=1;i<N;i++)if(z[i]>z[hIdx])hIdx=i;
+      if(hIdx>0&&hIdx<N-1)highPts.push(hIdx);
+    }
+  }
+
   const nTot=8*(N-1), snap_iv=2;
   const snapshots=[], Hn=new Float64Array(N), Qn=new Float64Array(N);
 
   for(let step=0;step<nTot;step++){
     const t=step*dt;
-    // ── Nós interiores: usa B do nó VIZINHO para cada característica ──
-    // Isso cria reflexões físicas nas juntas entre segmentos PN
+    // ── Nós interiores ─────────────────────────────────────────────
     for(let i=1;i<N-1;i++){
-      const Bl=B_nd[i-1], Br=B_nd[i+1];
+      if(Va0>0&&i===n_v)continue; // câmara de ar tratada separado
+      const Bl=B_nd[i-1],Br=B_nd[i+1];
       const CP=H[i-1]+Bl*Q[i-1]-R[i-1]*Q[i-1]*Math.abs(Q[i-1]);
-      const CM=H[i+1]-Br*Q[i+1]+R[i  ]*Q[i+1]*Math.abs(Q[i+1]);
-      const Bs=Bl+Br;
-      Qn[i]=(CP-CM)/Bs; Hn[i]=(Br*CP+Bl*CM)/Bs;
+      const CM=H[i+1]-Br*Q[i+1]+R[i]*Q[i+1]*Math.abs(Q[i+1]);
+      Qn[i]=(CP-CM)/(Bl+Br); Hn[i]=(Br*CP+Bl*CM)/(Bl+Br);
     }
-    // ── Condições de contorno ──
+    // ── Câmara de ar — BC implícito linearizado ─────────────────────
+    // Modelo isotérmico: P_ar * Va = P_air0 * Va0 → H_v = z_v + P_air0*Va0/Va
+    // Linearização: Hv ≈ Hv0 + Cv*Qv  onde Cv = dH/dVa * dt (>0)
+    // Qv = Ql - Qr = (CP-Hv)/Bl - (Hv-CM)/Br  (fluxo para dentro da câmara)
+    // Solução: Hv = (Hv0 + Cv*(CP/Bl+CM/Br)) / (1 + Cv*(1/Bl+1/Br))
+    if(Va0>0){
+      const i=n_v;
+      const Bl=B_nd[i-1],Br=B_nd[Math.min(i+1,N-1)];
+      const CP=H[i-1]+Bl*Q[i-1]-R[i-1]*Q[i-1]*Math.abs(Q[i-1]);
+      const CM=H[i+1]-Br*Q[i+1]+R[i]*Q[i+1]*Math.abs(Q[i+1]);
+      const Va_s=Math.max(Va0*0.04,Math.min(Va0*25,Va));
+      const Hv0=z[n_v]+P_air0*Va0/Va_s;
+      const Cv=(P_air0*Va0/(Va_s*Va_s))*dt;
+      const inv_Bl=1/Bl,inv_Br=1/Br;
+      Hn[i]=(Hv0+Cv*(CP*inv_Bl+CM*inv_Br))/(1+Cv*(inv_Bl+inv_Br));
+      Qn[i]=(Hn[i]-CM)/Br; // fluxo para a direita
+      const Qv=(CP-Hn[i])/Bl-Qn[i]; // fluxo para dentro da câmara
+      Va=Math.max(Va0*0.04,Math.min(Va0*25,Va-Qv*dt));
+    }
+    // ── Condições de contorno ──────────────────────────────────────
     if(evtType==='valve'){
       const CM0=H[1]-B_nd[1]*Q[1]+R[0]*Q[1]*Math.abs(Q[1]);
       Hn[0]=H_up; Qn[0]=(H_up-CM0)/B_nd[0];
@@ -568,10 +635,13 @@ function runMOC(){
       Hn[N-1]=H_dn; Qn[N-1]=(CPl-H_dn)/B_nd[N-1];
     }
     H.set(Hn); Q.set(Qn);
+    // ── Ventosas: clampam H ao terreno nos pontos altos ─────────────
+    for(const i of highPts)if(H[i]<z[i])H[i]=z[i];
     for(let i=0;i<N;i++){if(H[i]>Hmax[i])Hmax[i]=H[i];if(H[i]<Hmin[i])Hmin[i]=H[i];}
-    if(step%snap_iv===0) snapshots.push({t:(step+1)*dt,H:new Float64Array(H)});
+    if(step%snap_iv===0)snapshots.push({t:(step+1)*dt,H:new Float64Array(H)});
   }
-  _mocResult={N,L,dx,dt,z,H_ss,Hmax,Hmin,snapshots};
+  _mocResult={N,L,dx,dt,z,H_ss,Hmax,Hmin,snapshots,
+    protections:{vessel:vesselVol_L,airValves:highPts.length,flywheel:flywheelT}};
 }
 
 function initMOCAnim(){
@@ -948,16 +1018,31 @@ function buildTransienteCard(a,tc,dH_inst,dH_eff,VMax,tClose,tc2){
     </tr>`;
   }
 
+  // Proteções ativas
+  const pVessel=parseFloat($('prot_vessel_vol')?.value)||0;
+  const pValves=($('prot_airvalves')?.value||'0')==='1';
+  const pFlywheel=parseFloat($('prot_flywheel')?.value)||0;
+  const anyProt=pVessel>0||pValves||pFlywheel>0;
+  const protBadges=[
+    pVessel>0?`<span style="background:#e8f5e9;border:1px solid #81c784;border-radius:10px;padding:.1rem .55rem;font-size:.72rem;font-weight:700;color:#2e7d32">🏺 Câmara ${pVessel}L</span>`:'',
+    pValves?`<span style="background:#e8f5e9;border:1px solid #81c784;border-radius:10px;padding:.1rem .55rem;font-size:.72rem;font-weight:700;color:#2e7d32">🌬 Ventosas auto</span>`:'',
+    pFlywheel>0?`<span style="background:#e8f5e9;border:1px solid #81c784;border-radius:10px;padding:.1rem .55rem;font-size:.72rem;font-weight:700;color:#2e7d32">⚙ Volante ${pFlywheel}s</span>`:'',
+  ].filter(Boolean).join(' ');
+
   const protecao=hasRisk
-    ?`<div class="sbox err" style="margin-top:.5rem"><b>⚠ Subpressão abaixo de zero em ${riskPts.length} ponto(s):</b>
-        Risco de separação de coluna / cavitação.
-        <ul style="margin:.3rem 0 0 1rem;font-size:.8rem">
-          <li>Instalar <b>vaso de ar (câmara de ar)</b> próximo à bomba</li>
-          <li>Instalar <b>ventosas de admissão</b> nos pontos altos</li>
-          <li>Usar <b>volante de inércia</b> para aumentar o tempo de parada</li>
+    ?`<div class="sbox ${anyProt?'warn':'err'}" style="margin-top:.5rem">
+        <b>⚠ Subpressão abaixo de zero em ${riskPts.length} ponto(s) — risco de cavitação.</b>
+        ${anyProt?`<div style="margin-top:.3rem;font-size:.79rem">Proteções ativas: ${protBadges}<br>Ajuste o volume da câmara de ar ou adicione ventosas para eliminar os ${riskPts.length} ponto(s) restantes.</div>`
+        :`<ul style="margin:.3rem 0 0 1rem;font-size:.8rem">
+          <li>Instalar <b>câmara de ar</b> próximo à bomba (configure acima)</li>
+          <li>Ativar <b>ventosas de admissão</b> nos pontos altos (configure acima)</li>
+          <li>Aumentar o <b>tempo de parada</b> com volante de inércia (configure acima)</li>
           <li>Instalar <b>válvula de retenção</b> na saída da bomba</li>
-        </ul></div>`
-    :`<div class="sbox ok" style="margin-top:.5rem">✓ Envelope de subpressão acima de zero em toda a extensão — sem risco de cavitação.</div>`;
+        </ul>`}
+      </div>`
+    :`<div class="sbox ok" style="margin-top:.5rem">✓ Envelope de subpressão acima de zero em toda a extensão — sem risco de cavitação.
+        ${anyProt?`<span style="margin-left:.5rem">${protBadges}</span>`:''}
+      </div>`;
 
   const pnWarn=pnTrans>pnMax
     ?`<div class="sbox warn" style="margin-top:.5rem">⚠ <b>Transiente exige PN ${pnTrans}</b> — superior ao PN ${pnMax} usado em regime permanente. Verifique a especificação da tubulação!</div>`
