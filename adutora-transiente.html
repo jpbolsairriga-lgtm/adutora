@@ -170,8 +170,9 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
       <div style="border-top:1px solid var(--bdr);padding-top:.6rem;margin-top:.4rem">
         <label style="margin-bottom:.35rem;display:block">Curvas de nível (KML)</label>
         <input type="file" id="contoursInput" accept=".kml" style="display:none" onchange="handleContoursKML(event)">
-        <button class="btn" style="background:#00695c;color:#fff;width:100%;margin-bottom:.3rem" onclick="$('contoursInput').click()">&#127968; Importar Curvas de N&#237;vel</button>
-        <small style="color:var(--mu);display:block">KML com curvas de n&#237;vel &mdash; QGIS, Google Earth ou Civil 3D</small>
+        <button class="btn" style="background:#00695c;color:#fff;width:100%;margin-bottom:.3rem" onclick="$('contoursInput').click()">&#9968; Importar Curvas de N&#237;vel</button>
+        <button class="btn btn-out" id="btnLimparCurvas" style="width:100%;font-size:.78rem;padding:.38rem;display:none" onclick="limparCurvasNoMapa()">&#10005; Remover curvas do mapa</button>
+        <small style="color:var(--mu);display:block;margin-top:.3rem">KML com curvas de n&#237;vel &mdash; QGIS, Google Earth ou Civil 3D</small>
         <div id="contoursStatus" style="display:none;font-size:.72rem;margin-top:.35rem;padding:.35rem .6rem;border-radius:6px"></div>
       </div>
       <div id="capDiv" style="display:none;border-top:1px solid var(--bdr);padding-top:.6rem">
@@ -474,7 +475,7 @@ function pressurePointsProfile(multi,profile){
 }
 
 let _multi=null,_nominal=null,_cotaMax=null,_perfilSamples=null,_profileData=null,_transiente=null;
-let _mocResult=null,_mocAnim=null,_contourData=null;
+let _mocResult=null,_mocAnim=null,_contourData=null,_contourPolylines=[];
 
 // ═══ MOC — Método das Características ════════════════════════════════
 function _mocResample(N,L){
@@ -1307,6 +1308,72 @@ function handleKMLFile(e){
 }
 
 // ── Curvas de nível KML ───────────────────────────────────────────────
+function limparCurvasNoMapa(){
+  _contourPolylines.forEach(p=>{try{p.setMap(null);}catch(e){}});
+  _contourPolylines=[];
+  _contourData=null;
+  const btn=$('btnLimparCurvas');if(btn)btn.style.display='none';
+  setContoursStatus('Curvas removidas do mapa.','info');
+}
+
+function desenharCurvasNoMapa(contours){
+  if(!map||typeof google==='undefined'||!google.maps)return;
+  // Remove antigas
+  _contourPolylines.forEach(p=>{try{p.setMap(null);}catch(e){}});
+  _contourPolylines=[];
+
+  // Detecta intervalo mediano entre curvas consecutivas
+  let interval=5;
+  if(contours.length>=2){
+    const diffs=[];
+    for(let i=1;i<Math.min(contours.length,20);i++)
+      diffs.push(Math.abs(contours[i].elev-contours[i-1].elev));
+    diffs.sort((a,b)=>a-b);
+    interval=diffs[Math.floor(diffs.length/2)]||5;
+  }
+  // Índice = múltiplos de 5 m (ou múltiplos do 5.º intervalo se intervalo>1)
+  const indexStep=Math.max(5,Math.round(5/Math.max(interval,0.1))*interval);
+
+  for(const c of contours){
+    const isIndex=Math.abs(Math.round(c.elev)%indexStep)<0.5;
+    const path=c.pts.map(p=>new google.maps.LatLng(p.lat,p.lng));
+    if(path.length<2)continue;
+
+    const line=new google.maps.Polyline({
+      path,map,
+      strokeColor:isIndex?'#6B3300':'#B87040',
+      strokeWeight:isIndex?2.4:1,
+      strokeOpacity:isIndex?0.88:0.42,
+      zIndex:isIndex?3:2,
+      clickable:false
+    });
+    _contourPolylines.push(line);
+
+    // Etiqueta de cota nas curvas-índice
+    if(isIndex){
+      const midIdx=Math.floor(path.length/2);
+      try{
+        const lbl=new google.maps.Marker({
+          position:path[midIdx],map,clickable:false,
+          icon:{path:google.maps.SymbolPath.CIRCLE,scale:0,fillOpacity:0,strokeOpacity:0},
+          label:{text:Math.round(c.elev)+'m',color:'#3B1800',fontSize:'9px',
+                 fontWeight:'bold',fontFamily:'Segoe UI,Arial,sans-serif'},
+          zIndex:5
+        });
+        _contourPolylines.push(lbl);
+      }catch(e){}
+    }
+  }
+
+  // Ajusta bounds do mapa para englobar as curvas
+  if(_contourPolylines.length){
+    const bounds=new google.maps.LatLngBounds();
+    for(const c of contours)c.pts.forEach(p=>bounds.extend(new google.maps.LatLng(p.lat,p.lng)));
+    map.fitBounds(bounds);
+  }
+  const btn=$('btnLimparCurvas');if(btn)btn.style.display='block';
+}
+
 function setContoursStatus(msg,type){
   const el=$('contoursStatus');if(!el)return;
   el.style.display='block';el.textContent=msg;
@@ -1394,8 +1461,10 @@ async function handleContoursKML(e){
     const contours=parseKMLContours(text);
     if(!contours){setContoursStatus('⚠ Nenhuma curva encontrada. Verifique se os Placemarks têm nome com elevação ou coordenada Z.','err');return;}
     _contourData=contours;
-    setContoursStatus(`✓ ${contours.length} curvas lidas (${contours[0].elev.toFixed(0)}–${contours[contours.length-1].elev.toFixed(0)} m). Calculando perfil...`,'ok');
-    gerarPerfilDeContornos();
+    setContoursStatus(`✓ ${contours.length} curvas lidas (${contours[0].elev.toFixed(0)}–${contours[contours.length-1].elev.toFixed(0)} m). Desenhando no mapa...`,'ok');
+    desenharCurvasNoMapa(contours);
+    if(_perfilSamples)gerarPerfilDeContornos();
+    else setContoursStatus(`✓ ${contours.length} curvas desenhadas. Trace ou importe o percurso para gerar o perfil.`,'ok');
   }catch(err){setContoursStatus('⚠ Erro: '+err.message,'err');}
 }
 
