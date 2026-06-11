@@ -121,7 +121,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v2.2 · 11/06/2026</span></h1>
+      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v2.3 · 11/06/2026</span></h1>
       <p>Régime Permanente &middot; Celeridade &middot; Joukowsky &middot; Envelope Sobre/Subpressão &middot; Risco de Cavitação</p>
     </div>
   </div>
@@ -592,9 +592,12 @@ function drawMOCFrame(fi){
   const snap=snapshots[fi];if(!snap)return;
   ctx.clearRect(0,0,W,Hc);ctx.fillStyle='#fff';ctx.fillRect(0,0,W,Hc);
   const mg={t:50,b:56,l:74,r:18},cW=W-mg.l-mg.r,cH=Hc-mg.t-mg.b;
-  let yMin=Infinity,yMax=-Infinity;
-  for(let i=0;i<N;i++){if(z[i]<yMin)yMin=z[i];if(Hmax[i]>yMax)yMax=Hmax[i];if(Hmin[i]<yMin)yMin=Hmin[i];}
-  yMin-=8;yMax+=10;
+  let hMin=Infinity,hMax=-Infinity,zBot=Infinity;
+  for(let i=0;i<N;i++){if(Hmin[i]<hMin)hMin=Hmin[i];if(Hmax[i]>hMax)hMax=Hmax[i];if(z[i]<zBot)zBot=z[i];}
+  const hRng=Math.max(hMax-hMin,10);
+  const floorMoc=zBot<hMin-hRng*0.45?hMin-hRng*0.45:zBot;
+  const yMin=floorMoc-hRng*0.08;
+  const yMax=hMax+hRng*0.12;
   const ppx=x=>mg.l+(x/L)*cW,ppy=y=>mg.t+cH*(1-(y-yMin)/(yMax-yMin));
   // Grade
   ctx.strokeStyle='rgba(100,120,140,.13)';ctx.lineWidth=1;
@@ -652,6 +655,12 @@ function drawMOCFrame(fi){
     ctx.fillStyle='#333';ctx.font='9.5px Segoe UI';ctx.textAlign='left';ctx.fillText(it.l,lx+26,mg.t-10);
     lx+=Math.min(190,Math.round(ctx.measureText(it.l).width)+50);
   }
+  // Anotações ΔH (canto superior direito da animação)
+  const dhSobA=Math.max(...Array.from(Hmax).map((h,i)=>h-H_ss[i]));
+  const dhSubA=Math.max(...Array.from(Hmin).map((h,i)=>H_ss[i]-h));
+  ctx.font='bold 9px Segoe UI';ctx.textAlign='right';
+  ctx.fillStyle='#00962a';ctx.fillText(`+${Math.round(dhSobA)} m`,W-mg.r-4,mg.t+12);
+  ctx.fillStyle='#d32f2f';ctx.fillText(`−${Math.round(dhSubA)} m`,W-mg.r-4,mg.t+24);
 }
 
 function calc(){
@@ -1009,9 +1018,18 @@ function drawTransiente(dH_eff){
     _profileData.forEach((p,i)=>{const P=ptsP[i]?.P??0;combined.push({x:p.dist,z:p.elev,piezo:p.elev+P,sobre:p.elev+P+dH_eff,sub:p.elev+P-dH_eff});});
   }
   const L=combined[combined.length-1].x;
-  let yMin=Infinity,yMax=-Infinity;
-  for(const p of combined){if(p.z<yMin)yMin=p.z;if(p.sub<yMin)yMin=p.sub;if(p.sobre>yMax)yMax=p.sobre;}
-  yMin-=3;yMax+=5;
+  // Eixo Y inteligente: foca no envelope HGL, não deixa terreno comprimir a escala
+  let hglMin=Infinity,hglMax=-Infinity,zMinAll=Infinity;
+  for(const p of combined){
+    if(p.sub<hglMin)hglMin=p.sub;
+    if(p.sobre>hglMax)hglMax=p.sobre;
+    if(p.z<zMinAll)zMinAll=p.z;
+  }
+  const hglRange=Math.max(hglMax-hglMin,10);
+  // Inclui terreno só se estiver perto do envelope (cavitação visível)
+  const floorAuto=zMinAll<hglMin-hglRange*0.45?hglMin-hglRange*0.45:zMinAll;
+  const yMin=floorAuto-hglRange*0.06;
+  const yMax=hglMax+hglRange*0.10;
   const px=x=>mg.l+(x/L)*cW,py=y=>mg.t+cH*(1-(y-yMin)/(yMax-yMin));
 
   // Grade
@@ -1076,6 +1094,16 @@ function drawTransiente(dH_eff){
     ctx.fillStyle='#333';ctx.font='9.5px Segoe UI';ctx.textAlign='left';ctx.fillText(it.label,x+32,y+4);
     lx+=Math.min(195,Math.round(ctx.measureText(it.label).width)+46);
   });
+
+  // Anotações ΔH no canto superior direito
+  const dhSob=combined.reduce((mx,p)=>Math.max(mx,p.sobre-p.piezo),0);
+  const dhSub=combined.reduce((mx,p)=>Math.max(mx,p.piezo-p.sub),0);
+  const hasCav=combined.some(p=>p.sub<p.z);
+  const ax=mg.l+cW-6,ayBase=mg.t+14;
+  ctx.font='bold 10px Segoe UI';ctx.textAlign='right';
+  ctx.fillStyle='#c62828';ctx.fillText(`+${Math.round(dhSob)} m (sobrepressão)`,ax,ayBase);
+  ctx.fillStyle='#e07b00';ctx.fillText(`−${Math.round(dhSub)} m (subpressão)`,ax,ayBase+15);
+  if(hasCav){ctx.fillStyle='#b71c1c';ctx.fillText('⚠ Risco de cavitação',ax,ayBase+30);}
 }
 
 // ── Google Maps ───────────────────────────────────────────────────
