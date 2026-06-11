@@ -1169,28 +1169,36 @@ async function importarKML(file){
     const pts=parseKMLCoords(text);
     if(!pts){setKMLStatus('⚠ Nenhuma LineString encontrada no KML.','err');return;}
     setKMLStatus(`${pts.length} pontos lidos. Buscando elevações...`,'info');
-    // Obtém a chave API armazenada
     const key=localStorage.getItem('mapskey_at')||'';
     if(!key){setKMLStatus('⚠ Insira a chave API antes de importar o KML.','err');return;}
-    // Número de amostras da Elevation API (máx 512)
     const nSamples=Math.min(512,Math.max(100,pts.length*10));
-    // Monta a requisição em lotes se necessário (API aceita até 512 pontos por path encoded)
-    // Usamos path=lat1,lng1|lat2,lng2|... com máx 512 pontos
-    const step=Math.max(1,Math.floor(pts.length/100));
-    const sampled=pts.filter((_,i)=>i%step===0||(i===pts.length-1));
-    const pathStr=sampled.map(p=>`${p.lat},${p.lng}`).join('|');
-    const url=`https://maps.googleapis.com/maps/api/elevation/json?path=${encodeURIComponent(pathStr)}&samples=${nSamples}&key=${key}`;
-    const resp=await fetch(url);
-    const data=await resp.json();
-    if(data.status!=='OK')throw new Error(data.status||'ELEVATION_ERROR');
-    const results=data.results;
-    // Adapta formato para preencherDaAdutora (espera location.lat/lng como valores)
-    const samples=results.map(r=>({elevation:r.elevation,location:{lat:r.location.lat,lng:r.location.lng}}));
+    let samples;
+    if(typeof google!=='undefined'&&google.maps&&google.maps.ElevationService){
+      // Usa ElevationService do SDK — respeita restrições de chave e não tem problema de CORS
+      const svc=elevService||new google.maps.ElevationService();
+      const latLngs=pts.map(p=>new google.maps.LatLng(p.lat,p.lng));
+      const results=await new Promise((res,rej)=>{
+        svc.getElevationAlongPath({path:latLngs,samples:nSamples},(r,s)=>{
+          if(s==='OK'&&r)res(r);else rej(new Error(s||'UNKNOWN'));
+        });
+      });
+      // location retornado pelo SDK é LatLng (métodos), normalizamos para {lat,lng} plain
+      samples=results.map(r=>({elevation:r.elevation,location:{lat:r.location.lat(),lng:r.location.lng()}}));
+    } else {
+      // Fallback: REST API direta (requer Maps SDK não carregado)
+      if(!map){setKMLStatus('⚠ Carregue o mapa primeiro (botão "Carregar Mapa") para usar a importação KML.','err');return;}
+      const pathStr=pts.map(p=>`${p.lat},${p.lng}`).join('|');
+      const url=`https://maps.googleapis.com/maps/api/elevation/json?path=${encodeURIComponent(pathStr)}&samples=${nSamples}&key=${key}`;
+      const resp=await fetch(url);
+      const data=await resp.json();
+      if(data.status!=='OK')throw new Error(data.status||'ELEVATION_ERROR');
+      samples=data.results.map(r=>({elevation:r.elevation,location:{lat:r.location.lat,lng:r.location.lng}}));
+    }
     _perfilSamples=samples;
     preencherDaAdutora(samples);
     desenharPerfilElevacao(samples);
-    setKMLStatus(`✓ KML importado: ${results.length} amostras de elevação.`,'ok');
-    // Se o mapa estiver carregado, exibe a rota importada
+    setKMLStatus(`✓ KML importado: ${samples.length} amostras de elevação.`,'ok');
+    // Se o mapa está carregado, exibe a rota
     if(map&&typeof google!=='undefined'){
       if(tracePolyline)tracePolyline.setMap(null);
       tracePoints=pts.map(p=>new google.maps.LatLng(p.lat,p.lng));
