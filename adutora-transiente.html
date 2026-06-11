@@ -121,7 +121,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v2.1 · 11/06/2026</span></h1>
+      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v2.2 · 11/06/2026</span></h1>
       <p>Régime Permanente &middot; Celeridade &middot; Joukowsky &middot; Envelope Sobre/Subpressão &middot; Risco de Cavitação</p>
     </div>
   </div>
@@ -159,6 +159,13 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
         <div id="traceInfo" style="font-size:.72rem;color:var(--mu);display:none;margin-bottom:.35rem"></div>
         <button class="btn btn-blue" id="btnPerfil" style="width:100%;margin-bottom:.4rem" disabled onclick="gerarPerfil()">&#9650; Gerar Perfil de Elevação</button>
         <button class="btn btn-out" id="btnLimpar" style="width:100%;font-size:.8rem;padding:.4rem" disabled onclick="limparTrace()">&#10005; Limpar Traçado</button>
+      </div>
+      <div style="border-top:1px solid var(--bdr);padding-top:.6rem;margin-top:.4rem">
+        <label style="margin-bottom:.35rem;display:block">Importar percurso</label>
+        <input type="file" id="kmlInput" accept=".kml" style="display:none" onchange="handleKMLFile(event)">
+        <button class="btn" style="background:#5e35b1;color:#fff;width:100%;margin-bottom:.3rem" onclick="$('kmlInput').click()">&#128194; Importar KML da Adutora</button>
+        <small style="color:var(--mu);display:block">Arquivo KML com LineString do percurso</small>
+        <div id="kmlStatus" style="display:none;font-size:.72rem;margin-top:.35rem;padding:.35rem .6rem;border-radius:6px"></div>
       </div>
       <div id="capDiv" style="display:none;border-top:1px solid var(--bdr);padding-top:.6rem">
         <label style="margin-bottom:.3rem;display:block;color:#2e7d32">&#10003; Valores Capturados</label>
@@ -1124,6 +1131,73 @@ function limparTrace(){
   $('capDiv').style.display='none';$('elev-canvas').style.display='none';
   _perfilSamples=null;_cotaMax=null;_profileData=null;
   if(modoDesenho)toggleDesenho();setMStatus('Traçado limpo.','info');
+}
+function setKMLStatus(msg,type){
+  const el=$('kmlStatus');if(!el)return;
+  el.style.display='block';
+  el.textContent=msg;
+  el.style.background=type==='ok'?'#e8f5e9':type==='err'?'#ffebee':'#e3f2fd';
+  el.style.color=type==='ok'?'#2e7d32':type==='err'?'#c62828':'#1565c0';
+}
+function parseKMLCoords(kmlText){
+  const doc=new DOMParser().parseFromString(kmlText,'text/xml');
+  // Tenta <LineString><coordinates> ou <coordinates> direto
+  const el=doc.querySelector('LineString coordinates')||doc.querySelector('coordinates');
+  if(!el)return null;
+  const pts=[];
+  for(const tok of el.textContent.trim().split(/[\s,]+(?=[^,\s])/)){
+    // cada token é "lng,lat" ou "lng,lat,alt"
+    const p=tok.trim().split(',');
+    if(p.length<2)continue;
+    const lng=parseFloat(p[0]),lat=parseFloat(p[1]);
+    if(!isNaN(lat)&&!isNaN(lng))pts.push({lat,lng});
+  }
+  return pts.length>=2?pts:null;
+}
+async function importarKML(file){
+  setKMLStatus('Lendo arquivo...','info');
+  try{
+    const text=await file.text();
+    const pts=parseKMLCoords(text);
+    if(!pts){setKMLStatus('⚠ Nenhuma LineString encontrada no KML.','err');return;}
+    setKMLStatus(`${pts.length} pontos lidos. Buscando elevações...`,'info');
+    // Obtém a chave API armazenada
+    const key=localStorage.getItem('mapskey_at')||'';
+    if(!key){setKMLStatus('⚠ Insira a chave API antes de importar o KML.','err');return;}
+    // Número de amostras da Elevation API (máx 512)
+    const nSamples=Math.min(512,Math.max(100,pts.length*10));
+    // Monta a requisição em lotes se necessário (API aceita até 512 pontos por path encoded)
+    // Usamos path=lat1,lng1|lat2,lng2|... com máx 512 pontos
+    const step=Math.max(1,Math.floor(pts.length/100));
+    const sampled=pts.filter((_,i)=>i%step===0||(i===pts.length-1));
+    const pathStr=sampled.map(p=>`${p.lat},${p.lng}`).join('|');
+    const url=`https://maps.googleapis.com/maps/api/elevation/json?path=${encodeURIComponent(pathStr)}&samples=${nSamples}&key=${key}`;
+    const resp=await fetch(url);
+    const data=await resp.json();
+    if(data.status!=='OK')throw new Error(data.status||'ELEVATION_ERROR');
+    const results=data.results;
+    // Adapta formato para preencherDaAdutora (espera location.lat/lng como valores)
+    const samples=results.map(r=>({elevation:r.elevation,location:{lat:r.location.lat,lng:r.location.lng}}));
+    _perfilSamples=samples;
+    preencherDaAdutora(samples);
+    desenharPerfilElevacao(samples);
+    setKMLStatus(`✓ KML importado: ${results.length} amostras de elevação.`,'ok');
+    // Se o mapa estiver carregado, exibe a rota importada
+    if(map&&typeof google!=='undefined'){
+      if(tracePolyline)tracePolyline.setMap(null);
+      tracePoints=pts.map(p=>new google.maps.LatLng(p.lat,p.lng));
+      tracePolyline=new google.maps.Polyline({path:tracePoints,map,strokeColor:'#5e35b1',strokeWeight:3,strokeOpacity:.9,zIndex:5});
+      traceMarkers.forEach(m=>m.setMap(null));traceMarkers=[];
+      const bounds=new google.maps.LatLngBounds();tracePoints.forEach(p=>bounds.extend(p));
+      map.fitBounds(bounds);
+      $('traceInfo').style.display='block';$('traceInfo').textContent=`KML: ${pts.length} pontos`;
+      $('btnLimpar').disabled=false;
+    }
+  }catch(e){setKMLStatus('⚠ Erro: '+e.message,'err');}
+}
+function handleKMLFile(e){
+  const f=e.target.files?.[0];if(f)importarKML(f);
+  e.target.value='';
 }
 async function gerarPerfil(){
   if(tracePoints.length<2)return;
