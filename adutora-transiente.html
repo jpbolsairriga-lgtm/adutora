@@ -121,7 +121,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v2.8 · 11/06/2026</span></h1>
+      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v2.9 · 11/06/2026</span></h1>
       <p>Régime Permanente &middot; Celeridade &middot; Joukowsky &middot; Envelope Sobre/Subpressão &middot; Risco de Cavitação</p>
     </div>
   </div>
@@ -318,6 +318,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div style="display:flex;gap:.45rem;align-items:center;flex-wrap:wrap">
     <select id="prot-type-sel" style="flex:1;min-width:170px;padding:.32rem .5rem;border:1px solid #b0bec5;border-radius:6px;font-size:.82rem">
       <option value="vessel">&#127958; C&#226;mara de ar</option>
+      <option value="hydrotank">&#128739; Tanque hidropneum&#225;tico</option>
       <option value="airvalve">&#127788; Ventosa de admiss&#227;o</option>
       <option value="checkvalve">&#128274; V&#225;lvula de reten&#231;&#227;o</option>
       <option value="flywheel">&#9881; Volante de in&#233;rcia</option>
@@ -513,7 +514,8 @@ function protAdd(){
   const L_cur=gv('L')||1000;
   const comp={id,type};
   if(type==='vessel'){comp.pos=Math.round(L_cur*0.01)||5;comp.vol=500;comp.p0=0;}
-  else if(type==='airvalve'){comp.pos='';}  // vazio = automático
+  else if(type==='hydrotank'){comp.pos=Math.round(L_cur*0.01)||5;comp.vol=1000;comp.p0=0;}
+  else if(type==='airvalve'){comp.pos='';}
   else if(type==='checkvalve'){comp.pos=Math.round(L_cur*0.01)||5;comp.tClose=0;}
   else if(type==='flywheel'){comp.tStop=5;}
   _protComponents.push(comp);
@@ -538,8 +540,8 @@ function protRender(){
     return;
   }
   const L_cur=gv('L')||1000;
-  const icons={vessel:'&#127958;',airvalve:'&#127788;',checkvalve:'&#128274;',flywheel:'&#9881;'};
-  const names={vessel:'C&#226;mara de ar',airvalve:'Ventosa',checkvalve:'Val. Reten&#231;&#227;o',flywheel:'Volante de In&#233;rcia'};
+  const icons={vessel:'&#127958;',hydrotank:'&#128739;',airvalve:'&#127788;',checkvalve:'&#128274;',flywheel:'&#9881;'};
+  const names={vessel:'C&#226;mara de ar',hydrotank:'Tanque Hidropneum&#225;tico',airvalve:'Ventosa',checkvalve:'Val. Reten&#231;&#227;o',flywheel:'Volante de In&#233;rcia'};
   el.innerHTML=_protComponents.map(c=>{
     const icon=icons[c.type]||'';
     const nm=names[c.type]||c.type;
@@ -557,10 +559,11 @@ function protRender(){
       </div>`;
     }
     // parâmetros específicos
-    if(c.type==='vessel'){
+    if(c.type==='vessel'||c.type==='hydrotank'){
+      const isHT=c.type==='hydrotank';
       fields+=`<div style="display:flex;gap:.5rem;flex-wrap:wrap">
         <div style="display:flex;align-items:center;gap:.3rem">
-          <span style="font-size:.74rem;color:#607080">Vol:</span>
+          <span style="font-size:.74rem;color:#607080">Vol${isHT?' total':''}:</span>
           <input type="number" value="${c.vol}" min="10" step="100"
             style="width:80px;padding:.22rem .4rem;border:1px solid #b0bec5;border-radius:5px;font-size:.8rem"
             oninput="protSet(${c.id},'vol',this.value)" onchange="protSet(${c.id},'vol',this.value)">
@@ -573,7 +576,8 @@ function protRender(){
             oninput="protSet(${c.id},'p0',this.value)" onchange="protSet(${c.id},'p0',this.value)">
           <span style="font-size:.74rem;color:#607080">mca</span>
         </div>
-      </div>`;
+      </div>
+      ${isHT?`<div style="font-size:.72rem;color:#0277bd;margin-top:.1rem">&#128274; Inje&#231;&#227;o unidirecional — n&#227;o absorve sobrepressão</div>`:''}`;
     } else if(c.type==='checkvalve'){
       fields+=`<div style="display:flex;align-items:center;gap:.3rem">
         <span style="font-size:.74rem;color:#607080">T fechamento:</span>
@@ -591,9 +595,12 @@ function protRender(){
         <span style="font-size:.74rem;color:#607080">s</span>
       </div>`;
     }
-    return `<div style="background:#f1f8e9;border:1px solid #a5d6a7;border-radius:8px;padding:.45rem .6rem;display:flex;flex-direction:column;gap:.3rem">
+    const cardBg=c.type==='hydrotank'?'#e3f2fd':c.type==='checkvalve'?'#f3e5f5':c.type==='flywheel'?'#fff3e0':'#f1f8e9';
+    const cardBd=c.type==='hydrotank'?'#90caf9':c.type==='checkvalve'?'#ce93d8':c.type==='flywheel'?'#ffcc80':'#a5d6a7';
+    const cardTxt=c.type==='hydrotank'?'#0d47a1':c.type==='checkvalve'?'#4a148c':c.type==='flywheel'?'#e65100':'#2e7d32';
+    return `<div style="background:${cardBg};border:1px solid ${cardBd};border-radius:8px;padding:.45rem .6rem;display:flex;flex-direction:column;gap:.3rem">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.1rem">
-        <span style="font-size:.82rem;font-weight:700;color:#2e7d32">${icon} ${nm}</span>
+        <span style="font-size:.82rem;font-weight:700;color:${cardTxt}">${icon} ${nm}</span>
         <button onclick="protRemove(${c.id})" title="Remover"
           style="background:none;border:none;cursor:pointer;color:#c62828;font-size:1rem;line-height:1;padding:0 .2rem">&#10005;</button>
       </div>
@@ -663,16 +670,28 @@ function runMOC(){
   // ── Função auxiliar: converte posição (m) → nó MOC ────────────────
   function posNode(posM){return Math.max(1,Math.min(N-2,Math.round((posM/L)*(N-1))));}
 
-  // ── Câmaras de ar (múltiplas) ──────────────────────────────────────
+  // ── Câmaras de ar (múltiplas, bidirecionais) ────────────────────────
   const vessels=_protComponents
     .filter(c=>c.type==='vessel'&&(c.vol||0)>0)
     .map(c=>{
       const nd=posNode(c.pos||5);
       const Va0c=(c.vol||0)/1000;
       const p0c=(c.p0||0)>0?(c.p0||0):Math.max(1,H_ss[nd]-z[nd]);
-      return{nd,Va0:Va0c,Va:Va0c,P0:p0c};
+      return{nd,Va0:Va0c,Va:Va0c,P0:p0c,type:'vessel'};
     });
-  const vesselNodeSet=new Set(vessels.map(v=>v.nd));
+
+  // ── Tanques hidropneumáticos (injeção unidirecional) ─────────────────
+  // Mesma física (P·Va=cte), mas bloqueiam absorção de sobrepressão.
+  const hydrotanks=_protComponents
+    .filter(c=>c.type==='hydrotank'&&(c.vol||0)>0)
+    .map(c=>{
+      const nd=posNode(c.pos||5);
+      const Va0c=(c.vol||0)/1000;
+      const p0c=(c.p0||0)>0?(c.p0||0):Math.max(1,H_ss[nd]-z[nd]);
+      return{nd,Va0:Va0c,Va:Va0c,P0:p0c,type:'hydrotank',injected:0};
+    });
+
+  const vesselNodeSet=new Set([...vessels,...hydrotanks].map(v=>v.nd));
 
   // ── Válvulas de retenção (múltiplas) — estado por nó ──────────────
   // cvState: Map<node, {tClose, closing, t0, Q0}>
@@ -736,7 +755,7 @@ function runMOC(){
         }
       }
     }
-    // ── Câmaras de ar — BC implícito isotérmico (múltiplas) ────────
+    // ── Câmaras de ar — BC isotérmico bidirecional ─────────────────
     for(const v of vessels){
       const i=v.nd;
       const Bl=B_nd[i-1],Br=B_nd[Math.min(i+1,N-1)];
@@ -750,6 +769,33 @@ function runMOC(){
       Qn[i]=(Hn[i]-CM)/Br;
       const Qv=(CP-Hn[i])/Bl-Qn[i];
       v.Va=Math.max(v.Va0*0.04,Math.min(v.Va0*25,v.Va-Qv*dt));
+    }
+    // ── Tanques hidropneumáticos — BC isotérmico, injeção unidirecional
+    // Qv > 0 → água entra no tanque (absorção) → bloqueado pela retenção interna
+    // Qv ≤ 0 → água sai do tanque para a tubulação (injeção) → permitido
+    for(const v of hydrotanks){
+      const i=v.nd;
+      const Bl=B_nd[i-1],Br=B_nd[Math.min(i+1,N-1)];
+      const CP=H[i-1]+Bl*Q[i-1]-R[i-1]*Q[i-1]*Math.abs(Q[i-1]);
+      const CM=H[i+1]-Br*Q[i+1]+R[i]*Q[i+1]*Math.abs(Q[i+1]);
+      const Va_s=Math.max(v.Va0*0.04,Math.min(v.Va0*25,v.Va));
+      const Hv0=z[i]+v.P0*v.Va0/Va_s;
+      const Cv=(v.P0*v.Va0/(Va_s*Va_s))*dt;
+      const iB=1/Bl,iR=1/Br;
+      const Hn_tank=(Hv0+Cv*(CP*iB+CM*iR))/(1+Cv*(iB+iR));
+      const Qn_tank=(Hn_tank-CM)/Br;
+      const Qv=(CP-Hn_tank)/Bl-Qn_tank; // >0: entra no tanque; <0: sai (injeta)
+      if(Qv>0){
+        // Absorção bloqueada: trata como nó interior comum (válvula de retenção interna fechada)
+        Qn[i]=(CP-CM)/(Bl+Br); Hn[i]=(Br*CP+Bl*CM)/(Bl+Br);
+        // Va não muda
+      } else {
+        // Injeção ativa: usa BC do tanque
+        Hn[i]=Hn_tank; Qn[i]=Qn_tank;
+        const dvdt=-Qv*dt; // volume injetado neste passo (m³)
+        v.Va=Math.max(v.Va0*0.04,Math.min(v.Va0*25,v.Va-Qv*dt));
+        v.injected+=dvdt*1000; // acumula em litros
+      }
     }
     // ── Condições de contorno ──────────────────────────────────────
     if(evtType==='valve'){
@@ -774,6 +820,7 @@ function runMOC(){
   _mocResult={N,L,dx,dt,z,H_ss,Hmax,Hmin,snapshots,
     protections:{
       vessels:vessels.map(v=>({nd:v.nd,posM:v.nd*dx,vol:v.Va0*1000})),
+      hydrotanks:hydrotanks.map(v=>({nd:v.nd,posM:v.nd*dx,vol:v.Va0*1000,injected:v.injected})),
       airValves:[...airValveNodeSet].map(i=>i*dx),
       checkValves:[...checkNodeSet].map(i=>i*dx),
       flywheel:flywheelT
@@ -1167,6 +1214,10 @@ function buildTransienteCard(a,tc,dH_inst,dH_eff,VMax,tClose,tc2){
   const _badgeStyle=(bg,border,txt)=>`background:${bg};border:1px solid ${border};border-radius:10px;padding:.1rem .55rem;font-size:.72rem;font-weight:700;color:${txt}`;
   const protBadges=_protComponents.map(c=>{
     if(c.type==='vessel')return`<span style="${_badgeStyle('#e8f5e9','#81c784','#2e7d32')}">&#127958; C&#226;mara ${c.vol}L@${c.pos}m</span>`;
+    if(c.type==='hydrotank'){
+      const inj=_mocResult?.protections?.hydrotanks?.find(h=>Math.abs(h.posM-(c.pos||5))<5)?.injected||0;
+      return`<span style="${_badgeStyle('#e3f2fd','#90caf9','#0d47a1')}">&#128739; Tanque ${c.vol}L@${c.pos}m${inj>0.5?` · ${inj.toFixed(0)}L injetados`:''}</span>`;
+    }
     if(c.type==='airvalve')return`<span style="${_badgeStyle('#e0f7fa','#80deea','#006064')}">&#127788; Ventosa ${c.pos&&+c.pos>0?(c.pos+'m'):'auto'}</span>`;
     if(c.type==='checkvalve')return`<span style="${_badgeStyle('#ede7f6','#ce93d8','#4a148c')}">&#128274; Reten&#231;&#227;o@${c.pos}m</span>`;
     if(c.type==='flywheel')return`<span style="${_badgeStyle('#fff3e0','#ffcc80','#e65100')}">&#9881; Volante ${c.tStop}s</span>`;
