@@ -144,7 +144,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v3.0 · 12/06/2026</span></h1>
+      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v3.1 · 12/06/2026</span></h1>
       <p>Régime Permanente &middot; Celeridade &middot; Joukowsky &middot; Envelope Sobre/Subpressão &middot; Risco de Cavitação</p>
     </div>
   </div>
@@ -192,11 +192,15 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
         <div id="kmlStatus" style="display:none;font-size:.72rem;margin-top:.35rem;padding:.35rem .6rem;border-radius:6px"></div>
       </div>
       <div style="border-top:1px solid var(--bdr);padding-top:.6rem;margin-top:.4rem">
-        <label style="margin-bottom:.35rem;display:block">Curvas de nível (KML)</label>
+        <label style="margin-bottom:.35rem;display:block">Curvas de n&#237;vel (KML / DXF)</label>
         <input type="file" id="contoursInput" accept=".kml" style="display:none" onchange="handleContoursKML(event)">
-        <button class="btn" style="background:#00695c;color:#fff;width:100%;margin-bottom:.3rem" onclick="$('contoursInput').click()">&#9968; Importar Curvas de N&#237;vel</button>
+        <input type="file" id="dxfInput" accept=".dxf" style="display:none" onchange="handleContoursDXF(event)">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.35rem;margin-bottom:.3rem">
+          <button class="btn" style="background:#00695c;color:#fff;font-size:.8rem;padding:.5rem .25rem" onclick="$('contoursInput').click()">&#9968; KML</button>
+          <button class="btn" style="background:#00695c;color:#fff;font-size:.8rem;padding:.5rem .25rem" onclick="$('dxfInput').click()">&#9968; DXF</button>
+        </div>
         <button class="btn btn-out" id="btnLimparCurvas" style="width:100%;font-size:.78rem;padding:.38rem;display:none" onclick="limparCurvasNoMapa()">&#10005; Remover curvas do mapa</button>
-        <small style="color:var(--mu);display:block;margin-top:.3rem">KML com curvas de n&#237;vel &mdash; QGIS, Google Earth ou Civil 3D</small>
+        <small style="color:var(--mu);display:block;margin-top:.3rem">KML &mdash; QGIS, Google Earth, Civil 3D &middot; DXF &mdash; AutoCAD / Civil 3D (SIRGAS/UTM)</small>
         <div id="contoursStatus" style="display:none;font-size:.72rem;margin-top:.35rem;padding:.35rem .6rem;border-radius:6px"></div>
       </div>
       <div id="capDiv" style="display:none;border-top:1px solid var(--bdr);padding-top:.6rem">
@@ -1981,6 +1985,139 @@ function setContoursStatus(msg,type){
   el.style.background=type==='ok'?'#e8f5e9':type==='err'?'#ffebee':'#e3f2fd';
   el.style.color=type==='ok'?'#2e7d32':type==='err'?'#c62828':'#1565c0';
 }
+// ── UTM → WGS84 (Transverse Mercator inverse) ─────────────────────────
+function utmToLatLng(E,N,zone,hasFalseN){
+  const a=6378137,f=1/298.257223563,k0=0.9996;
+  const e2=2*f-f*f,ep2=e2/(1-e2);
+  const x=E-500000,y=hasFalseN?N-10000000:N;
+  const M=y/k0;
+  const mu=M/(a*(1-e2/4-3*e2*e2/64-5*e2*e2*e2/256));
+  const e1=(1-Math.sqrt(1-e2))/(1+Math.sqrt(1-e2));
+  const phi1=mu+(3*e1/2-27*e1*e1*e1/32)*Math.sin(2*mu)
+               +(21*e1*e1/16-55*e1*e1*e1*e1/32)*Math.sin(4*mu)
+               +(151*e1*e1*e1/96)*Math.sin(6*mu);
+  const sp1=Math.sin(phi1),cp1=Math.cos(phi1),tp1=Math.tan(phi1);
+  const N1=a/Math.sqrt(1-e2*sp1*sp1);
+  const T1=tp1*tp1,C1=ep2*cp1*cp1;
+  const R1=a*(1-e2)/Math.pow(1-e2*sp1*sp1,1.5);
+  const D=x/(N1*k0);
+  const lat=phi1-(N1*tp1/R1)*(D*D/2-(5+3*T1+10*C1-4*C1*C1-9*ep2)*D*D*D*D/24
+    +(61+90*T1+298*C1+45*T1*T1-252*ep2-3*C1*C1)*D*D*D*D*D*D/720);
+  const lon0=((zone-1)*6-180+3)*Math.PI/180;
+  const lng=lon0+(D-(1+2*T1+C1)*D*D*D/6
+    +(5-2*C1+28*T1-3*C1*C1+8*ep2+24*T1*T1)*D*D*D*D*D/120)/cp1;
+  return{lat:lat*180/Math.PI,lng:lng*180/Math.PI};
+}
+
+// ── Parser DXF → [{elev, pts:[{x,y}]}] ────────────────────────────────
+function parseDXFContours(text){
+  const lines=text.split(/\r?\n/).map(l=>l.trim()).filter(l=>l!=='');
+  const G=[];
+  for(let i=0;i+1<lines.length;i+=2){
+    const code=parseInt(lines[i],10);
+    if(isNaN(code)){i--;continue;}
+    G.push({code,val:lines[i+1]});
+  }
+  const raw=[];
+  let gi=0;
+  const peek=()=>gi<G.length?G[gi]:null;
+  const next=()=>gi<G.length?G[gi++]:null;
+  const elevFromLayer=lyr=>{const m=lyr.replace(',','.').match(/-?(\d+(?:\.\d+)?)/);return m?parseFloat(m[0]):NaN;};
+
+  while(gi<G.length){
+    const g=next();if(!g)break;
+
+    if(g.code===0&&g.val==='LWPOLYLINE'){
+      let layer='',elev=NaN,xs=[],ys=[];
+      while(gi<G.length&&peek().code!==0){
+        const{code,val}=next();
+        if(code===8)layer=val;
+        else if(code===38)elev=parseFloat(val);
+        else if(code===10)xs.push(parseFloat(val));
+        else if(code===20)ys.push(parseFloat(val));
+      }
+      if(isNaN(elev))elev=elevFromLayer(layer);
+      if(!isNaN(elev)&&xs.length>=2)
+        raw.push({elev,pts:xs.map((x,j)=>({x,y:ys[j]??0}))});
+    }
+
+    else if(g.code===0&&g.val==='POLYLINE'){
+      let layer='',baseElev=NaN;
+      while(gi<G.length&&peek().code!==0){
+        const{code,val}=next();
+        if(code===8)layer=val;
+        else if(code===38)baseElev=parseFloat(val);
+      }
+      const pts=[];let lastZ=NaN;
+      while(gi<G.length){
+        const p=peek();if(!p||p.code!==0)break;
+        if(p.val==='SEQEND'){next();break;}
+        if(p.val!=='VERTEX')break;
+        next();
+        let vx=NaN,vy=NaN,vz=NaN;
+        while(gi<G.length&&peek().code!==0){
+          const{code,val}=next();
+          if(code===10)vx=parseFloat(val);
+          else if(code===20)vy=parseFloat(val);
+          else if(code===30)vz=parseFloat(val);
+        }
+        if(!isNaN(vx)&&!isNaN(vy)){pts.push({x:vx,y:vy});if(!isNaN(vz))lastZ=vz;}
+      }
+      const elev=!isNaN(lastZ)?lastZ:!isNaN(baseElev)?baseElev:elevFromLayer(layer);
+      if(!isNaN(elev)&&pts.length>=2)raw.push({elev,pts});
+    }
+  }
+  return raw;
+}
+
+// ── Handler DXF ────────────────────────────────────────────────────────
+async function handleContoursDXF(e){
+  const f=e.target.files?.[0];e.target.value='';if(!f)return;
+  setContoursStatus('Lendo DXF...','info');
+  try{
+    const text=await f.text();
+    const raw=parseDXFContours(text);
+    if(!raw.length){
+      setContoursStatus('⚠ Nenhuma curva encontrada. O DXF precisa ter LWPOLYLINE ou POLYLINE com grupo 38 (elevação) ou layer com número.','err');
+      return;
+    }
+    // Detectar sistema de coordenadas
+    const allX=raw.flatMap(c=>c.pts.map(p=>p.x));
+    const allY=raw.flatMap(c=>c.pts.map(p=>p.y));
+    const maxAbsX=Math.max(...allX.map(Math.abs));
+    const maxY=Math.max(...allY);
+    const isUTM=maxAbsX>5000;
+    let contours;
+    if(!isUTM){
+      // EPSG:4326 — x=lng, y=lat
+      contours=raw.map(c=>({elev:c.elev,pts:c.pts.map(p=>({lat:p.y,lng:p.x}))}));
+    } else {
+      // UTM — derivar zona pelo centro da adutora
+      let refLng=-47;
+      if(tracePoints.length>0){
+        const mid=tracePoints[Math.floor(tracePoints.length/2)];
+        refLng=typeof mid.lng==='function'?mid.lng():mid.lng;
+      } else if(_perfilSamples&&_perfilSamples.length>0){
+        refLng=_perfilSamples[Math.floor(_perfilSamples.length/2)].location.lng;
+      }
+      const zone=Math.floor((refLng+180)/6)+1;
+      const hasFalseN=maxY>5000000; // SIRGAS/UTM hemisfério sul com falso norte
+      contours=raw.map(c=>({
+        elev:c.elev,
+        pts:c.pts.map(p=>utmToLatLng(p.x,p.y,zone,hasFalseN))
+      }));
+    }
+    contours.sort((a,b)=>a.elev-b.elev);
+    if(contours.length<2){setContoursStatus('⚠ Menos de 2 curvas. Verifique as elevações no DXF.','err');return;}
+    _contourData=contours;
+    setContoursStatus(`✓ ${contours.length} curvas lidas (${contours[0].elev.toFixed(0)}–${contours[contours.length-1].elev.toFixed(0)} m). Desenhando...`,'ok');
+    desenharCurvasNoMapa(contours);
+    const btn=$('btnLimparCurvas');if(btn)btn.style.display='';
+    if(_perfilSamples)gerarPerfilDeContornos();
+    else setContoursStatus(`✓ ${contours.length} curvas desenhadas. Trace ou importe o percurso para gerar o perfil.`,'ok');
+  }catch(err){setContoursStatus('⚠ Erro ao processar DXF: '+err.message,'err');}
+}
+
 function parseKMLContours(kmlText){
   const doc=new DOMParser().parseFromString(kmlText,'text/xml');
   const pms=doc.getElementsByTagName('Placemark');
