@@ -144,7 +144,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v2.9 · 12/06/2026</span></h1>
+      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v3.0 · 12/06/2026</span></h1>
       <p>Régime Permanente &middot; Celeridade &middot; Joukowsky &middot; Envelope Sobre/Subpressão &middot; Risco de Cavitação</p>
     </div>
   </div>
@@ -1148,12 +1148,12 @@ function drawMOCFrame(fi){
   const{N,L,dx,z,H_ss,Hmax,Hmin,snapshots}=_mocResult;
   const snap=snapshots[fi];if(!snap)return;
   ctx.clearRect(0,0,W,Hc);ctx.fillStyle='#fff';ctx.fillRect(0,0,W,Hc);
-  const mg={t:50,b:56,l:74,r:18},cW=W-mg.l-mg.r,cH=Hc-mg.t-mg.b;
-  let hMin=Infinity,hMax=-Infinity,zBot=Infinity;
-  for(let i=0;i<N;i++){if(Hmin[i]<hMin)hMin=Hmin[i];if(Hmax[i]>hMax)hMax=Hmax[i];if(z[i]<zBot)zBot=z[i];}
+  const mg={t:50,b:56,l:74,r:96},cW=W-mg.l-mg.r,cH=Hc-mg.t-mg.b;
+  let hMin=Infinity,hMax=-Infinity,zBot=Infinity,zTopM=-Infinity;
+  for(let i=0;i<N;i++){if(Hmin[i]<hMin)hMin=Hmin[i];if(Hmax[i]>hMax)hMax=Hmax[i];if(z[i]<zBot)zBot=z[i];if(z[i]>zTopM)zTopM=z[i];}
   const hRng=Math.max(hMax-hMin,10);
-  const floorMoc=zBot<hMin-hRng*0.45?hMin-hRng*0.45:zBot;
-  const yMin=floorMoc-hRng*0.08;
+  // yMin sempre mostra terreno completo: pelo menos 15% do range abaixo do terreno mais baixo
+  const yMin=Math.min(zBot,hMin)-Math.max(hRng*0.15,15);
   const yMax=hMax+hRng*0.12;
   const ppx=x=>mg.l+(x/L)*cW,ppy=y=>mg.t+cH*(1-(y-yMin)/(yMax-yMin));
   // Grade
@@ -1162,13 +1162,13 @@ function drawMOCFrame(fi){
   for(let i=0;i<=8;i++){const d=L*i/8,xc=ppx(d);ctx.beginPath();ctx.moveTo(xc,mg.t);ctx.lineTo(xc,mg.t+cH);ctx.stroke();ctx.fillStyle='#5a6a7a';ctx.font='10px Segoe UI';ctx.textAlign='center';ctx.fillText(Math.round(d),xc,mg.t+cH+16);}
   ctx.fillStyle='#5a6a7a';ctx.font='11px Segoe UI';ctx.textAlign='center';ctx.fillText('Distância (m)',mg.l+cW/2,Hc-6);
   ctx.save();ctx.translate(13,mg.t+cH/2);ctx.rotate(-Math.PI/2);ctx.fillText('Altura piezométrica (m)',0,0);ctx.restore();
-  // Terreno (preenchimento + pontilhado)
-  const tGrad=ctx.createLinearGradient(0,mg.t,0,mg.t+cH);
-  tGrad.addColorStop(0,'rgba(180,150,110,.55)');tGrad.addColorStop(1,'rgba(210,185,150,.2)');
+  // Terreno (preenchimento colorido + linha de borda)
+  const tGradM=ctx.createLinearGradient(0,ppy(zTopM),0,ppy(yMin));
+  tGradM.addColorStop(0,'#8B4513');tGradM.addColorStop(0.3,'#C8883A');tGradM.addColorStop(0.62,'#6BBF00');tGradM.addColorStop(1,'#228B22');
   ctx.beginPath();ctx.moveTo(ppx(0),ppy(yMin));
   for(let i=0;i<N;i++) ctx.lineTo(ppx(i*dx),ppy(z[i]));
-  ctx.lineTo(ppx(L),ppy(yMin));ctx.closePath();ctx.fillStyle=tGrad;ctx.fill();
-  ctx.beginPath();ctx.setLineDash([4,4]);ctx.strokeStyle='rgba(110,85,60,.65)';ctx.lineWidth=1.5;
+  ctx.lineTo(ppx(L),ppy(yMin));ctx.closePath();ctx.fillStyle=tGradM;ctx.fill();
+  ctx.beginPath();ctx.strokeStyle='rgba(93,64,55,.5)';ctx.lineWidth=1;ctx.setLineDash([3,3]);
   for(let i=0;i<N;i++) i===0?ctx.moveTo(ppx(0),ppy(z[0])):ctx.lineTo(ppx(i*dx),ppy(z[i]));
   ctx.stroke();ctx.setLineDash([]);
   // Zonas de cavitação (pressão < 0 → Hmin < terreno)
@@ -1228,6 +1228,37 @@ function drawMOCFrame(fi){
   ctx.font='bold 9px Segoe UI';ctx.textAlign='right';
   ctx.fillStyle='#00962a';ctx.fillText(`+${Math.round(dhSobA)} m`,W-mg.r-4,mg.t+12);
   ctx.fillStyle='#d32f2f';ctx.fillText(`−${Math.round(dhSubA)} m`,W-mg.r-4,mg.t+24);
+
+  // ── Eixo de pressão manométrica (direita, ref. cota da bomba) ──────
+  const zRefM=z[0];
+  const lim_m=getLimits();
+  const pRMinM=yMin-zRefM,pRMaxM=yMax-zRefM,pRRngM=pRMaxM-pRMinM;
+  const rawStepM=pRRngM/5;
+  const tStepM=rawStepM<=10?10:rawStepM<=20?20:rawStepM<=50?50:rawStepM<=100?100:200;
+  const firstTickM=Math.ceil(pRMinM/tStepM)*tStepM;
+  ctx.strokeStyle='rgba(80,100,120,.3)';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(mg.l+cW,mg.t);ctx.lineTo(mg.l+cW,mg.t+cH);ctx.stroke();
+  ctx.font='9.5px Segoe UI';ctx.fillStyle='#607080';ctx.textAlign='left';
+  for(let p=firstTickM;p<=pRMaxM+0.1;p+=tStepM){
+    const yT=ppy(p+zRefM);if(yT<mg.t-2||yT>mg.t+cH+2)continue;
+    ctx.strokeStyle='rgba(80,100,120,.3)';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(mg.l+cW,yT);ctx.lineTo(mg.l+cW+5,yT);ctx.stroke();
+    ctx.fillStyle='#607080';ctx.fillText(Math.round(p)+' mca',mg.l+cW+8,yT+3.5);
+  }
+  // Linhas PN (dashed coloridas)
+  ctx.font='bold 8px Segoe UI';
+  for(const pn of [60,80,125,145,180]){
+    const H_lim=zRefM+lim_m[pn];
+    if(H_lim<yMin-1||H_lim>yMax+1)continue;
+    const yL=ppy(H_lim);
+    ctx.strokeStyle=PN_COLOR[pn];ctx.lineWidth=1;ctx.setLineDash([5,4]);
+    ctx.beginPath();ctx.moveTo(mg.l,yL);ctx.lineTo(mg.l+cW,yL);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle=PN_COLOR[pn];ctx.textAlign='left';
+    ctx.fillText(`PN${pn} ${lim_m[pn]}mca`,mg.l+cW+8,yL-1.5);
+  }
+  ctx.save();ctx.translate(W-5,mg.t+cH/2);ctx.rotate(-Math.PI/2);
+  ctx.font='10px Segoe UI';ctx.fillStyle='#607080';ctx.textAlign='center';
+  ctx.fillText('Pressão manométrica ref. sucção (mca)',0,0);ctx.restore();
 }
 
 function calc(){
@@ -1614,9 +1645,8 @@ function drawTransiente(dH_eff){
     if(p.z<zMinAll)zMinAll=p.z;
   }
   const hglRange=Math.max(hglMax-hglMin,10);
-  // Inclui terreno só se estiver perto do envelope (cavitação visível)
-  const floorAuto=zMinAll<hglMin-hglRange*0.45?hglMin-hglRange*0.45:zMinAll;
-  const yMin=floorAuto-hglRange*0.06;
+  // yMin sempre mostra terreno completo com margem mínima de 15% abaixo
+  const yMin=Math.min(zMinAll,hglMin)-Math.max(hglRange*0.15,15);
   const yMax=hglMax+hglRange*0.10;
   const px=x=>mg.l+(x/L)*cW,py=y=>mg.t+cH*(1-(y-yMin)/(yMax-yMin));
 
