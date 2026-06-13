@@ -349,6 +349,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
       <option value="hydrotank">&#128739; Tanque hidropneum&#225;tico</option>
       <option value="airvalve">&#127788; Ventosa de admiss&#227;o</option>
       <option value="checkvalve">&#128274; V&#225;lvula de reten&#231;&#227;o</option>
+      <option value="reliefvalve">&#128308; Val. Antecipadora de Onda</option>
       <option value="flywheel">&#9881; Volante de in&#233;rcia</option>
     </select>
     <button onclick="protAdd()" style="background:#2e7d32;color:#fff;border:none;border-radius:6px;padding:.35rem 1rem;cursor:pointer;font-size:.82rem;font-weight:700;white-space:nowrap">+ Adicionar</button>
@@ -790,6 +791,7 @@ function protAdd(){
   else if(type==='hydrotank'){comp.pos=Math.round(L_cur*0.01)||5;comp.vol=1000;comp.p0=0;}
   else if(type==='airvalve'){comp.pos='';}
   else if(type==='checkvalve'){comp.pos=Math.round(L_cur*0.01)||5;comp.tClose=0;}
+  else if(type==='reliefvalve'){comp.pos=Math.round(L_cur*0.01)||5;comp.Hset=80;}
   else if(type==='flywheel'){comp.tStop=5;}
   _protComponents.push(comp);
   protRender();
@@ -813,8 +815,8 @@ function protRender(){
     return;
   }
   const L_cur=gv('L')||1000;
-  const icons={vessel:'&#127958;',hydrotank:'&#128739;',airvalve:'&#127788;',checkvalve:'&#128274;',flywheel:'&#9881;'};
-  const names={vessel:'C&#226;mara de ar',hydrotank:'Tanque Hidropneum&#225;tico',airvalve:'Ventosa',checkvalve:'Val. Reten&#231;&#227;o',flywheel:'Volante de In&#233;rcia'};
+  const icons={vessel:'&#127958;',hydrotank:'&#128739;',airvalve:'&#127788;',checkvalve:'&#128274;',reliefvalve:'&#128308;',flywheel:'&#9881;'};
+  const names={vessel:'C&#226;mara de ar',hydrotank:'Tanque Hidropneum&#225;tico',airvalve:'Ventosa',checkvalve:'Val. Reten&#231;&#227;o',reliefvalve:'Val. Antecipadora (VAO)',flywheel:'Volante de In&#233;rcia'};
   el.innerHTML=_protComponents.map(c=>{
     const icon=icons[c.type]||'';
     const nm=names[c.type]||c.type;
@@ -859,6 +861,15 @@ function protRender(){
           oninput="protSet(${c.id},'tClose',this.value)" onchange="protSet(${c.id},'tClose',this.value)">
         <span style="font-size:.74rem;color:#607080">s &nbsp;<span style="color:#90a4ae">(0 = instant&#226;neo)</span></span>
       </div>`;
+    } else if(c.type==='reliefvalve'){
+      fields+=`<div style="display:flex;align-items:center;gap:.3rem">
+        <span style="font-size:.74rem;color:#607080">Press&#227;o de abertura:</span>
+        <input type="number" value="${c.Hset||80}" min="10" step="5"
+          style="width:75px;padding:.22rem .4rem;border:1px solid #b0bec5;border-radius:5px;font-size:.8rem"
+          oninput="protSet(${c.id},'Hset',this.value)" onchange="protSet(${c.id},'Hset',this.value)">
+        <span style="font-size:.74rem;color:#607080">mca</span>
+      </div>
+      <div style="font-size:.72rem;color:#b71c1c;margin-top:.1rem">&#128308; Limita a press&#227;o m&#225;xima no n&#243; — descarrega para a atmosfera</div>`;
     } else if(c.type==='flywheel'){
       fields+=`<div style="display:flex;align-items:center;gap:.3rem">
         <span style="font-size:.74rem;color:#607080">T parada:</span>
@@ -868,9 +879,9 @@ function protRender(){
         <span style="font-size:.74rem;color:#607080">s</span>
       </div>`;
     }
-    const cardBg=c.type==='hydrotank'?'#e3f2fd':c.type==='checkvalve'?'#f3e5f5':c.type==='flywheel'?'#fff3e0':'#f1f8e9';
-    const cardBd=c.type==='hydrotank'?'#90caf9':c.type==='checkvalve'?'#ce93d8':c.type==='flywheel'?'#ffcc80':'#a5d6a7';
-    const cardTxt=c.type==='hydrotank'?'#0d47a1':c.type==='checkvalve'?'#4a148c':c.type==='flywheel'?'#e65100':'#2e7d32';
+    const cardBg=c.type==='hydrotank'?'#e3f2fd':c.type==='checkvalve'?'#f3e5f5':c.type==='reliefvalve'?'#fce4ec':c.type==='flywheel'?'#fff3e0':'#f1f8e9';
+    const cardBd=c.type==='hydrotank'?'#90caf9':c.type==='checkvalve'?'#ce93d8':c.type==='reliefvalve'?'#ef9a9a':c.type==='flywheel'?'#ffcc80':'#a5d6a7';
+    const cardTxt=c.type==='hydrotank'?'#0d47a1':c.type==='checkvalve'?'#4a148c':c.type==='reliefvalve'?'#b71c1c':c.type==='flywheel'?'#e65100':'#2e7d32';
     return `<div style="background:${cardBg};border:1px solid ${cardBd};border-radius:8px;padding:.45rem .6rem;display:flex;flex-direction:column;gap:.3rem">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.1rem">
         <span style="font-size:.82rem;font-weight:700;color:${cardTxt}">${icon} ${nm}</span>
@@ -966,6 +977,14 @@ function runMOC(){
 
   const vesselNodeSet=new Set([...vessels,...hydrotanks].map(v=>v.nd));
 
+  // ── Válvulas antecipadora de onda (VAO) — alívio de pressão ───────
+  const reliefValveMap=new Map();
+  for(const comp of _protComponents.filter(c=>c.type==='reliefvalve')){
+    const nd=posNode(comp.pos||5);
+    reliefValveMap.set(nd,{Hset:+(comp.Hset)||80});
+  }
+  const reliefNodeSet=new Set(reliefValveMap.keys());
+
   // ── Válvulas de retenção (múltiplas) — estado por nó ──────────────
   // cvState: Map<node, {tClose, closing, t0, Q0}>
   const cvState=new Map();
@@ -1025,6 +1044,15 @@ function runMOC(){
           // Início do fechamento
           if(cv.tClose>0){cv.closing=true;cv.t0=t;cv.Q0=Math.max(0,Q[i]);Qn[i]=cv.Q0;Hn[i]=CP-Bl*Qn[i];}
           else{cv.closed=true;Qn[i]=0;Hn[i]=CP;}
+        }
+      }
+      // ── VAO: limita H máximo descarregando para a atmosfera ────────
+      if(reliefNodeSet.has(i)){
+        const rv=reliefValveMap.get(i);
+        const Hset_abs=z[i]+rv.Hset;
+        if(Hn[i]>Hset_abs){
+          Hn[i]=Hset_abs;
+          Qn[i]=(Hset_abs-CM)/Br; // fluxo a jusante mantido; excesso aliviado
         }
       }
     }
@@ -1524,6 +1552,7 @@ function buildTransienteCard(a,tc,dH_inst,dH_eff,VMax,tClose,tc2){
     }
     if(c.type==='airvalve')return`<span style="${_badgeStyle('#e0f7fa','#80deea','#006064')}">&#127788; Ventosa ${c.pos&&+c.pos>0?(c.pos+'m'):'auto'}</span>`;
     if(c.type==='checkvalve')return`<span style="${_badgeStyle('#ede7f6','#ce93d8','#4a148c')}">&#128274; Reten&#231;&#227;o@${c.pos}m</span>`;
+    if(c.type==='reliefvalve')return`<span style="${_badgeStyle('#fce4ec','#ef9a9a','#b71c1c')}">&#128308; VAO ${c.Hset}mca@${c.pos}m</span>`;
     if(c.type==='flywheel')return`<span style="${_badgeStyle('#fff3e0','#ffcc80','#e65100')}">&#9881; Volante ${c.tStop}s</span>`;
     return'';
   }).filter(Boolean).join(' ');
