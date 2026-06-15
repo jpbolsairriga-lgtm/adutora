@@ -154,7 +154,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v4.2 · 15/06/2026</span></h1>
+      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v4.3 · 15/06/2026</span></h1>
       <p>Régime Permanente &middot; Celeridade &middot; Joukowsky &middot; Envelope Sobre/Subpressão &middot; Risco de Cavitação</p>
     </div>
   </div>
@@ -1388,44 +1388,52 @@ function drawMOCFrame(fi){
     ctx.beginPath();ctx.moveTo(mg.l+cW,yT);ctx.lineTo(mg.l+cW+5,yT);ctx.stroke();
     ctx.fillStyle='#607080';ctx.fillText(Math.round(p)+' mca',mg.l+cW+8,yT+3.5);
   }
-  // Linhas PN — horizontal por segmento em z_min_seg + lim (pior ponto de pressão do trecho)
-  // Resultado: linha inversa ao terreno (desce ao trocar para PN menor) + degrau nas transições
+  // Linhas PN — horizontal por segmento em z_min_seg + lim
   ctx.font='bold 8px Segoe UI';
   if(_multi&&_multi.segs&&_multi.segs.length>0){
     const segsPN=_multi.segs;
-    const usedPNLblM={};const usedLblYMPN=[];
-    for(let s=0;s<segsPN.length;s++){
-      const seg=segsPN[s];const lim=lim_m[seg.pn];
-      let zWorstM=Infinity;
-      for(let i=0;i<N;i++){const d=i*dx;if(d>=seg.from-0.1&&d<=seg.to+0.1&&z[i]<zWorstM)zWorstM=z[i];}
-      if(!isFinite(zWorstM))zWorstM=zRefM;
-      const H_lim=zWorstM+lim;
-      const yL=ppy(H_lim);
-      ctx.strokeStyle=PN_COLOR[seg.pn];ctx.lineWidth=1.5;ctx.setLineDash([5,4]);
-      ctx.beginPath();ctx.moveTo(ppx(seg.from),yL);ctx.lineTo(ppx(seg.to),yL);ctx.stroke();ctx.setLineDash([]);
-      // Degrau vertical na transição (sobe se H_next > H_lim, desce se menor)
+    // Pré-calcula H_lim de cada segmento
+    const pnLD=segsPN.map((seg,s)=>{
+      const lim=lim_m[seg.pn];
+      let zW=Infinity;
+      for(let i=0;i<N;i++){const d=i*dx;if(d>=seg.from-0.1&&d<=seg.to+0.1&&z[i]<zW)zW=z[i];}
+      if(!isFinite(zW))zW=zRefM;
+      let H_next=null;
       if(s<segsPN.length-1){
-        const nextSeg=segsPN[s+1];const nextLim=lim_m[nextSeg.pn];
-        let zWNM=Infinity;
-        for(let i=0;i<N;i++){const d=i*dx;if(d>=nextSeg.from-0.1&&d<=nextSeg.to+0.1&&z[i]<zWNM)zWNM=z[i];}
-        if(!isFinite(zWNM))zWNM=zRefM;
-        const H_next=zWNM+nextLim;
-        const yN=ppy(H_next);
+        const ns=segsPN[s+1];const nl=lim_m[ns.pn];let zN=Infinity;
+        for(let i=0;i<N;i++){const d=i*dx;if(d>=ns.from-0.1&&d<=ns.to+0.1&&z[i]<zN)zN=z[i];}
+        if(!isFinite(zN))zN=zRefM;
+        H_next=zN+nl;
+      }
+      return{seg,lim,H_lim:zW+lim,H_next};
+    });
+    // Traços: dentro de clip para não sair da área
+    ctx.save();ctx.beginPath();ctx.rect(mg.l,mg.t,cW,cH);ctx.clip();
+    for(const d of pnLD){
+      const yL=ppy(d.H_lim);
+      ctx.strokeStyle=PN_COLOR[d.seg.pn];ctx.lineWidth=1.5;ctx.setLineDash([5,4]);
+      ctx.beginPath();ctx.moveTo(ppx(d.seg.from),yL);ctx.lineTo(ppx(d.seg.to),yL);ctx.stroke();ctx.setLineDash([]);
+      if(d.H_next!==null){
+        const yN=ppy(d.H_next);
         const yCA=Math.max(Math.min(yL,yN),mg.t),yCB=Math.min(Math.max(yL,yN),mg.t+cH);
         if(yCA<=yCB){
           ctx.strokeStyle='rgba(80,100,130,.65)';ctx.lineWidth=1.2;ctx.setLineDash([3,3]);
-          ctx.beginPath();ctx.moveTo(ppx(seg.to),yCA);ctx.lineTo(ppx(seg.to),yCB);ctx.stroke();ctx.setLineDash([]);
+          ctx.beginPath();ctx.moveTo(ppx(d.seg.to),yCA);ctx.lineTo(ppx(d.seg.to),yCB);ctx.stroke();ctx.setLineDash([]);
         }
       }
-      // Label à direita do eixo
-      if(!usedPNLblM[seg.pn]){
-        usedPNLblM[seg.pn]=true;
-        let yLbl=yL;
+    }
+    ctx.restore();
+    // Labels: fora do clip (ficam à direita do eixo)
+    const usedPNLblM={};const usedLblYMPN=[];
+    for(const d of pnLD){
+      if(!usedPNLblM[d.seg.pn]){
+        usedPNLblM[d.seg.pn]=true;
+        let yLbl=ppy(d.H_lim);
         for(const yp of usedLblYMPN){if(Math.abs(yp-yLbl)<12)yLbl=Math.min(yp-12,yLbl-12);}
         usedLblYMPN.push(yLbl);
         if(yLbl>=mg.t-2&&yLbl<=mg.t+cH+6){
-          ctx.fillStyle=PN_COLOR[seg.pn];ctx.textAlign='left';
-          ctx.fillText(`PN${seg.pn} ${lim}mca`,mg.l+cW+8,yLbl+3.5);
+          ctx.fillStyle=PN_COLOR[d.seg.pn];ctx.textAlign='left';
+          ctx.fillText(`PN${d.seg.pn} ${d.lim}mca`,mg.l+cW+8,yLbl+3.5);
         }
       }
     }
@@ -1978,44 +1986,52 @@ function drawTransiente(dH_eff){
     ctx.beginPath();ctx.moveTo(mg.l+cW,yT);ctx.lineTo(mg.l+cW+5,yT);ctx.stroke();
     ctx.fillStyle='#607080';ctx.fillText(Math.round(p)+' mca',mg.l+cW+8,yT+3.5);
   }
-  // Linhas PN — horizontal por segmento em z_min_seg + lim (pior ponto de pressão do trecho)
-  // Resultado: linha inversa ao terreno (desce ao trocar para PN menor) + degrau nas transições
+  // Linhas PN — horizontal por segmento em z_min_seg + lim
   ctx.font='bold 8.5px Segoe UI';
   if(_multi&&_multi.segs&&_multi.segs.length>0){
     const segsPN=_multi.segs;
-    const usedPNLbl={};const usedLblYPN=[];
-    for(let s=0;s<segsPN.length;s++){
-      const seg=segsPN[s];const lim=lim_r[seg.pn];
-      let zWorst=Infinity;
-      for(const p of combined){if(p.x>=seg.from-0.1&&p.x<=seg.to+0.1&&p.z<zWorst)zWorst=p.z;}
-      if(!isFinite(zWorst))zWorst=zRef;
-      const H_lim=zWorst+lim;
-      const yL=py(H_lim);
-      ctx.strokeStyle=PN_COLOR[seg.pn];ctx.lineWidth=1.5;ctx.setLineDash([6,4]);
-      ctx.beginPath();ctx.moveTo(px(seg.from),yL);ctx.lineTo(px(seg.to),yL);ctx.stroke();ctx.setLineDash([]);
-      // Degrau vertical na transição (sobe se H_next > H_lim, desce se menor)
+    // Pré-calcula H_lim de cada segmento
+    const pnLD=segsPN.map((seg,s)=>{
+      const lim=lim_r[seg.pn];
+      let zW=Infinity;
+      for(const p of combined){if(p.x>=seg.from-0.1&&p.x<=seg.to+0.1&&p.z<zW)zW=p.z;}
+      if(!isFinite(zW))zW=zRef;
+      let H_next=null;
       if(s<segsPN.length-1){
-        const nextSeg=segsPN[s+1];const nextLim=lim_r[nextSeg.pn];
-        let zWN=Infinity;
-        for(const p of combined){if(p.x>=nextSeg.from-0.1&&p.x<=nextSeg.to+0.1&&p.z<zWN)zWN=p.z;}
-        if(!isFinite(zWN))zWN=zRef;
-        const H_next=zWN+nextLim;
-        const yN=py(H_next);
+        const ns=segsPN[s+1];const nl=lim_r[ns.pn];let zN=Infinity;
+        for(const p of combined){if(p.x>=ns.from-0.1&&p.x<=ns.to+0.1&&p.z<zN)zN=p.z;}
+        if(!isFinite(zN))zN=zRef;
+        H_next=zN+nl;
+      }
+      return{seg,lim,H_lim:zW+lim,H_next};
+    });
+    // Traços: dentro de clip para não sair da área
+    ctx.save();ctx.beginPath();ctx.rect(mg.l,mg.t,cW,cH);ctx.clip();
+    for(const d of pnLD){
+      const yL=py(d.H_lim);
+      ctx.strokeStyle=PN_COLOR[d.seg.pn];ctx.lineWidth=1.5;ctx.setLineDash([6,4]);
+      ctx.beginPath();ctx.moveTo(px(d.seg.from),yL);ctx.lineTo(px(d.seg.to),yL);ctx.stroke();ctx.setLineDash([]);
+      if(d.H_next!==null){
+        const yN=py(d.H_next);
         const yCA=Math.max(Math.min(yL,yN),mg.t),yCB=Math.min(Math.max(yL,yN),mg.t+cH);
         if(yCA<=yCB){
           ctx.strokeStyle='rgba(80,100,130,.65)';ctx.lineWidth=1.2;ctx.setLineDash([3,3]);
-          ctx.beginPath();ctx.moveTo(px(seg.to),yCA);ctx.lineTo(px(seg.to),yCB);ctx.stroke();ctx.setLineDash([]);
+          ctx.beginPath();ctx.moveTo(px(d.seg.to),yCA);ctx.lineTo(px(d.seg.to),yCB);ctx.stroke();ctx.setLineDash([]);
         }
       }
-      // Label
-      if(!usedPNLbl[seg.pn]){
-        usedPNLbl[seg.pn]=true;
-        let yLbl=yL;
+    }
+    ctx.restore();
+    // Labels: fora do clip (ficam à direita do eixo)
+    const usedPNLbl={};const usedLblYPN=[];
+    for(const d of pnLD){
+      if(!usedPNLbl[d.seg.pn]){
+        usedPNLbl[d.seg.pn]=true;
+        let yLbl=py(d.H_lim);
         for(const yp of usedLblYPN){if(Math.abs(yp-yLbl)<12)yLbl=Math.min(yp-12,yLbl-12);}
         usedLblYPN.push(yLbl);
         if(yLbl>=mg.t-2&&yLbl<=mg.t+cH+6){
-          ctx.fillStyle=PN_COLOR[seg.pn];ctx.textAlign='left';
-          ctx.fillText(`PN${seg.pn} ${lim}mca`,mg.l+cW+8,yLbl+3.5);
+          ctx.fillStyle=PN_COLOR[d.seg.pn];ctx.textAlign='left';
+          ctx.fillText(`PN${d.seg.pn} ${d.lim}mca`,mg.l+cW+8,yLbl+3.5);
         }
       }
     }
