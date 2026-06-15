@@ -154,7 +154,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v4.4 · 15/06/2026</span></h1>
+      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v4.5 · 15/06/2026</span></h1>
       <p>Régime Permanente &middot; Celeridade &middot; Joukowsky &middot; Envelope Sobre/Subpressão &middot; Risco de Cavitação</p>
     </div>
   </div>
@@ -1358,6 +1358,24 @@ function drawMOCFrame(fi){
   // Linha instantânea (azul animada)
   ctx.beginPath();for(let i=0;i<N;i++) i===0?ctx.moveTo(ppx(0),ppy(snap.H[0])):ctx.lineTo(ppx(i*dx),ppy(snap.H[i]));
   ctx.strokeStyle='#1565c0';ctx.lineWidth=2;ctx.stroke();
+  // Marcadores de ventosas de ar
+  if(_mocResult.protections&&_mocResult.protections.airValves&&_mocResult.protections.airValves.length>0){
+    ctx.font='bold 7.5px Segoe UI';
+    for(const av of _mocResult.protections.airValves){
+      const nd=Math.max(0,Math.min(N-1,Math.round((av.posM/L)*(N-1))));
+      const zv=z[nd],cx_v=ppx(av.posM),cy_v=ppy(zv);
+      const activated=av.vol_L>0.5;
+      const col=activated?'#00BCD4':'#B0BEC5',colDark=activated?'#006064':'#607D8B';
+      const ts=5;
+      ctx.beginPath();ctx.moveTo(cx_v,cy_v-ts*2);ctx.lineTo(cx_v,mg.t+2);
+      ctx.strokeStyle=col;ctx.lineWidth=1;ctx.setLineDash([3,3]);ctx.stroke();ctx.setLineDash([]);
+      ctx.beginPath();ctx.moveTo(cx_v,cy_v-ts*2);ctx.lineTo(cx_v-ts,cy_v);ctx.lineTo(cx_v+ts,cy_v);ctx.closePath();
+      ctx.fillStyle=col;ctx.fill();ctx.strokeStyle=colDark;ctx.lineWidth=1;ctx.stroke();
+      ctx.fillStyle=colDark;ctx.textAlign='left';
+      ctx.fillText(`Ventosa @${Math.round(av.posM)}m`,cx_v+4,mg.t+10);
+      ctx.fillText(activated?`${av.vol_L<1000?av.vol_L.toFixed(0)+'L':(av.vol_L/1000).toFixed(2)+'m³'} ar`:'não ativou',cx_v+4,mg.t+19);
+    }
+  }
   ctx.restore(); // libera clip
   // Borda
   ctx.strokeStyle='rgba(100,120,140,.25)';ctx.lineWidth=1;ctx.strokeRect(mg.l,mg.t,cW,cH);
@@ -1948,6 +1966,27 @@ function drawTransiente(dH_eff){
   }else{
     ctx.beginPath();combined.forEach((p,i)=>i===0?ctx.moveTo(px(p.x),py(p.piezo)):ctx.lineTo(px(p.x),py(p.piezo)));
     ctx.strokeStyle='#0077b6';ctx.lineWidth=2.5;ctx.setLineDash([7,4]);ctx.stroke();ctx.setLineDash([]);
+  }
+  // Marcadores de ventosas de ar
+  if(useMOC&&_mocResult.protections&&_mocResult.protections.airValves&&_mocResult.protections.airValves.length>0){
+    ctx.font='bold 7.5px Segoe UI';
+    for(const av of _mocResult.protections.airValves){
+      const nd=Math.max(0,Math.min(combined.length-1,Math.round((av.posM/L)*(combined.length-1))));
+      const zv=combined[nd].z,cx_v=px(av.posM),cy_v=py(zv);
+      const activated=av.vol_L>0.5;
+      const col=activated?'#00BCD4':'#B0BEC5',colDark=activated?'#006064':'#607D8B';
+      const ts=5;
+      // Haste vertical da cota até o topo do gráfico
+      ctx.beginPath();ctx.moveTo(cx_v,cy_v-ts*2);ctx.lineTo(cx_v,mg.t+2);
+      ctx.strokeStyle=col;ctx.lineWidth=1;ctx.setLineDash([3,3]);ctx.stroke();ctx.setLineDash([]);
+      // Triângulo ▲ na cota do terreno
+      ctx.beginPath();ctx.moveTo(cx_v,cy_v-ts*2);ctx.lineTo(cx_v-ts,cy_v);ctx.lineTo(cx_v+ts,cy_v);ctx.closePath();
+      ctx.fillStyle=col;ctx.fill();ctx.strokeStyle=colDark;ctx.lineWidth=1;ctx.stroke();
+      // Label no topo (dentro do clip)
+      ctx.fillStyle=colDark;ctx.textAlign='left';
+      ctx.fillText(`Ventosa @${Math.round(av.posM)}m`,cx_v+4,mg.t+10);
+      ctx.fillText(activated?`${av.vol_L<1000?av.vol_L.toFixed(0)+'L':(av.vol_L/1000).toFixed(2)+'m³'} ar`:'não ativou',cx_v+4,mg.t+19);
+    }
   }
   ctx.restore(); // libera clip
   const srcLabel=useMOC?'MOC':'Joukowsky';
