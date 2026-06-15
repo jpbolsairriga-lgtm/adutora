@@ -154,7 +154,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v3.7 · 15/06/2026</span></h1>
+      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v3.8 · 15/06/2026</span></h1>
       <p>Régime Permanente &middot; Celeridade &middot; Joukowsky &middot; Envelope Sobre/Subpressão &middot; Risco de Cavitação</p>
     </div>
   </div>
@@ -1359,31 +1359,44 @@ function drawMOCFrame(fi){
     ctx.beginPath();ctx.moveTo(mg.l+cW,yT);ctx.lineTo(mg.l+cW+5,yT);ctx.stroke();
     ctx.fillStyle='#607080';ctx.fillText(Math.round(p)+' mca',mg.l+cW+8,yT+3.5);
   }
-  // Linhas PN — função degrau por segmento Multi-PN (ref. cota sucção z[0])
+  // Linhas PN — segmento por segmento seguindo terreno + degrau na transição
   ctx.font='bold 8px Segoe UI';
   if(_multi&&_multi.segs&&_multi.segs.length>0){
     const segsPN=_multi.segs;
-    const usedPNLblM={};const usedLblYM=[];
+    const usedPNLblM={};const usedLblYMPN=[];
     for(let s=0;s<segsPN.length;s++){
       const seg=segsPN[s];const lim=lim_m[seg.pn];
-      const H_lim=zRefM+lim;
-      if(H_lim<yMin-5||H_lim>yMax+5)continue;
-      const x0=ppx(seg.from),x1=ppx(seg.to),yL=ppy(H_lim);
       ctx.strokeStyle=PN_COLOR[seg.pn];ctx.lineWidth=1.5;ctx.setLineDash([5,4]);
-      ctx.beginPath();ctx.moveTo(x0,yL);ctx.lineTo(x1,yL);ctx.stroke();ctx.setLineDash([]);
-      // Degrau vertical para o próximo segmento
-      if(s<segsPN.length-1){
-        const H_next=zRefM+lim_m[segsPN[s+1].pn];
-        const yN=ppy(H_next);
-        ctx.strokeStyle='rgba(100,120,140,.5)';ctx.lineWidth=1;ctx.setLineDash([3,3]);
-        ctx.beginPath();ctx.moveTo(x1,yL);ctx.lineTo(x1,yN);ctx.stroke();ctx.setLineDash([]);
+      let pathOpen=false;let lastVisYM=NaN;
+      for(let i=0;i<N;i++){
+        const d=i*dx;
+        if(d<seg.from-0.1||d>seg.to+0.1)continue;
+        const h=z[i]+lim;
+        if(h<yMin-20||h>yMax+20){if(pathOpen){ctx.stroke();pathOpen=false;}continue;}
+        if(!pathOpen){ctx.beginPath();ctx.moveTo(ppx(d),ppy(h));pathOpen=true;}
+        else ctx.lineTo(ppx(d),ppy(h));
+        if(ppy(h)>=mg.t&&ppy(h)<=mg.t+cH)lastVisYM=ppy(h);
       }
-      // Label à direita (uma vez por classe PN)
-      if(!usedPNLblM[seg.pn]){
+      if(pathOpen)ctx.stroke();
+      ctx.setLineDash([]);
+      // Degrau na transição
+      if(s<segsPN.length-1){
+        const iBnd=Math.min(N-1,Math.round(seg.to/dx));
+        const zBnd=z[iBnd];const nextLim=lim_m[segsPN[s+1].pn];
+        const H_cur=zBnd+lim,H_nxt=zBnd+nextLim;
+        const yA=Math.min(ppy(H_cur),ppy(H_nxt)),yB=Math.max(ppy(H_cur),ppy(H_nxt));
+        const yCA=Math.max(yA,mg.t),yCB=Math.min(yB,mg.t+cH);
+        if(yCA<=yCB){
+          ctx.strokeStyle='rgba(80,100,130,.65)';ctx.lineWidth=1.2;ctx.setLineDash([3,3]);
+          ctx.beginPath();ctx.moveTo(ppx(seg.to),yCA);ctx.lineTo(ppx(seg.to),yCB);ctx.stroke();ctx.setLineDash([]);
+        }
+      }
+      // Label
+      if(!usedPNLblM[seg.pn]&&!isNaN(lastVisYM)){
         usedPNLblM[seg.pn]=true;
-        let yLbl=yL;
-        for(const yp of usedLblYM){if(Math.abs(yp-yLbl)<12)yLbl=Math.min(yp-12,yLbl-12);}
-        usedLblYM.push(yLbl);
+        let yLbl=lastVisYM;
+        for(const yp of usedLblYMPN){if(Math.abs(yp-yLbl)<12)yLbl=Math.min(yp-12,yLbl-12);}
+        usedLblYMPN.push(yLbl);
         if(yLbl>=mg.t-2&&yLbl<=mg.t+cH+6){
           ctx.fillStyle=PN_COLOR[seg.pn];ctx.textAlign='left';
           ctx.fillText(`PN${seg.pn} ${lim}mca`,mg.l+cW+8,yLbl+3.5);
@@ -1926,31 +1939,45 @@ function drawTransiente(dH_eff){
     ctx.beginPath();ctx.moveTo(mg.l+cW,yT);ctx.lineTo(mg.l+cW+5,yT);ctx.stroke();
     ctx.fillStyle='#607080';ctx.fillText(Math.round(p)+' mca',mg.l+cW+8,yT+3.5);
   }
-  // Linhas de limite PN — função degrau por segmento Multi-PN (ref. cota sucção z[0])
+  // Linhas de limite PN — segmento por segmento seguindo terreno + degrau na transição
   ctx.font='bold 8.5px Segoe UI';
   if(_multi&&_multi.segs&&_multi.segs.length>0){
     const segsPN=_multi.segs;
-    const usedPNLblR={};const usedLblYR=[];
+    const usedPNLbl={};const usedLblYPN=[];
     for(let s=0;s<segsPN.length;s++){
       const seg=segsPN[s];const lim=lim_r[seg.pn];
-      const H_lim=zRef+lim;
-      if(H_lim<yMin-5||H_lim>yMax+5)continue;
-      const x0=px(seg.from),x1=px(seg.to),yL=py(H_lim);
+      // Linha seguindo terreno dentro do segmento (ou horizontal se não-MOC)
       ctx.strokeStyle=PN_COLOR[seg.pn];ctx.lineWidth=1.5;ctx.setLineDash([6,4]);
-      ctx.beginPath();ctx.moveTo(x0,yL);ctx.lineTo(x1,yL);ctx.stroke();ctx.setLineDash([]);
-      // Degrau vertical para o próximo segmento
-      if(s<segsPN.length-1){
-        const H_next=zRef+lim_r[segsPN[s+1].pn];
-        const yN=py(H_next);
-        ctx.strokeStyle='rgba(100,120,140,.5)';ctx.lineWidth=1;ctx.setLineDash([3,3]);
-        ctx.beginPath();ctx.moveTo(x1,yL);ctx.lineTo(x1,yN);ctx.stroke();ctx.setLineDash([]);
+      let pathOpen=false;let lastVisY=NaN;
+      for(const p of combined){
+        if(p.x<seg.from-0.1||p.x>seg.to+0.1)continue;
+        const h=useMOC?p.z+lim:zRef+lim;
+        if(h<yMin-20||h>yMax+20){if(pathOpen){ctx.stroke();pathOpen=false;}continue;}
+        if(!pathOpen){ctx.beginPath();ctx.moveTo(px(p.x),py(h));pathOpen=true;}
+        else ctx.lineTo(px(p.x),py(h));
+        if(py(h)>=mg.t&&py(h)<=mg.t+cH)lastVisY=py(h);
       }
-      // Label à direita (uma vez por classe PN)
-      if(!usedPNLblR[seg.pn]){
-        usedPNLblR[seg.pn]=true;
-        let yLbl=yL;
-        for(const yp of usedLblYR){if(Math.abs(yp-yLbl)<12)yLbl=Math.min(yp-12,yLbl-12);}
-        usedLblYR.push(yLbl);
+      if(pathOpen)ctx.stroke();
+      ctx.setLineDash([]);
+      // Degrau vertical na transição para o próximo segmento
+      if(s<segsPN.length-1){
+        const xBnd=seg.to;const nextLim=lim_r[segsPN[s+1].pn];
+        let zBnd=zRef,minD=Infinity;
+        for(const p of combined){const d=Math.abs(p.x-xBnd);if(d<minD){minD=d;zBnd=useMOC?p.z:zRef;}}
+        const H_cur=zBnd+lim,H_nxt=zBnd+nextLim;
+        const yA=Math.min(py(H_cur),py(H_nxt)),yB=Math.max(py(H_cur),py(H_nxt));
+        const yCA=Math.max(yA,mg.t),yCB=Math.min(yB,mg.t+cH);
+        if(yCA<=yCB){
+          ctx.strokeStyle='rgba(80,100,130,.65)';ctx.lineWidth=1.2;ctx.setLineDash([3,3]);
+          ctx.beginPath();ctx.moveTo(px(xBnd),yCA);ctx.lineTo(px(xBnd),yCB);ctx.stroke();ctx.setLineDash([]);
+        }
+      }
+      // Label à direita no último ponto visível do segmento
+      if(!usedPNLbl[seg.pn]&&!isNaN(lastVisY)){
+        usedPNLbl[seg.pn]=true;
+        let yLbl=lastVisY;
+        for(const yp of usedLblYPN){if(Math.abs(yp-yLbl)<12)yLbl=Math.min(yp-12,yLbl-12);}
+        usedLblYPN.push(yLbl);
         if(yLbl>=mg.t-2&&yLbl<=mg.t+cH+6){
           ctx.fillStyle=PN_COLOR[seg.pn];ctx.textAlign='left';
           ctx.fillText(`PN${seg.pn} ${lim}mca`,mg.l+cW+8,yLbl+3.5);
