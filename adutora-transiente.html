@@ -154,7 +154,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v4.0 · 15/06/2026</span></h1>
+      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v4.1 · 15/06/2026</span></h1>
       <p>Régime Permanente &middot; Celeridade &middot; Joukowsky &middot; Envelope Sobre/Subpressão &middot; Risco de Cavitação</p>
     </div>
   </div>
@@ -723,7 +723,7 @@ function calcMultiPN(Q_calc,L,Hg,CHW,nom,kLoc,filtro,pRes,slackP,lim){
   const ts=Hg/L,STEP=Math.max(1,Math.round(L/500));
   let AMT_hid=Hg+pRes+filtro+30,segs=[],totalHf=0;
   for(let iter=0;iter<20;iter++){
-    const AMT_d=AMT_hid*(1+slackP);let x=0,P=AMT_d,s_=[];
+    const AMT_d=AMT_hid*(1+slackP);let x=0,P=AMT_d-filtro,s_=[];
     let sPN=pnForPressure(P,lim),sX=0,sP=P;
     while(x<L){
       const dx=Math.min(STEP,L-x),pn=pnForPressure(P,lim);
@@ -736,10 +736,11 @@ function calcMultiPN(Q_calc,L,Hg,CHW,nom,kLoc,filtro,pRes,slackP,lim){
     totalHf=0;for(const s of segs)totalHf+=(jByPN[s.pn]??jByPN[125]??jByPN[80]??0)*s.len;
     const an=Hg+totalHf+filtro+pRes;if(Math.abs(an-AMT_hid)<0.05){AMT_hid=an;break;}AMT_hid=an;
   }
-  return{AMT_hid,AMT_design:AMT_hid*(1+slackP),totalHf,segs,pipeByPN,jByPN,pnsUsados:new Set(segs.map(s=>s.pn))};
+  return{AMT_hid,AMT_design:AMT_hid*(1+slackP),totalHf,segs,pipeByPN,jByPN,filtro,pnsUsados:new Set(segs.map(s=>s.pn))};
 }
 function pressurePoints(multi,L,Hg){
-  const ts=Hg/L,pts=[{x:0,P:multi.AMT_design}];let P=multi.AMT_design;
+  const filt=multi.filtro||0;
+  const ts=Hg/L,pts=[{x:0,P:multi.AMT_design-filt}];let P=multi.AMT_design-filt;
   for(const s of multi.segs){const J=multi.jByPN[s.pn]??0;P-=(J+ts)*s.len;pts.push({x:s.to,P:Math.max(0,P)});}
   return pts;
 }
@@ -753,7 +754,7 @@ function calcMultiPNProfile(Q_calc,profile,CHW,nom,kLoc,filtro,pRes,slackP,lim){
   let AMT_hid=maxGain+pRes+filtro+30,segs=[],totalHf=0,criticalIdx=n-1;
   for(let iter=0;iter<20;iter++){
     const AMT_d=AMT_hid*(1+slackP);
-    let P=AMT_d,hfAcc=0,maxReq=0;const s_=[];
+    let P=AMT_d-filtro,hfAcc=0,maxReq=0;const s_=[];
     let sPN=pnForPressure(P,lim),sFrom=0,sPstart=P;
     for(let i=1;i<n;i++){
       const dx=profile[i].dist-profile[i-1].dist,dz=profile[i].elev-profile[i-1].elev,pn=pnForPressure(P,lim);
@@ -769,14 +770,15 @@ function calcMultiPNProfile(Q_calc,profile,CHW,nom,kLoc,filtro,pRes,slackP,lim){
     totalHf=hfAcc;
     if(Math.abs(maxReq-AMT_hid)<0.05){AMT_hid=maxReq;break;}AMT_hid=maxReq;
   }
-  return{AMT_hid,AMT_design:AMT_hid*(1+slackP),totalHf,segs,pipeByPN,jByPN,
+  return{AMT_hid,AMT_design:AMT_hid*(1+slackP),totalHf,segs,pipeByPN,jByPN,filtro,
     pnsUsados:new Set(segs.map(s=>s.pn)),L,
     criticalDist:profile[criticalIdx].dist,criticalElev:profile[criticalIdx].elev};
 }
 
 function pressurePointsProfile(multi,profile){
-  const pts=[{x:0,P:multi.AMT_design}];
-  let P=multi.AMT_design,sIdx=0;
+  const filt=multi.filtro||0;
+  const pts=[{x:0,P:multi.AMT_design-filt}];
+  let P=multi.AMT_design-filt,sIdx=0;
   for(let i=1;i<profile.length;i++){
     const dx=profile[i].dist-profile[i-1].dist,dz=profile[i].elev-profile[i-1].elev;
     while(sIdx<multi.segs.length-1&&profile[i].dist>multi.segs[sIdx].to)sIdx++;
@@ -1289,17 +1291,6 @@ function drawMOCFrame(fi){
   ctx.beginPath();ctx.strokeStyle='rgba(93,64,55,.5)';ctx.lineWidth=1;ctx.setLineDash([3,3]);
   for(let i=0;i<N;i++) i===0?ctx.moveTo(ppx(0),ppy(z[0])):ctx.lineTo(ppx(i*dx),ppy(z[i]));
   ctx.stroke();ctx.setLineDash([]);
-  // Sombra PN por segmento (terreno → regime permanente, fill colorido por classe)
-  if(_multi&&_multi.segs&&_multi.segs.length>0){
-    for(const seg of _multi.segs){
-      const pts=[];
-      for(let i=0;i<N;i++){const d=i*dx;if(d>=seg.from-0.1&&d<=seg.to+0.1)pts.push({x:d,zi:z[i],hi:H_ss[i]});}
-      if(pts.length<2)continue;
-      ctx.beginPath();pts.forEach((p,i)=>i===0?ctx.moveTo(ppx(p.x),ppy(p.zi)):ctx.lineTo(ppx(p.x),ppy(p.zi)));
-      for(let i=pts.length-1;i>=0;i--)ctx.lineTo(ppx(pts[i].x),ppy(pts[i].hi));
-      ctx.closePath();ctx.fillStyle=PN_BG[seg.pn];ctx.fill();
-    }
-  }
   // Zonas de cavitação (pressão < 0 → Hmin < terreno)
   for(let i=0;i<N-1;i++){
     if(Hmin[i]<z[i]||Hmin[i+1]<z[i+1]){
@@ -1397,40 +1388,24 @@ function drawMOCFrame(fi){
     ctx.beginPath();ctx.moveTo(mg.l+cW,yT);ctx.lineTo(mg.l+cW+5,yT);ctx.stroke();
     ctx.fillStyle='#607080';ctx.fillText(Math.round(p)+' mca',mg.l+cW+8,yT+3.5);
   }
-  // Linhas PN — horizontal no nível (z_min_segmento + lim_PN): pior ponto de pressão de cada trecho
+  // Linhas PN — seguindo o terreno: H_lim[i] = z[i] + lim_PN (limite real em cada nó)
   ctx.font='bold 8px Segoe UI';
   if(_multi&&_multi.segs&&_multi.segs.length>0){
-    const segsPN=_multi.segs;
     const usedPNLblM={};const usedLblYMPN=[];
-    for(let s=0;s<segsPN.length;s++){
-      const seg=segsPN[s];const lim=lim_m[seg.pn];
-      // Cota mínima no segmento (pior caso de pressão)
-      let zWorstM=Infinity;
-      for(let i=0;i<N;i++){const d=i*dx;if(d>=seg.from-0.1&&d<=seg.to+0.1&&z[i]<zWorstM)zWorstM=z[i];}
-      if(!isFinite(zWorstM))zWorstM=zRefM;
-      const H_lim=zWorstM+lim;
-      if(H_lim<yMin-5||H_lim>yMax+5)continue;
-      const yL=ppy(H_lim);
+    for(const seg of _multi.segs){
+      const lim=lim_m[seg.pn];
       ctx.strokeStyle=PN_COLOR[seg.pn];ctx.lineWidth=1.5;ctx.setLineDash([5,4]);
-      ctx.beginPath();ctx.moveTo(ppx(seg.from),yL);ctx.lineTo(ppx(seg.to),yL);ctx.stroke();ctx.setLineDash([]);
-      // Degrau na transição
-      if(s<segsPN.length-1){
-        const nextSeg=segsPN[s+1];const nextLim=lim_m[nextSeg.pn];
-        let zWNM=Infinity;
-        for(let i=0;i<N;i++){const d=i*dx;if(d>=nextSeg.from-0.1&&d<=nextSeg.to+0.1&&z[i]<zWNM)zWNM=z[i];}
-        if(!isFinite(zWNM))zWNM=zRefM;
-        const H_next=zWNM+nextLim;
-        const yN=ppy(H_next);
-        const yCA=Math.max(Math.min(yL,yN),mg.t),yCB=Math.min(Math.max(yL,yN),mg.t+cH);
-        if(yCA<=yCB){
-          ctx.strokeStyle='rgba(80,100,130,.65)';ctx.lineWidth=1.2;ctx.setLineDash([3,3]);
-          ctx.beginPath();ctx.moveTo(ppx(seg.to),yCA);ctx.lineTo(ppx(seg.to),yCB);ctx.stroke();ctx.setLineDash([]);
-        }
+      ctx.beginPath();let stM=false,sumY=0,cntY=0;
+      for(let i=0;i<N;i++){
+        const d=i*dx;if(d<seg.from-0.5||d>seg.to+0.5)continue;
+        const yL=ppy(z[i]+lim);
+        stM?ctx.lineTo(ppx(d),yL):(ctx.moveTo(ppx(d),yL),stM=true);
+        sumY+=yL;cntY++;
       }
-      // Label
-      if(!usedPNLblM[seg.pn]){
+      if(stM)ctx.stroke();ctx.setLineDash([]);
+      if(!usedPNLblM[seg.pn]&&stM){
         usedPNLblM[seg.pn]=true;
-        let yLbl=yL;
+        let yLbl=sumY/cntY;
         for(const yp of usedLblYMPN){if(Math.abs(yp-yLbl)<12)yLbl=Math.min(yp-12,yLbl-12);}
         usedLblYMPN.push(yLbl);
         if(yLbl>=mg.t-2&&yLbl<=mg.t+cH+6){
@@ -1988,42 +1963,24 @@ function drawTransiente(dH_eff){
     ctx.beginPath();ctx.moveTo(mg.l+cW,yT);ctx.lineTo(mg.l+cW+5,yT);ctx.stroke();
     ctx.fillStyle='#607080';ctx.fillText(Math.round(p)+' mca',mg.l+cW+8,yT+3.5);
   }
-  // Linhas PN — horizontal no nível (z_min_segmento + lim_PN): pior ponto de pressão de cada trecho
-  // z_min = cota mais baixa dentro do segmento = onde a pressão de trabalho é máxima (ponto crítico)
-  // Resultado: linha desce na transição PN80→PN60 (contrário ao terreno) e fica dentro do gráfico
+  // Linhas PN — seguindo o terreno: H_lim = p.z + lim_PN por ponto (limite real por posição)
   ctx.font='bold 8.5px Segoe UI';
   if(_multi&&_multi.segs&&_multi.segs.length>0){
-    const segsPN=_multi.segs;
     const usedPNLbl={};const usedLblYPN=[];
-    for(let s=0;s<segsPN.length;s++){
-      const seg=segsPN[s];const lim=lim_r[seg.pn];
-      // Cota mínima no segmento (pior caso de pressão)
-      let zWorst=Infinity;
-      for(const p of combined){if(p.x>=seg.from-0.1&&p.x<=seg.to+0.1&&useMOC){if(p.z<zWorst)zWorst=p.z;}}
-      if(!isFinite(zWorst))zWorst=zRef;
-      const H_lim=zWorst+lim;
-      if(H_lim<yMin-5||H_lim>yMax+5)continue;
-      const yL=py(H_lim);
+    for(const seg of _multi.segs){
+      const lim=lim_r[seg.pn];
       ctx.strokeStyle=PN_COLOR[seg.pn];ctx.lineWidth=1.5;ctx.setLineDash([6,4]);
-      ctx.beginPath();ctx.moveTo(px(seg.from),yL);ctx.lineTo(px(seg.to),yL);ctx.stroke();ctx.setLineDash([]);
-      // Degrau vertical na transição para o próximo segmento
-      if(s<segsPN.length-1){
-        const nextSeg=segsPN[s+1];const nextLim=lim_r[nextSeg.pn];
-        let zWN=Infinity;
-        for(const p of combined){if(p.x>=nextSeg.from-0.1&&p.x<=nextSeg.to+0.1&&useMOC){if(p.z<zWN)zWN=p.z;}}
-        if(!isFinite(zWN))zWN=zRef;
-        const H_next=zWN+nextLim;
-        const yN=py(H_next);
-        const yCA=Math.max(Math.min(yL,yN),mg.t),yCB=Math.min(Math.max(yL,yN),mg.t+cH);
-        if(yCA<=yCB){
-          ctx.strokeStyle='rgba(80,100,130,.65)';ctx.lineWidth=1.2;ctx.setLineDash([3,3]);
-          ctx.beginPath();ctx.moveTo(px(seg.to),yCA);ctx.lineTo(px(seg.to),yCB);ctx.stroke();ctx.setLineDash([]);
-        }
+      ctx.beginPath();let stT=false,sumY=0,cntY=0;
+      for(const p of combined){
+        if(p.x<seg.from-0.5||p.x>seg.to+0.5)continue;
+        const yL=py(p.z+lim);
+        stT?ctx.lineTo(px(p.x),yL):(ctx.moveTo(px(p.x),yL),stT=true);
+        sumY+=yL;cntY++;
       }
-      // Label
-      if(!usedPNLbl[seg.pn]){
+      if(stT)ctx.stroke();ctx.setLineDash([]);
+      if(!usedPNLbl[seg.pn]&&stT){
         usedPNLbl[seg.pn]=true;
-        let yLbl=yL;
+        let yLbl=sumY/cntY;
         for(const yp of usedLblYPN){if(Math.abs(yp-yLbl)<12)yLbl=Math.min(yp-12,yLbl-12);}
         usedLblYPN.push(yLbl);
         if(yLbl>=mg.t-2&&yLbl<=mg.t+cH+6){
