@@ -154,7 +154,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v4.3 · 15/06/2026</span></h1>
+      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v4.4 · 15/06/2026</span></h1>
       <p>Régime Permanente &middot; Celeridade &middot; Joukowsky &middot; Envelope Sobre/Subpressão &middot; Risco de Cavitação</p>
     </div>
   </div>
@@ -579,11 +579,19 @@ Se Qv ≤ 0 → <b>injeção ativa</b>       → BC do tanque, Va aumenta
     </div>
 
     <h3>Ventosas de Admissão de Ar</h3>
-    <p>Instaladas nos pontos altos do perfil, admitem ar atmosférico quando a pressão cai abaixo de 0 mca, evitando cavitação. Modelagem simplificada:</p>
+    <p>Instaladas nos pontos altos do perfil, admitem ar atmosférico quando a pressão cai abaixo de 0 mca local e expelem o ar quando a pressão se recupera. Modelo dois estágios (HAMMER/Allievi):</p>
     <div class="met-formula">
-<b>H[i] = max( H[i], z[i] )</b>    <i>// limita subpressão ao terreno (≥ 0 mca)</i>
+<i>// Fase de admissão: H &lt; z[i]  →  bolsão de ar cresce</i>
+Q_esq = (CP − z[i]) / B_l        <i>// vazão entrando pelo lado esquerdo</i>
+Q_dir = (z[i] − CM) / B_r        <i>// vazão saindo pelo lado direito</i>
+dVa   = (Q_dir − Q_esq) · dt     <i>// &gt;0 admite ar; &lt;0 expele</i>
+Va    = max(0, Va + dVa)          <i>// volume do bolsão persiste entre passos</i>
+H[i]  = z[i],  Q[i] = Q_dir      <i>// pressão travada na atmosférica local</i>
+
+<i>// Fase de expulsão: Va &gt; 0 mesmo com H recuperado</i>
+<i>// Válvula permanece aberta até Va → 0 (ar completamente expelido)</i>
     </div>
-    <div class="met-note">A detecção automática de pontos altos usa: <code>z[i] &gt; z[i-1]</code> e <code>z[i] ≥ z[i+1]</code>. Se o perfil for monotônico (sem pontos altos), o nó de maior elevação recebe a ventosa.</div>
+    <div class="met-note">A detecção automática de pontos altos usa: <code>z[i] &gt; z[i-1]</code> e <code>z[i] ≥ z[i+1]</code>. Se o perfil for monotônico (sem pontos altos), o nó de maior elevação recebe a ventosa. O volume total de ar admitido é contabilizado em litros e exibido nos resultados.</div>
 
     <h3>Válvula de Retenção</h3>
     <p>Impede o refluxo na tubulação após a parada da bomba. O modelo rastreia o estado de cada válvula para evitar chatter (abertura/fechamento rápido alternado):</p>
@@ -1024,9 +1032,12 @@ function runMOC(){
 
   const nTot=8*(N-1), snap_iv=2;
   const snapshots=[], Hn=new Float64Array(N), Qn=new Float64Array(N);
-  // Acumuladores de volume de ar por ventosa
+  // Acumuladores de volume de ar por ventosa (total admitido, para display)
   const airVolumeMap=new Map();
   for(const i of airValveNodeSet) airVolumeMap.set(i,0);
+  // Estado do bolsão de ar em cada ventosa (volume atual, m³) — persiste entre passos
+  const airVa=new Map();
+  for(const i of airValveNodeSet) airVa.set(i,0);
 
   for(let step=0;step<nTot;step++){
     const t=step*dt;
@@ -1070,14 +1081,20 @@ function runMOC(){
           Qn[i]=(Hset_abs-CM)/Br; // fluxo a jusante mantido; excesso aliviado
         }
       }
-      // ── Ventosa: clampa H ≥ z[i] e rastreia volume de ar admitido ──
-      if(airValveNodeSet.has(i) && Hn[i]<z[i]){
-        const Q_esq=(CP-z[i])/Bl;   // fluxo do lado esquerdo com H=z[i]
-        const Q_dir=(z[i]-CM)/Br;   // fluxo do lado direito com H=z[i]
-        const Q_ar=Math.max(0,Q_dir-Q_esq); // ar admitido = diferença de vazão
-        airVolumeMap.set(i,airVolumeMap.get(i)+Q_ar*dt*1000); // acumula em litros
-        Hn[i]=z[i];
-        Qn[i]=Q_dir;
+      // ── Ventosa: admissão (H<z) e expulsão (Va>0) — modelo dois estágios ──
+      if(airValveNodeSet.has(i)){
+        const va=airVa.get(i);
+        if(va>1e-9||Hn[i]<z[i]){
+          const H_atm=z[i]; // pressão atmosférica local = cota do ponto
+          const Q_esq=(CP-H_atm)/Bl;
+          const Q_dir=(H_atm-CM)/Br;
+          const dVa=(Q_dir-Q_esq)*dt; // >0 admite ar, <0 expele
+          const va_new=Math.max(0,va+dVa);
+          airVa.set(i,va_new);
+          if(dVa>0)airVolumeMap.set(i,(airVolumeMap.get(i)||0)+dVa*1000); // litros admitidos
+          Hn[i]=H_atm;
+          Qn[i]=Q_dir;
+        }
       }
     }
     // ── Câmaras de ar — BC isotérmico bidirecional ─────────────────
@@ -1137,8 +1154,6 @@ function runMOC(){
       Hn[N-1]=H_dn; Qn[N-1]=(CPl-H_dn)/B_nd[N-1];
     }
     H.set(Hn); Q.set(Qn);
-    // ── Ventosas: clampam H ≥ z[i] nos nós configurados ───────────
-    for(const i of airValveNodeSet)if(H[i]<z[i])H[i]=z[i];
     for(let i=0;i<N;i++){if(H[i]>Hmax[i])Hmax[i]=H[i];if(H[i]<Hmin[i])Hmin[i]=H[i];}
     if(step%snap_iv===0)snapshots.push({t:(step+1)*dt,H:new Float64Array(H)});
   }
