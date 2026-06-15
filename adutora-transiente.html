@@ -154,7 +154,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v4.5 · 15/06/2026</span></h1>
+      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v4.6 · 15/06/2026</span></h1>
       <p>Régime Permanente &middot; Celeridade &middot; Joukowsky &middot; Envelope Sobre/Subpressão &middot; Risco de Cavitação</p>
     </div>
   </div>
@@ -1196,8 +1196,180 @@ function runMOC(){
       hydrotanks:hydrotanks.map(v=>({nd:v.nd,posM:v.nd*dx,vol:v.Va0*1000,injected:v.injected})),
       airValves:[...airValveNodeSet].map(i=>({posM:i*dx,vol_L:airVolumeMap.get(i)||0})),
       checkValves:[...checkNodeSet].map(i=>i*dx),
+      reliefValves:[...reliefNodeSet].map(i=>({posM:i*dx,Hset:reliefValveMap.get(i).Hset})),
       flywheel:flywheelT
     }};
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Símbolos hidráulicos de proteção — funções de desenho compartilhadas
+// ══════════════════════════════════════════════════════════════════
+const _DSYM={
+  airvalve:  {col:'#00BCD4',dark:'#006064'},
+  airvalveOff:{col:'#B0BEC5',dark:'#607D8B'},
+  vessel:    {col:'#43A047',dark:'#1B5E20'},
+  hydrotank: {col:'#1E88E5',dark:'#0D47A1'},
+  checkvalve:{col:'#AB47BC',dark:'#4A148C'},
+  reliefvalve:{col:'#EF5350',dark:'#B71C1C'},
+  flywheel:  {col:'#FF7043',dark:'#BF360C'},
+};
+
+// Desenha um símbolo hidráulico centrado em (cx, cy_terrain)
+function _drawDeviceSymbol(ctx, type, cx, cy, mg, dc){
+  const col=dc.col, colDark=dc.dark;
+  // Haste pontilhada do símbolo ao topo do gráfico
+  ctx.beginPath();ctx.moveTo(cx,cy-(type==='airvalve'?10:type==='checkvalve'?12:16));
+  ctx.lineTo(cx,mg.t+2);
+  ctx.strokeStyle=col;ctx.lineWidth=1;ctx.setLineDash([2,3]);ctx.stroke();ctx.setLineDash([]);
+
+  if(type==='airvalve'){
+    // ▲ triângulo apontando para cima
+    const ts=5;
+    ctx.beginPath();ctx.moveTo(cx,cy-ts*2);ctx.lineTo(cx-ts,cy);ctx.lineTo(cx+ts,cy);ctx.closePath();
+    ctx.fillStyle=col;ctx.fill();ctx.strokeStyle=colDark;ctx.lineWidth=1;ctx.stroke();
+  } else if(type==='vessel'){
+    // Cilindro (câmara de ar)
+    const w=10,h=15;
+    ctx.fillStyle=col+'55';ctx.strokeStyle=colDark;ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.rect(cx-w/2,cy-h,w,h);ctx.fill();ctx.stroke();
+    ctx.beginPath();ctx.arc(cx,cy-h,w/2,Math.PI,0,false);ctx.fill();ctx.stroke();
+  } else if(type==='hydrotank'){
+    // Tanque (retângulo + telhado triangular)
+    const w=10,h=15;
+    ctx.fillStyle=col+'55';ctx.strokeStyle=colDark;ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.rect(cx-w/2,cy-h+4,w,h-4);ctx.fill();ctx.stroke();
+    ctx.beginPath();ctx.moveTo(cx,cy-h-1);ctx.lineTo(cx-w/2,cy-h+4);ctx.lineTo(cx+w/2,cy-h+4);ctx.closePath();
+    ctx.fill();ctx.stroke();
+  } else if(type==='checkvalve'){
+    // ◁| válvula de retenção
+    ctx.fillStyle=col+'66';ctx.strokeStyle=colDark;ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.moveTo(cx-7,cy-9);ctx.lineTo(cx-7,cy-1);ctx.lineTo(cx-1,cy-5);ctx.closePath();
+    ctx.fill();ctx.stroke();
+    ctx.beginPath();ctx.moveTo(cx-1,cy-10);ctx.lineTo(cx-1,cy);
+    ctx.strokeStyle=colDark;ctx.lineWidth=2;ctx.stroke();
+  } else if(type==='reliefvalve'){
+    // Círculo com seta ↑ (válvula de alívio / VAO)
+    const r=5;
+    ctx.beginPath();ctx.arc(cx,cy-r-4,r,0,Math.PI*2);
+    ctx.fillStyle=col+'55';ctx.fill();ctx.strokeStyle=colDark;ctx.lineWidth=1.5;ctx.stroke();
+    ctx.beginPath();ctx.moveTo(cx,cy-4);ctx.lineTo(cx,cy-r-4-3);ctx.strokeStyle=colDark;ctx.lineWidth=1.5;ctx.stroke();
+    ctx.beginPath();ctx.moveTo(cx-2.5,cy-r-4-1.5);ctx.lineTo(cx,cy-r-4-4.5);ctx.lineTo(cx+2.5,cy-r-4-1.5);
+    ctx.strokeStyle=colDark;ctx.lineWidth=1.2;ctx.stroke();
+  } else if(type==='flywheel'){
+    // Engrenagem / volante de inércia
+    const r=7;
+    ctx.beginPath();ctx.arc(cx,cy-r-3,r,0,Math.PI*2);
+    ctx.fillStyle=col+'44';ctx.fill();ctx.strokeStyle=colDark;ctx.lineWidth=2;ctx.stroke();
+    ctx.beginPath();ctx.arc(cx,cy-r-3,r*0.32,0,Math.PI*2);
+    ctx.fillStyle=colDark;ctx.fill();
+    for(let a=0;a<4;a++){
+      const ang=a*Math.PI/4+Math.PI/8;
+      ctx.beginPath();
+      ctx.moveTo(cx+Math.cos(ang)*r*0.32,cy-r-3+Math.sin(ang)*r*0.32);
+      ctx.lineTo(cx+Math.cos(ang)*r*0.78,cy-r-3+Math.sin(ang)*r*0.78);
+      ctx.strokeStyle=colDark;ctx.lineWidth=1.5;ctx.stroke();
+    }
+  }
+}
+
+// Desenha todos os símbolos dentro do clip ativo
+function _drawAllDevices(ctx, toX, toY, getZatX, prot, mg){
+  ctx.font='bold 7.5px Segoe UI';
+  let lastLblX=-999; // evita sobreposição de labels
+  function lbl(cx,t1,t2,dark){
+    if(cx-lastLblX<78){return;}lastLblX=cx;
+    ctx.fillStyle=dark;ctx.textAlign='left';
+    ctx.fillText(t1,cx+9,mg.t+11);
+    if(t2)ctx.fillText(t2,cx+9,mg.t+21);
+  }
+  // Ventosas
+  for(const av of (prot.airValves||[])){
+    const a=av.vol_L>0.5;const dc=a?_DSYM.airvalve:_DSYM.airvalveOff;
+    const cx=toX(av.posM),cy=toY(getZatX(av.posM));
+    _drawDeviceSymbol(ctx,'airvalve',cx,cy,mg,dc);
+    lbl(cx,`Ventosa @${Math.round(av.posM)}m`,
+      a?`${av.vol_L<1000?av.vol_L.toFixed(0)+'L':(av.vol_L/1000).toFixed(2)+'m³'} ar`:'não ativou',dc.dark);
+  }
+  // Câmaras de ar
+  for(const v of (prot.vessels||[])){
+    const cx=toX(v.posM),cy=toY(getZatX(v.posM));
+    _drawDeviceSymbol(ctx,'vessel',cx,cy,mg,_DSYM.vessel);
+    lbl(cx,`C.Ar ${v.vol>=1000?(v.vol/1000).toFixed(1)+'m³':v.vol+'L'} @${Math.round(v.posM)}m`,null,_DSYM.vessel.dark);
+  }
+  // Tanques hidropneumáticos
+  for(const v of (prot.hydrotanks||[])){
+    const cx=toX(v.posM),cy=toY(getZatX(v.posM));
+    _drawDeviceSymbol(ctx,'hydrotank',cx,cy,mg,_DSYM.hydrotank);
+    const inj=v.injected>0.5?` ·${v.injected<1000?v.injected.toFixed(0)+'L':(v.injected/1000).toFixed(2)+'m³'}inj`:'';
+    lbl(cx,`T.HP ${v.vol>=1000?(v.vol/1000).toFixed(1)+'m³':v.vol+'L'} @${Math.round(v.posM)}m${inj}`,null,_DSYM.hydrotank.dark);
+  }
+  // Válvulas de retenção
+  for(const posM of (prot.checkValves||[])){
+    const cx=toX(posM),cy=toY(getZatX(posM));
+    _drawDeviceSymbol(ctx,'checkvalve',cx,cy,mg,_DSYM.checkvalve);
+    lbl(cx,`V.Ret. @${Math.round(posM)}m`,null,_DSYM.checkvalve.dark);
+  }
+  // Válvulas de alívio (VAO)
+  for(const rv of (prot.reliefValves||[])){
+    const cx=toX(rv.posM),cy=toY(getZatX(rv.posM));
+    _drawDeviceSymbol(ctx,'reliefvalve',cx,cy,mg,_DSYM.reliefvalve);
+    lbl(cx,`VAO ${rv.Hset}mca @${Math.round(rv.posM)}m`,null,_DSYM.reliefvalve.dark);
+  }
+  // Volante de inércia (na bomba, x=0)
+  if((prot.flywheel||0)>0){
+    const cx=toX(0),cy=toY(getZatX(0));
+    _drawDeviceSymbol(ctx,'flywheel',cx,cy,mg,_DSYM.flywheel);
+    lbl(cx,`Volante ${prot.flywheel}s`,null,_DSYM.flywheel.dark);
+  }
+}
+
+// Legenda de símbolos (segunda linha, acima do gráfico, fora do clip)
+function _drawDeviceLegend(ctx, prot, mg, W){
+  const types=[];
+  if((prot.airValves||[]).length) types.push({k:'airvalve',label:'Ventosa de ar'});
+  if((prot.vessels||[]).length)   types.push({k:'vessel',  label:'Câmara de ar'});
+  if((prot.hydrotanks||[]).length)types.push({k:'hydrotank',label:'Tanque hidrop.'});
+  if((prot.checkValves||[]).length)types.push({k:'checkvalve',label:'V. Retenção'});
+  if((prot.reliefValves||[]).length)types.push({k:'reliefvalve',label:'VAO'});
+  if((prot.flywheel||0)>0)        types.push({k:'flywheel',label:'Volante inércia'});
+  if(!types.length)return;
+  const y=mg.t-27;if(y<4)return;
+  ctx.font='9px Segoe UI';
+  let lx=mg.l+4;
+  for(const t of types){
+    if(lx+90>W)break;
+    const dc=_DSYM[t.k];
+    // Mini símbolo 12px
+    ctx.strokeStyle=dc.col;ctx.lineWidth=0.8;ctx.setLineDash([2,2]);
+    ctx.beginPath();ctx.moveTo(lx+6,y+5);ctx.lineTo(lx+6,y-6);ctx.stroke();ctx.setLineDash([]);
+    if(t.k==='airvalve'){
+      ctx.fillStyle=dc.col;ctx.strokeStyle=dc.dark;ctx.lineWidth=0.8;
+      ctx.beginPath();ctx.moveTo(lx+6,y-5);ctx.lineTo(lx+3,y+1);ctx.lineTo(lx+9,y+1);ctx.closePath();ctx.fill();ctx.stroke();
+    }else if(t.k==='vessel'){
+      ctx.fillStyle=dc.col+'66';ctx.strokeStyle=dc.dark;ctx.lineWidth=0.8;
+      ctx.beginPath();ctx.rect(lx+3,y-4,6,5);ctx.fill();ctx.stroke();
+      ctx.beginPath();ctx.arc(lx+6,y-4,3,Math.PI,0);ctx.fill();ctx.stroke();
+    }else if(t.k==='hydrotank'){
+      ctx.fillStyle=dc.col+'66';ctx.strokeStyle=dc.dark;ctx.lineWidth=0.8;
+      ctx.beginPath();ctx.rect(lx+3,y-2,6,3);ctx.fill();ctx.stroke();
+      ctx.beginPath();ctx.moveTo(lx+6,y-5);ctx.lineTo(lx+3,y-2);ctx.lineTo(lx+9,y-2);ctx.closePath();ctx.fill();ctx.stroke();
+    }else if(t.k==='checkvalve'){
+      ctx.fillStyle=dc.col+'66';ctx.strokeStyle=dc.dark;ctx.lineWidth=0.8;
+      ctx.beginPath();ctx.moveTo(lx+2,y-4);ctx.lineTo(lx+2,y+1);ctx.lineTo(lx+7,y-2);ctx.closePath();ctx.fill();ctx.stroke();
+      ctx.beginPath();ctx.moveTo(lx+7,y-5);ctx.lineTo(lx+7,y+1);ctx.strokeStyle=dc.dark;ctx.lineWidth=1.2;ctx.stroke();
+    }else if(t.k==='reliefvalve'){
+      ctx.beginPath();ctx.arc(lx+6,y-1,4,0,Math.PI*2);
+      ctx.fillStyle=dc.col+'66';ctx.fill();ctx.strokeStyle=dc.dark;ctx.lineWidth=0.8;ctx.stroke();
+      ctx.beginPath();ctx.moveTo(lx+6,y+1);ctx.lineTo(lx+6,y-5);ctx.strokeStyle=dc.dark;ctx.lineWidth=1;ctx.stroke();
+      ctx.beginPath();ctx.moveTo(lx+4,y-3);ctx.lineTo(lx+6,y-5.5);ctx.lineTo(lx+8,y-3);ctx.stroke();
+    }else if(t.k==='flywheel'){
+      ctx.beginPath();ctx.arc(lx+6,y,4,0,Math.PI*2);
+      ctx.fillStyle=dc.col+'44';ctx.fill();ctx.strokeStyle=dc.dark;ctx.lineWidth=1.2;ctx.stroke();
+      ctx.beginPath();ctx.arc(lx+6,y,1.5,0,Math.PI*2);ctx.fillStyle=dc.dark;ctx.fill();
+    }
+    ctx.fillStyle='#333';ctx.textAlign='left';ctx.fillText(t.label,lx+14,y+3);
+    lx+=Math.min(110,Math.round(ctx.measureText(t.label).width)+22);
+  }
 }
 
 function initMOCAnim(){
@@ -1358,28 +1530,15 @@ function drawMOCFrame(fi){
   // Linha instantânea (azul animada)
   ctx.beginPath();for(let i=0;i<N;i++) i===0?ctx.moveTo(ppx(0),ppy(snap.H[0])):ctx.lineTo(ppx(i*dx),ppy(snap.H[i]));
   ctx.strokeStyle='#1565c0';ctx.lineWidth=2;ctx.stroke();
-  // Marcadores de ventosas de ar
-  if(_mocResult.protections&&_mocResult.protections.airValves&&_mocResult.protections.airValves.length>0){
-    ctx.font='bold 7.5px Segoe UI';
-    for(const av of _mocResult.protections.airValves){
-      const nd=Math.max(0,Math.min(N-1,Math.round((av.posM/L)*(N-1))));
-      const zv=z[nd],cx_v=ppx(av.posM),cy_v=ppy(zv);
-      const activated=av.vol_L>0.5;
-      const col=activated?'#00BCD4':'#B0BEC5',colDark=activated?'#006064':'#607D8B';
-      const ts=5;
-      ctx.beginPath();ctx.moveTo(cx_v,cy_v-ts*2);ctx.lineTo(cx_v,mg.t+2);
-      ctx.strokeStyle=col;ctx.lineWidth=1;ctx.setLineDash([3,3]);ctx.stroke();ctx.setLineDash([]);
-      ctx.beginPath();ctx.moveTo(cx_v,cy_v-ts*2);ctx.lineTo(cx_v-ts,cy_v);ctx.lineTo(cx_v+ts,cy_v);ctx.closePath();
-      ctx.fillStyle=col;ctx.fill();ctx.strokeStyle=colDark;ctx.lineWidth=1;ctx.stroke();
-      ctx.fillStyle=colDark;ctx.textAlign='left';
-      ctx.fillText(`Ventosa @${Math.round(av.posM)}m`,cx_v+4,mg.t+10);
-      ctx.fillText(activated?`${av.vol_L<1000?av.vol_L.toFixed(0)+'L':(av.vol_L/1000).toFixed(2)+'m³'} ar`:'não ativou',cx_v+4,mg.t+19);
-    }
-  }
+  // Símbolos hidráulicos de proteção
+  if(_mocResult.protections)
+    _drawAllDevices(ctx,ppx,ppy,x=>z[Math.max(0,Math.min(N-1,Math.round((x/L)*(N-1))))],_mocResult.protections,mg);
   ctx.restore(); // libera clip
+  // Legenda de dispositivos de proteção (segunda linha)
+  if(_mocResult.protections) _drawDeviceLegend(ctx,_mocResult.protections,mg,W);
   // Borda
   ctx.strokeStyle='rgba(100,120,140,.25)';ctx.lineWidth=1;ctx.strokeRect(mg.l,mg.t,cW,cH);
-  // Legenda
+  // Legenda de curvas
   const leg=[
     {c:'#1565c0',d:false,l:`Instantâneo  t = ${snap.t.toFixed(2)} s`},
     {c:'#00962a',d:false,l:hasBareM?'Sobrepressão máx. c/ prot.':'Sobrepressão máx.'},
@@ -1967,27 +2126,9 @@ function drawTransiente(dH_eff){
     ctx.beginPath();combined.forEach((p,i)=>i===0?ctx.moveTo(px(p.x),py(p.piezo)):ctx.lineTo(px(p.x),py(p.piezo)));
     ctx.strokeStyle='#0077b6';ctx.lineWidth=2.5;ctx.setLineDash([7,4]);ctx.stroke();ctx.setLineDash([]);
   }
-  // Marcadores de ventosas de ar
-  if(useMOC&&_mocResult.protections&&_mocResult.protections.airValves&&_mocResult.protections.airValves.length>0){
-    ctx.font='bold 7.5px Segoe UI';
-    for(const av of _mocResult.protections.airValves){
-      const nd=Math.max(0,Math.min(combined.length-1,Math.round((av.posM/L)*(combined.length-1))));
-      const zv=combined[nd].z,cx_v=px(av.posM),cy_v=py(zv);
-      const activated=av.vol_L>0.5;
-      const col=activated?'#00BCD4':'#B0BEC5',colDark=activated?'#006064':'#607D8B';
-      const ts=5;
-      // Haste vertical da cota até o topo do gráfico
-      ctx.beginPath();ctx.moveTo(cx_v,cy_v-ts*2);ctx.lineTo(cx_v,mg.t+2);
-      ctx.strokeStyle=col;ctx.lineWidth=1;ctx.setLineDash([3,3]);ctx.stroke();ctx.setLineDash([]);
-      // Triângulo ▲ na cota do terreno
-      ctx.beginPath();ctx.moveTo(cx_v,cy_v-ts*2);ctx.lineTo(cx_v-ts,cy_v);ctx.lineTo(cx_v+ts,cy_v);ctx.closePath();
-      ctx.fillStyle=col;ctx.fill();ctx.strokeStyle=colDark;ctx.lineWidth=1;ctx.stroke();
-      // Label no topo (dentro do clip)
-      ctx.fillStyle=colDark;ctx.textAlign='left';
-      ctx.fillText(`Ventosa @${Math.round(av.posM)}m`,cx_v+4,mg.t+10);
-      ctx.fillText(activated?`${av.vol_L<1000?av.vol_L.toFixed(0)+'L':(av.vol_L/1000).toFixed(2)+'m³'} ar`:'não ativou',cx_v+4,mg.t+19);
-    }
-  }
+  // Símbolos hidráulicos de proteção
+  if(useMOC&&_mocResult.protections)
+    _drawAllDevices(ctx,px,py,x=>combined[Math.max(0,Math.min(combined.length-1,Math.round((x/L)*(combined.length-1))))].z,_mocResult.protections,mg);
   ctx.restore(); // libera clip
   const srcLabel=useMOC?'MOC':'Joukowsky';
   const leg=[
@@ -2010,6 +2151,8 @@ function drawTransiente(dH_eff){
     ctx.fillStyle='#333';ctx.font='9.5px Segoe UI';ctx.textAlign='left';ctx.fillText(it.label,x+32,y+4);
     lx+=Math.min(195,Math.round(ctx.measureText(it.label).width)+46);
   });
+  // Legenda de dispositivos de proteção (segunda linha)
+  if(useMOC&&_mocResult.protections) _drawDeviceLegend(ctx,_mocResult.protections,mg,W);
 
   // Anotações ΔH no canto superior direito
   const dhSob=combined.reduce((mx,p)=>Math.max(mx,p.sobre-p.piezo),0);
