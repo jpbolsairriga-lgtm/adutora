@@ -154,7 +154,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v3.5 · 15/06/2026</span></h1>
+      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v3.6 · 15/06/2026</span></h1>
       <p>Régime Permanente &middot; Celeridade &middot; Joukowsky &middot; Envelope Sobre/Subpressão &middot; Risco de Cavitação</p>
     </div>
   </div>
@@ -1232,12 +1232,17 @@ function drawMOCFrame(fi){
   const cv=$('c-moc');if(!cv||!_mocResult)return;
   const ctx=cv.getContext('2d');
   const W=cv.width,Hc=cv.height;
-  const{N,L,dx,z,H_ss,Hmax,Hmin,snapshots}=_mocResult;
+  const{N,L,dx,z,H_ss,Hmax,Hmin,Hmax_bare,Hmin_bare,snapshots}=_mocResult;
+  const hasBareM=Hmax_bare!=null&&_protComponents.length>0;
   const snap=snapshots[fi];if(!snap)return;
   ctx.clearRect(0,0,W,Hc);ctx.fillStyle='#fff';ctx.fillRect(0,0,W,Hc);
   const mg={t:50,b:56,l:74,r:96},cW=W-mg.l-mg.r,cH=Hc-mg.t-mg.b;
   let hMin=Infinity,hMax=-Infinity,zBot=Infinity,zTopM=-Infinity;
-  for(let i=0;i<N;i++){if(Hmin[i]<hMin)hMin=Hmin[i];if(Hmax[i]>hMax)hMax=Hmax[i];if(z[i]<zBot)zBot=z[i];if(z[i]>zTopM)zTopM=z[i];}
+  for(let i=0;i<N;i++){
+    if(Hmin[i]<hMin)hMin=Hmin[i];if(Hmax[i]>hMax)hMax=Hmax[i];
+    if(hasBareM){if(Hmin_bare[i]<hMin)hMin=Hmin_bare[i];if(Hmax_bare[i]>hMax)hMax=Hmax_bare[i];}
+    if(z[i]<zBot)zBot=z[i];if(z[i]>zTopM)zTopM=z[i];
+  }
   const hRng=Math.max(hMax-hMin,10);
   // yMin sempre mostra terreno completo: pelo menos 15% do range abaixo do terreno mais baixo
   const yMin=Math.min(zBot,hMin)-Math.max(hRng*0.15,15);
@@ -1267,18 +1272,31 @@ function drawMOCFrame(fi){
       ctx.lineTo(ppx(i*dx),ppy(Math.max(Hmin[i],yMin)));ctx.closePath();ctx.fill();
     }
   }
-  // Faixa sobrepressão (verde claro)
+  // Curvas SEM proteção (comparação, fundo mais suave)
+  if(hasBareM){
+    ctx.beginPath();for(let i=0;i<N;i++) i===0?ctx.moveTo(ppx(0),ppy(H_ss[0])):ctx.lineTo(ppx(i*dx),ppy(H_ss[i]));
+    for(let i=N-1;i>=0;i--) ctx.lineTo(ppx(i*dx),ppy(Hmax_bare[i]));
+    ctx.closePath();ctx.fillStyle='rgba(198,40,40,.06)';ctx.fill();
+    ctx.beginPath();for(let i=0;i<N;i++) i===0?ctx.moveTo(ppx(0),ppy(H_ss[0])):ctx.lineTo(ppx(i*dx),ppy(H_ss[i]));
+    for(let i=N-1;i>=0;i--) ctx.lineTo(ppx(i*dx),ppy(Hmin_bare[i]));
+    ctx.closePath();ctx.fillStyle='rgba(224,123,0,.06)';ctx.fill();
+    ctx.beginPath();for(let i=0;i<N;i++) i===0?ctx.moveTo(ppx(0),ppy(Hmax_bare[0])):ctx.lineTo(ppx(i*dx),ppy(Hmax_bare[i]));
+    ctx.strokeStyle='rgba(198,40,40,.5)';ctx.lineWidth=1.5;ctx.setLineDash([5,3]);ctx.stroke();ctx.setLineDash([]);
+    ctx.beginPath();for(let i=0;i<N;i++) i===0?ctx.moveTo(ppx(0),ppy(Hmin_bare[0])):ctx.lineTo(ppx(i*dx),ppy(Hmin_bare[i]));
+    ctx.strokeStyle='rgba(224,123,0,.5)';ctx.lineWidth=1.5;ctx.setLineDash([5,3]);ctx.stroke();ctx.setLineDash([]);
+  }
+  // Faixa sobrepressão c/ proteção (verde claro)
   ctx.beginPath();for(let i=0;i<N;i++) i===0?ctx.moveTo(ppx(0),ppy(H_ss[0])):ctx.lineTo(ppx(i*dx),ppy(H_ss[i]));
   for(let i=N-1;i>=0;i--) ctx.lineTo(ppx(i*dx),ppy(Hmax[i]));
   ctx.closePath();ctx.fillStyle='rgba(0,180,60,.07)';ctx.fill();
-  // Faixa subpressão (vermelho claro)
+  // Faixa subpressão c/ proteção (vermelho claro)
   ctx.beginPath();for(let i=0;i<N;i++) i===0?ctx.moveTo(ppx(0),ppy(H_ss[0])):ctx.lineTo(ppx(i*dx),ppy(H_ss[i]));
   for(let i=N-1;i>=0;i--) ctx.lineTo(ppx(i*dx),ppy(Hmin[i]));
   ctx.closePath();ctx.fillStyle='rgba(200,0,0,.07)';ctx.fill();
-  // Envelope máximo (verde)
+  // Envelope máximo c/ proteção (verde)
   ctx.beginPath();for(let i=0;i<N;i++) i===0?ctx.moveTo(ppx(0),ppy(Hmax[0])):ctx.lineTo(ppx(i*dx),ppy(Hmax[i]));
   ctx.strokeStyle='#00962a';ctx.lineWidth=2;ctx.stroke();
-  // Envelope mínimo (vermelho)
+  // Envelope mínimo c/ proteção (vermelho)
   ctx.beginPath();for(let i=0;i<N;i++) i===0?ctx.moveTo(ppx(0),ppy(Hmin[0])):ctx.lineTo(ppx(i*dx),ppy(Hmin[i]));
   ctx.strokeStyle='#d32f2f';ctx.lineWidth=2;ctx.stroke();
   // Regime permanente — tracejado colorido por PN
@@ -1300,18 +1318,27 @@ function drawMOCFrame(fi){
   // Borda
   ctx.strokeStyle='rgba(100,120,140,.25)';ctx.lineWidth=1;ctx.strokeRect(mg.l,mg.t,cW,cH);
   // Legenda
-  const leg=[{c:'#1565c0',d:false,l:`Instantâneo  t = ${snap.t.toFixed(2)} s`},{c:'#00962a',d:false,l:'Sobrepressão máx.'},{c:'#d32f2f',d:false,l:'Subpressão mín.'},{c:'rgba(60,80,100,.7)',d:true,l:'Regime permanente'}];
+  const leg=[
+    {c:'#1565c0',d:false,l:`Instantâneo  t = ${snap.t.toFixed(2)} s`},
+    {c:'#00962a',d:false,l:hasBareM?'Sobrepressão máx. c/ prot.':'Sobrepressão máx.'},
+    {c:'#d32f2f',d:false,l:hasBareM?'Subpressão mín. c/ prot.':'Subpressão mín.'},
+    ...(hasBareM?[
+      {c:'rgba(198,40,40,.6)',d:true,l:'Sobrepressão s/ prot.'},
+      {c:'rgba(224,123,0,.6)',d:true,l:'Subpressão s/ prot.'},
+    ]:[]),
+    {c:'rgba(60,80,100,.7)',d:true,l:'Regime permanente'},
+  ];
   let lx=mg.l+6;
   for(const it of leg){
-    if(lx+150>W)break;
+    if(lx+130>W)break;
     ctx.strokeStyle=it.c;ctx.lineWidth=2;if(it.d)ctx.setLineDash([5,3]);else ctx.setLineDash([]);
     ctx.beginPath();ctx.moveTo(lx,mg.t-14);ctx.lineTo(lx+22,mg.t-14);ctx.stroke();ctx.setLineDash([]);
     ctx.fillStyle='#333';ctx.font='9.5px Segoe UI';ctx.textAlign='left';ctx.fillText(it.l,lx+26,mg.t-10);
-    lx+=Math.min(190,Math.round(ctx.measureText(it.l).width)+50);
+    lx+=Math.min(185,Math.round(ctx.measureText(it.l).width)+46);
   }
   // Anotações ΔH (canto superior direito da animação)
-  const dhSobA=Math.max(...Array.from(Hmax).map((h,i)=>h-H_ss[i]));
-  const dhSubA=Math.max(...Array.from(Hmin).map((h,i)=>H_ss[i]-h));
+  let dhSobA=0,dhSubA=0;
+  for(let i=0;i<N;i++){if(Hmax[i]-H_ss[i]>dhSobA)dhSobA=Hmax[i]-H_ss[i];if(H_ss[i]-Hmin[i]>dhSubA)dhSubA=H_ss[i]-Hmin[i];}
   ctx.font='bold 9px Segoe UI';ctx.textAlign='right';
   ctx.fillStyle='#00962a';ctx.fillText(`+${Math.round(dhSobA)} m`,W-mg.r-4,mg.t+12);
   ctx.fillStyle='#d32f2f';ctx.fillText(`−${Math.round(dhSubA)} m`,W-mg.r-4,mg.t+24);
@@ -1332,16 +1359,32 @@ function drawMOCFrame(fi){
     ctx.beginPath();ctx.moveTo(mg.l+cW,yT);ctx.lineTo(mg.l+cW+5,yT);ctx.stroke();
     ctx.fillStyle='#607080';ctx.fillText(Math.round(p)+' mca',mg.l+cW+8,yT+3.5);
   }
-  // Linhas PN (dashed coloridas)
+  // Linhas PN — seguem o terreno (pressão manométrica constante ao longo do tubo)
+  const pnLimOrdM=[60,80,125,145,180];
   ctx.font='bold 8px Segoe UI';
-  for(const pn of [60,80,125,145,180]){
-    const H_lim=zRefM+lim_m[pn];
-    if(H_lim<yMin-1||H_lim>yMax+1)continue;
-    const yL=ppy(H_lim);
-    ctx.strokeStyle=PN_COLOR[pn];ctx.lineWidth=1;ctx.setLineDash([5,4]);
-    ctx.beginPath();ctx.moveTo(mg.l,yL);ctx.lineTo(mg.l+cW,yL);ctx.stroke();ctx.setLineDash([]);
-    ctx.fillStyle=PN_COLOR[pn];ctx.textAlign='left';
-    ctx.fillText(`PN${pn} ${lim_m[pn]}mca`,mg.l+cW+8,yL-1.5);
+  const usedLblM=[];
+  for(const pn of pnLimOrdM){
+    const lim=lim_m[pn];
+    let visible=false;
+    for(let i=0;i<N;i++){const h=z[i]+lim;if(h>=yMin-5&&h<=yMax+5){visible=true;break;}}
+    if(!visible)continue;
+    ctx.beginPath();ctx.strokeStyle=PN_COLOR[pn];ctx.lineWidth=1.2;ctx.setLineDash([5,4]);
+    let started=false;
+    for(let i=0;i<N;i++){
+      const h=z[i]+lim;
+      if(h<yMin-20||h>yMax+20){started=false;continue;}
+      started?ctx.lineTo(ppx(i*dx),ppy(h)):(ctx.moveTo(ppx(i*dx),ppy(h)),started=true);
+    }
+    if(started)ctx.stroke();
+    ctx.setLineDash([]);
+    const lastH=z[N-1]+lim;
+    let yLbl=ppy(lastH);
+    for(const yp of usedLblM){if(Math.abs(yp-yLbl)<12)yLbl=Math.min(yp-12,yLbl-12);}
+    usedLblM.push(yLbl);
+    if(yLbl>=mg.t-2&&yLbl<=mg.t+cH+6){
+      ctx.fillStyle=PN_COLOR[pn];ctx.textAlign='left';
+      ctx.fillText(`PN${pn} ${lim}mca`,mg.l+cW+8,yLbl+3.5);
+    }
   }
   ctx.save();ctx.translate(W-5,mg.t+cH/2);ctx.rotate(-Math.PI/2);
   ctx.font='10px Segoe UI';ctx.fillStyle='#607080';ctx.textAlign='center';
