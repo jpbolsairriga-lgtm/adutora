@@ -154,7 +154,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v3.6 · 15/06/2026</span></h1>
+      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v3.7 · 15/06/2026</span></h1>
       <p>Régime Permanente &middot; Celeridade &middot; Joukowsky &middot; Envelope Sobre/Subpressão &middot; Risco de Cavitação</p>
     </div>
   </div>
@@ -1359,31 +1359,36 @@ function drawMOCFrame(fi){
     ctx.beginPath();ctx.moveTo(mg.l+cW,yT);ctx.lineTo(mg.l+cW+5,yT);ctx.stroke();
     ctx.fillStyle='#607080';ctx.fillText(Math.round(p)+' mca',mg.l+cW+8,yT+3.5);
   }
-  // Linhas PN — seguem o terreno (pressão manométrica constante ao longo do tubo)
-  const pnLimOrdM=[60,80,125,145,180];
+  // Linhas PN — função degrau por segmento Multi-PN (ref. cota sucção z[0])
   ctx.font='bold 8px Segoe UI';
-  const usedLblM=[];
-  for(const pn of pnLimOrdM){
-    const lim=lim_m[pn];
-    let visible=false;
-    for(let i=0;i<N;i++){const h=z[i]+lim;if(h>=yMin-5&&h<=yMax+5){visible=true;break;}}
-    if(!visible)continue;
-    ctx.beginPath();ctx.strokeStyle=PN_COLOR[pn];ctx.lineWidth=1.2;ctx.setLineDash([5,4]);
-    let started=false;
-    for(let i=0;i<N;i++){
-      const h=z[i]+lim;
-      if(h<yMin-20||h>yMax+20){started=false;continue;}
-      started?ctx.lineTo(ppx(i*dx),ppy(h)):(ctx.moveTo(ppx(i*dx),ppy(h)),started=true);
-    }
-    if(started)ctx.stroke();
-    ctx.setLineDash([]);
-    const lastH=z[N-1]+lim;
-    let yLbl=ppy(lastH);
-    for(const yp of usedLblM){if(Math.abs(yp-yLbl)<12)yLbl=Math.min(yp-12,yLbl-12);}
-    usedLblM.push(yLbl);
-    if(yLbl>=mg.t-2&&yLbl<=mg.t+cH+6){
-      ctx.fillStyle=PN_COLOR[pn];ctx.textAlign='left';
-      ctx.fillText(`PN${pn} ${lim}mca`,mg.l+cW+8,yLbl+3.5);
+  if(_multi&&_multi.segs&&_multi.segs.length>0){
+    const segsPN=_multi.segs;
+    const usedPNLblM={};const usedLblYM=[];
+    for(let s=0;s<segsPN.length;s++){
+      const seg=segsPN[s];const lim=lim_m[seg.pn];
+      const H_lim=zRefM+lim;
+      if(H_lim<yMin-5||H_lim>yMax+5)continue;
+      const x0=ppx(seg.from),x1=ppx(seg.to),yL=ppy(H_lim);
+      ctx.strokeStyle=PN_COLOR[seg.pn];ctx.lineWidth=1.5;ctx.setLineDash([5,4]);
+      ctx.beginPath();ctx.moveTo(x0,yL);ctx.lineTo(x1,yL);ctx.stroke();ctx.setLineDash([]);
+      // Degrau vertical para o próximo segmento
+      if(s<segsPN.length-1){
+        const H_next=zRefM+lim_m[segsPN[s+1].pn];
+        const yN=ppy(H_next);
+        ctx.strokeStyle='rgba(100,120,140,.5)';ctx.lineWidth=1;ctx.setLineDash([3,3]);
+        ctx.beginPath();ctx.moveTo(x1,yL);ctx.lineTo(x1,yN);ctx.stroke();ctx.setLineDash([]);
+      }
+      // Label à direita (uma vez por classe PN)
+      if(!usedPNLblM[seg.pn]){
+        usedPNLblM[seg.pn]=true;
+        let yLbl=yL;
+        for(const yp of usedLblYM){if(Math.abs(yp-yLbl)<12)yLbl=Math.min(yp-12,yLbl-12);}
+        usedLblYM.push(yLbl);
+        if(yLbl>=mg.t-2&&yLbl<=mg.t+cH+6){
+          ctx.fillStyle=PN_COLOR[seg.pn];ctx.textAlign='left';
+          ctx.fillText(`PN${seg.pn} ${lim}mca`,mg.l+cW+8,yLbl+3.5);
+        }
+      }
     }
   }
   ctx.save();ctx.translate(W-5,mg.t+cH/2);ctx.rotate(-Math.PI/2);
@@ -1921,33 +1926,36 @@ function drawTransiente(dH_eff){
     ctx.beginPath();ctx.moveTo(mg.l+cW,yT);ctx.lineTo(mg.l+cW+5,yT);ctx.stroke();
     ctx.fillStyle='#607080';ctx.fillText(Math.round(p)+' mca',mg.l+cW+8,yT+3.5);
   }
-  // Linhas de limite PN — seguem o terreno (pressão manométrica = cte ao longo do tubo)
-  const pnLimOrd=[60,80,125,145,180];
+  // Linhas de limite PN — função degrau por segmento Multi-PN (ref. cota sucção z[0])
   ctx.font='bold 8.5px Segoe UI';
-  const usedLabelY=[];
-  for(const pn of pnLimOrd){
-    const lim=lim_r[pn];
-    // Verifica se a curva toca a janela visível
-    let visible=false;
-    for(const p of combined){const h=p.z+lim;if(h>=yMin-5&&h<=yMax+5){visible=true;break;}}
-    if(!visible)continue;
-    ctx.beginPath();ctx.strokeStyle=PN_COLOR[pn];ctx.lineWidth=1.2;ctx.setLineDash([6,4]);
-    let started=false;
-    for(const p of combined){
-      const h=p.z+lim;
-      if(h<yMin-20||h>yMax+20){started=false;continue;}
-      started?ctx.lineTo(px(p.x),py(h)):(ctx.moveTo(px(p.x),py(h)),started=true);
-    }
-    if(started)ctx.stroke();
-    ctx.setLineDash([]);
-    // Label à direita — evitar sobreposição
-    const lastH=combined[combined.length-1].z+lim;
-    let yLbl=py(lastH);
-    for(const yp of usedLabelY){if(Math.abs(yp-yLbl)<12)yLbl=Math.min(yp-12,yLbl-12);}
-    usedLabelY.push(yLbl);
-    if(yLbl>=mg.t-2&&yLbl<=mg.t+cH+6){
-      ctx.fillStyle=PN_COLOR[pn];ctx.textAlign='left';
-      ctx.fillText(`PN${pn} ${lim}mca`,mg.l+cW+8,yLbl+3.5);
+  if(_multi&&_multi.segs&&_multi.segs.length>0){
+    const segsPN=_multi.segs;
+    const usedPNLblR={};const usedLblYR=[];
+    for(let s=0;s<segsPN.length;s++){
+      const seg=segsPN[s];const lim=lim_r[seg.pn];
+      const H_lim=zRef+lim;
+      if(H_lim<yMin-5||H_lim>yMax+5)continue;
+      const x0=px(seg.from),x1=px(seg.to),yL=py(H_lim);
+      ctx.strokeStyle=PN_COLOR[seg.pn];ctx.lineWidth=1.5;ctx.setLineDash([6,4]);
+      ctx.beginPath();ctx.moveTo(x0,yL);ctx.lineTo(x1,yL);ctx.stroke();ctx.setLineDash([]);
+      // Degrau vertical para o próximo segmento
+      if(s<segsPN.length-1){
+        const H_next=zRef+lim_r[segsPN[s+1].pn];
+        const yN=py(H_next);
+        ctx.strokeStyle='rgba(100,120,140,.5)';ctx.lineWidth=1;ctx.setLineDash([3,3]);
+        ctx.beginPath();ctx.moveTo(x1,yL);ctx.lineTo(x1,yN);ctx.stroke();ctx.setLineDash([]);
+      }
+      // Label à direita (uma vez por classe PN)
+      if(!usedPNLblR[seg.pn]){
+        usedPNLblR[seg.pn]=true;
+        let yLbl=yL;
+        for(const yp of usedLblYR){if(Math.abs(yp-yLbl)<12)yLbl=Math.min(yp-12,yLbl-12);}
+        usedLblYR.push(yLbl);
+        if(yLbl>=mg.t-2&&yLbl<=mg.t+cH+6){
+          ctx.fillStyle=PN_COLOR[seg.pn];ctx.textAlign='left';
+          ctx.fillText(`PN${seg.pn} ${lim}mca`,mg.l+cW+8,yLbl+3.5);
+        }
+      }
     }
   }
   // Rótulo eixo direito
