@@ -154,7 +154,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v3.4 · 13/06/2026</span></h1>
+      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v3.5 · 15/06/2026</span></h1>
       <p>Régime Permanente &middot; Celeridade &middot; Joukowsky &middot; Envelope Sobre/Subpressão &middot; Risco de Cavitação</p>
     </div>
   </div>
@@ -1140,7 +1140,40 @@ function runMOC(){
     for(let i=0;i<N;i++){if(H[i]>Hmax[i])Hmax[i]=H[i];if(H[i]<Hmin[i])Hmin[i]=H[i];}
     if(step%snap_iv===0)snapshots.push({t:(step+1)*dt,H:new Float64Array(H)});
   }
-  _mocResult={N,L,dx,dt,z,H_ss,Hmax,Hmin,snapshots,
+
+  // ── Simulação SEM proteção (para comparação) ─────────────────────
+  let Hmax_bare=null,Hmin_bare=null;
+  if(_protComponents.length>0){
+    const H_b=new Float64Array(H_ss),Q_b=new Float64Array(N).fill(Q0);
+    Hmax_bare=new Float64Array(H_ss);Hmin_bare=new Float64Array(H_ss);
+    const Hn_b=new Float64Array(N),Qn_b=new Float64Array(N);
+    for(let step=0;step<nTot;step++){
+      const t=step*dt;
+      for(let i=1;i<N-1;i++){
+        const Bl=B_nd[i-1],Br=B_nd[i+1];
+        const CP=H_b[i-1]+Bl*Q_b[i-1]-R[i-1]*Q_b[i-1]*Math.abs(Q_b[i-1]);
+        const CM=H_b[i+1]-Br*Q_b[i+1]+R[i]*Q_b[i+1]*Math.abs(Q_b[i+1]);
+        Qn_b[i]=(CP-CM)/(Bl+Br);Hn_b[i]=(Br*CP+Bl*CM)/(Bl+Br);
+      }
+      if(evtType==='valve'){
+        const CM0=H_b[1]-B_nd[1]*Q_b[1]+R[0]*Q_b[1]*Math.abs(Q_b[1]);
+        Hn_b[0]=H_up;Qn_b[0]=(H_up-CM0)/B_nd[0];
+        const tau=Math.max(0,1-t/tClose_eff);
+        const CPl=H_b[N-2]+B_nd[N-2]*Q_b[N-2]-R[N-2]*Q_b[N-2]*Math.abs(Q_b[N-2]);
+        Qn_b[N-1]=Q0*tau;Hn_b[N-1]=CPl-B_nd[N-1]*Qn_b[N-1];
+      }else{
+        const tau=Math.max(0,1-t/tClose_eff);
+        const CM0=H_b[1]-B_nd[1]*Q_b[1]+R[0]*Q_b[1]*Math.abs(Q_b[1]);
+        Qn_b[0]=Math.max(0,Q0*tau);Hn_b[0]=CM0+B_nd[0]*Qn_b[0];
+        const CPl=H_b[N-2]+B_nd[N-2]*Q_b[N-2]-R[N-2]*Q_b[N-2]*Math.abs(Q_b[N-2]);
+        Hn_b[N-1]=H_dn;Qn_b[N-1]=(CPl-H_dn)/B_nd[N-1];
+      }
+      H_b.set(Hn_b);Q_b.set(Qn_b);
+      for(let i=0;i<N;i++){if(H_b[i]>Hmax_bare[i])Hmax_bare[i]=H_b[i];if(H_b[i]<Hmin_bare[i])Hmin_bare[i]=H_b[i];}
+    }
+  }
+
+  _mocResult={N,L,dx,dt,z,H_ss,Hmax,Hmin,Hmax_bare,Hmin_bare,snapshots,
     protections:{
       vessels:vessels.map(v=>({nd:v.nd,posM:v.nd*dx,vol:v.Va0*1000})),
       hydrotanks:hydrotanks.map(v=>({nd:v.nd,posM:v.nd*dx,vol:v.Va0*1000,injected:v.injected})),
@@ -1694,19 +1727,25 @@ function drawTransiente(dH_eff){
   const useMOC=_mocResult!=null;
   const combined=[];
   const L_cv=_profileData[_profileData.length-1].dist;
+  const hasBare=useMOC&&_mocResult.Hmax_bare!=null&&_protComponents.length>0;
   if(useMOC){
-    const{N,dx,z,H_ss,Hmax,Hmin}=_mocResult;
-    for(let i=0;i<N;i++) combined.push({x:i*dx,z:z[i],piezo:H_ss[i],sobre:Hmax[i],sub:Hmin[i]});
+    const{N,dx,z,H_ss,Hmax,Hmin,Hmax_bare,Hmin_bare}=_mocResult;
+    for(let i=0;i<N;i++) combined.push({
+      x:i*dx,z:z[i],piezo:H_ss[i],sobre:Hmax[i],sub:Hmin[i],
+      sobre_b:hasBare?Hmax_bare[i]:null,sub_b:hasBare?Hmin_bare[i]:null
+    });
   } else {
     const ptsP=pressurePointsProfile(_multi,_profileData);
-    _profileData.forEach((p,i)=>{const P=ptsP[i]?.P??0;combined.push({x:p.dist,z:p.elev,piezo:p.elev+P,sobre:p.elev+P+dH_eff,sub:p.elev+P-dH_eff});});
+    _profileData.forEach((p,i)=>{const P=ptsP[i]?.P??0;combined.push({x:p.dist,z:p.elev,piezo:p.elev+P,sobre:p.elev+P+dH_eff,sub:p.elev+P-dH_eff,sobre_b:null,sub_b:null});});
   }
   const L=combined[combined.length-1].x;
-  // Eixo Y inteligente: foca no envelope HGL, não deixa terreno comprimir a escala
+  // Eixo Y: inclui envelopes bare (sem proteção) no cálculo de escala
   let hglMin=Infinity,hglMax=-Infinity,zMinAll=Infinity;
   for(const p of combined){
-    if(p.sub<hglMin)hglMin=p.sub;
-    if(p.sobre>hglMax)hglMax=p.sobre;
+    const subMin=p.sub_b!=null?Math.min(p.sub,p.sub_b):p.sub;
+    const sobreMax=p.sobre_b!=null?Math.max(p.sobre,p.sobre_b):p.sobre;
+    if(subMin<hglMin)hglMin=subMin;
+    if(sobreMax>hglMax)hglMax=sobreMax;
     if(p.z<zMinAll)zMinAll=p.z;
   }
   const hglRange=Math.max(hglMax-hglMin,10);
@@ -1742,6 +1781,24 @@ function drawTransiente(dH_eff){
       ctx.closePath();ctx.fill();
     }
   }
+  // ── Curvas SEM proteção (comparação, apenas quando há dispositivos) ──
+  if(hasBare){
+    // Faixa sobrepressão bare (muito sutil)
+    ctx.beginPath();combined.forEach((p,i)=>i===0?ctx.moveTo(px(p.x),py(p.piezo)):ctx.lineTo(px(p.x),py(p.piezo)));
+    for(let i=combined.length-1;i>=0;i--)ctx.lineTo(px(combined[i].x),py(combined[i].sobre_b));
+    ctx.closePath();ctx.fillStyle='rgba(198,40,40,.06)';ctx.fill();
+    // Faixa subpressão bare (muito sutil)
+    ctx.beginPath();combined.forEach((p,i)=>i===0?ctx.moveTo(px(p.x),py(p.piezo)):ctx.lineTo(px(p.x),py(p.piezo)));
+    for(let i=combined.length-1;i>=0;i--)ctx.lineTo(px(combined[i].x),py(combined[i].sub_b));
+    ctx.closePath();ctx.fillStyle='rgba(224,123,0,.06)';ctx.fill();
+    // Linha sobrepressão bare (vermelho fino tracejado)
+    ctx.beginPath();combined.forEach((p,i)=>i===0?ctx.moveTo(px(p.x),py(p.sobre_b)):ctx.lineTo(px(p.x),py(p.sobre_b)));
+    ctx.strokeStyle='rgba(198,40,40,.45)';ctx.lineWidth=1.5;ctx.setLineDash([5,3]);ctx.stroke();ctx.setLineDash([]);
+    // Linha subpressão bare (laranja fino tracejado)
+    ctx.beginPath();combined.forEach((p,i)=>i===0?ctx.moveTo(px(p.x),py(p.sub_b)):ctx.lineTo(px(p.x),py(p.sub_b)));
+    ctx.strokeStyle='rgba(224,123,0,.45)';ctx.lineWidth=1.5;ctx.setLineDash([5,3]);ctx.stroke();ctx.setLineDash([]);
+  }
+  // ── Curvas COM proteção (sobre/subpressão) ──────────────────────────
   // Faixa sobrepressão
   ctx.beginPath();combined.forEach((p,i)=>i===0?ctx.moveTo(px(p.x),py(p.piezo)):ctx.lineTo(px(p.x),py(p.piezo)));
   for(let i=combined.length-1;i>=0;i--)ctx.lineTo(px(combined[i].x),py(combined[i].sobre));
@@ -1772,9 +1829,13 @@ function drawTransiente(dH_eff){
 
   const srcLabel=useMOC?'MOC':'Joukowsky';
   const leg=[
-    {color:'rgba(60,80,100,.7)',dash:true,fill:null,label:'Regime perm. (por PN)'},
-    {color:'#c62828',dash:false,fill:'rgba(198,40,40,.15)',label:`Sobrepressão máx. (${srcLabel})`},
-    {color:'#e07b00',dash:false,fill:'rgba(224,123,0,.15)',label:`Subpressão mín. (${srcLabel})`},
+    {color:'rgba(60,80,100,.7)',dash:true,fill:null,label:'Regime permanente (por PN)'},
+    {color:'#c62828',dash:false,fill:'rgba(198,40,40,.15)',label:`Sobrepressão máx. c/ proteção`},
+    {color:'#e07b00',dash:false,fill:'rgba(224,123,0,.15)',label:`Subpressão mín. c/ proteção`},
+    ...(hasBare?[
+      {color:'rgba(198,40,40,.5)',dash:true,fill:null,label:'Sobrepressão máx. s/ proteção'},
+      {color:'rgba(224,123,0,.5)',dash:true,fill:null,label:'Subpressão mín. s/ proteção'},
+    ]:[]),
     {color:'rgba(198,40,40,.6)',dash:false,fill:'rgba(198,40,40,.22)',label:'Cavitação (P < 0)'},
   ];
   let lx=mg.l+6;
@@ -1817,17 +1878,34 @@ function drawTransiente(dH_eff){
     ctx.beginPath();ctx.moveTo(mg.l+cW,yT);ctx.lineTo(mg.l+cW+5,yT);ctx.stroke();
     ctx.fillStyle='#607080';ctx.fillText(Math.round(p)+' mca',mg.l+cW+8,yT+3.5);
   }
-  // Linhas de limite PN (horizontais coloridas)
+  // Linhas de limite PN — seguem o terreno (pressão manométrica = cte ao longo do tubo)
   const pnLimOrd=[60,80,125,145,180];
-  ctx.font='bold 8px Segoe UI';
+  ctx.font='bold 8.5px Segoe UI';
+  const usedLabelY=[];
   for(const pn of pnLimOrd){
-    const H_lim=zRef+lim_r[pn];
-    if(H_lim<yMin-1||H_lim>yMax+1)continue;
-    const yL=py(H_lim);
-    ctx.strokeStyle=PN_COLOR[pn];ctx.lineWidth=1;ctx.setLineDash([5,4]);
-    ctx.beginPath();ctx.moveTo(mg.l,yL);ctx.lineTo(mg.l+cW,yL);ctx.stroke();ctx.setLineDash([]);
-    ctx.fillStyle=PN_COLOR[pn];ctx.textAlign='left';
-    ctx.fillText(`PN${pn} ${lim_r[pn]}mca`,mg.l+cW+8,yL-1.5);
+    const lim=lim_r[pn];
+    // Verifica se a curva toca a janela visível
+    let visible=false;
+    for(const p of combined){const h=p.z+lim;if(h>=yMin-5&&h<=yMax+5){visible=true;break;}}
+    if(!visible)continue;
+    ctx.beginPath();ctx.strokeStyle=PN_COLOR[pn];ctx.lineWidth=1.2;ctx.setLineDash([6,4]);
+    let started=false;
+    for(const p of combined){
+      const h=p.z+lim;
+      if(h<yMin-20||h>yMax+20){started=false;continue;}
+      started?ctx.lineTo(px(p.x),py(h)):(ctx.moveTo(px(p.x),py(h)),started=true);
+    }
+    if(started)ctx.stroke();
+    ctx.setLineDash([]);
+    // Label à direita — evitar sobreposição
+    const lastH=combined[combined.length-1].z+lim;
+    let yLbl=py(lastH);
+    for(const yp of usedLabelY){if(Math.abs(yp-yLbl)<12)yLbl=Math.min(yp-12,yLbl-12);}
+    usedLabelY.push(yLbl);
+    if(yLbl>=mg.t-2&&yLbl<=mg.t+cH+6){
+      ctx.fillStyle=PN_COLOR[pn];ctx.textAlign='left';
+      ctx.fillText(`PN${pn} ${lim}mca`,mg.l+cW+8,yLbl+3.5);
+    }
   }
   // Rótulo eixo direito
   ctx.save();ctx.translate(W-5,mg.t+cH/2);ctx.rotate(-Math.PI/2);
