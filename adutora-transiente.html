@@ -1118,30 +1118,29 @@ function runMOC(){
           Qn[i]=(Hset_abs-CM)/Br; // fluxo a jusante mantido; excesso aliviado
         }
       }
-      // ── VR-Bypass: VR fecha refluxo; orifício dissipa sobrepressão ───
+      // ── VR-Bypass: VR fecha refluxo; orifício no bypass dissipa sobrepressão ─
       if(vrbypassNodeSet.has(i)){
         const vr=vrbypassMap.get(i);
-        if(vr.closed){
-          // VR fechada: verificar se fluxo voltou a ser positivo
-          const Qtest=(CP-CM)/(Bl+Br);
-          if(Qtest>1e-9){vr.closed=false;/* usa Qn/Hn já calculados acima */}
-          else{
-            // Orifício ativo (fluxo reverso controlado)
-            // Equação: K_or × Q² − (Bl+Br) × Q + (CP−CM) = 0  →  raiz negativa
-            const Bsum=Bl+Br;
-            const disc=Bsum*Bsum-4*vr.K_or*(CP-CM);
-            const Q_or=disc>=0?((Bsum-Math.sqrt(disc))/(2*vr.K_or)):0;
-            Qn[i]=Q_or;
-            Hn[i]=CM+Br*Q_or; // pressão downstream (lado sobrepressão)
-          }
-        } else if(Qn[i]<-1e-9){
-          // Detectou refluxo → VR fecha instantaneamente
-          vr.closed=true;
+        const _applyOrifice=()=>{
+          // Quadrática: K_or·Q²−(Bl+Br)·Q+(CP−CM)=0  →  raiz Q_or<0 (refluxo controlado)
           const Bsum=Bl+Br;
           const disc=Bsum*Bsum-4*vr.K_or*(CP-CM);
           const Q_or=disc>=0?((Bsum-Math.sqrt(disc))/(2*vr.K_or)):0;
           Qn[i]=Q_or;
-          Hn[i]=CM+Br*Q_or;
+          // H_up (lado bomba): propagação correta para vizinhos upstream
+          Hn[i]=CP-Bl*Q_or;
+          // H_down (lado reservatório / sobrepressão): rastreia envelope
+          const H_down=CM+Br*Q_or;
+          if(H_down>Hmax[i])Hmax[i]=H_down;
+          if(H_down<Hmin[i])Hmin[i]=H_down;
+        };
+        if(vr.closed){
+          const Qtest=(CP-CM)/(Bl+Br);
+          if(Qtest>1e-9){vr.closed=false;/* fluxo positivo restaurado — nó padrão */}
+          else{_applyOrifice();}
+        } else if(Qn[i]<-1e-9){
+          vr.closed=true;
+          _applyOrifice();
         }
       }
       // ── Ventosa: admissão (H<z) e expulsão (Va>0) — modelo dois estágios ──
@@ -2071,10 +2070,28 @@ function buildTransienteCard(a,tc,dH_inst,dH_eff,VMax,tClose,tc2){
     return'';
   }).filter(Boolean).join(' ');
 
+  // ── Tabela de resultado VR-Bypass ─────────────────────────────────
+  const _vrList=_mocResult?.protections?.vrBypass||[];
+  function _nextDN(d_mm){const dns=[15,20,25,32,40,50,65,80,100,125,150];return dns.find(d=>d>=d_mm)||Math.ceil(d_mm/5)*5;}
+  const vrBypassTable=_vrList.length?`
+    <div class="ct tr" style="margin-top:.5rem">&#128295; VR-Bypass &mdash; Especifica&#231;&#227;o do Orifício</div>
+    <div class="cmp-wrap" style="margin-bottom:.6rem"><table class="cmp"><thead><tr>
+      <th>Posi&#231;&#227;o</th><th>&#216; Orifício calculado</th><th>Tubo bypass (DN comercial)</th><th>&#916;H_max admissível</th><th>Cd</th>
+    </tr></thead><tbody>${_vrList.map(vr=>{
+      const d=vr.d_or_mm,dn=_nextDN(d);
+      return`<tr>
+        <td>${Math.round(vr.posM)} m</td>
+        <td><b style="color:#e65100;font-size:1rem">&#216;${d.toFixed(1)} mm</b></td>
+        <td><b>DN ${dn}</b> <span style="color:#607080;font-size:.75rem">(&#216;int &#8805; ${d.toFixed(0)} mm)</span></td>
+        <td>${vr.dH_max.toFixed(1)} mca</td>
+        <td>0.61</td>
+      </tr>`;
+    }).join('')}</tbody></table></div>`:'';
+
   const protecao=hasRisk
     ?`<div class="sbox ${anyProt?'warn':'err'}" style="margin-top:.5rem">
-        <b>⚠ Subpressão abaixo de zero em ${riskPts.length} ponto(s) — risco de cavitação.</b>
-        ${anyProt?`<div style="margin-top:.3rem;font-size:.79rem">Proteções ativas: ${protBadges}<br>Ajuste o volume da câmara de ar ou adicione ventosas para eliminar os ${riskPts.length} ponto(s) restantes.</div>`
+        <b>&#9888; Subpress&#227;o abaixo de zero em ${riskPts.length} ponto(s) &mdash; risco de cavita&#231;&#227;o.</b>
+        ${anyProt?`<div style="margin-top:.3rem;font-size:.79rem">Prote&#231;&#245;es ativas: ${protBadges}<br>Ajuste o volume da c&#226;mara de ar ou adicione ventosas para eliminar os ${riskPts.length} ponto(s) restantes.</div>`
         :`<ul style="margin:.3rem 0 0 1rem;font-size:.8rem">
           <li>Adicionar <b>&#127958; c&#226;mara de ar</b> pr&#243;ximo &#224; bomba</li>
           <li>Adicionar <b>&#127788; ventosa de admiss&#227;o</b> nos pontos altos</li>
@@ -2082,7 +2099,7 @@ function buildTransienteCard(a,tc,dH_inst,dH_eff,VMax,tClose,tc2){
           <li>Aumentar o tempo de parada com <b>&#9881; volante de in&#233;rcia</b></li>
         </ul>`}
       </div>`
-    :`<div class="sbox ok" style="margin-top:.5rem">✓ Envelope de subpressão acima de zero em toda a extensão — sem risco de cavitação.
+    :`<div class="sbox ok" style="margin-top:.5rem">&#10003; Envelope de subpress&#227;o acima de zero em toda a extens&#227;o &mdash; sem risco de cavita&#231;&#227;o.
         ${anyProt?`<span style="margin-left:.5rem">${protBadges}</span>`:''}
       </div>`;
 
@@ -2132,6 +2149,8 @@ function buildTransienteCard(a,tc,dH_inst,dH_eff,VMax,tClose,tc2){
       <th>PN</th><th>D. Ext.</th><th>Espessura</th><th>D. Int.</th>
       <th>Celeridade (a)</th><th>Velocidade</th><th>ΔH Joukowsky</th><th>Comprimento</th>
     </tr></thead><tbody>${segRows}</tbody></table></div>
+
+    ${vrBypassTable}
 
     <div class="ct tr">&#128202; Envelope de Press&#227;o Transit&#243;ria &mdash; MOC (por trecho)<button onclick="mostrarTabelaMOC()" style="margin-left:auto;background:#5e35b1;color:#fff;border:none;border-radius:7px;padding:.22rem .85rem;font-size:.76rem;font-weight:700;cursor:pointer;white-space:nowrap">&#128203; Tabela</button></div>
     <canvas id="c-transiente" width="1200" height="500" style="width:100%;display:block"></canvas>
