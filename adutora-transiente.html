@@ -361,6 +361,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
       <option value="checkvalve">&#128274; V&#225;lvula de reten&#231;&#227;o</option>
       <option value="reliefvalve">&#128308; Val. Antecipadora de Onda</option>
       <option value="flywheel">&#9881; Volante de in&#233;rcia</option>
+      <option value="vrbypass">&#128295; VR-Bypass (Amort. Hidr&#225;ulico)</option>
     </select>
     <button onclick="protAdd()" style="background:#2e7d32;color:#fff;border:none;border-radius:6px;padding:.35rem 1rem;cursor:pointer;font-size:.82rem;font-weight:700;white-space:nowrap">+ Adicionar</button>
   </div>
@@ -370,6 +371,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
     <b>C&#226;mara de ar</b>: atenua queda de press&#227;o.
     <b>Ventosa</b>: limita subpress&#227;o a 0 mca (vazio = pontos altos autom&#225;ticos).
     <b>Reten&#231;&#227;o</b>: impede refluxo e amortece sobrepressão de retorno.
+    <b>VR-Bypass</b>: VR + placa de orifício no bypass — dissipa a sobrepressão de retorno; calcula Ø automaticamente.
     <b>Volante</b>: aumenta o tempo de parada da bomba.
   </div>
 </div>
@@ -813,6 +815,7 @@ function protAdd(){
   else if(type==='checkvalve'){comp.pos=Math.round(L_cur*0.01)||5;comp.tClose=0;}
   else if(type==='reliefvalve'){comp.pos=Math.round(L_cur*0.01)||5;comp.Hset=80;}
   else if(type==='flywheel'){comp.tStop=5;}
+  else if(type==='vrbypass'){comp.pos=Math.round(L_cur*0.01)||5;comp.dHmax='';}
   _protComponents.push(comp);
   protRender();
   calcTransiente();
@@ -835,8 +838,8 @@ function protRender(){
     return;
   }
   const L_cur=gv('L')||1000;
-  const icons={vessel:'&#127958;',hydrotank:'&#128739;',airvalve:'&#127788;',checkvalve:'&#128274;',reliefvalve:'&#128308;',flywheel:'&#9881;'};
-  const names={vessel:'C&#226;mara de ar',hydrotank:'Tanque Hidropneum&#225;tico',airvalve:'Ventosa',checkvalve:'Val. Reten&#231;&#227;o',reliefvalve:'Val. Antecipadora (VAO)',flywheel:'Volante de In&#233;rcia'};
+  const icons={vessel:'&#127958;',hydrotank:'&#128739;',airvalve:'&#127788;',checkvalve:'&#128274;',reliefvalve:'&#128308;',flywheel:'&#9881;',vrbypass:'&#128295;'};
+  const names={vessel:'C&#226;mara de ar',hydrotank:'Tanque Hidropneum&#225;tico',airvalve:'Ventosa',checkvalve:'Val. Reten&#231;&#227;o',reliefvalve:'Val. Antecipadora (VAO)',flywheel:'Volante de In&#233;rcia',vrbypass:'VR-Bypass'};
   el.innerHTML=_protComponents.map(c=>{
     const icon=icons[c.type]||'';
     const nm=names[c.type]||c.type;
@@ -898,10 +901,19 @@ function protRender(){
           oninput="protSet(${c.id},'tStop',this.value)" onchange="protSet(${c.id},'tStop',this.value)">
         <span style="font-size:.74rem;color:#607080">s</span>
       </div>`;
+    } else if(c.type==='vrbypass'){
+      fields+=`<div style="display:flex;align-items:center;gap:.3rem;flex-wrap:wrap">
+        <span style="font-size:.74rem;color:#607080">&#916;H m&#225;x admiss&#237;vel:</span>
+        <input type="number" value="${c.dHmax||''}" min="5" step="5" placeholder="Auto (por PN)"
+          style="width:110px;padding:.22rem .4rem;border:1px solid #b0bec5;border-radius:5px;font-size:.8rem"
+          oninput="protSet(${c.id},'dHmax',this.value)" onchange="protSet(${c.id},'dHmax',this.value)">
+        <span style="font-size:.74rem;color:#607080">mca</span>
+      </div>
+      <div style="font-size:.72rem;color:#e65100;margin-top:.1rem">&#128295; VR fecha o refluxo &mdash; orifício no bypass dissipa a sobrepressão. Ø calculado automaticamente.</div>`;
     }
-    const cardBg=c.type==='hydrotank'?'#e3f2fd':c.type==='checkvalve'?'#f3e5f5':c.type==='reliefvalve'?'#fce4ec':c.type==='flywheel'?'#fff3e0':'#f1f8e9';
-    const cardBd=c.type==='hydrotank'?'#90caf9':c.type==='checkvalve'?'#ce93d8':c.type==='reliefvalve'?'#ef9a9a':c.type==='flywheel'?'#ffcc80':'#a5d6a7';
-    const cardTxt=c.type==='hydrotank'?'#0d47a1':c.type==='checkvalve'?'#4a148c':c.type==='reliefvalve'?'#b71c1c':c.type==='flywheel'?'#e65100':'#2e7d32';
+    const cardBg=c.type==='hydrotank'?'#e3f2fd':c.type==='checkvalve'?'#f3e5f5':c.type==='reliefvalve'?'#fce4ec':c.type==='flywheel'?'#fff3e0':c.type==='vrbypass'?'#fff8e1':'#f1f8e9';
+    const cardBd=c.type==='hydrotank'?'#90caf9':c.type==='checkvalve'?'#ce93d8':c.type==='reliefvalve'?'#ef9a9a':c.type==='flywheel'?'#ffcc80':c.type==='vrbypass'?'#ffe082':'#a5d6a7';
+    const cardTxt=c.type==='hydrotank'?'#0d47a1':c.type==='checkvalve'?'#4a148c':c.type==='reliefvalve'?'#b71c1c':c.type==='flywheel'?'#e65100':c.type==='vrbypass'?'#f57f17':'#2e7d32';
     return `<div style="background:${cardBg};border:1px solid ${cardBd};border-radius:8px;padding:.45rem .6rem;display:flex;flex-direction:column;gap:.3rem">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.1rem">
         <span style="font-size:.82rem;font-weight:700;color:${cardTxt}">${icon} ${nm}</span>
@@ -1015,6 +1027,31 @@ function runMOC(){
     cvState.set(nd,{tClose:+(comp.tClose)||0,closing:false,t0:0,Q0:0,closed:false});
   }
 
+  // ── VR-Bypass: retenção + placa de orifício no bypass ─────────────
+  const Cd_or=0.61;
+  const vrbypassMap=new Map(); // nd → {K_or, A_or, d_or_mm, dH_max, closed}
+  const vrbypassNodeSet=new Set();
+  for(const comp of _protComponents.filter(c=>c.type==='vrbypass')){
+    const nd=posNode(comp.pos||5);
+    // ΔH_max: usuário define ou auto = limite PN − pressão permanente no nó
+    let dH_max=(comp.dHmax&&+comp.dHmax>0)?+comp.dHmax:null;
+    if(dH_max===null){
+      const d_nd=nd*dx;
+      let pn_seg=segs[segs.length-1].pn;
+      for(const s of segs){if(d_nd>=s.from-0.1&&d_nd<=s.to+0.1){pn_seg=s.pn;break;}}
+      const lim_vr=getLimits();
+      const H_PN_nd=lim_vr[pn_seg]||60;
+      const P_ss_nd=Math.max(0,H_ss[nd]-z[nd]);
+      dH_max=Math.max(5,H_PN_nd-P_ss_nd);
+    }
+    // Orifício: Q0 = Cd × Aor × √(2g × ΔH_max)  →  d_or
+    const A_or=Q0>0?Q0/(Cd_or*Math.sqrt(2*9.81*dH_max)):0.001;
+    const d_or_m=Math.sqrt(4*A_or/Math.PI);
+    const K_or=1.0/(2*9.81*Cd_or*Cd_or*A_or*A_or);
+    vrbypassMap.set(nd,{K_or,A_or,d_or_mm:d_or_m*1000,dH_max,closed:false});
+    vrbypassNodeSet.add(nd);
+  }
+
   // ── Ventosas de admissão (múltiplas, posição manual ou auto) ───────
   const airValveNodeSet=new Set();
   for(const comp of _protComponents.filter(c=>c.type==='airvalve')){
@@ -1079,6 +1116,32 @@ function runMOC(){
         if(Hn[i]>Hset_abs){
           Hn[i]=Hset_abs;
           Qn[i]=(Hset_abs-CM)/Br; // fluxo a jusante mantido; excesso aliviado
+        }
+      }
+      // ── VR-Bypass: VR fecha refluxo; orifício dissipa sobrepressão ───
+      if(vrbypassNodeSet.has(i)){
+        const vr=vrbypassMap.get(i);
+        if(vr.closed){
+          // VR fechada: verificar se fluxo voltou a ser positivo
+          const Qtest=(CP-CM)/(Bl+Br);
+          if(Qtest>1e-9){vr.closed=false;/* usa Qn/Hn já calculados acima */}
+          else{
+            // Orifício ativo (fluxo reverso controlado)
+            // Equação: K_or × Q² − (Bl+Br) × Q + (CP−CM) = 0  →  raiz negativa
+            const Bsum=Bl+Br;
+            const disc=Bsum*Bsum-4*vr.K_or*(CP-CM);
+            const Q_or=disc>=0?((Bsum-Math.sqrt(disc))/(2*vr.K_or)):0;
+            Qn[i]=Q_or;
+            Hn[i]=CM+Br*Q_or; // pressão downstream (lado sobrepressão)
+          }
+        } else if(Qn[i]<-1e-9){
+          // Detectou refluxo → VR fecha instantaneamente
+          vr.closed=true;
+          const Bsum=Bl+Br;
+          const disc=Bsum*Bsum-4*vr.K_or*(CP-CM);
+          const Q_or=disc>=0?((Bsum-Math.sqrt(disc))/(2*vr.K_or)):0;
+          Qn[i]=Q_or;
+          Hn[i]=CM+Br*Q_or;
         }
       }
       // ── Ventosa: admissão (H<z) e expulsão (Va>0) — modelo dois estágios ──
@@ -1197,6 +1260,7 @@ function runMOC(){
       airValves:[...airValveNodeSet].map(i=>({posM:i*dx,vol_L:airVolumeMap.get(i)||0})),
       checkValves:[...checkNodeSet].map(i=>i*dx),
       reliefValves:[...reliefNodeSet].map(i=>({posM:i*dx,Hset:reliefValveMap.get(i).Hset})),
+      vrBypass:[...vrbypassNodeSet].map(i=>({posM:i*dx,d_or_mm:vrbypassMap.get(i).d_or_mm,dH_max:vrbypassMap.get(i).dH_max})),
       flywheel:flywheelT
     }};
 }
@@ -1212,6 +1276,7 @@ const _DSYM={
   checkvalve:{col:'#AB47BC',dark:'#4A148C'},
   reliefvalve:{col:'#EF5350',dark:'#B71C1C'},
   flywheel:  {col:'#FF7043',dark:'#BF360C'},
+  vrbypass:  {col:'#F9A825',dark:'#E65100'},
 };
 
 // Desenha um símbolo hidráulico centrado em (cx, cy_terrain)
@@ -1269,6 +1334,19 @@ function _drawDeviceSymbol(ctx, type, cx, cy, mg, dc){
       ctx.lineTo(cx+Math.cos(ang)*r*0.78,cy-r-3+Math.sin(ang)*r*0.78);
       ctx.strokeStyle=colDark;ctx.lineWidth=1.5;ctx.stroke();
     }
+  } else if(type==='vrbypass'){
+    // VR + bypass com orifício: triângulo◁| (VR) + arco (bypass) + círculo (orifício)
+    ctx.fillStyle=col+'66';ctx.strokeStyle=colDark;ctx.lineWidth=1.5;
+    // VR (triângulo)
+    ctx.beginPath();ctx.moveTo(cx-8,cy-11);ctx.lineTo(cx-8,cy-3);ctx.lineTo(cx-3,cy-7);ctx.closePath();
+    ctx.fill();ctx.stroke();
+    ctx.beginPath();ctx.moveTo(cx-3,cy-12);ctx.lineTo(cx-3,cy-2);ctx.strokeStyle=colDark;ctx.lineWidth=2;ctx.stroke();
+    // Bypass curvo
+    ctx.beginPath();ctx.arc(cx,cy-7,5,Math.PI*0.9,Math.PI*2.1,false);
+    ctx.strokeStyle=col;ctx.lineWidth=1.2;ctx.setLineDash([2,1.5]);ctx.stroke();ctx.setLineDash([]);
+    // Orifício (círculo preenchido)
+    ctx.beginPath();ctx.arc(cx+6,cy-7,2.5,0,Math.PI*2);
+    ctx.fillStyle=colDark;ctx.fill();
   }
 }
 
@@ -1315,6 +1393,13 @@ function _drawAllDevices(ctx, toX, toY, getZatX, prot, mg){
     _drawDeviceSymbol(ctx,'reliefvalve',cx,cy,mg,_DSYM.reliefvalve);
     lbl(cx,`VAO ${rv.Hset}mca @${Math.round(rv.posM)}m`,null,_DSYM.reliefvalve.dark);
   }
+  // VR-Bypass
+  for(const vr of (prot.vrBypass||[])){
+    const cx=toX(vr.posM),cy=toY(getZatX(vr.posM));
+    _drawDeviceSymbol(ctx,'vrbypass',cx,cy,mg,_DSYM.vrbypass);
+    lbl(cx,`VR-Bypass Ø${vr.d_or_mm.toFixed(1)}mm @${Math.round(vr.posM)}m`,
+      `ΔH≤${vr.dH_max.toFixed(0)}mca`,_DSYM.vrbypass.dark);
+  }
   // Volante de inércia (na bomba, x=0)
   if((prot.flywheel||0)>0){
     const cx=toX(0),cy=toY(getZatX(0));
@@ -1331,6 +1416,7 @@ function _drawDeviceLegend(ctx, prot, mg, W){
   if((prot.hydrotanks||[]).length)types.push({k:'hydrotank',label:'Tanque hidrop.'});
   if((prot.checkValves||[]).length)types.push({k:'checkvalve',label:'V. Retenção'});
   if((prot.reliefValves||[]).length)types.push({k:'reliefvalve',label:'VAO'});
+  if((prot.vrBypass||[]).length)   types.push({k:'vrbypass',  label:'VR-Bypass'});
   if((prot.flywheel||0)>0)        types.push({k:'flywheel',label:'Volante inércia'});
   if(!types.length)return;
   const y=mg.t-27;if(y<4)return;
@@ -1366,6 +1452,11 @@ function _drawDeviceLegend(ctx, prot, mg, W){
       ctx.beginPath();ctx.arc(lx+6,y,4,0,Math.PI*2);
       ctx.fillStyle=dc.col+'44';ctx.fill();ctx.strokeStyle=dc.dark;ctx.lineWidth=1.2;ctx.stroke();
       ctx.beginPath();ctx.arc(lx+6,y,1.5,0,Math.PI*2);ctx.fillStyle=dc.dark;ctx.fill();
+    }else if(t.k==='vrbypass'){
+      ctx.fillStyle=dc.col+'66';ctx.strokeStyle=dc.dark;ctx.lineWidth=0.8;
+      ctx.beginPath();ctx.moveTo(lx+1,y-4);ctx.lineTo(lx+1,y+1);ctx.lineTo(lx+5,y-2);ctx.closePath();ctx.fill();ctx.stroke();
+      ctx.beginPath();ctx.moveTo(lx+5,y-5);ctx.lineTo(lx+5,y+1);ctx.strokeStyle=dc.dark;ctx.lineWidth=1.2;ctx.stroke();
+      ctx.beginPath();ctx.arc(lx+9,y-2,2,0,Math.PI*2);ctx.fillStyle=dc.dark;ctx.fill();
     }
     ctx.fillStyle='#333';ctx.textAlign='left';ctx.fillText(t.label,lx+14,y+3);
     lx+=Math.min(110,Math.round(ctx.measureText(t.label).width)+22);
@@ -1861,6 +1952,62 @@ function getRiscoCavitacao(dH_eff){
   return risk;
 }
 
+function _refreshTransienteProt(dH_eff){
+  const box=$('transiente-prot-box');
+  if(!box||!_multi)return;
+  const lim=getLimits();
+  const maxSteadyP=_multi.AMT_design;
+  const maxTransP=maxSteadyP+dH_eff;
+  const pnTrans=pnForPressure(maxTransP,lim);
+  const pnMax=Math.max(...[..._multi.pnsUsados]);
+  const riskPts=_profileData?getRiscoCavitacao(dH_eff):[];
+  const hasRisk=riskPts.length>0;
+  const anyProt=_protComponents.length>0;
+  const _bs=(bg,b,t)=>`background:${bg};border:1px solid ${b};border-radius:10px;padding:.1rem .55rem;font-size:.72rem;font-weight:700;color:${t}`;
+  const protBadges=_protComponents.map(c=>{
+    if(c.type==='vessel')return`<span style="${_bs('#e8f5e9','#81c784','#2e7d32')}">&#127958; C&#226;mara ${c.vol}L@${c.pos}m</span>`;
+    if(c.type==='hydrotank'){
+      const inj=_mocResult?.protections?.hydrotanks?.find(h=>Math.abs(h.posM-(c.pos||5))<5)?.injected||0;
+      return`<span style="${_bs('#e3f2fd','#90caf9','#0d47a1')}">&#128739; Tanque ${c.vol}L@${c.pos}m${inj>0.5?` \xb7 ${inj.toFixed(0)}L injetados`:''}</span>`;
+    }
+    if(c.type==='airvalve'){
+      const posV=c.pos&&+c.pos>0?+c.pos:null;
+      const avRes=_mocResult?.protections?.airValves||[];
+      const vol_L=posV!=null?(avRes.find(r=>Math.abs(r.posM-posV)<10)?.vol_L||0):avRes.reduce((s,r)=>s+r.vol_L,0);
+      const volStr=vol_L>0.5?` \xb7 ${vol_L<1000?vol_L.toFixed(0)+'L':(vol_L/1000).toFixed(2)+'m\xb3'} ar`:'';
+      return`<span style="${_bs('#e0f7fa','#80deea','#006064')}">&#127788; Ventosa ${posV?(posV+'m'):'auto'}${volStr}</span>`;
+    }
+    if(c.type==='checkvalve')return`<span style="${_bs('#ede7f6','#ce93d8','#4a148c')}">&#128274; Reten&#231;&#227;o@${c.pos}m</span>`;
+    if(c.type==='reliefvalve')return`<span style="${_bs('#fce4ec','#ef9a9a','#b71c1c')}">&#128308; VAO ${c.Hset}mca@${c.pos}m</span>`;
+    if(c.type==='flywheel')return`<span style="${_bs('#fff3e0','#ffcc80','#e65100')}">&#9881; Volante ${c.tStop}s</span>`;
+    if(c.type==='vrbypass'){
+      const vr=_mocResult?.protections?.vrBypass?.find(v=>Math.abs(v.posM-(c.pos||5))<5);
+      const d_or=vr?vr.d_or_mm.toFixed(1):'?';
+      const dH=vr?vr.dH_max.toFixed(0):'?';
+      return`<span style="${_bs('#fff8e1','#ffe082','#e65100')}">&#128295; VR-Bypass &#216;${d_or}mm@${c.pos}m \xb7 ΔH≤${dH}mca</span>`;
+    }
+    return'';
+  }).filter(Boolean).join(' ');
+  const protecao=hasRisk
+    ?`<div class="sbox ${anyProt?'warn':'err'}" style="margin-top:.5rem">
+        <b>&#9888; Subpress&#227;o abaixo de zero em ${riskPts.length} ponto(s) &mdash; risco de cavita&#231;&#227;o.</b>
+        ${anyProt?`<div style="margin-top:.3rem;font-size:.79rem">Prote&#231;&#245;es ativas: ${protBadges}<br>Ajuste o volume da c&#226;mara de ar ou adicione ventosas para eliminar os ${riskPts.length} ponto(s) restantes.</div>`
+        :`<ul style="margin:.3rem 0 0 1rem;font-size:.8rem">
+          <li>Adicionar <b>&#127958; c&#226;mara de ar</b> pr&#243;ximo &#224; bomba</li>
+          <li>Adicionar <b>&#127788; ventosa de admiss&#227;o</b> nos pontos altos</li>
+          <li>Adicionar <b>&#128274; v&#225;lvula de reten&#231;&#227;o</b> na sa&#237;da da bomba</li>
+          <li>Aumentar o tempo de parada com <b>&#9881; volante de in&#233;rcia</b></li>
+        </ul>`}
+      </div>`
+    :`<div class="sbox ok" style="margin-top:.5rem">&#10003; Envelope de subpress&#227;o acima de zero em toda a extens&#227;o &mdash; sem risco de cavita&#231;&#227;o.
+        ${anyProt?`<span style="margin-left:.5rem">${protBadges}</span>`:''}
+      </div>`;
+  const pnWarn=pnTrans>pnMax
+    ?`<div class="sbox warn" style="margin-top:.5rem">&#9888; <b>Transiente exige PN ${pnTrans}</b> &mdash; superior ao PN ${pnMax} usado em regime permanente. Verifique a especifica&#231;&#227;o da tubula&#231;&#227;o!</div>`
+    :`<div class="sbox ok" style="margin-top:.5rem">&#10003; Classe PN do projeto (PN ${pnMax}) &#233; suficiente para o transiente (${fmt(maxTransP,1)} mca &#8804; ${lim[pnMax]} mca).</div>`;
+  box.innerHTML=protecao+pnWarn;
+}
+
 function buildTransienteCard(a,tc,dH_inst,dH_eff,VMax,tClose,tc2){
   const lim=getLimits();
   const maxSteadyP=_multi.AMT_design;
@@ -1915,6 +2062,12 @@ function buildTransienteCard(a,tc,dH_inst,dH_eff,VMax,tClose,tc2){
     if(c.type==='checkvalve')return`<span style="${_badgeStyle('#ede7f6','#ce93d8','#4a148c')}">&#128274; Reten&#231;&#227;o@${c.pos}m</span>`;
     if(c.type==='reliefvalve')return`<span style="${_badgeStyle('#fce4ec','#ef9a9a','#b71c1c')}">&#128308; VAO ${c.Hset}mca@${c.pos}m</span>`;
     if(c.type==='flywheel')return`<span style="${_badgeStyle('#fff3e0','#ffcc80','#e65100')}">&#9881; Volante ${c.tStop}s</span>`;
+    if(c.type==='vrbypass'){
+      const vr=_mocResult?.protections?.vrBypass?.find(v=>Math.abs(v.posM-(c.pos||5))<5);
+      const d_or=vr?vr.d_or_mm.toFixed(1):'?';
+      const dH=vr?vr.dH_max.toFixed(0):'?';
+      return`<span style="${_badgeStyle('#fff8e1','#ffe082','#e65100')}">&#128295; VR-Bypass &#216;${d_or}mm@${c.pos}m &middot; &#916;H&#8804;${dH}mca</span>`;
+    }
     return'';
   }).filter(Boolean).join(' ');
 
@@ -1969,7 +2122,7 @@ function buildTransienteCard(a,tc,dH_inst,dH_eff,VMax,tClose,tc2){
       </div>
     </div>
 
-    <div class="g2" style="margin-bottom:.8rem">
+    <div class="g2" id="transiente-prot-box" style="margin-bottom:.8rem">
       ${protecao}
       ${pnWarn}
     </div>
@@ -2009,6 +2162,7 @@ function buildTransienteCard(a,tc,dH_inst,dH_eff,VMax,tClose,tc2){
   </div>`;
 
   runMOC();
+  _refreshTransienteProt(dH_eff);
   requestAnimationFrame(()=>{drawTransiente(dH_eff);initMOCAnim();});
 }
 
