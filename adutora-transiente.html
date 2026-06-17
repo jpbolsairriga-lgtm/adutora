@@ -154,7 +154,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v4.15 · 17/06/2026</span></h1>
+      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v4.16 · 17/06/2026</span></h1>
       <p>Régime Permanente &middot; Celeridade &middot; Joukowsky &middot; Envelope Sobre/Subpressão &middot; Risco de Cavitação</p>
     </div>
   </div>
@@ -2106,31 +2106,46 @@ function drawCVChart(cvRes){
   ctx.strokeStyle='rgba(76,175,80,.35)';
   ctx.beginPath();ctx.moveTo(mg.l,py(0.10));ctx.lineTo(mg.l+cW,py(0.10));ctx.stroke();
   ctx.setLineDash([]);
-  // Todas as curvas
+  // Todas as curvas — desenha linhas, coleta pontos finais para legend lateral
   const order=['ball','swing','swingflex','tilted','dualdisk','surgebuster','silent','nozzle'];
   const shortLabel={ball:'Esfera',swing:'Portinhola',swingflex:'Sf.Flex',tilted:'Disco Inc.',dualdisk:'Dupla',surgebuster:'SurgeB.',silent:'Silenc.',nozzle:'Bocal'};
+  const lblData=[];
   for(const key of order){
     const c=CV_CURVES[key];if(!c)continue;
     const isSel=cvRes&&cvRes.type===key;
     ctx.beginPath();ctx.moveTo(px(0),py(0));
+    let xEnd=0,VrEnd=0;
     for(let xi=0.1;xi<=xMax;xi+=0.2){
       const Vri=c.k*Math.pow(xi,c.n);
       if(Vri>yMax+0.05)break;
       ctx.lineTo(px(xi),py(Vri));
+      xEnd=xi;VrEnd=Vri;
     }
     ctx.strokeStyle=isSel?c.col:'rgba(0,0,0,.20)';
     ctx.lineWidth=isSel?2.5:1;
     ctx.stroke();
-    // Label no final da curva
-    let xlbl=xMax;
-    while(xlbl>1&&c.k*Math.pow(xlbl,c.n)>yMax)xlbl-=0.5;
-    if(xlbl>0.5){
-      const Vr_lbl=c.k*Math.pow(xlbl,c.n);
-      ctx.fillStyle=isSel?c.col:'rgba(80,90,100,.6)';
-      ctx.font=isSel?'bold 8.5px Segoe UI':'8px Segoe UI';
-      ctx.textAlign='left';
-      ctx.fillText(shortLabel[key]||key,px(xlbl)+3,py(Vr_lbl)+3);
-    }
+    if(xEnd>0.5)lblData.push({key,c,xEnd,VrEnd,isSel});
+  }
+  // Ordena pelo Vr na desaceleração operacional (ou xMax) — melhor embaixo, pior em cima
+  const aRef=cvRes&&cvRes.a_decel>0?Math.min(cvRes.a_decel,xMax):xMax;
+  lblData.sort((a,b)=>a.c.k*Math.pow(aRef,a.c.n)-b.c.k*Math.pow(aRef,b.c.n));
+  // Labels na margem direita com bullet colorido (evita colisão nas curvas)
+  const lxR=mg.l+cW+6;
+  const nL=lblData.length;
+  for(let di=0;di<nL;di++){
+    const{key,c,xEnd,VrEnd,isSel}=lblData[di];
+    const yLbl=mg.t+cH-2-Math.round((di/Math.max(nL-1,1))*(cH-4));
+    // marcador no fim da curva visível
+    ctx.beginPath();ctx.arc(px(xEnd),py(VrEnd),isSel?3.5:2,0,Math.PI*2);
+    ctx.fillStyle=isSel?c.col:'rgba(110,120,130,.40)';ctx.fill();
+    // bullet na legenda
+    ctx.beginPath();ctx.arc(lxR+3,yLbl,3,0,Math.PI*2);
+    ctx.fillStyle=isSel?c.col:c.col+'66';ctx.fill();
+    // texto
+    ctx.fillStyle=isSel?c.col:'rgba(65,75,90,.72)';
+    ctx.font=isSel?'bold 8.5px Segoe UI':'8px Segoe UI';
+    ctx.textAlign='left';
+    ctx.fillText(shortLabel[key]||key,lxR+9,yLbl+3.5);
   }
   // Curva manual
   if(cvRes&&cvRes.type==='manual'){
