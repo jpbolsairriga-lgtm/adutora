@@ -154,7 +154,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v4.11 · 16/06/2026</span></h1>
+      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v4.12 · 17/06/2026</span></h1>
       <p>Régime Permanente &middot; Celeridade &middot; Joukowsky &middot; Envelope Sobre/Subpressão &middot; Risco de Cavitação</p>
     </div>
   </div>
@@ -328,7 +328,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
     </div>
     <div class="fg">
       <label>Tipo de evento</label>
-      <select id="evtTrans" onchange="calcTransiente()">
+      <select id="evtTrans" onchange="toggleInertiaUI();calcTransiente()">
         <option value="valve">Fechamento de válvula (fim de linha)</option>
         <option value="pump">Parada de bomba (falta de energia)</option>
       </select>
@@ -339,6 +339,42 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
       <small>0 = instantâneo (conservador). T &gt; tc = fechamento lento.</small>
     </div>
   </div>
+
+  <!-- ── Inércia do conjunto moto-bomba ─────────────────────── -->
+  <div id="inertia-box" style="display:none;margin-top:.75rem;border-top:1px solid #e1bee7;padding-top:.75rem">
+    <div style="font-size:.74rem;font-weight:800;color:#7b1fa2;margin-bottom:.55rem">&#9881; In&#233;rcia do Conjunto Moto-bomba</div>
+    <div class="g3" style="margin-bottom:.5rem">
+      <div class="fg">
+        <label>M&#233;todo de obten&#231;&#227;o de I</label>
+        <select id="inerciaMet" onchange="toggleInertiaUI();calcTransiente()">
+          <option value="none">N&#227;o usar (tempo manual acima)</option>
+          <option value="gd2">GD&#178; do fabricante (kgf&#183;m&#178;)</option>
+          <option value="koelle">Estimar &#8212; Koelle &amp; Bet&#226;mio (1992)</option>
+          <option value="thorley">Estimar &#8212; Thorley &amp; Faithfull (1992)</option>
+        </select>
+        <small>Koelle/Thorley n&#227;o valem para bomba multiestágio</small>
+      </div>
+      <div class="fg">
+        <label>Rota&#231;&#227;o nominal N&#8320;</label>
+        <div class="iu"><input type="number" id="inN0" value="1750" min="200" step="50" onchange="calcTransiente()"><span class="u">rpm</span></div>
+        <small>Velocidade em regime permanente</small>
+      </div>
+      <div class="fg">
+        <label>Pot&#234;ncia da bomba P</label>
+        <div class="iu"><input type="number" id="inPowCV" min="0.1" step="0.5" placeholder="Auto" onchange="calcTransiente()"><span class="u">CV</span></div>
+        <small>Eixo da bomba (catálogo). Vazio = usa calc.</small>
+      </div>
+    </div>
+    <div id="gd2-row" style="display:none;margin-bottom:.5rem">
+      <div class="fg" style="max-width:260px">
+        <label>GD&#178; (cat&#225;logo do fabricante)</label>
+        <div class="iu"><input type="number" id="inGD2" min="0" step="0.01" placeholder="kgf&#183;m&#178;" onchange="calcTransiente()"><span class="u">kgf&#183;m&#178;</span></div>
+        <small>Tamb&#233;m chamado WD&#178; em alguns cat&#225;logos</small>
+      </div>
+    </div>
+    <div id="inertia-result"></div>
+  </div>
+
   <div class="sbox info" style="font-size:.78rem">
     &#9432; Configure o material e tipo de evento. O cálculo atualiza automaticamente após gerar o perfil e calcular a adutora.
     Fórmula: <b>a = √(K/ρ) / √(1 + K·D/(E·e))</b> &nbsp;|&nbsp; <b>ΔH = a·V/g</b> (Joukowsky)
@@ -953,7 +989,10 @@ function runMOC(){
   // ── Proteções (lista dinâmica _protComponents) ─────────────────────
   const _fw=_protComponents.filter(c=>c.type==='flywheel');
   const flywheelT=_fw.length?Math.max(..._fw.map(c=>c.tStop||0)):0;
-  const tClose_raw=flywheelT>0?flywheelT:(_transiente.tClose||0);
+  // Tempo de parada efetivo: max(T_inércia, volante, manual)
+  // Inércia da bomba só se aplica ao evento de parada de bomba
+  const T_inertia=(evtType==='pump'&&_transiente.inertia?.T_s>0)?_transiente.inertia.T_s:0;
+  const tClose_raw=Math.max(flywheelT, _transiente.tClose||0, T_inertia);
   const tClose_eff=tClose_raw>0?tClose_raw:1e-9;
 
   // ── Celeridade e impedância POR NÓ ──────────────────────────────────
@@ -1912,8 +1951,89 @@ function calcCeleridade(D_i_mm, e_mm, E_Pa){
   return Math.sqrt(K_WATER/RHO_WATER)/Math.sqrt(1+(K_WATER*D)/(E_Pa*e));
 }
 
+function toggleInertiaUI(){
+  const met=$('inerciaMet')?.value||'none';
+  const gd2=$('gd2-row');
+  if(gd2)gd2.style.display=met==='gd2'?'':'none';
+}
+
+function computeInertia(){
+  const met=$('inerciaMet')?.value||'none';
+  if(met==='none')return null;
+
+  const N0=parseFloat($('inN0')?.value)||1750;
+  const w0=2*Math.PI*N0/60; // rad/s
+
+  // Potência da bomba: usa input ou estima do _multi
+  const P_cv_inp=parseFloat($('inPowCV')?.value)||0;
+  let P_cv_ref=0;
+  if(_multi){
+    const Q_m3s=(gv('Q')*(1+(gv('slackQ')||0)/100))/3600;
+    const effV=gv('eff')||70;
+    const P_hid_W=Q_m3s*(_multi.AMT_hid-(_multi.filtro||0))*9.81*1000;
+    P_cv_ref=(P_hid_W/1000/0.7355)/(effV/100);
+  }
+  const P_cv=P_cv_inp>0?P_cv_inp:P_cv_ref;
+  const P_kW=P_cv*0.7355;
+  const P_W=P_kW*1000;
+
+  let I=0,I1=0,I2=0,label='';
+
+  if(met==='gd2'){
+    const GD2=parseFloat($('inGD2')?.value)||0;
+    if(GD2<=0){$('inertia-result').innerHTML='<div class="sbox warn" style="font-size:.78rem">Informe o valor de GD&#178;.</div>';return null;}
+    // Eq 5.4 (Castro): I = GD²/4 quando GD² em kgf·m² (G = peso em kgf ≈ massa em kg)
+    I=GD2/4;
+    label='GD&#178; do fabricante';
+  } else if(met==='koelle'){
+    // Koelle & Betâmio (1992) — Eq 5.8: I = 288·(P/N₀)^1.435  P em HP, N₀ em rpm
+    const P_hp=P_cv*1.0139; // 1 CV métrico = 1.0139 HP
+    if(P_hp<=0||N0<=0){$('inertia-result').innerHTML='<div class="sbox warn" style="font-size:.78rem">Calcule a adutora antes ou informe a pot&#234;ncia.</div>';return null;}
+    I=288*Math.pow(P_hp/N0,1.435);
+    label='Koelle &amp; Bet&#226;mio (1992)';
+  } else if(met==='thorley'){
+    // Thorley & Faithfull (1992) — Eq 5.9 + 5.10: I = I₁+I₂  P em kW, N₀ em rpm
+    if(P_kW<=0||N0<=0){$('inertia-result').innerHTML='<div class="sbox warn" style="font-size:.78rem">Calcule a adutora antes ou informe a pot&#234;ncia.</div>';return null;}
+    I1=0.038*Math.pow(P_kW/Math.pow(N0/1000,3),0.96);
+    I2=0.0043*Math.pow(P_kW/(N0/1000),1.48);
+    I=I1+I2;
+    label='Thorley &amp; Faithfull (1992)';
+  }
+
+  if(I<=0||P_W<=0)return null;
+  // Tempo de parada físico: T_s = I·ω₀²/P₀
+  const T_s=I*w0*w0/P_W;
+  const T0_torque=P_W/w0; // torque nominal [N·m]
+
+  // Display resultado
+  const detRow=met==='thorley'
+    ?`<span style="color:var(--mu);font-size:.72rem">I&#8321;=${I1.toFixed(3)} + I&#8322;=${I2.toFixed(3)} kg&#183;m&#178;</span>`
+    :met==='gd2'?`<span style="color:var(--mu);font-size:.72rem">GD&#178;/4 = ${(parseFloat($('inGD2')?.value)).toFixed(3)}/4</span>`:'';
+  $('inertia-result').innerHTML=`
+    <div style="background:#f3e5f5;border:1px solid #ce93d8;border-radius:8px;padding:.55rem .85rem;font-size:.8rem;margin-top:.3rem">
+      <b style="color:#4a0080">&#9881; ${label}</b> &nbsp;|&nbsp;
+      <b>I = ${I.toFixed(3)} kg&#183;m&#178;</b>
+      &nbsp;|&nbsp; N&#8320; = ${N0} rpm &nbsp;|&nbsp; P = ${fmt(P_cv,1)} CV (${fmt(P_kW,1)} kW)
+      &nbsp;|&nbsp; T&#8320; (torque) = ${T0_torque.toFixed(1)} N&#183;m
+      &nbsp;|&nbsp; <b style="color:#1b6e3a">T&#8209;parada = ${fmt(T_s,2)} s</b>
+      ${detRow?'<br>'+detRow:''}
+      <div style="font-size:.7rem;color:#607080;margin-top:.25rem">
+        Tempo de parada f&#237;sico: T&#8209;s = I&#183;&#969;&#8320;&#178; / P&#8320; (Wylie &amp; Streeter, 1993).
+        O MOC usar&#225; max(T&#8209;s, T&#8209;manual) como tempo de desacelera&#231;&#227;o da bomba.
+      </div>
+    </div>`;
+
+  return{I,I1,I2,T_s,N0,w0,P_kW,P_cv,method:met,label};
+}
+
 function calcTransiente(){
   if(!_multi)return;
+  const evtT=$('evtTrans').value;
+  // Mostra/oculta seção de inércia só para parada de bomba
+  const ibox=$('inertia-box');
+  if(ibox)ibox.style.display=evtT==='pump'?'':'none';
+  if(evtT!=='pump'&&$('inertia-result'))$('inertia-result').innerHTML='';
+
   const E=MAT_TRANS[parseInt($('matTrans').value)||0].E;
   const tClose=gv('tClose');
   const Q=gv('Q'), slackQ=gv('slackQ')||0;
@@ -1934,9 +2054,14 @@ function calcTransiente(){
   // Tempo crítico e ΔH Joukowsky
   const tc=2*L/a;
   const dH_inst=a*VMax/9.81;
-  const dH_eff=(tClose>0&&tClose>tc)?dH_inst*tc/tClose:dH_inst;
 
-  _transiente={a,tc,dH_inst,dH_eff,VMax,E,tClose};
+  // Inércia da bomba (apenas para evento de parada)
+  const iner=(evtT==='pump')?computeInertia():null;
+  // Tempo efetivo de parada = max(tClose manual, T_s inércia)
+  const tClose_eff_jouk=Math.max(tClose||0, iner?.T_s||0);
+  const dH_eff=(tClose_eff_jouk>0&&tClose_eff_jouk>tc)?dH_inst*tc/tClose_eff_jouk:dH_inst;
+
+  _transiente={a,tc,dH_inst,dH_eff,VMax,E,tClose,inertia:iner};
   buildTransienteCard(a,tc,dH_inst,dH_eff,VMax,tClose,tc);
 }
 
@@ -2133,11 +2258,33 @@ function buildTransienteCard(a,tc,dH_inst,dH_eff,VMax,tClose,tc2){
         <div>${closureTag}</div>
       </div>
       <div class="tile" style="background:${hasRisk?'linear-gradient(135deg,#ffebee,#ffcdd2)':'linear-gradient(135deg,#e8f5e9,#c8e6c9)'};border:1px solid ${hasRisk?'#ef9a9a':'#a5d6a7'}">
-        <div class="tl" style="color:${hasRisk?'#b71c1c':'#1b6e3a'}">Cavitação</div>
-        <div class="tv" style="font-size:1rem;color:${hasRisk?'#c62828':'#2e7d32'}">${hasRisk?'⚠ RISCO':'✓ OK'}</div>
-        ${hasRisk?`<div style="font-size:.65rem;color:#c62828">${riskPts.length} ponto(s) crítico(s)</div>`:''}
+        <div class="tl" style="color:${hasRisk?'#b71c1c':'#1b6e3a'}">Cavita&#231;&#227;o</div>
+        <div class="tv" style="font-size:1rem;color:${hasRisk?'#c62828':'#2e7d32'}">${hasRisk?'&#9888; RISCO':'&#10003; OK'}</div>
+        ${hasRisk?`<div style="font-size:.65rem;color:#c62828">${riskPts.length} ponto(s) cr&#237;tico(s)</div>`:''}
       </div>
     </div>
+
+    ${(()=>{
+      const iner=_transiente?.inertia;
+      if(!iner)return'';
+      const T_eff=Math.max(iner.T_s,tClose||0);
+      const det=iner.method==='gd2'
+        ?`GD&#178; = ${(iner.I*4).toFixed(3)} kgf&#183;m&#178; &rarr; I = GD&#178;/4`
+        :iner.method==='koelle'
+          ?`Koelle &amp; Bet&#226;mio (1992): I = 288&#183;(P/N&#8320;)&#185;&#8331;&#8308;&#179;&#8309;`
+          :`Thorley &amp; Faithfull (1992): I&#8321;=${iner.I1.toFixed(3)} + I&#8322;=${iner.I2.toFixed(3)} kg&#183;m&#178;`;
+      return`<div style="background:#f3e5f5;border:1px solid #ce93d8;border-radius:8px;padding:.5rem .85rem;margin-bottom:.7rem;font-size:.8rem">
+        <b style="color:#4a0080">&#9881; In&#233;rcia da Bomba (${iner.label})</b>
+        <div style="display:flex;gap:1.2rem;flex-wrap:wrap;margin-top:.3rem">
+          <span><b>I = ${iner.I.toFixed(3)} kg&#183;m&#178;</b></span>
+          <span>N&#8320; = ${iner.N0} rpm</span>
+          <span>P = ${fmt(iner.P_cv,1)} CV (${fmt(iner.P_kW,1)} kW)</span>
+          <span><b style="color:#1b6e3a">T&#8209;parada = ${fmt(iner.T_s,2)} s</b>${T_eff>iner.T_s?` (T&#8209;efetivo: ${fmt(T_eff,2)} s)`:''}
+          </span>
+        </div>
+        <div style="font-size:.7rem;color:var(--mu);margin-top:.2rem">${det} &nbsp;|&nbsp; T&#8209;s = I&#183;&#969;&#8320;&#178;/P&#8320; &nbsp;|&nbsp; &#969;&#8320; = ${fmt(iner.w0,2)} rad/s</div>
+      </div>`;
+    })()}
 
     <div class="g2" id="transiente-prot-box" style="margin-bottom:.8rem">
       ${protecao}
