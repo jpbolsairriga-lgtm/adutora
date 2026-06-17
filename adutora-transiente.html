@@ -154,7 +154,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v4.14 · 17/06/2026</span></h1>
+      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v4.15 · 17/06/2026</span></h1>
       <p>Régime Permanente &middot; Celeridade &middot; Joukowsky &middot; Envelope Sobre/Subpressão &middot; Risco de Cavitação</p>
     </div>
   </div>
@@ -1349,6 +1349,25 @@ function runMOC(){
       }
       H_b.set(Hn_b);Q_b.set(Qn_b);
       for(let i=0;i<N;i++){if(H_b[i]>Hmax_bare[i])Hmax_bare[i]=H_b[i];if(H_b[i]<Hmin_bare[i])Hmin_bare[i]=H_b[i];}
+    }
+  }
+
+  // ── Amortecimento visual pós-slam nos snapshots ───────────────────
+  // Hmax/Hmin NÃO são alterados (análise hidráulica permanece correta).
+  // Após o slam da VR, Q≈0 em toda a tubulação → atrito Darcy≈0 →
+  // a onda bate nas extremidades indefinidamente. Na prática a tubulação
+  // dissipa energia via viscoelasticidade da parede; simulamos isso aqui.
+  if(useCVModel&&cvSlamDone){
+    const slamIdx=snapshots.findIndex(s=>s.t>=cvSlamT);
+    if(slamIdx>=0){
+      const T_RT=2*L/a_max; // período ida-e-volta (s)
+      const tau_d=1.5*T_RT; // ≈95% dissipação em 3 reflexões
+      for(let fi=slamIdx+1;fi<snapshots.length;fi++){
+        const dt_sl=snapshots[fi].t-cvSlamT;
+        const decay=Math.exp(-dt_sl/tau_d);
+        for(let i=0;i<N;i++)
+          snapshots[fi].H[i]=H_dn+(snapshots[fi].H[i]-H_dn)*decay;
+      }
     }
   }
 
