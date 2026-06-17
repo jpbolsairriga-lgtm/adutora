@@ -154,7 +154,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v4.12 · 17/06/2026</span></h1>
+      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v4.13 · 17/06/2026</span></h1>
       <p>Régime Permanente &middot; Celeridade &middot; Joukowsky &middot; Envelope Sobre/Subpressão &middot; Risco de Cavitação</p>
     </div>
   </div>
@@ -373,6 +373,42 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
       </div>
     </div>
     <div id="inertia-result"></div>
+  </div>
+
+  <!-- ── Válvula de retenção na saída da bomba ─────────────────── -->
+  <div id="cv-box" style="display:none;margin-top:.75rem;border-top:1px solid #e1bee7;padding-top:.75rem">
+    <div style="font-size:.74rem;font-weight:800;color:#7b1fa2;margin-bottom:.55rem">&#128274; V&#225;lvula de Reten&#231;&#227;o &mdash; Sa&#237;da da Bomba (Caracteri&#769;stica Dinâmica)</div>
+    <div class="g2" style="margin-bottom:.5rem">
+      <div class="fg">
+        <label>Tipo de v&#225;lvula</label>
+        <select id="cvType" onchange="toggleCVUI();calcTransiente()">
+          <option value="none">N&#227;o modelar (fechamento instant&#226;neo)</option>
+          <option value="nozzle">&#9679; Bocal / Axial (Nozzle) &mdash; Menor risco</option>
+          <option value="silent">&#9679; Silenciosa (Silent Check)</option>
+          <option value="surgebuster">&#9679; SurgeBuster</option>
+          <option value="dualdisk">&#9679; Dupla Portinhola (Dual Disc)</option>
+          <option value="tilted">&#9679; Disco Inclinado (Tilted Disc)</option>
+          <option value="swingflex">&#9679; Portinhola Flex&#237;vel (Swing-Flex)</option>
+          <option value="swing">&#9679; Portinhola Simples (Swing Check)</option>
+          <option value="ball">&#9679; Esfera (Ball Check) &mdash; Maior risco</option>
+          <option value="manual">&#9998; Curva manual (coef. k e n)</option>
+        </select>
+        <small>Curvas Val-Matic / Thorley (1991) &mdash; convertidas para SI</small>
+      </div>
+      <div class="fg" id="cv-manual-wrap" style="display:none">
+        <label>Coeficientes da curva Vr = k · a<sup>n</sup></label>
+        <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-top:.1rem">
+          <span style="font-size:.74rem;color:#607080">k =</span>
+          <input type="number" id="cvK" value="0.010" min="0.0001" step="0.001" style="width:80px;padding:.25rem .4rem;border:1.5px solid var(--bdr);border-radius:6px;font-size:.85rem" onchange="calcTransiente()">
+          <span style="font-size:.74rem;color:#607080">n =</span>
+          <input type="number" id="cvN" value="1.3" min="0.5" max="2.5" step="0.05" style="width:65px;padding:.25rem .4rem;border:1.5px solid var(--bdr);border-radius:6px;font-size:.85rem" onchange="calcTransiente()">
+        </div>
+        <small>Vr em m/s, a em m/s&#178; &nbsp;|&nbsp; De catálogo do fabricante ou ensaio</small>
+      </div>
+    </div>
+    <!-- Gráfico dinâmico das curvas -->
+    <canvas id="cv-chart" width="700" height="220" style="width:100%;max-width:700px;display:block;border-radius:8px;border:1px solid #e1bee7;margin-bottom:.5rem;background:#f8fbff"></canvas>
+    <div id="cv-result"></div>
   </div>
 
   <div class="sbox info" style="font-size:.78rem">
@@ -1106,6 +1142,14 @@ function runMOC(){
     }
   }
 
+  // ── Válvula de retenção dinâmica (saída da bomba) ─────────────────
+  const _cvDyn=_transiente.cv;
+  const useCVModel=(evtType==='pump')&&_cvDyn&&_cvDyn.type!=='none'&&_cvDyn.Vr>0;
+  let cvSlamDone=false,cvSlamT=0;
+  // Área da seção transversal no nó 0 (= A = a/(g·B))
+  const A_nd0=a_nd[0]/(9.81*B_nd[0]);
+  const Q_rev_max_cv=useCVModel?_cvDyn.Vr*A_nd0:0;
+
   const nTot=8*(N-1), snap_iv=2;
   const snapshots=[], Hn=new Float64Array(N), Qn=new Float64Array(N);
   // Acumuladores de volume de ar por ventosa (total admitido, para display)
@@ -1250,7 +1294,24 @@ function runMOC(){
     } else {
       const tau=Math.max(0,1-t/tClose_eff);
       const CM0=H[1]-B_nd[1]*Q[1]+R[0]*Q[1]*Math.abs(Q[1]);
-      Qn[0]=Math.max(0,Q0*tau); Hn[0]=CM0+B_nd[0]*Qn[0];
+      if(useCVModel&&tau===0&&!cvSlamDone){
+        // Bomba parada, VR ainda não fechou: fluxo livre pelo reservatório de sucção
+        // H_suc = z[0] (reservatório de sucção — superfície livre = cota sucção)
+        const Q_suc=(z[0]-CM0)/B_nd[0];
+        if(Q_suc<=-Q_rev_max_cv){
+          // Slam! velocidade reversa atingiu o limite da curva da válvula
+          cvSlamDone=true;cvSlamT=t;
+          Qn[0]=0;Hn[0]=CM0; // fechamento instantâneo → spike ΔH=a·Vr/g em CM0
+        } else if(Q_suc>=0){
+          Qn[0]=0;Hn[0]=CM0; // fluxo positivo inesperado → fecha
+        } else {
+          Qn[0]=Q_suc;Hn[0]=z[0]; // fluxo reverso controlado
+        }
+      } else if(useCVModel&&cvSlamDone){
+        Qn[0]=0;Hn[0]=CM0;
+      } else {
+        Qn[0]=Math.max(0,Q0*tau); Hn[0]=CM0+B_nd[0]*Qn[0];
+      }
       const CPl=H[N-2]+B_nd[N-2]*Q[N-2]-R[N-2]*Q[N-2]*Math.abs(Q[N-2]);
       Hn[N-1]=H_dn; Qn[N-1]=(CPl-H_dn)/B_nd[N-1];
     }
@@ -1292,6 +1353,7 @@ function runMOC(){
   }
 
   _mocResult={N,L,dx,dt,z,H_ss,Hmax,Hmin,Hmax_bare,Hmin_bare,snapshots,
+    cvSlam:useCVModel?{Vr:_cvDyn.Vr,dH_slam:a_nd[0]*_cvDyn.Vr/9.81,slamDone:cvSlamDone,slamT:cvSlamT}:null,
     protections:{
       vessels:vessels.map(v=>({nd:v.nd,posM:v.nd*dx,vol:v.Va0*1000})),
       hydrotanks:hydrotanks.map(v=>({nd:v.nd,posM:v.nd*dx,vol:v.Va0*1000,injected:v.injected})),
@@ -1946,9 +2008,150 @@ const MAT_TRANS=[
 const K_WATER=2.1e9; // Pa — módulo de compressibilidade da água
 const RHO_WATER=1000; // kg/m³
 
+// ── Curvas dinâmicas de válvulas de retenção (Val-Matic / Thorley 1991) ─
+// Fonte: Relatorio_Completo_Valvulas_Retencao_Dinamica_SI.pdf (digitalização em SI)
+// Curva: Vr [m/s] = k · a_decel [m/s²]^n
+// Faixas: SEM SLAM Vr<0.10 · LEVE 0.10-0.30 · SEVERO >0.30
+const CV_CURVES={
+  nozzle:    {name:'Bocal / Axial (Nozzle Check)',          k:0.0026,n:1.314,col:'#00796b',order:1},
+  silent:    {name:'Silenciosa (Silent Check)',              k:0.0026,n:1.533,col:'#0288d1',order:2},
+  surgebuster:{name:'SurgeBuster',                          k:0.0044,n:1.460,col:'#1976d2',order:3},
+  dualdisk:  {name:'Dupla Portinhola (Dual Disc)',          k:0.0060,n:1.535,col:'#388e3c',order:4},
+  tilted:    {name:'Disco Inclinado (Tilted Disc)',         k:0.0227,n:1.302,col:'#f9a825',order:5},
+  swingflex: {name:'Portinhola Flex. (Swing-Flex)',         k:0.0430,n:1.015,col:'#f57c00',order:6},
+  swing:     {name:'Portinhola Simples (Swing Check)',      k:0.2521,n:1.026,col:'#e53935',order:7},
+  ball:      {name:'Esfera (Ball Check)',                   k:0.3341,n:1.005,col:'#c62828',order:8},
+};
+
 function calcCeleridade(D_i_mm, e_mm, E_Pa){
   const D=D_i_mm/1000, e=e_mm/1000;
   return Math.sqrt(K_WATER/RHO_WATER)/Math.sqrt(1+(K_WATER*D)/(E_Pa*e));
+}
+
+function toggleCVUI(){
+  const met=$('cvType')?.value||'none';
+  const mw=$('cv-manual-wrap');
+  if(mw)mw.style.display=met==='manual'?'':'none';
+}
+
+function computeCVDynamics(){
+  const type=$('cvType')?.value||'none';
+  if(type==='none'||!_multi||!_transiente)return null;
+  const VMax=_transiente.VMax||0;
+  if(VMax<=0)return null;
+  // Desaceleração média: V₀ / T_stop; T_stop mín. 0.1 s para evitar div/0
+  const T_eff=Math.max(_transiente.inertia?.T_s||0, gv('tClose')||0);
+  const T_stop=T_eff>0?T_eff:0.1;
+  const a_decel=VMax/T_stop; // m/s²
+  let k,n,cvName,col;
+  if(type==='manual'){
+    k=parseFloat($('cvK')?.value)||0.01;
+    n=parseFloat($('cvN')?.value)||1.3;
+    cvName='Curva manual';col='#7b1fa2';
+  } else {
+    const cv=CV_CURVES[type];
+    if(!cv)return null;
+    k=cv.k;n=cv.n;cvName=cv.name;col=cv.col;
+  }
+  const Vr=k*Math.pow(a_decel,n); // m/s
+  const dH_slam=_transiente.a*Vr/9.81; // mca  (Joukowsky para velocidade reversa)
+  const slamClass=Vr<0.10?'no':Vr<0.30?'mild':'severe';
+  return{type,k,n,cvName,col,a_decel,T_stop,Vr,dH_slam,slamClass};
+}
+
+function drawCVChart(cvRes){
+  const cv=$('cv-chart');if(!cv)return;
+  const ctx=cv.getContext('2d');
+  const W=cv.width,H=cv.height;
+  ctx.clearRect(0,0,W,H);ctx.fillStyle='#f8fbff';ctx.fillRect(0,0,W,H);
+  const mg={t:28,b:40,l:54,r:90},cW=W-mg.l-mg.r,cH=H-mg.t-mg.b;
+  const xMax=20,yMax=0.65;
+  const px=x=>mg.l+x/xMax*cW, py=y=>mg.t+cH*(1-y/yMax);
+  // Faixas de fundo
+  ctx.fillStyle='rgba(244,67,54,.10)';ctx.fillRect(mg.l,mg.t,cW,py(0.30)-mg.t);
+  ctx.fillStyle='rgba(255,193,7,.14)';ctx.fillRect(mg.l,py(0.30),cW,py(0.10)-py(0.30));
+  ctx.fillStyle='rgba(76,175,80,.12)';ctx.fillRect(mg.l,py(0.10),cW,py(0)-py(0.10));
+  // Labels das faixas
+  ctx.font='bold 8px Segoe UI';ctx.textAlign='right';
+  ctx.fillStyle='rgba(198,40,40,.7)';ctx.fillText('SLAM SEVERO',mg.l+cW-3,mg.t+10);
+  ctx.fillStyle='rgba(230,81,0,.7)';ctx.fillText('SLAM LEVE',mg.l+cW-3,py(0.20)+3);
+  ctx.fillStyle='rgba(56,142,60,.7)';ctx.fillText('SEM SLAM',mg.l+cW-3,py(0.05)+3);
+  // Grade
+  ctx.strokeStyle='rgba(0,0,0,.07)';ctx.lineWidth=0.8;
+  for(let xi=0;xi<=xMax;xi+=2){ctx.beginPath();ctx.moveTo(px(xi),mg.t);ctx.lineTo(px(xi),mg.t+cH);ctx.stroke();}
+  for(let yi=0;yi<=yMax;yi+=0.1){ctx.beginPath();ctx.moveTo(mg.l,py(yi));ctx.lineTo(mg.l+cW,py(yi));ctx.stroke();}
+  // Linhas de limite das faixas
+  ctx.setLineDash([4,3]);
+  ctx.strokeStyle='rgba(198,40,40,.35)';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(mg.l,py(0.30));ctx.lineTo(mg.l+cW,py(0.30));ctx.stroke();
+  ctx.strokeStyle='rgba(76,175,80,.35)';
+  ctx.beginPath();ctx.moveTo(mg.l,py(0.10));ctx.lineTo(mg.l+cW,py(0.10));ctx.stroke();
+  ctx.setLineDash([]);
+  // Todas as curvas
+  const order=['ball','swing','swingflex','tilted','dualdisk','surgebuster','silent','nozzle'];
+  const shortLabel={ball:'Esfera',swing:'Portinhola',swingflex:'Sf.Flex',tilted:'Disco Inc.',dualdisk:'Dupla',surgebuster:'SurgeB.',silent:'Silenc.',nozzle:'Bocal'};
+  for(const key of order){
+    const c=CV_CURVES[key];if(!c)continue;
+    const isSel=cvRes&&cvRes.type===key;
+    ctx.beginPath();ctx.moveTo(px(0),py(0));
+    for(let xi=0.1;xi<=xMax;xi+=0.2){
+      const Vri=c.k*Math.pow(xi,c.n);
+      if(Vri>yMax+0.05)break;
+      ctx.lineTo(px(xi),py(Vri));
+    }
+    ctx.strokeStyle=isSel?c.col:'rgba(0,0,0,.20)';
+    ctx.lineWidth=isSel?2.5:1;
+    ctx.stroke();
+    // Label no final da curva
+    let xlbl=xMax;
+    while(xlbl>1&&c.k*Math.pow(xlbl,c.n)>yMax)xlbl-=0.5;
+    if(xlbl>0.5){
+      const Vr_lbl=c.k*Math.pow(xlbl,c.n);
+      ctx.fillStyle=isSel?c.col:'rgba(80,90,100,.6)';
+      ctx.font=isSel?'bold 8.5px Segoe UI':'8px Segoe UI';
+      ctx.textAlign='left';
+      ctx.fillText(shortLabel[key]||key,px(xlbl)+3,py(Vr_lbl)+3);
+    }
+  }
+  // Curva manual
+  if(cvRes&&cvRes.type==='manual'){
+    ctx.beginPath();ctx.moveTo(px(0),py(0));
+    for(let xi=0.1;xi<=xMax;xi+=0.2){
+      const Vri=cvRes.k*Math.pow(xi,cvRes.n);
+      if(Vri>yMax+0.05)break;
+      ctx.lineTo(px(xi),py(Vri));
+    }
+    ctx.strokeStyle='#7b1fa2';ctx.lineWidth=2.5;ctx.stroke();
+    ctx.fillStyle='#7b1fa2';ctx.font='bold 8.5px Segoe UI';ctx.textAlign='left';
+    ctx.fillText('Manual',px(Math.min(15,xMax))+3,py(cvRes.k*Math.pow(Math.min(15,xMax),cvRes.n))+3);
+  }
+  // Ponto de operação do sistema
+  if(cvRes&&cvRes.type!=='none'){
+    const a_cl=Math.min(cvRes.a_decel,xMax);
+    const Vr_cl=Math.min(cvRes.Vr,yMax);
+    ctx.setLineDash([5,3]);ctx.strokeStyle='rgba(75,0,130,.55)';ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.moveTo(px(a_cl),mg.t);ctx.lineTo(px(a_cl),mg.t+cH);ctx.stroke();
+    ctx.strokeStyle='rgba(75,0,130,.35)';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(mg.l,py(Vr_cl));ctx.lineTo(mg.l+cW,py(Vr_cl));ctx.stroke();
+    ctx.setLineDash([]);
+    const dotCol=cvRes.slamClass==='no'?'#388e3c':cvRes.slamClass==='mild'?'#f57c00':'#c62828';
+    ctx.beginPath();ctx.arc(px(a_cl),py(Vr_cl),6,0,Math.PI*2);
+    ctx.fillStyle=dotCol;ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+    ctx.font='bold 9px Segoe UI';ctx.fillStyle='rgba(75,0,130,.85)';
+    ctx.textAlign='center';ctx.fillText(cvRes.a_decel.toFixed(1)+' m/s²',px(a_cl),mg.t-6);
+    ctx.textAlign='right';ctx.fillStyle=dotCol;
+    ctx.fillText(cvRes.Vr.toFixed(3)+' m/s',mg.l-4,py(Vr_cl)+3);
+  }
+  // Eixos
+  ctx.strokeStyle='rgba(0,0,0,.30)';ctx.lineWidth=1;ctx.setLineDash([]);
+  ctx.beginPath();ctx.moveTo(mg.l,mg.t);ctx.lineTo(mg.l,mg.t+cH);ctx.lineTo(mg.l+cW,mg.t+cH);ctx.stroke();
+  ctx.fillStyle='#607080';ctx.font='9px Segoe UI';ctx.textAlign='center';
+  for(let xi=0;xi<=xMax;xi+=5)ctx.fillText(xi,px(xi),mg.t+cH+13);
+  ctx.fillText('Desaceleração (m/s²)',mg.l+cW/2,H-2);
+  ctx.textAlign='right';
+  for(let yi=0;yi<=yMax+0.01;yi+=0.1)ctx.fillText(yi.toFixed(1),mg.l-5,py(yi)+3);
+  ctx.save();ctx.translate(13,mg.t+cH/2);ctx.rotate(-Math.PI/2);ctx.textAlign='center';
+  ctx.fillStyle='#607080';ctx.font='9px Segoe UI';ctx.fillText('Vel. Reversa (m/s)',0,0);ctx.restore();
 }
 
 function toggleInertiaUI(){
@@ -2061,7 +2264,33 @@ function calcTransiente(){
   const tClose_eff_jouk=Math.max(tClose||0, iner?.T_s||0);
   const dH_eff=(tClose_eff_jouk>0&&tClose_eff_jouk>tc)?dH_inst*tc/tClose_eff_jouk:dH_inst;
 
-  _transiente={a,tc,dH_inst,dH_eff,VMax,E,tClose,inertia:iner};
+  // VR dinâmica (apenas para evento de parada)
+  const cvbox=$('cv-box');
+  if(cvbox)cvbox.style.display=evtT==='pump'?'':'none';
+  _transiente={a,tc,dH_inst,dH_eff,VMax,E,tClose,inertia:iner,cv:null};
+  // Compute CV depois de _transiente estar populado (computeCVDynamics usa _transiente.VMax)
+  const cvDyn=(evtT==='pump')?computeCVDynamics():null;
+  _transiente.cv=cvDyn;
+  // Atualiza display da VR
+  if(evtT==='pump'){
+    drawCVChart(cvDyn);
+    if(cvDyn&&$('cv-result')){
+      const cls=cvDyn.slamClass;
+      const clsCol=cls==='no'?'#388e3c':cls==='mild'?'#e65100':'#c62828';
+      const clsLbl=cls==='no'?'SEM SLAM':cls==='mild'?'SLAM LEVE':'SLAM SEVERO';
+      $('cv-result').innerHTML=`<div style="background:#f3e5f5;border:1px solid #ce93d8;border-radius:8px;padding:.5rem .85rem;font-size:.8rem">
+        <b style="color:#4a0080">&#128274; ${cvDyn.cvName}</b>
+        <div style="display:flex;gap:1.2rem;flex-wrap:wrap;margin-top:.3rem">
+          <span>Decelera&#231;&#227;o: <b>${cvDyn.a_decel.toFixed(2)} m/s²</b> (V=${fmt(VMax,2)} m/s &divide; T=${fmt(cvDyn.T_stop,2)} s)</span>
+          <span>Vr m&#225;x: <b>${cvDyn.Vr.toFixed(3)} m/s</b></span>
+          <span>&#916;H slam: <b style="color:${clsCol}">${fmt(cvDyn.dH_slam,1)} mca</b></span>
+          <span><b style="color:${clsCol}">&#10148; ${clsLbl}</b></span>
+        </div>
+        <div style="font-size:.7rem;color:#607080;margin-top:.2rem">Vr = k&middot;a<sup>n</sup> = ${cvDyn.k.toFixed(4)}&middot;${cvDyn.a_decel.toFixed(2)}<sup>${cvDyn.n.toFixed(3)}</sup> | &#916;H&#8209;slam = a&#8209;celerity &times; Vr / g = ${fmt(a,0)}&times;${cvDyn.Vr.toFixed(3)}/9.81</div>
+      </div>`;
+    } else if($('cv-result')){$('cv-result').innerHTML='';}
+  }
+
   buildTransienteCard(a,tc,dH_inst,dH_eff,VMax,tClose,tc);
 }
 
@@ -2213,6 +2442,25 @@ function buildTransienteCard(a,tc,dH_inst,dH_eff,VMax,tClose,tc2){
       </tr>`;
     }).join('')}</tbody></table></div>`:'';
 
+  // ── Resultado do slam da VR ─────────────────────────────────────────
+  const _cvSlam=_mocResult?.cvSlam;
+  const cvSlamBlock=(()=>{
+    if(!_cvSlam)return'';
+    const cls=_transiente.cv?.slamClass||'no';
+    const clsCol=cls==='no'?'#388e3c':cls==='mild'?'#e65100':'#c62828';
+    const clsLbl=cls==='no'?'SEM SLAM':cls==='mild'?'SLAM LEVE':'SLAM SEVERO';
+    const slamIcon=cls==='no'?'&#10003;':cls==='mild'?'&#9888;':'&#9940;';
+    return`<div style="background:${cls==='no'?'#e8f5e9':cls==='mild'?'#fff8e1':'#ffebee'};border:1px solid ${cls==='no'?'#a5d6a7':cls==='mild'?'#ffe082':'#ef9a9a'};border-radius:8px;padding:.55rem .85rem;font-size:.82rem;margin-top:.4rem">
+      <b style="color:${clsCol}">${slamIcon} VR Sa&#237;da da Bomba &mdash; ${clsLbl}</b> &nbsp;
+      <span style="color:#607080;font-size:.76rem">| ${_transiente.cv?.cvName||''}</span>
+      <div style="display:flex;gap:1.2rem;flex-wrap:wrap;margin-top:.25rem;font-size:.8rem">
+        <span>Vr = <b>${_cvSlam.Vr.toFixed(3)} m/s</b></span>
+        <span>&#916;H slam = <b style="color:${clsCol}">${fmt(_cvSlam.dH_slam,1)} mca</b></span>
+        ${_cvSlam.slamDone?`<span style="color:#607080">Fechamento aos <b>${fmt(_cvSlam.slamT,3)} s</b></span>`:'<span style="color:#388e3c">VR fechou antes do limite Vr</span>'}
+      </div>
+    </div>`;
+  })();
+
   const protecao=hasRisk
     ?`<div class="sbox ${anyProt?'warn':'err'}" style="margin-top:.5rem">
         <b>&#9888; Subpress&#227;o abaixo de zero em ${riskPts.length} ponto(s) &mdash; risco de cavita&#231;&#227;o.</b>
@@ -2285,6 +2533,8 @@ function buildTransienteCard(a,tc,dH_inst,dH_eff,VMax,tClose,tc2){
         <div style="font-size:.7rem;color:var(--mu);margin-top:.2rem">${det} &nbsp;|&nbsp; T&#8209;s = I&#183;&#969;&#8320;&#178;/P&#8320; &nbsp;|&nbsp; &#969;&#8320; = ${fmt(iner.w0,2)} rad/s</div>
       </div>`;
     })()}
+
+    ${cvSlamBlock}
 
     <div class="g2" id="transiente-prot-box" style="margin-bottom:.8rem">
       ${protecao}
