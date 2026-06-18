@@ -154,7 +154,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v4.17 · 18/06/2026</span></h1>
+      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v4.18 · 18/06/2026</span></h1>
       <p>Régime Permanente &middot; Celeridade &middot; Joukowsky &middot; Envelope Sobre/Subpressão &middot; Risco de Cavitação</p>
     </div>
   </div>
@@ -1145,12 +1145,16 @@ function runMOC(){
   // ── Válvula de retenção dinâmica (saída da bomba) ─────────────────
   const _cvDyn=_transiente.cv;
   const useCVModel=(evtType==='pump')&&_cvDyn&&_cvDyn.type!=='none'&&_cvDyn.Vr>0;
-  let cvSlamDone=false,cvSlamT=0;
+  let cvSlamDone=false,cvSlamT=0,cvSlamStep=-1;
   // Área da seção transversal no nó 0 (= A = a/(g·B))
   const A_nd0=a_nd[0]/(9.81*B_nd[0]);
   const Q_rev_max_cv=useCVModel?_cvDyn.Vr*A_nd0:0;
 
   const nTot=8*(N-1), snap_iv=2;
+  // Amortecimento pós-slam dentro do loop MOC — aplicado a Hn/Qn antes de gravar
+  // Simula dissipação viscoelástica da parede; τ=1.5×T_RT → ~7% restante ao fim
+  const T_RT_moc=2*L/a_max, tau_d_moc=1.5*T_RT_moc;
+  const decayPerStep=Math.exp(-dt/tau_d_moc);
   const snapshots=[], Hn=new Float64Array(N), Qn=new Float64Array(N);
   // Acumuladores de volume de ar por ventosa (total admitido, para display)
   const airVolumeMap=new Map();
@@ -1300,7 +1304,7 @@ function runMOC(){
         const Q_suc=(z[0]-CM0)/B_nd[0];
         if(Q_suc<=-Q_rev_max_cv){
           // Slam! velocidade reversa atingiu o limite da curva da válvula
-          cvSlamDone=true;cvSlamT=t;
+          cvSlamDone=true;cvSlamT=t;cvSlamStep=step;
           Qn[0]=0;Hn[0]=z[0]+B_nd[0]*Q_rev_max_cv; // spike Joukowsky: H_suc + a·Vr/g
         } else if(Q_suc>=0){
           Qn[0]=0;Hn[0]=CM0; // fluxo positivo inesperado → fecha
@@ -1314,6 +1318,15 @@ function runMOC(){
       }
       const CPl=H[N-2]+B_nd[N-2]*Q[N-2]-R[N-2]*Q[N-2]*Math.abs(Q[N-2]);
       Hn[N-1]=H_dn; Qn[N-1]=(CPl-H_dn)/B_nd[N-1];
+    }
+    // Amortecimento pós-slam: onda Q≈0 não dissipa por Darcy; forçamos decaimento
+    // exponencial de H e Q em direção ao estado final (H_dn, Q=0).
+    // Começa no passo SEGUINTE ao slam para não reduzir o pico Joukowsky registrado.
+    if(cvSlamDone&&step>cvSlamStep){
+      for(let i=0;i<N;i++){
+        Hn[i]=H_dn+(Hn[i]-H_dn)*decayPerStep;
+        Qn[i]=Qn[i]*decayPerStep;
+      }
     }
     H.set(Hn); Q.set(Qn);
     for(let i=0;i<N;i++){if(H[i]>Hmax[i])Hmax[i]=H[i];if(H[i]<Hmin[i])Hmin[i]=H[i];}
@@ -1352,24 +1365,7 @@ function runMOC(){
     }
   }
 
-  // ── Amortecimento visual pós-slam nos snapshots ───────────────────
-  // Hmax/Hmin NÃO são alterados (análise hidráulica permanece correta).
-  // Após o slam da VR, Q≈0 em toda a tubulação → atrito Darcy≈0 →
-  // a onda bate nas extremidades indefinidamente. Na prática a tubulação
-  // dissipa energia via viscoelasticidade da parede; simulamos isso aqui.
-  if(useCVModel&&cvSlamDone){
-    const slamIdx=snapshots.findIndex(s=>s.t>=cvSlamT);
-    if(slamIdx>=0){
-      const T_RT=2*L/a_max; // período ida-e-volta (s)
-      const tau_d=1.5*T_RT; // ≈95% dissipação em 3 reflexões
-      for(let fi=slamIdx+1;fi<snapshots.length;fi++){
-        const dt_sl=snapshots[fi].t-cvSlamT;
-        const decay=Math.exp(-dt_sl/tau_d);
-        for(let i=0;i<N;i++)
-          snapshots[fi].H[i]=H_dn+(snapshots[fi].H[i]-H_dn)*decay;
-      }
-    }
-  }
+
 
   _mocResult={N,L,dx,dt,z,H_ss,Hmax,Hmin,Hmax_bare,Hmin_bare,snapshots,
     cvSlam:useCVModel?{Vr:_cvDyn.Vr,dH_slam:a_nd[0]*_cvDyn.Vr/9.81,slamDone:cvSlamDone,slamT:cvSlamT}:null,
