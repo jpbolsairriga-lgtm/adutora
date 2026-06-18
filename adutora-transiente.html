@@ -154,7 +154,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v4.19 · 18/06/2026</span></h1>
+      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v4.20 · 18/06/2026</span></h1>
       <p>Régime Permanente &middot; Celeridade &middot; Joukowsky &middot; Envelope Sobre/Subpressão &middot; Risco de Cavitação</p>
     </div>
   </div>
@@ -1301,18 +1301,11 @@ function runMOC(){
       const tau=Math.max(0,1-t/tClose_eff);
       const CM0=H[1]-B_nd[1]*Q[1]+R[0]*Q[1]*Math.abs(Q[1]);
       if(useCVModel&&tau===0&&!cvSlamDone){
-        // Bomba parada, VR ainda não fechou: fluxo livre pelo reservatório de sucção
-        // H_suc = z[0] (reservatório de sucção — superfície livre = cota sucção)
-        const Q_suc=(z[0]-CM0)/B_nd[0];
-        if(Q_suc<=-Q_rev_max_cv){
-          // Slam! velocidade reversa atingiu o limite da curva da válvula
-          cvSlamDone=true;cvSlamT=t;cvSlamStep=step;
-          Qn[0]=0;Hn[0]=z[0]+B_nd[0]*Q_rev_max_cv; // spike Joukowsky: H_suc + a·Vr/g
-        } else if(Q_suc>=0){
-          Qn[0]=0;Hn[0]=CM0; // fluxo positivo inesperado → fecha
-        } else {
-          Qn[0]=Q_suc;Hn[0]=z[0]; // fluxo reverso controlado
-        }
+        // Slam imediato ao parar a bomba: pico Joukowsky somado ao estado atual do sistema.
+        // Usar CM0 (≈H_ss[0]) como base — NÃO z[0] (cota do terreno) — para que o pico
+        // se propague seguindo o gradiente hidráulico: Hmax[i] ≈ H_ss[i] + a·Vr/g.
+        cvSlamDone=true;cvSlamT=t;cvSlamStep=step;
+        Qn[0]=0;Hn[0]=CM0+B_nd[0]*Q_rev_max_cv; // spike = estado_atual + a·Vr/g
       } else if(useCVModel&&cvSlamDone){
         Qn[0]=0;Hn[0]=CM0;
       } else {
