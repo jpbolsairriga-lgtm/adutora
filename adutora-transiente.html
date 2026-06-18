@@ -154,7 +154,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v4.18 · 18/06/2026</span></h1>
+      <h1>Adutora &mdash; Transiente Hidráulico <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">MOC v4.19 · 18/06/2026</span></h1>
       <p>Régime Permanente &middot; Celeridade &middot; Joukowsky &middot; Envelope Sobre/Subpressão &middot; Risco de Cavitação</p>
     </div>
   </div>
@@ -1150,11 +1150,12 @@ function runMOC(){
   const A_nd0=a_nd[0]/(9.81*B_nd[0]);
   const Q_rev_max_cv=useCVModel?_cvDyn.Vr*A_nd0:0;
 
-  const nTot=8*(N-1), snap_iv=2;
-  // Amortecimento pós-slam dentro do loop MOC — aplicado a Hn/Qn antes de gravar
-  // Simula dissipação viscoelástica da parede; τ=1.5×T_RT → ~7% restante ao fim
+  // Amortecimento pós-slam: τ=1.5×T_RT; para <1% de amplitude precisamos de 7τ≈10.5×T_RT
   const T_RT_moc=2*L/a_max, tau_d_moc=1.5*T_RT_moc;
   const decayPerStep=Math.exp(-dt/tau_d_moc);
+  const stepsForDissipation=Math.ceil(7*tau_d_moc/dt); // passos até <1% de amplitude
+  // nTot começa em 4×T_RT; é estendido dentro do loop quando o slam ocorre
+  let nTot=8*(N-1), snap_iv=2;
   const snapshots=[], Hn=new Float64Array(N), Qn=new Float64Array(N);
   // Acumuladores de volume de ar por ventosa (total admitido, para display)
   const airVolumeMap=new Map();
@@ -1163,7 +1164,8 @@ function runMOC(){
   const airVa=new Map();
   for(const i of airValveNodeSet) airVa.set(i,0);
 
-  for(let step=0;step<nTot;step++){
+  let step=0;
+  while(step<nTot){
     const t=step*dt;
     // ── Nós interiores ─────────────────────────────────────────────
     for(let i=1;i<N-1;i++){
@@ -1331,6 +1333,10 @@ function runMOC(){
     H.set(Hn); Q.set(Qn);
     for(let i=0;i<N;i++){if(H[i]>Hmax[i])Hmax[i]=H[i];if(H[i]<Hmin[i])Hmin[i]=H[i];}
     if(step%snap_iv===0)snapshots.push({t:(step+1)*dt,H:new Float64Array(H)});
+    // Ao detectar o slam, estende nTot para cobrir a dissipação completa (<1% amplitude)
+    if(cvSlamDone&&cvSlamStep===step)
+      nTot=Math.min(Math.max(nTot,step+stepsForDissipation),40*(N-1));
+    step++;
   }
 
   // ── Simulação SEM proteção (para comparação) ─────────────────────
@@ -1608,7 +1614,12 @@ function initMOCAnim(){
     const interval=physDtMs/_mocAnim.speed; // ms reais por frame
     if(ts-lastTs>=Math.max(interval,1)){
       lastTs=ts;
-      let nxt=_mocAnim.frame+1;if(nxt>=S.length)nxt=0;
+      const nxt=_mocAnim.frame+1;
+      if(nxt>=S.length){
+        _mocAnim.playing=false;
+        const btn=$('moc-play');if(btn)btn.textContent='▶';
+        return;
+      }
       setFrame(nxt);
     }
     requestAnimationFrame(loop);
