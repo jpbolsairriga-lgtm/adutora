@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Transiente Hidráulico MOC — Bolsa Irriga</title>
+<title>Transiente Hidráulico MOC v3.3 — Bolsa Irriga</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@0.14.0/dist/Leaflet.GoogleMutant.js"></script>
@@ -109,7 +109,7 @@ button.del-seg:hover{background:#ffcdd2}
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v3.2 · 19/06/2026</span></h1>
+      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v3.3 · 19/06/2026</span></h1>
       <p>Método das Características &middot; Multi-Trecho &middot; Inércia da Bomba &middot; FCV &middot; Comparação Hammer</p>
     </div>
   </div>
@@ -392,6 +392,8 @@ let _mapInst   = null;
 let _traceLayer  = null;
 let _curvasLayer = null;
 let _mapVisible  = false;
+let _gApiLoaded  = false;
+let _gApiLoading = false;
 
 // ═══════════════════════════════════════════════════════════
 // KML — TRAÇADO (com altitude) e CURVAS DE NÍVEL
@@ -528,6 +530,26 @@ function clearKmls(){
 }
 
 // ═══════════════════════════════════════════════════════════
+// GOOGLE MAPS API — carregamento assíncrono
+// ═══════════════════════════════════════════════════════════
+function ensureGoogleApi(key){
+  return new Promise((resolve,reject)=>{
+    if(_gApiLoaded||(window.google&&window.google.maps)){_gApiLoaded=true;resolve();return;}
+    if(_gApiLoading){
+      const t=setInterval(()=>{if(window.google&&window.google.maps){clearInterval(t);_gApiLoaded=true;resolve();}},120);
+      return;
+    }
+    _gApiLoading=true;
+    const cb='_gmCb'+Date.now();
+    window[cb]=()=>{_gApiLoaded=true;_gApiLoading=false;resolve();};
+    const s=document.createElement('script');
+    s.src=`https://maps.googleapis.com/maps/api/js?key=${key}&callback=${cb}`;
+    s.onerror=()=>{_gApiLoading=false;reject();};
+    document.head.appendChild(s);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
 // MAPA LEAFLET
 // ═══════════════════════════════════════════════════════════
 function toggleMap(){
@@ -544,9 +566,13 @@ function toggleMap(){
 }
 
 function onApiKey(v){
-  if(v.length>10) localStorage.setItem('mapskey_pl',v);
+  if(v.length<10) return;
+  localStorage.setItem('mapskey_pl',v);
   if(_mapInst){_mapInst.remove();_mapInst=null;}
-  if(_mapVisible) initMap(null,null);
+  _gApiLoaded=false; _gApiLoading=false;
+  if(_mapVisible){
+    ensureGoogleApi(v).then(()=>initMap()).catch(()=>initMap());
+  }
 }
 
 function initMap(center,zoom){
@@ -555,8 +581,8 @@ function initMap(center,zoom){
   const c=center||[-15,-50], z=zoom||4;
   _mapInst=L.map(el,{zoomControl:true}).setView(c,z);
   const key=localStorage.getItem('mapskey_pl');
-  if(key&&window.L.gridLayer&&window.L.gridLayer.googleMutant){
-    L.gridLayer.googleMutant({type:'hybrid',apiKey:key}).addTo(_mapInst);
+  if(_gApiLoaded&&key&&window.L.gridLayer&&window.L.gridLayer.googleMutant){
+    L.gridLayer.googleMutant({type:'hybrid'}).addTo(_mapInst);
   } else {
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
       {attribution:'© OSM contributors',maxZoom:19}).addTo(_mapInst);
@@ -886,7 +912,7 @@ function runMOC(p){
 
   return {dist,H_ss,Hmax,Hmin,N,dt,nTot,T_sim,
     nd_f,B_arr,R_arr,N_segs,segs,
-    elev_arr,hasElev,
+    elev_arr,hasElev,HR_s,HR_d,
     dH_jou,H_ss_pump:H_ss[0],t_cv_close,_fcvHmax,_fcvHmin,pump,cavitDist};
 }
 
@@ -904,6 +930,14 @@ function drawChart(res, hammer, frameH){
 
   const ham_off=hammer?(+document.getElementById('hammer-offset').value||0):0;
 
+  // Cores e helper PN
+  const PN_COLORS={180:'#6a1b9a',145:'#ad1457',125:'#b71c1c',80:'#e65100',60:'#0d47a1',40:'#1565c0'};
+  function pnElevAt(node_i){
+    if(res.hasElev&&res.elev_arr[node_i]>50) return res.elev_arr[node_i];
+    // Estimativa linear entre reservatórios
+    return res.HR_s+(res.HR_d-res.HR_s)*(res.dist[node_i]/res.dist[res.N]);
+  }
+
   // Y range — loop explícito (evita bug de zeros em TypedArray)
   let yMin=+Infinity, yMax=-Infinity;
   const upd=v=>{const n=+v; if(n>50&&isFinite(n)){if(n<yMin)yMin=n;if(n>yMax)yMax=n;}};
@@ -913,6 +947,13 @@ function drawChart(res, hammer, frameH){
     if(frameH) upd(frameH[i]);
   }
   if(hammer){hammer.hgl_max.forEach(upd);hammer.hgl_min.forEach(upd);}
+  // Inclui limites PN no range (apenas nós representativos para não pesar)
+  {let ni2=0;res.segs.forEach((sg,s)=>{
+    const ns2=res.N_segs[s];
+    const pn=sg.pipeIdx>=0?PIPE_DB[sg.pipeIdx].PN:null;
+    if(pn){[ni2,ni2+Math.floor(ns2/2),ni2+ns2].forEach(i=>{if(i<=res.N)upd(pnElevAt(i)+pn);});}
+    ni2+=ns2;
+  });}
   if(!isFinite(yMin)){yMin=780;yMax=850;}
   const pad=Math.max(15,(yMax-yMin)*0.08);
   yMin=Math.floor((yMin-pad)/10)*10; yMax=Math.ceil((yMax+pad)/10)*10;
@@ -1013,6 +1054,35 @@ function drawChart(res, hammer, frameH){
   polyLine(dArr,hmax,'#c62828',[],2);
   polyLine(dArr,hmin,'#1565c0',[],2);
 
+  // Linhas de limite PN por trecho (elev + PN_mca)
+  {
+    let ni=0;
+    const seenPn=new Set();
+    res.segs.forEach((sg,s)=>{
+      const ns=res.N_segs[s];
+      const pn=sg.pipeIdx>=0?PIPE_DB[sg.pipeIdx].PN:null;
+      if(pn!=null){
+        const col=PN_COLORS[pn]||'#888';
+        // Linha de limite
+        ctx.beginPath();ctx.strokeStyle=col;ctx.lineWidth=1.5;ctx.setLineDash([6,4]);
+        for(let i=ni;i<=ni+ns;i++){
+          const[cx,cy]=toC(res.dist[i],pnElevAt(i)+pn);
+          if(i===ni)ctx.moveTo(cx,cy);else ctx.lineTo(cx,cy);
+        }
+        ctx.stroke();ctx.setLineDash([]);
+        // Rótulo no meio do trecho (apenas 1 por PN único)
+        if(!seenPn.has(pn)){
+          seenPn.add(pn);
+          const mid=ni+Math.floor(ns/2);
+          const[cxm,cym]=toC(res.dist[mid],pnElevAt(mid)+pn);
+          ctx.fillStyle=col;ctx.font='bold 9.5px Segoe UI';ctx.textAlign='center';
+          ctx.fillText('PN'+pn,cxm,cym-5);
+        }
+      }
+      ni+=ns;
+    });
+  }
+
   if(frameH){
     polyLine(dArr,Array.from(frameH),'#ff6f00',[],2.5);
     const[cx0,cy0]=toC(0,frameH[0]);
@@ -1032,6 +1102,12 @@ function drawChart(res, hammer, frameH){
   if(res.hasElev) leg.push(['#8d6e63','─','Terreno']);
   if(frameH) leg.push(['#ff6f00','─','HGL(t)']);
   if(hammer) leg.push(['rgba(230,81,0,.8)','•','Ham Hmax'],['rgba(21,101,192,.8)','•','Ham Hmin']);
+  // PN entries (únicos)
+  const seenPnLeg=new Set();
+  res.segs.forEach(sg=>{
+    const pn=sg.pipeIdx>=0?PIPE_DB[sg.pipeIdx].PN:null;
+    if(pn&&!seenPnLeg.has(pn)){seenPnLeg.add(pn);leg.push([PN_COLORS[pn]||'#888','--','PN'+pn]);}
+  });
   let lx=PAD.l+8;
   ctx.font='10px Segoe UI';ctx.textAlign='left';
   leg.forEach(([col,sym,lbl])=>{
@@ -1179,7 +1255,7 @@ function updateStats(res){
 // ═══════════════════════════════════════════════════════════
 function readParams(){
   const segs=_segments.filter(s=>s.L>0).map(s=>({
-    L:s.L, Di:s.Di, e:s.e, a:s.a, C_hw:s.C_hw
+    L:s.L, Di:s.Di, e:s.e, a:s.a, C_hw:s.C_hw, pipeIdx:s.pipeIdx
   }));
   if(!segs.length) throw new Error('Adicione pelo menos um trecho.');
   return {
@@ -1246,9 +1322,13 @@ window.addEventListener('load',()=>{
   if(key) document.getElementById('api-key-input').value=key;
   setAnimSpeed(1);
 
-  // Inicia mapa automaticamente
+  // Inicia mapa (com Google satélite se houver chave)
   _mapVisible=true;
-  initMap([-15,-50],4);
+  if(key&&key.length>10){
+    ensureGoogleApi(key).then(()=>initMap([-15,-50],4)).catch(()=>initMap([-15,-50],4));
+  } else {
+    initMap([-15,-50],4);
+  }
 
   // Sardinha: DEFOFO JEI PN80 DN150 com a=1183 m/s (ferro fundido dúctil K7)
   const dfIdx=PIPE_DB.findIndex(p=>p.g==='DEFOFO JEI PN80'&&p.dn===150);
