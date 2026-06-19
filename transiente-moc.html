@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Transiente Hidráulico MOC v3.3 — Bolsa Irriga</title>
+<title>Transiente Hidráulico MOC v3.4 — Bolsa Irriga</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@0.14.0/dist/Leaflet.GoogleMutant.js"></script>
@@ -109,7 +109,7 @@ button.del-seg:hover{background:#ffcdd2}
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v3.3 · 19/06/2026</span></h1>
+      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v3.4 · 19/06/2026</span></h1>
       <p>Método das Características &middot; Multi-Trecho &middot; Inércia da Bomba &middot; FCV &middot; Comparação Hammer</p>
     </div>
   </div>
@@ -289,7 +289,7 @@ button.del-seg:hover{background:#ffcdd2}
 
 <!-- ── Resultados (oculto até calcular) ── -->
 <div class="card" id="card-stats" style="display:none">
-  <div class="ct">📊 Resultados da Simulação</div>
+  <div class="ct">📊 Resultados da Simulação <button onclick="abrirTabela()" style="margin-left:auto;background:#7b1fa2;border:none;color:#fff;border-radius:7px;padding:.22rem .85rem;cursor:pointer;font-weight:700;font-size:.72rem;flex-shrink:0">📋 Tabela</button></div>
   <div class="tiles">
     <div class="tile tr2"><div class="tl">Hmax global</div><div class="tv"><span id="st-hmax">—</span><small>m</small></div></div>
     <div class="tile tb2"><div class="tl">Hmin global</div><div class="tv"><span id="st-hmin">—</span><small>m</small></div></div>
@@ -309,6 +309,25 @@ button.del-seg:hover{background:#ffcdd2}
 </div>
 
 </div><!-- .page -->
+
+<!-- ── Modal Tabela MOC ── -->
+<div id="mocTableModal" onclick="if(event.target===this)this.style.display='none'" style="position:fixed;inset:0;background:rgba(0,0,0,.58);z-index:400;display:none;align-items:flex-start;justify-content:center;padding:1rem;overflow-y:auto">
+  <div style="background:#fff;border-radius:14px;width:min(1200px,98vw);display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.35);max-height:92vh">
+    <div style="background:linear-gradient(135deg,#1a0030,#7b1fa2);color:#fff;padding:.8rem 1.1rem;border-radius:14px 14px 0 0;display:flex;align-items:center;gap:.65rem;flex-shrink:0">
+      <span style="font-size:1.1rem">📋</span>
+      <span style="font-size:.95rem;font-weight:900;flex:1">Tabela de Resultados — Perfil Piezométrico MOC</span>
+      <button onclick="exportarCSV()" style="background:#2e7d32;border:none;color:#fff;border-radius:7px;padding:.32rem 1rem;cursor:pointer;font-weight:700;font-size:.8rem">⬇ CSV</button>
+      <button onclick="document.getElementById('mocTableModal').style.display='none'" style="background:rgba(255,255,255,.18);border:none;color:#fff;border-radius:7px;padding:.32rem .85rem;cursor:pointer;font-weight:900;font-size:1rem">✕</button>
+    </div>
+    <div style="overflow:auto;flex:1">
+      <table id="mocTable" style="width:100%;border-collapse:collapse;font-size:.79rem;font-family:'Segoe UI',system-ui;white-space:nowrap">
+        <thead id="mocTableHead"></thead>
+        <tbody id="mocTableBody"></tbody>
+      </table>
+    </div>
+    <div id="mocTableFooter" style="padding:.4rem 1rem;font-size:.7rem;color:#607080;border-top:1px solid #d0e4f0;background:#f8fbff;border-radius:0 0 14px 14px;flex-shrink:0"></div>
+  </div>
+</div>
 
 <script>
 'use strict';
@@ -1313,6 +1332,109 @@ document.getElementById('use_inertia').addEventListener('change',function(){
 window.addEventListener('resize',()=>{
   if(_res) drawChart(_res,_hammer,_frames[Math.floor(_animIdx)]||null);
 });
+
+// ═══════════════════════════════════════════════════════════
+// TABELA DE RESULTADOS
+// ═══════════════════════════════════════════════════════════
+function getElevNode(res,i){
+  if(res.hasElev&&res.elev_arr[i]>50) return res.elev_arr[i];
+  return res.HR_s+(res.HR_d-res.HR_s)*(res.dist[i]/res.dist[res.N]);
+}
+
+function getPNNode(res,i){
+  let ni=0;
+  for(let s=0;s<res.segs.length;s++){
+    ni+=res.N_segs[s];
+    if(i<ni||s===res.segs.length-1){
+      const idx=res.segs[s].pipeIdx;
+      return idx>=0?PIPE_DB[idx].PN:null;
+    }
+  }
+  return null;
+}
+
+function abrirTabela(){
+  if(!_res){alert('Execute o cálculo primeiro.');return;}
+  const res=_res;
+  const N=res.N;
+  const step=Math.max(1,Math.floor(N/100));
+  const cols=['Nó','Dist. (m)','Cota (m)','HGL (m)','P regime (mca)','Hmax (m)','Hmin (m)','ΔH+ (m)','ΔH− (m)','PN','Cavitação'];
+  const thStyle='position:sticky;top:0;background:#f0e6ff;padding:.38rem .55rem;border:1px solid #d0c0e8;font-size:.72rem;font-weight:800;color:#4a0080;white-space:nowrap';
+  document.getElementById('mocTableHead').innerHTML='<tr>'+cols.map(c=>`<th style="${thStyle}">${c}</th>`).join('')+'</tr>';
+
+  const rows=[];
+  const idxSet=new Set();
+  for(let i=0;i<=N;i+=step) idxSet.add(i);
+  idxSet.add(N);
+  [...idxSet].sort((a,b)=>a-b).forEach(i=>{
+    const elev=getElevNode(res,i);
+    const hss=res.H_ss[i];
+    const hmax=res.Hmax[i];
+    const hmin=res.Hmin[i];
+    const pn=getPNNode(res,i);
+    const hasCav=hmin<elev;
+    const vals=[
+      i,
+      res.dist[i].toFixed(1),
+      elev.toFixed(2),
+      hss.toFixed(2),
+      (hss-elev).toFixed(2),
+      hmax.toFixed(2),
+      hmin.toFixed(2),
+      (hmax-hss).toFixed(2),
+      (hss-hmin).toFixed(2),
+      pn!=null?'PN'+pn:'—',
+      hasCav?'⚠ Sim':'—'
+    ];
+    const bg=hasCav?'#fff3e0':rows.length%2===0?'#fff':'#f8f4ff';
+    rows.push('<tr style="background:'+bg+'">'+vals.map((v,ci)=>{
+      const align=ci<=1||ci>=9?'center':'right';
+      const extra=hasCav&&ci===10?';color:#c62828;font-weight:700':'';
+      return `<td style="padding:.3rem .55rem;border:1px solid #e8ddf8;text-align:${align}${extra}">${v}</td>`;
+    }).join('')+'</tr>');
+  });
+  document.getElementById('mocTableBody').innerHTML=rows.join('');
+
+  let cavCount=0;
+  for(let i=0;i<=N;i++) if(_res.Hmin[i]<getElevNode(_res,i)) cavCount++;
+  document.getElementById('mocTableFooter').textContent=
+    `${rows.length} linhas exibidas (passo ${step}) · ${N+1} nós totais · `+
+    (cavCount>0?cavCount+' nó(s) com risco de cavitação':'Sem risco de cavitação');
+  document.getElementById('mocTableModal').style.display='flex';
+}
+
+function exportarCSV(){
+  if(!_res){alert('Execute o cálculo primeiro.');return;}
+  const res=_res;
+  const N=res.N;
+  const cols=['Nó','Dist. (m)','Cota (m)','HGL (m)','P regime (mca)','Hmax (m)','Hmin (m)','ΔH+ (m)','ΔH− (m)','PN','Cavitação'];
+  const lines=['﻿'+cols.join(';')];
+  for(let i=0;i<=N;i++){
+    const elev=getElevNode(res,i);
+    const hss=res.H_ss[i];
+    const hmax=res.Hmax[i];
+    const hmin=res.Hmin[i];
+    const pn=getPNNode(res,i);
+    lines.push([
+      i,
+      res.dist[i].toFixed(3),
+      elev.toFixed(3),
+      hss.toFixed(3),
+      (hss-elev).toFixed(3),
+      hmax.toFixed(3),
+      hmin.toFixed(3),
+      (hmax-hss).toFixed(3),
+      (hss-hmin).toFixed(3),
+      pn!=null?'PN'+pn:'',
+      hmin<elev?'Sim':'Não'
+    ].join(';'));
+  }
+  const blob=new Blob([lines.join('\r\n')],{type:'text/csv;charset=utf-8;'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='transiente_moc_perfil.csv';
+  a.click();
+}
 
 // ═══════════════════════════════════════════════════════════
 // INIT
