@@ -434,6 +434,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
       <option value="reliefvalve">&#128308; Val. Antecipadora de Onda</option>
       <option value="flywheel">&#9881; Volante de in&#233;rcia</option>
       <option value="vrbypass">&#128295; VR-Bypass (Amort. Hidr&#225;ulico)</option>
+      <option value="fcv">&#9660; Val. Reguladora de Carga (FCV)</option>
     </select>
     <button onclick="protAdd()" style="background:#2e7d32;color:#fff;border:none;border-radius:6px;padding:.35rem 1rem;cursor:pointer;font-size:.82rem;font-weight:700;white-space:nowrap">+ Adicionar</button>
   </div>
@@ -444,6 +445,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
     <b>Ventosa</b>: limita subpress&#227;o a 0 mca (vazio = pontos altos autom&#225;ticos).
     <b>Reten&#231;&#227;o</b>: impede refluxo e amortece sobrepressão de retorno.
     <b>VR-Bypass</b>: VR + placa de orifício no bypass — dissipa a sobrepressão de retorno; calcula Ø automaticamente.
+    <b>FCV</b>: queda de pressão concentrada permanente (ex.: válvula reguladora existente) — eleva a linha piezométrica a montante e altera o perfil da envoltória.
     <b>Volante</b>: aumenta o tempo de parada da bomba.
   </div>
 </div>
@@ -888,6 +890,7 @@ function protAdd(){
   else if(type==='reliefvalve'){comp.pos=Math.round(L_cur*0.01)||5;comp.Hset=80;}
   else if(type==='flywheel'){comp.tStop=5;}
   else if(type==='vrbypass'){comp.pos=Math.round(L_cur*0.01)||5;comp.dHmax='';}
+  else if(type==='fcv'){comp.pos=Math.round(L_cur*0.01)||5;comp.dH=24.5;}
   _protComponents.push(comp);
   protRender();
   calcTransiente();
@@ -910,8 +913,8 @@ function protRender(){
     return;
   }
   const L_cur=gv('L')||1000;
-  const icons={vessel:'&#127958;',hydrotank:'&#128739;',airvalve:'&#127788;',checkvalve:'&#128274;',reliefvalve:'&#128308;',flywheel:'&#9881;',vrbypass:'&#128295;'};
-  const names={vessel:'C&#226;mara de ar',hydrotank:'Tanque Hidropneum&#225;tico',airvalve:'Ventosa',checkvalve:'Val. Reten&#231;&#227;o',reliefvalve:'Val. Antecipadora (VAO)',flywheel:'Volante de In&#233;rcia',vrbypass:'VR-Bypass'};
+  const icons={vessel:'&#127958;',hydrotank:'&#128739;',airvalve:'&#127788;',checkvalve:'&#128274;',reliefvalve:'&#128308;',flywheel:'&#9881;',vrbypass:'&#128295;',fcv:'&#9660;'};
+  const names={vessel:'C&#226;mara de ar',hydrotank:'Tanque Hidropneum&#225;tico',airvalve:'Ventosa',checkvalve:'Val. Reten&#231;&#227;o',reliefvalve:'Val. Antecipadora (VAO)',flywheel:'Volante de In&#233;rcia',vrbypass:'VR-Bypass',fcv:'Val. Reg. de Carga (FCV)'};
   el.innerHTML=_protComponents.map(c=>{
     const icon=icons[c.type]||'';
     const nm=names[c.type]||c.type;
@@ -982,10 +985,19 @@ function protRender(){
         <span style="font-size:.74rem;color:#607080">mca</span>
       </div>
       <div style="font-size:.72rem;color:#e65100;margin-top:.1rem">&#128295; VR fecha o refluxo &mdash; orifício no bypass dissipa a sobrepressão. Ø calculado automaticamente.</div>`;
+    } else if(c.type==='fcv'){
+      fields+=`<div style="display:flex;align-items:center;gap:.3rem">
+        <span style="font-size:.74rem;color:#607080">&#916;H permanente:</span>
+        <input type="number" value="${c.dH||24.5}" min="1" step="0.5"
+          style="width:75px;padding:.22rem .4rem;border:1px solid #b0bec5;border-radius:5px;font-size:.8rem"
+          oninput="protSet(${c.id},'dH',this.value)" onchange="protSet(${c.id},'dH',this.value)">
+        <span style="font-size:.74rem;color:#607080">mca</span>
+      </div>
+      <div style="font-size:.72rem;color:#004d40;margin-top:.1rem">&#9660; Queda concentrada: eleva a linha piezométrica a montante da válvula.</div>`;
     }
-    const cardBg=c.type==='hydrotank'?'#e3f2fd':c.type==='checkvalve'?'#f3e5f5':c.type==='reliefvalve'?'#fce4ec':c.type==='flywheel'?'#fff3e0':c.type==='vrbypass'?'#fff8e1':'#f1f8e9';
-    const cardBd=c.type==='hydrotank'?'#90caf9':c.type==='checkvalve'?'#ce93d8':c.type==='reliefvalve'?'#ef9a9a':c.type==='flywheel'?'#ffcc80':c.type==='vrbypass'?'#ffe082':'#a5d6a7';
-    const cardTxt=c.type==='hydrotank'?'#0d47a1':c.type==='checkvalve'?'#4a148c':c.type==='reliefvalve'?'#b71c1c':c.type==='flywheel'?'#e65100':c.type==='vrbypass'?'#f57f17':'#2e7d32';
+    const cardBg=c.type==='hydrotank'?'#e3f2fd':c.type==='checkvalve'?'#f3e5f5':c.type==='reliefvalve'?'#fce4ec':c.type==='flywheel'?'#fff3e0':c.type==='vrbypass'?'#fff8e1':c.type==='fcv'?'#e0f2f1':'#f1f8e9';
+    const cardBd=c.type==='hydrotank'?'#90caf9':c.type==='checkvalve'?'#ce93d8':c.type==='reliefvalve'?'#ef9a9a':c.type==='flywheel'?'#ffcc80':c.type==='vrbypass'?'#ffe082':c.type==='fcv'?'#80cbc4':'#a5d6a7';
+    const cardTxt=c.type==='hydrotank'?'#0d47a1':c.type==='checkvalve'?'#4a148c':c.type==='reliefvalve'?'#b71c1c':c.type==='flywheel'?'#e65100':c.type==='vrbypass'?'#f57f17':c.type==='fcv'?'#004d40':'#2e7d32';
     return `<div style="background:${cardBg};border:1px solid ${cardBd};border-radius:8px;padding:.45rem .6rem;display:flex;flex-direction:column;gap:.3rem">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.1rem">
         <span style="font-size:.82rem;font-weight:700;color:${cardTxt}">${icon} ${nm}</span>
@@ -1054,12 +1066,27 @@ function runMOC(){
   const R=new Float64Array(N-1);
   for(let i=0;i<N-1;i++) R[i]=Q0>1e-9?Math.max(0,H_ss[i]-H_ss[i+1])/(Q0*Q0):0;
 
+  // ── Função auxiliar: converte posição (m) → nó MOC ────────────────
+  function posNode(posM){return Math.max(1,Math.min(N-2,Math.round((posM/L)*(N-1))));}
+
+  // ── FCV — Válvula Reguladora de Carga (queda concentrada) ─────────
+  // R é calculado antes do ajuste para capturar apenas atrito distribuído.
+  // H_ss a montante do FCV é elevado por dH; face downstream fica inalterada.
+  const fcvList=[], fcvNodeSet=new Set(), fcvH_up=new Float64Array(N);
+  for(const comp of _protComponents.filter(c=>c.type==='fcv'&&+(c.dH||0)>0&&+(c.pos||0)>0)){
+    const nd=posNode(+comp.pos), dH=+(comp.dH);
+    const K=Q0>1e-9?dH/(Q0*Q0):0;
+    if(K<=0) continue;
+    fcvList.push({nd,dH,K});
+    fcvNodeSet.add(nd);
+    for(let i=0;i<nd;i++) H_ss[i]+=dH; // nós upstream: piezométrica sobe
+    fcvH_up[nd]=H_ss[nd]+dH;            // face upstream do FCV no nó nd
+    // H_ss[nd] = face downstream (inalterada = regime a jusante correto)
+  }
+
   const H_up=H_ss[0], H_dn=H_ss[N-1];
   const H=new Float64Array(H_ss), Q=new Float64Array(N).fill(Q0);
   const Hmax=new Float64Array(H_ss), Hmin=new Float64Array(H_ss);
-
-  // ── Função auxiliar: converte posição (m) → nó MOC ────────────────
-  function posNode(posM){return Math.max(1,Math.min(N-2,Math.round((posM/L)*(N-1))));}
 
   // ── Câmaras de ar (múltiplas, bidirecionais) ────────────────────────
   const vessels=_protComponents
@@ -1170,9 +1197,12 @@ function runMOC(){
     // ── Nós interiores ─────────────────────────────────────────────
     for(let i=1;i<N-1;i++){
       if(vesselNodeSet.has(i))continue; // câmara de ar tratada separado
+      if(fcvNodeSet.has(i))continue;    // FCV tratado separado
       const Bl=B_nd[i-1],Br=B_nd[i+1];
       const CP=H[i-1]+Bl*Q[i-1]-R[i-1]*Q[i-1]*Math.abs(Q[i-1]);
-      const CM=H[i+1]-Br*Q[i+1]+R[i]*Q[i+1]*Math.abs(Q[i+1]);
+      // Se vizinho da direita é FCV, usar face upstream (H_up do FCV)
+      const H_r=fcvNodeSet.has(i+1)?fcvH_up[i+1]:H[i+1];
+      const CM=H_r-Br*Q[i+1]+R[i]*Q[i+1]*Math.abs(Q[i+1]);
       Qn[i]=(CP-CM)/(Bl+Br); Hn[i]=(Br*CP+Bl*CM)/(Bl+Br);
       // ── Válvula de retenção: sem chatter + fechamento gradual ──────
       if(checkNodeSet.has(i)){
@@ -1248,6 +1278,25 @@ function runMOC(){
         }
       }
     }
+    // ── FCV — condição de contorno interna (resistência quadrática) ──
+    for(const fcv of fcvList){
+      const nd=fcv.nd;
+      const Bl=B_nd[nd-1],Br=B_nd[nd+1];
+      const CP=H[nd-1]+Bl*Q[nd-1]-R[nd-1]*Q[nd-1]*Math.abs(Q[nd-1]);
+      const CM=H[nd+1]-Br*Q[nd+1]+R[nd]*Q[nd+1]*Math.abs(Q[nd+1]);
+      let Q_fcv;
+      if(CP>CM){
+        // K·Q²+(Bl+Br)·Q−(CP−CM)=0  →  raiz positiva
+        const disc=(Bl+Br)*(Bl+Br)+4*fcv.K*(CP-CM);
+        Q_fcv=disc>=0?(-(Bl+Br)+Math.sqrt(disc))/(2*fcv.K):0;
+      }else{Q_fcv=0;} // FCV fecha com refluxo
+      const H_up_f=CP-Bl*Q_fcv, H_dn_f=CM+Br*Q_fcv;
+      Hn[nd]=H_dn_f; Qn[nd]=Q_fcv;
+      fcvH_up[nd]=H_up_f; // atualiza face upstream para próximo passo
+      // Envoltória: face upstream para Hmax, face downstream para Hmin
+      if(H_up_f>Hmax[nd])Hmax[nd]=H_up_f;
+      if(H_dn_f<Hmin[nd])Hmin[nd]=H_dn_f;
+    }
     // ── Câmaras de ar — BC isotérmico bidirecional ─────────────────
     for(const v of vessels){
       const i=v.nd;
@@ -1321,18 +1370,36 @@ function runMOC(){
   }
 
   // ── Simulação SEM proteção (para comparação) ─────────────────────
+  // FCVs fazem parte do sistema hidráulico — incluídos também aqui.
   let Hmax_bare=null,Hmin_bare=null;
-  if(_protComponents.length>0){
+  const _hasProt=_protComponents.some(c=>c.type!=='fcv');
+  if(_hasProt){
     const H_b=new Float64Array(H_ss),Q_b=new Float64Array(N).fill(Q0);
     Hmax_bare=new Float64Array(H_ss);Hmin_bare=new Float64Array(H_ss);
     const Hn_b=new Float64Array(N),Qn_b=new Float64Array(N);
+    const fcvH_up_b=new Float64Array(fcvH_up); // face upstream dos FCVs para bare sim
     for(let step=0;step<nTot;step++){
       const t=step*dt;
       for(let i=1;i<N-1;i++){
+        if(fcvNodeSet.has(i))continue;
         const Bl=B_nd[i-1],Br=B_nd[i+1];
         const CP=H_b[i-1]+Bl*Q_b[i-1]-R[i-1]*Q_b[i-1]*Math.abs(Q_b[i-1]);
-        const CM=H_b[i+1]-Br*Q_b[i+1]+R[i]*Q_b[i+1]*Math.abs(Q_b[i+1]);
+        const H_rb=fcvNodeSet.has(i+1)?fcvH_up_b[i+1]:H_b[i+1];
+        const CM=H_rb-Br*Q_b[i+1]+R[i]*Q_b[i+1]*Math.abs(Q_b[i+1]);
         Qn_b[i]=(CP-CM)/(Bl+Br);Hn_b[i]=(Br*CP+Bl*CM)/(Bl+Br);
+      }
+      for(const fcv of fcvList){
+        const nd=fcv.nd;
+        const Bl=B_nd[nd-1],Br=B_nd[nd+1];
+        const CP=H_b[nd-1]+Bl*Q_b[nd-1]-R[nd-1]*Q_b[nd-1]*Math.abs(Q_b[nd-1]);
+        const CM=H_b[nd+1]-Br*Q_b[nd+1]+R[nd]*Q_b[nd+1]*Math.abs(Q_b[nd+1]);
+        let Q_fb;
+        if(CP>CM){const disc=(Bl+Br)*(Bl+Br)+4*fcv.K*(CP-CM);Q_fb=disc>=0?(-(Bl+Br)+Math.sqrt(disc))/(2*fcv.K):0;}
+        else{Q_fb=0;}
+        const H_uf=CP-Bl*Q_fb,H_df=CM+Br*Q_fb;
+        Hn_b[nd]=H_df;Qn_b[nd]=Q_fb;fcvH_up_b[nd]=H_uf;
+        if(H_uf>Hmax_bare[nd])Hmax_bare[nd]=H_uf;
+        if(H_df<Hmin_bare[nd])Hmin_bare[nd]=H_df;
       }
       if(evtType==='valve'){
         const CM0=H_b[1]-B_nd[1]*Q_b[1]+R[0]*Q_b[1]*Math.abs(Q_b[1]);
@@ -1363,7 +1430,8 @@ function runMOC(){
       checkValves:[...checkNodeSet].map(i=>i*dx),
       reliefValves:[...reliefNodeSet].map(i=>({posM:i*dx,Hset:reliefValveMap.get(i).Hset})),
       vrBypass:[...vrbypassNodeSet].map(i=>({posM:i*dx,d_or_mm:vrbypassMap.get(i).d_or_mm,dH_max:vrbypassMap.get(i).dH_max})),
-      flywheel:flywheelT
+      flywheel:flywheelT,
+      fcvs:fcvList.map(f=>({posM:f.nd*dx,dH:f.dH}))
     }};
 }
 
@@ -1379,6 +1447,7 @@ const _DSYM={
   reliefvalve:{col:'#EF5350',dark:'#B71C1C'},
   flywheel:  {col:'#FF7043',dark:'#BF360C'},
   vrbypass:  {col:'#F9A825',dark:'#E65100'},
+  fcv:       {col:'#00838F',dark:'#004D40'},
 };
 
 // Desenha um símbolo hidráulico centrado em (cx, cy_terrain)
@@ -1449,6 +1518,15 @@ function _drawDeviceSymbol(ctx, type, cx, cy, mg, dc){
     // Orifício (círculo preenchido)
     ctx.beginPath();ctx.arc(cx+6,cy-7,2.5,0,Math.PI*2);
     ctx.fillStyle=colDark;ctx.fill();
+  } else if(type==='fcv'){
+    // FCV: dois triângulos espelhados (borboleta) com linha central
+    ctx.fillStyle=col+'66';ctx.strokeStyle=colDark;ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.moveTo(cx-6,cy-13);ctx.lineTo(cx,cy-7);ctx.lineTo(cx-6,cy-2);ctx.closePath();
+    ctx.fill();ctx.stroke();
+    ctx.beginPath();ctx.moveTo(cx+6,cy-13);ctx.lineTo(cx,cy-7);ctx.lineTo(cx+6,cy-2);ctx.closePath();
+    ctx.fill();ctx.stroke();
+    ctx.beginPath();ctx.moveTo(cx-6,cy-13);ctx.lineTo(cx+6,cy-13);ctx.moveTo(cx-6,cy-2);ctx.lineTo(cx+6,cy-2);
+    ctx.strokeStyle=colDark;ctx.lineWidth=1;ctx.stroke();
   }
 }
 
@@ -1502,6 +1580,12 @@ function _drawAllDevices(ctx, toX, toY, getZatX, prot, mg){
     lbl(cx,`VR-Bypass Ø${vr.d_or_mm.toFixed(1)}mm @${Math.round(vr.posM)}m`,
       `ΔH≤${vr.dH_max.toFixed(0)}mca`,_DSYM.vrbypass.dark);
   }
+  // FCV — Válvula Reguladora de Carga
+  for(const fcv of (prot.fcvs||[])){
+    const cx=toX(fcv.posM),cy=toY(getZatX(fcv.posM));
+    _drawDeviceSymbol(ctx,'fcv',cx,cy,mg,_DSYM.fcv);
+    lbl(cx,`FCV ΔH=${fcv.dH.toFixed(1)}mca @${Math.round(fcv.posM)}m`,null,_DSYM.fcv.dark);
+  }
   // Volante de inércia (na bomba, x=0)
   if((prot.flywheel||0)>0){
     const cx=toX(0),cy=toY(getZatX(0));
@@ -1519,6 +1603,7 @@ function _drawDeviceLegend(ctx, prot, mg, W){
   if((prot.checkValves||[]).length)types.push({k:'checkvalve',label:'V. Retenção'});
   if((prot.reliefValves||[]).length)types.push({k:'reliefvalve',label:'VAO'});
   if((prot.vrBypass||[]).length)   types.push({k:'vrbypass',  label:'VR-Bypass'});
+  if((prot.fcvs||[]).length)       types.push({k:'fcv',       label:'FCV'});
   if((prot.flywheel||0)>0)        types.push({k:'flywheel',label:'Volante inércia'});
   if(!types.length)return;
   const y=mg.t-27;if(y<4)return;
@@ -2357,6 +2442,7 @@ function _refreshTransienteProt(dH_eff){
       const dH=vr?vr.dH_max.toFixed(0):'?';
       return`<span style="${_bs('#fff8e1','#ffe082','#e65100')}">&#128295; VR-Bypass &#216;${d_or}mm@${c.pos}m \xb7 ΔH≤${dH}mca</span>`;
     }
+    if(c.type==='fcv')return`<span style="${_bs('#e0f2f1','#80cbc4','#004d40')}">&#9660; FCV ${c.dH}mca@${c.pos}m</span>`;
     return'';
   }).filter(Boolean).join(' ');
   const protecao=hasRisk
@@ -2439,6 +2525,7 @@ function buildTransienteCard(a,tc,dH_inst,dH_eff,VMax,tClose,tc2){
       const dH=vr?vr.dH_max.toFixed(0):'?';
       return`<span style="${_badgeStyle('#fff8e1','#ffe082','#e65100')}">&#128295; VR-Bypass &#216;${d_or}mm@${c.pos}m &middot; &#916;H&#8804;${dH}mca</span>`;
     }
+    if(c.type==='fcv')return`<span style="${_badgeStyle('#e0f2f1','#80cbc4','#004d40')}">&#9660; FCV ${c.dH}mca@${c.pos}m</span>`;
     return'';
   }).filter(Boolean).join(' ');
 
