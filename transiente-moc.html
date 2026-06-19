@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Transiente Hidráulico MOC v3.6 — Bolsa Irriga</title>
+<title>Transiente Hidráulico MOC v3.7 — Bolsa Irriga</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@0.14.0/dist/Leaflet.GoogleMutant.js"></script>
@@ -109,7 +109,7 @@ button.del-seg:hover{background:#ffcdd2}
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v3.6 · 19/06/2026</span></h1>
+      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v3.7 · 19/06/2026</span></h1>
       <p>Método das Características &middot; Multi-Trecho &middot; Inércia da Bomba &middot; FCV &middot; Comparação Hammer</p>
     </div>
   </div>
@@ -156,14 +156,27 @@ button.del-seg:hover{background:#ffcdd2}
     <div style="border:1px solid #e1bee7;border-radius:10px;padding:.75rem;background:#fdf4ff">
       <div class="cbr" style="margin-bottom:.55rem">
         <input type="checkbox" id="use_inertia" checked>
-        <label for="use_inertia">Inércia WR² do Conjunto Moto-bomba</label>
+        <label for="use_inertia">Inércia do Conjunto Moto-bomba</label>
       </div>
       <div id="inertia-fields">
-        <div class="g3">
-          <div class="fg"><label>WR² (kgf·m²)</label><input type="number" id="WR2" value="0.3" step="0.05" min="0.01"></div>
-          <div class="fg"><label>Rotação nominal</label><div class="iu"><input type="number" id="n_rated" value="3500" step="100"><span class="u">rpm</span></div></div>
-          <div class="fg"><label>η BEP</label><div class="iu"><input type="number" id="eta_bep" value="77.3" step="0.5" min="10" max="100"><span class="u">%</span></div></div>
+        <div class="g3" style="margin-bottom:.45rem">
+          <div class="fg">
+            <label>Método</label>
+            <select id="inercia_met" onchange="toggleInerciaUI()">
+              <option value="koelle">Estimar — Koelle &amp; Betâmio (1992)</option>
+              <option value="thorley">Estimar — Thorley &amp; Faithfull (1992)</option>
+              <option value="gd2">GD² do fabricante (kgf·m²)</option>
+            </select>
+            <small>Koelle/Thorley: bomba centrífuga monoestágio</small>
+          </div>
+          <div class="fg"><label>Potência P (eixo)</label><div class="iu"><input type="number" id="inercia_P" value="33.7" step="0.5" min="0.1" onchange="calcInertia()"><span class="u">CV</span></div></div>
+          <div class="fg"><label>Rotação nominal N₀</label><div class="iu"><input type="number" id="n_rated" value="3500" step="100" min="200" onchange="calcInertia()"><span class="u">rpm</span></div></div>
         </div>
+        <div id="gd2-row" style="display:none;margin-bottom:.45rem">
+          <div class="fg" style="max-width:220px"><label>GD² (catálogo)</label><div class="iu"><input type="number" id="inercia_GD2" value="0.3" step="0.01" min="0.001" onchange="calcInertia()"><span class="u">kgf·m²</span></div><small>Também chamado WD² em alguns catálogos</small></div>
+        </div>
+        <div class="fg" style="max-width:180px;margin-bottom:.45rem"><label>η BEP (rendimento)</label><div class="iu"><input type="number" id="eta_bep" value="77.3" step="0.5" min="10" max="100" onchange="calcInertia()"><span class="u">%</span></div></div>
+        <div id="inertia-result"></div>
       </div>
     </div>
     <div style="border:1px solid #e1bee7;border-radius:10px;padding:.75rem;background:#fdf4ff">
@@ -1292,7 +1305,7 @@ function readParams(){
     pH3:   +document.getElementById('pH3').value,
     T_trip:+document.getElementById('T_trip').value,
     use_inertia:document.getElementById('use_inertia').checked,
-    WR2:   +document.getElementById('WR2').value,
+    WR2:   (()=>{const r=calcInertia();return r?r.I:0;})(),
     n_rated:+document.getElementById('n_rated').value,
     eta_bep:+document.getElementById('eta_bep').value,
     fcv_on: document.getElementById('fcv_on').checked,
@@ -1330,7 +1343,50 @@ function onRun(){
 
 document.getElementById('use_inertia').addEventListener('change',function(){
   document.getElementById('inertia-fields').style.display=this.checked?'':'none';
+  if(this.checked) calcInertia();
 });
+
+function toggleInerciaUI(){
+  const met=document.getElementById('inercia_met').value;
+  document.getElementById('gd2-row').style.display=met==='gd2'?'':'none';
+  calcInertia();
+}
+
+function calcInertia(){
+  if(!document.getElementById('use_inertia').checked) return null;
+  const met=document.getElementById('inercia_met').value;
+  const P_cv=+document.getElementById('inercia_P').value||0;
+  const N0=+document.getElementById('n_rated').value||3500;
+  if(P_cv<=0||N0<=0){document.getElementById('inertia-result').innerHTML='';return null;}
+  const P_kW=P_cv*0.7355, P_W=P_kW*1000;
+  const w0=2*Math.PI*N0/60;
+  let I=0,I1=0,I2=0,label='',det='';
+  if(met==='gd2'){
+    const GD2=+document.getElementById('inercia_GD2').value||0;
+    if(GD2<=0){document.getElementById('inertia-result').innerHTML='<small style="color:#c62828">Informe o GD².</small>';return null;}
+    I=GD2/4;
+    label='GD² do fabricante'; det=`GD²/4 = ${GD2.toFixed(3)}/4`;
+  } else if(met==='koelle'){
+    const P_hp=P_cv*1.0139;
+    I=288*Math.pow(P_hp/N0,1.435);
+    label='Koelle &amp; Betâmio (1992)';
+  } else {
+    I1=0.038*Math.pow(P_kW/Math.pow(N0/1000,3),0.96);
+    I2=0.0043*Math.pow(P_kW/(N0/1000),1.48);
+    I=I1+I2; label='Thorley &amp; Faithfull (1992)';
+    det=`I₁=${I1.toFixed(3)} + I₂=${I2.toFixed(3)} kg·m²`;
+  }
+  if(I<=0) return null;
+  const T_s=I*w0*w0/P_W;
+  document.getElementById('inertia-result').innerHTML=`
+    <div style="background:#f3e5f5;border:1px solid #ce93d8;border-radius:7px;padding:.45rem .75rem;font-size:.76rem;line-height:1.6">
+      <b style="color:#4a0080">⚙ ${label}</b><br>
+      I&nbsp;=&nbsp;<b>${I.toFixed(3)} kg·m²</b> &nbsp;|&nbsp; N₀=${N0} rpm &nbsp;|&nbsp; P=${P_cv.toFixed(1)} CV (${P_kW.toFixed(1)} kW)
+      &nbsp;|&nbsp; <b style="color:#1b6e3a">T-parada = ${T_s.toFixed(2)} s</b>
+      ${det?'<br><span style="color:#607080">'+det+'</span>':''}
+    </div>`;
+  return {I,T_s,N0,w0,P_kW};
+}
 
 window.addEventListener('resize',()=>{
   if(_res) drawChart(_res,_hammer,_frames[Math.floor(_animIdx)]||null);
@@ -1461,6 +1517,7 @@ window.addEventListener('load',()=>{
   const a_def=calcWaveSpeed(dfPipe.Di,dfPipe.e,dfPipe.type);
   _segments=[{pipeIdx:dfIdx>=0?dfIdx:19, Di:dfPipe.Di, e:dfPipe.e, a:a_def, C_hw:150, L:933.4}];
   renderSegments();
+  calcInertia();
   onRun();
 });
 </script>
