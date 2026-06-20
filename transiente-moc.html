@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Transiente Hidráulico MOC v3.9 — Bolsa Irriga</title>
+<title>Transiente Hidráulico MOC v4.0 — Bolsa Irriga</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@0.14.0/dist/Leaflet.GoogleMutant.js"></script>
@@ -109,7 +109,7 @@ button.del-seg:hover{background:#ffcdd2}
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v3.9 · 20/06/2026</span></h1>
+      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v4.0 · 20/06/2026</span></h1>
       <p>Método das Características &middot; Multi-Trecho &middot; Inércia da Bomba &middot; FCV &middot; Comparação Hammer</p>
     </div>
   </div>
@@ -127,11 +127,34 @@ button.del-seg:hover{background:#ffcdd2}
 <div class="card">
   <div class="ct">⚙ Parâmetros do Sistema</div>
 
-  <div class="g4" style="margin-bottom:.85rem">
+  <div class="g4" style="margin-bottom:.6rem">
     <div class="fg"><label>Nível Fonte HR_s</label><div class="iu"><input type="number" id="HR_s" value="749.56" step="0.01"><span class="u">m</span></div></div>
     <div class="fg"><label>Nível Entrega HR_d</label><div class="iu"><input type="number" id="HR_d" value="798.90" step="0.01"><span class="u">m</span></div></div>
     <div class="fg"><label>Vazão nominal Q₀</label><div class="iu"><input type="number" id="Q0" value="88" step="1" min="0"><span class="u">m³/h</span></div></div>
-    <div class="fg"><label>Trip da bomba T_trip</label><div class="iu"><input type="number" id="T_trip" value="2" step="0.5" min="0"><span class="u">s</span></div><small>0 = desligamento instantâneo</small></div>
+    <div class="fg">
+      <label>Tipo de Evento</label>
+      <select id="event_type" onchange="onEventTypeChange()">
+        <option value="pump">Parada de bomba (falta de energia)</option>
+        <option value="valve">Fechamento de válvula (fim de linha)</option>
+      </select>
+    </div>
+  </div>
+  <div class="g3" style="margin-bottom:.85rem">
+    <div class="fg">
+      <label id="ttrip-label">Tempo de parada T_trip</label>
+      <div class="iu"><input type="number" id="T_trip" value="2" step="0.5" min="0"><span class="u">s</span></div>
+      <small id="ttrip-hint">0 = parada instantânea</small>
+    </div>
+    <div class="fg">
+      <label>Perda no filtro</label>
+      <div class="iu"><input type="number" id="filtro_dH" value="0" step="0.5" min="0"><span class="u">mca</span></div>
+      <small>Queda concentrada no filtro (tela / disco)</small>
+    </div>
+    <div class="fg">
+      <label>Pressão residual mín.</label>
+      <div class="iu"><input type="number" id="p_residual" value="10" step="1" min="0"><span class="u">mca</span></div>
+      <small>Mínima exigida no final da rede (referência)</small>
+    </div>
   </div>
 
   <div style="border-top:1px solid var(--bdr);padding-top:.75rem;margin-bottom:.85rem">
@@ -278,14 +301,26 @@ button.del-seg:hover{background:#ffcdd2}
       <select id="prot-type-sel" style="padding:.3rem .5rem;border:1px solid #b0bec5;border-radius:6px;font-size:.82rem">
         <option value="fcv">↓ Val. Reguladora de Carga (FCV)</option>
         <option value="airvalve">🌬 Ventosa de Admissão de Ar</option>
+        <option value="vessel">🏺 Câmara de Ar</option>
+        <option value="hydrotank">🛢 Tanque Hidropneumático</option>
+        <option value="checkvalve">🔒 Válvula de Retenção</option>
+        <option value="reliefvalve">🔴 Val. Antecipadora de Onda (VAO)</option>
+        <option value="flywheel">⚙ Volante de Inércia</option>
+        <option value="vrbypass">🔧 VR-Bypass (Amort. Hidráulico)</option>
       </select>
       <button onclick="protAdd()" style="background:#2e7d32;color:#fff;border:none;border-radius:6px;padding:.32rem 1rem;cursor:pointer;font-size:.82rem;font-weight:700;white-space:nowrap">+ Adicionar</button>
     </div>
   </div>
   <div id="prot-list" style="display:flex;flex-direction:column;gap:.4rem"></div>
-  <div class="sbox info" style="font-size:.76rem;margin-top:.65rem">
-    ℹ️ <b>FCV</b>: queda de pressão concentrada permanente — eleva a piezométrica a montante.
-    <b>Ventosa</b>: admite ar quando pressão cai abaixo da cota local (limita subpressão a 0 mca).
+  <div class="sbox info" style="font-size:.75rem;margin-top:.65rem;line-height:1.65">
+    <b>FCV</b>: queda concentrada permanente — eleva piezométrica a montante. &nbsp;|&nbsp;
+    <b>Ventosa</b>: admite ar quando H &lt; cota (limita subpressão). &nbsp;|&nbsp;
+    <b>Câmara de ar</b>: acumulador (gás isotérmico) bidirecional. &nbsp;|&nbsp;
+    <b>Tanque HP</b>: idem, mas só injeta (retenção interna). &nbsp;|&nbsp;
+    <b>V.Retenção</b>: impede refluxo. &nbsp;|&nbsp;
+    <b>VAO</b>: abre e alivia quando H &gt; H_set (descarrega para atmosfera). &nbsp;|&nbsp;
+    <b>Volante</b>: prolonga a desaceleração — aumenta T_trip efetivo. &nbsp;|&nbsp;
+    <b>VR-Bypass</b>: retenção + orifício que dissipa a sobrepressão de refluxo.
   </div>
 </div>
 
@@ -864,6 +899,64 @@ function runMOC(p){
     }
   }
 
+  // ── Câmaras de ar / Tanques Hidropneumáticos ─────────────────────
+  const vesselList=[];
+  const vesselNodeSet=new Set();
+  for(const comp of prots.filter(c=>(c.type==='vessel'||c.type==='hydrotank')&&+(c.vol||0)>0&&+(c.pos||0)>0)){
+    let best=Infinity,nd=-1;
+    for(let i=1;i<N;i++){const d=Math.abs(dist[i]-(+comp.pos));if(d<best){best=d;nd=i;}}
+    if(nd<1) continue;
+    const Va0=+(comp.vol)/1000;
+    vesselList.push({nd,Va0,Va:Va0,P0:0,type:comp.type,injected:0,_p0init:+(comp.p0)||0});
+    vesselNodeSet.add(nd);
+  }
+
+  // ── Válvulas de retenção ──────────────────────────────────────────
+  const checkNodeSet=new Set();
+  const checkState={};
+  for(const comp of prots.filter(c=>c.type==='checkvalve'&&+(c.pos||0)>0)){
+    let best=Infinity,nd=-1;
+    for(let i=1;i<N;i++){const d=Math.abs(dist[i]-(+comp.pos));if(d<best){best=d;nd=i;}}
+    if(nd<1) continue;
+    checkNodeSet.add(nd);
+    checkState[nd]={closed:false,closing:false,t0:0,Q0c:0,tClose:+(comp.tClose||0)};
+  }
+
+  // ── VAO — Val. Antecipadora de Onda ──────────────────────────────
+  const reliefNodeSet=new Set();
+  const reliefMap={};
+  for(const comp of prots.filter(c=>c.type==='reliefvalve'&&+(c.Hset||0)>0&&+(c.pos||0)>0)){
+    let best=Infinity,nd=-1;
+    for(let i=1;i<N;i++){const d=Math.abs(dist[i]-(+comp.pos));if(d<best){best=d;nd=i;}}
+    if(nd<1) continue;
+    reliefNodeSet.add(nd);
+    reliefMap[nd]={Hset:+(comp.Hset)};
+  }
+
+  // ── VR-Bypass ─────────────────────────────────────────────────────
+  const Cd_or=0.61;
+  const vrbypassNodeSet=new Set();
+  const vrbypassMap={};
+  for(const comp of prots.filter(c=>c.type==='vrbypass'&&+(c.pos||0)>0)){
+    let best=Infinity,nd=-1;
+    for(let i=1;i<N;i++){const d=Math.abs(dist[i]-(+comp.pos));if(d<best){best=d;nd=i;}}
+    if(nd<1) continue;
+    let dH_max=+(comp.dHmax)||0;
+    if(dH_max<=0){
+      const z_nd=hasElev?elev_arr[nd]:(HR_s+(HR_d-HR_s)*(dist[nd]/L_tot));
+      dH_max=Math.max(5,H_ss[nd]>0?H_ss[nd]-z_nd:30);
+    }
+    const A_or=Q0>0?Q0/(Cd_or*Math.sqrt(2*g*dH_max)):1e-4;
+    const K_or=1.0/(2*g*Cd_or*Cd_or*A_or*A_or);
+    vrbypassMap[nd]={K_or,d_or_mm:Math.sqrt(4*A_or/Math.PI)*1000,dH_max,closed:false};
+    vrbypassNodeSet.add(nd);
+  }
+
+  // ── Volante de inércia — prolonga T_trip ──────────────────────────
+  const flywheelT=prots.filter(c=>c.type==='flywheel').reduce((m,c)=>Math.max(m,+(c.tStop||0)),0);
+  const T_trip_eff=Math.max(p.T_trip,flywheelT);
+  const event_type=p.event_type||'pump';
+
   // ── H_ss: cálculo correto — FCV primeiro, depois drift único ─────────
   function hf_hw(L_m,Di_m,C_hw){
     return 10.67*L_m*Math.pow(Q0,1.852)/(Math.pow(C_hw,1.852)*Math.pow(Di_m,4.87));
@@ -882,14 +975,22 @@ function runMOC(p){
     }
     H_ss[i]=H_pd-hfAcc;
   }
+  // Filtro: queda concentrada logo após a bomba
+  if(p.filtro_dH>0) for(let i=1;i<=N;i++) H_ss[i]-=p.filtro_dH;
   // Aplica quedas de cada FCV (do primeiro para o último)
   for(const fcv of fcvList){
-    fcvH_up[fcv.nd]=H_ss[fcv.nd]; // face a montante (antes da queda)
+    fcvH_up[fcv.nd]=H_ss[fcv.nd];
     for(let i=fcv.nd;i<=N;i++) H_ss[i]-=fcv.dH;
   }
-  // Correção única de drift (diferença entre H_ss[N] e HR_d após FCV)
+  // Correção única de drift
   {const drift=H_ss[N]-HR_d;
    if(Math.abs(drift)>0.01) for(let i=1;i<=N;i++) H_ss[i]-=drift*(dist[i]/L_tot);}
+
+  // Inicializa pé-carga das câmaras de ar com a pressão estática no nó
+  for(const v of vesselList){
+    const z_v=hasElev?elev_arr[v.nd]:(HR_s+(HR_d-HR_s)*(dist[v.nd]/L_tot));
+    v.P0=v._p0init>0?v._p0init:Math.max(5,H_ss[v.nd]-z_v);
+  }
 
   const H=new Float64Array(H_ss);
   const Q=new Float64Array(N+1).fill(Q0);
@@ -927,10 +1028,10 @@ function runMOC(p){
   for(let step=0;step<nTot;step++){
     const t=step*dt;
 
-    // ── Nós interiores (exceto FCVs e ventosas)
+    // ── Nós interiores
     for(let i=1;i<N;i++){
       if(fcvNodeSet.has(i)) continue;
-      // C- do lado direito: se i+1 for FCV, usar a face upstream (valor do passo anterior)
+      if(vesselNodeSet.has(i)) continue;
       const H_r=fcvNodeSet.has(i+1)?fcvH_up[i+1]:H[i+1];
       const Bl=B_arr[i-1],Br=B_arr[i];
       const Rl=R_arr[i-1],Rr=R_arr[i];
@@ -938,6 +1039,46 @@ function runMOC(p){
       const CM=H_r   -Br*Q[i+1]+Rr*Q[i+1]*Math.abs(Q[i+1]);
       Qn[i]=(CP-CM)/(Bl+Br);
       Hn[i]=(Br*CP+Bl*CM)/(Bl+Br);
+
+      // ── Válvula de retenção
+      if(checkNodeSet.has(i)){
+        const cv=checkState[i];
+        if(cv.closed){
+          const Qtest=(CP-CM)/(Bl+Br);
+          if(Qtest>0){cv.closed=false;cv.closing=false;}
+          else{Qn[i]=0;Hn[i]=CP;}
+        } else if(cv.closing){
+          const el=t-cv.t0;
+          if(el>=cv.tClose){cv.closed=true;cv.closing=false;Qn[i]=0;Hn[i]=CP;}
+          else{const Qmax=Math.max(0,cv.Q0c*(1-el/cv.tClose));Qn[i]=Math.max(0,Math.min(Qn[i],Qmax));Hn[i]=CP-Bl*Qn[i];}
+        } else if(Qn[i]<0){
+          if(cv.tClose>0){cv.closing=true;cv.t0=t;cv.Q0c=Math.max(0,Q[i]);}
+          else{cv.closed=true;Qn[i]=0;Hn[i]=CP;}
+        }
+      }
+
+      // ── VAO: limita H máximo descarregando para a atmosfera
+      if(reliefNodeSet.has(i)){
+        const rv=reliefMap[i];
+        const z_i=hasElev?elev_arr[i]:(HR_s+(HR_d-HR_s)*(dist[i]/L_tot));
+        const Hset_abs=z_i+rv.Hset;
+        if(Hn[i]>Hset_abs){Hn[i]=Hset_abs;Qn[i]=(Hset_abs-CM)/Br;}
+      }
+
+      // ── VR-Bypass
+      if(vrbypassNodeSet.has(i)){
+        const vr=vrbypassMap[i];
+        const applyOrifice=()=>{
+          const Bsum=Bl+Br;
+          const disc=Bsum*Bsum-4*vr.K_or*(CP-CM);
+          const Q_or=disc>=0?(Bsum-Math.sqrt(Math.max(0,disc)))/(2*vr.K_or):0;
+          Qn[i]=Q_or; Hn[i]=CP-Bl*Q_or;
+        };
+        if(vr.closed){
+          if((CP-CM)/(Bl+Br)>1e-9){vr.closed=false;}
+          else{applyOrifice();}
+        } else if(Qn[i]<-1e-9){vr.closed=true;applyOrifice();}
+      }
     }
 
     // Guarda fcvH_up de todos os FCVs ANTES de executar os BCs das FCVs
@@ -965,29 +1106,64 @@ function runMOC(p){
       if(Hdf<_fcvHmin)_fcvHmin=Hdf;
     }
 
+    // ── Câmaras de ar / Tanques Hidropneumáticos (BC isotérmico)
+    for(const v of vesselList){
+      const i=v.nd;
+      if(i<=0||i>=N) continue;
+      const Bl=B_arr[i-1],Br=B_arr[i];
+      const Rl=R_arr[i-1],Rr=R_arr[i];
+      const H_r=fcvNodeSet.has(i+1)?fcvH_up[i+1]:H[i+1];
+      const CP=H[i-1]+Bl*Q[i-1]-Rl*Q[i-1]*Math.abs(Q[i-1]);
+      const CM=H_r   -Br*Q[i+1]+Rr*Q[i+1]*Math.abs(Q[i+1]);
+      const Va_s=Math.max(v.Va0*0.04,Math.min(v.Va0*25,v.Va));
+      const z_v=hasElev?elev_arr[i]:(HR_s+(HR_d-HR_s)*(dist[i]/L_tot));
+      const Hv0=z_v+v.P0*v.Va0/Va_s; // isothermal
+      const Cv=(v.P0*v.Va0/(Va_s*Va_s))*dt;
+      const iB=1/Bl,iR=1/Br;
+      Hn[i]=(Hv0+Cv*(CP*iB+CM*iR))/(1+Cv*(iB+iR));
+      Qn[i]=(Hn[i]-CM)/Br;
+      const Qv=(CP-Hn[i])/Bl-Qn[i];
+      if(v.type==='hydrotank'&&Qv>0){
+        Qn[i]=(CP-CM)/(Bl+Br); Hn[i]=(Br*CP+Bl*CM)/(Bl+Br); // absorção bloqueada
+      } else {
+        v.Va=Math.max(v.Va0*0.04,Math.min(v.Va0*25,v.Va-Qv*dt));
+        if(v.type==='hydrotank') v.injected+=Math.max(0,-Qv*dt)*1000;
+      }
+    }
+
     // ── BC da bomba
-    // Se o primeiro FCV está no nó 1, CM0 deve usar a cabeça a montante daquela FCV
-    // (valor do passo anterior, salvo em _fcvUpPrev)
     const _h1cm=(nd_f===1)?_fcvUpPrev[1]:H[1];
     const CM0=_h1cm-B_arr[0]*Q[1]+R_arr[0]*Q[1]*Math.abs(Q[1]);
-    if(t<T_trip){
+    if(event_type==='valve'){
+      // Evento "fechamento de válvula": bomba sempre ligada; válvula fecha ao longo de T_trip_eff
       const q=pumpBC(CM0,1.0); Qn[0]=q; Hn[0]=CM0+B_arr[0]*q;
-    } else if(pump_active){
-      if(use_inertia&&alpha>0.02){
-        const q=pumpBC(CM0,alpha); Qn[0]=q; Hn[0]=CM0+B_arr[0]*q;
-        const Hnet=Math.max(0,Hn[0]-HR_s);
-        const dAdt=-(1000*g*Hnet*q)/(WR2*eta_bep*Math.max(0.02,alpha)*omega0*omega0);
-        alpha=Math.max(0,alpha+dAdt*dt);
-        if(q<=1e-6||alpha<0.02){pump_active=false;t_cv_close=t;Qn[0]=0;Hn[0]=CM0;}
-      } else {
-        if(t_cv_close<0)t_cv_close=t;
-        pump_active=false; Qn[0]=0; Hn[0]=CM0;
-      }
-    } else {Qn[0]=0; Hn[0]=CM0;}
+    } else {
+      // Evento "parada de bomba"
+      if(t<T_trip_eff){
+        const q=pumpBC(CM0,1.0); Qn[0]=q; Hn[0]=CM0+B_arr[0]*q;
+      } else if(pump_active){
+        if(use_inertia&&alpha>0.02){
+          const q=pumpBC(CM0,alpha); Qn[0]=q; Hn[0]=CM0+B_arr[0]*q;
+          const Hnet=Math.max(0,Hn[0]-HR_s);
+          const dAdt=-(1000*g*Hnet*q)/(WR2*eta_bep*Math.max(0.02,alpha)*omega0*omega0);
+          alpha=Math.max(0,alpha+dAdt*dt);
+          if(q<=1e-6||alpha<0.02){pump_active=false;t_cv_close=t;Qn[0]=0;Hn[0]=CM0;}
+        } else {
+          if(t_cv_close<0)t_cv_close=t;
+          pump_active=false; Qn[0]=0; Hn[0]=CM0;
+        }
+      } else {Qn[0]=0; Hn[0]=CM0;}
+    }
 
-    // ── BC do reservatório de entrega
+    // ── BC do reservatório de entrega / válvula de linha
     const CP_N=H[N-1]+B_arr[N-1]*Q[N-1]-R_arr[N-1]*Q[N-1]*Math.abs(Q[N-1]);
-    Hn[N]=HR_d; Qn[N]=(CP_N-HR_d)/B_arr[N-1];
+    if(event_type==='valve'){
+      // Fecha linearmente de Q0 a 0 em T_trip_eff segundos
+      const tau=T_trip_eff>0?Math.max(0,1-t/T_trip_eff):0;
+      Qn[N]=Q0*tau; Hn[N]=CP_N-B_arr[N-1]*Qn[N];
+    } else {
+      Hn[N]=HR_d; Qn[N]=(CP_N-HR_d)/B_arr[N-1];
+    }
 
     // ── Ventosas: clampear Hmin na cota (pressão não cai abaixo da atmosférica)
     for(const nd of airNodeSet){
@@ -1022,6 +1198,8 @@ function runMOC(p){
   return {dist,H_ss,Hmax,Hmin,N,dt,nTot,T_sim,
     nd_f,fcvList,fcvNodeSet,B_arr,R_arr,N_segs,segs,
     elev_arr,hasElev,HR_s,HR_d,airNodeSet,
+    vesselList,vesselNodeSet,checkNodeSet,reliefNodeSet,vrbypassNodeSet,
+    event_type,T_trip_eff,
     dH_jou,H_ss_pump:H_ss[0],t_cv_close,_fcvHmax,_fcvHmin,pump,cavitDist};
 }
 
@@ -1158,6 +1336,38 @@ function drawChart(res, hammer, frameH){
     ctx.beginPath();ctx.moveTo(cx,PAD.t);ctx.lineTo(cx,PAD.t+PH);ctx.stroke();ctx.setLineDash([]);
     ctx.fillStyle='#00897b';ctx.font='9px Segoe UI';ctx.textAlign='center';
     ctx.fillText('Vent.',cx,PAD.t+22);
+  }
+  // Câmaras de ar / Tanques HP
+  for(const v of (res.vesselList||[])){
+    const[cx]=toC(res.dist[v.nd],0);
+    const col=v.type==='hydrotank'?'#1976d2':'#43a047';
+    ctx.strokeStyle=col;ctx.lineWidth=1.2;ctx.setLineDash([4,2]);
+    ctx.beginPath();ctx.moveTo(cx,PAD.t);ctx.lineTo(cx,PAD.t+PH);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle=col;ctx.font='9px Segoe UI';ctx.textAlign='center';
+    ctx.fillText(v.type==='hydrotank'?'T.HP':'C.Ar',cx,PAD.t+33);
+  }
+  // VAO
+  for(const nd of (res.reliefNodeSet||[])){
+    const[cx]=toC(res.dist[nd],0);
+    ctx.strokeStyle='#e53935';ctx.lineWidth=1.2;ctx.setLineDash([3,3]);
+    ctx.beginPath();ctx.moveTo(cx,PAD.t);ctx.lineTo(cx,PAD.t+PH);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle='#e53935';ctx.font='9px Segoe UI';ctx.textAlign='center';
+    ctx.fillText('VAO',cx,PAD.t+44);
+  }
+  // V.Retenção e VR-Bypass
+  for(const nd of (res.checkNodeSet||[])){
+    const[cx]=toC(res.dist[nd],0);
+    ctx.strokeStyle='#7b1fa2';ctx.lineWidth=1;ctx.setLineDash([2,2]);
+    ctx.beginPath();ctx.moveTo(cx,PAD.t+PH*0.7);ctx.lineTo(cx,PAD.t+PH);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle='#7b1fa2';ctx.font='9px Segoe UI';ctx.textAlign='center';
+    ctx.fillText('VR',cx,PAD.t+PH*0.7-2);
+  }
+  for(const nd of (res.vrbypassNodeSet||[])){
+    const[cx]=toC(res.dist[nd],0);
+    ctx.strokeStyle='#f57f17';ctx.lineWidth=1.2;ctx.setLineDash([3,2]);
+    ctx.beginPath();ctx.moveTo(cx,PAD.t);ctx.lineTo(cx,PAD.t+PH);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle='#f57f17';ctx.font='9px Segoe UI';ctx.textAlign='center';
+    ctx.fillText('VRB',cx,PAD.t+55);
   }
 
   // Envelope Hmax-Hmin
@@ -1376,12 +1586,25 @@ function updateStats(res){
 // ═══════════════════════════════════════════════════════════
 // PROTEÇÕES
 // ═══════════════════════════════════════════════════════════
+function onEventTypeChange(){
+  const v=document.getElementById('event_type').value;
+  document.getElementById('ttrip-label').textContent=v==='valve'?'Tempo de fechamento T_close':'Tempo de parada T_trip';
+  document.getElementById('ttrip-hint').textContent=v==='valve'?'0 = fechamento instantâneo':'0 = parada instantânea';
+}
 function protAdd(){
   const type=document.getElementById('prot-type-sel').value;
   const id=++_protIdCtr;
   const comp={id,type};
-  if(type==='fcv'){comp.pos=50;comp.dH=10;}
+  const L_cur=_segments.reduce((s,sg)=>s+sg.L,0)||1000;
+  const posAuto=Math.max(5,Math.round(L_cur*0.01));
+  if(type==='fcv'){comp.pos=posAuto;comp.dH=10;}
   else if(type==='airvalve'){comp.pos='';}
+  else if(type==='vessel'){comp.pos=posAuto;comp.vol=500;comp.p0='';}
+  else if(type==='hydrotank'){comp.pos=posAuto;comp.vol=1000;comp.p0='';}
+  else if(type==='checkvalve'){comp.pos=posAuto;comp.tClose=0;}
+  else if(type==='reliefvalve'){comp.pos=posAuto;comp.Hset=80;}
+  else if(type==='flywheel'){comp.tStop=5;}
+  else if(type==='vrbypass'){comp.pos=posAuto;comp.dHmax='';}
   _protComponents.push(comp);
   protRender();
 }
@@ -1400,28 +1623,94 @@ function protRender(){
     return;
   }
   const L_cur=_segments.reduce((s,sg)=>s+sg.L,0)||1000;
+  const icons={fcv:'↓',airvalve:'🌬',vessel:'🏺',hydrotank:'🛢',checkvalve:'🔒',reliefvalve:'🔴',flywheel:'⚙',vrbypass:'🔧'};
+  const names={fcv:'Val. Reg. de Carga (FCV)',airvalve:'Ventosa de Admissão',vessel:'Câmara de Ar',hydrotank:'Tanque Hidropneumático',checkvalve:'Válvula de Retenção',reliefvalve:'Val. Antecipadora (VAO)',flywheel:'Volante de Inércia',vrbypass:'VR-Bypass (Amort. Hidr.)'};
+  const bgMap={fcv:'#e0f2f1',airvalve:'#e3f2fd',vessel:'#e8f5e9',hydrotank:'#e3f2fd',checkvalve:'#f3e5f5',reliefvalve:'#fce4ec',flywheel:'#fff3e0',vrbypass:'#fff8e1'};
+  const bdMap={fcv:'#80cbc4',airvalve:'#90caf9',vessel:'#a5d6a7',hydrotank:'#90caf9',checkvalve:'#ce93d8',reliefvalve:'#ef9a9a',flywheel:'#ffcc80',vrbypass:'#ffe082'};
+  const txMap={fcv:'#004d40',airvalve:'#0d47a1',vessel:'#2e7d32',hydrotank:'#0d47a1',checkvalve:'#4a148c',reliefvalve:'#b71c1c',flywheel:'#e65100',vrbypass:'#f57f17'};
+
   el.innerHTML=_protComponents.map(c=>{
-    const isFCV=c.type==='fcv';
-    const isAV=c.type==='airvalve';
-    const bg=isFCV?'#e0f2f1':isAV?'#e3f2fd':'#f1f8e9';
-    const bd=isFCV?'#80cbc4':isAV?'#90caf9':'#a5d6a7';
-    const tx=isFCV?'#004d40':isAV?'#0d47a1':'#2e7d32';
-    const icon=isFCV?'↓':isAV?'🌬':'⚙';
-    const nm=isFCV?'FCV — Val. Reg. de Carga':isAV?'Ventosa de Admissão':'Componente';
-    const posLabel=isAV?'Posição (m, vazio=auto):':'Posição (m da bomba):';
-    const posPlaceholder=isAV?'pontos altos auto':'';
-    let fields=`<div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
-      <span style="font-size:.74rem;color:#607080;white-space:nowrap">${posLabel}</span>
-      <input type="number" value="${c.pos??''}" min="0" max="${L_cur}" step="1" placeholder="${posPlaceholder}"
-        style="width:90px;padding:.22rem .4rem;border:1px solid #b0bec5;border-radius:5px;font-size:.8rem"
-        oninput="protSet(${c.id},'pos',this.value)" onchange="protSet(${c.id},'pos',this.value)">
-      <span style="font-size:.74rem;color:#607080">m</span>`;
-    if(isFCV) fields+=`<span style="font-size:.74rem;color:#607080;margin-left:.5rem">ΔH:</span>
-      <input type="number" value="${c.dH??10}" min="0.5" step="0.5"
-        style="width:75px;padding:.22rem .4rem;border:1px solid #b0bec5;border-radius:5px;font-size:.8rem"
-        oninput="protSet(${c.id},'dH',this.value)" onchange="protSet(${c.id},'dH',this.value)">
-      <span style="font-size:.74rem;color:#607080">mca</span>`;
-    fields+=`</div>`;
+    const icon=icons[c.type]||'⚙';
+    const nm=names[c.type]||c.type;
+    const bg=bgMap[c.type]||'#f5f5f5';
+    const bd=bdMap[c.type]||'#ccc';
+    const tx=txMap[c.type]||'#333';
+    let fields='';
+
+    // Posição (todos exceto flywheel)
+    if(c.type!=='flywheel'){
+      const posLabel=c.type==='airvalve'?'Posição (vazio=auto):':'Posição (m da bomba):';
+      fields+=`<div style="display:flex;align-items:center;gap:.4rem;flex-wrap:wrap">
+        <span style="font-size:.74rem;color:#607080;white-space:nowrap">${posLabel}</span>
+        <input type="number" value="${c.pos??''}" min="1" max="${L_cur}" step="5" placeholder="${c.type==='airvalve'?'pontos altos auto':''}"
+          style="width:90px;padding:.22rem .4rem;border:1px solid #b0bec5;border-radius:5px;font-size:.8rem"
+          oninput="protSet(${c.id},'pos',this.value)" onchange="protSet(${c.id},'pos',this.value)">
+        <span style="font-size:.74rem;color:#607080">m</span>`;
+
+      if(c.type==='fcv') fields+=`
+        &nbsp;<span style="font-size:.74rem;color:#607080">ΔH:</span>
+        <input type="number" value="${c.dH??10}" min="0.5" step="0.5"
+          style="width:70px;padding:.22rem .4rem;border:1px solid #b0bec5;border-radius:5px;font-size:.8rem"
+          oninput="protSet(${c.id},'dH',this.value)" onchange="protSet(${c.id},'dH',this.value)">
+        <span style="font-size:.74rem;color:#607080">mca</span>`;
+
+      fields+=`</div>`;
+    }
+
+    if(c.type==='vessel'||c.type==='hydrotank'){
+      const isHT=c.type==='hydrotank';
+      fields+=`<div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.2rem">
+        <div style="display:flex;align-items:center;gap:.3rem">
+          <span style="font-size:.74rem;color:#607080">Vol${isHT?' total':''}:</span>
+          <input type="number" value="${c.vol||500}" min="10" step="100"
+            style="width:80px;padding:.22rem .4rem;border:1px solid #b0bec5;border-radius:5px;font-size:.8rem"
+            oninput="protSet(${c.id},'vol',this.value)" onchange="protSet(${c.id},'vol',this.value)">
+          <span style="font-size:.74rem;color:#607080">L</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:.3rem">
+          <span style="font-size:.74rem;color:#607080">Pé-carga:</span>
+          <input type="number" value="${c.p0??''}" min="0" step="5" placeholder="Auto"
+            style="width:65px;padding:.22rem .4rem;border:1px solid #b0bec5;border-radius:5px;font-size:.8rem"
+            oninput="protSet(${c.id},'p0',this.value)" onchange="protSet(${c.id},'p0',this.value)">
+          <span style="font-size:.74rem;color:#607080">mca</span>
+        </div>
+      </div>${isHT?'<div style="font-size:.71rem;color:#0277bd;margin-top:.1rem">🔒 Injeção unidirecional — não absorve sobrepressão</div>':''}`;
+    } else if(c.type==='checkvalve'){
+      fields+=`<div style="display:flex;align-items:center;gap:.3rem;margin-top:.2rem">
+        <span style="font-size:.74rem;color:#607080">T fechamento:</span>
+        <input type="number" value="${c.tClose??0}" min="0" step="0.1" placeholder="0 = instant."
+          style="width:75px;padding:.22rem .4rem;border:1px solid #b0bec5;border-radius:5px;font-size:.8rem"
+          oninput="protSet(${c.id},'tClose',this.value)" onchange="protSet(${c.id},'tClose',this.value)">
+        <span style="font-size:.74rem;color:#607080">s (0 = instantâneo)</span>
+      </div>`;
+    } else if(c.type==='reliefvalve'){
+      fields+=`<div style="display:flex;align-items:center;gap:.3rem;margin-top:.2rem">
+        <span style="font-size:.74rem;color:#607080">Pressão de abertura:</span>
+        <input type="number" value="${c.Hset||80}" min="10" step="5"
+          style="width:70px;padding:.22rem .4rem;border:1px solid #b0bec5;border-radius:5px;font-size:.8rem"
+          oninput="protSet(${c.id},'Hset',this.value)" onchange="protSet(${c.id},'Hset',this.value)">
+        <span style="font-size:.74rem;color:#607080">mca acima do terreno</span>
+      </div>
+      <div style="font-size:.71rem;color:#b71c1c;margin-top:.1rem">🔴 Limita H máximo no nó — descarrega para a atmosfera</div>`;
+    } else if(c.type==='flywheel'){
+      fields+=`<div style="display:flex;align-items:center;gap:.3rem">
+        <span style="font-size:.74rem;color:#607080">T parada efetivo:</span>
+        <input type="number" value="${c.tStop||5}" min="0.5" step="0.5"
+          style="width:75px;padding:.22rem .4rem;border:1px solid #b0bec5;border-radius:5px;font-size:.8rem"
+          oninput="protSet(${c.id},'tStop',this.value)" onchange="protSet(${c.id},'tStop',this.value)">
+        <span style="font-size:.74rem;color:#607080">s (sobrepõe T_trip se maior)</span>
+      </div>`;
+    } else if(c.type==='vrbypass'){
+      fields+=`<div style="display:flex;align-items:center;gap:.3rem;flex-wrap:wrap;margin-top:.2rem">
+        <span style="font-size:.74rem;color:#607080">ΔH máx admissível:</span>
+        <input type="number" value="${c.dHmax||''}" min="5" step="5" placeholder="Auto (por PN)"
+          style="width:100px;padding:.22rem .4rem;border:1px solid #b0bec5;border-radius:5px;font-size:.8rem"
+          oninput="protSet(${c.id},'dHmax',this.value)" onchange="protSet(${c.id},'dHmax',this.value)">
+        <span style="font-size:.74rem;color:#607080">mca</span>
+      </div>
+      <div style="font-size:.71rem;color:#e65100;margin-top:.1rem">🔧 VR fecha o refluxo — orifício no bypass dissipa a sobrepressão. Ø calculado automaticamente.</div>`;
+    }
+
     return `<div style="background:${bg};border:1px solid ${bd};border-radius:8px;padding:.45rem .65rem;display:flex;flex-direction:column;gap:.25rem">
       <div style="display:flex;justify-content:space-between;align-items:center">
         <span style="font-size:.82rem;font-weight:700;color:${tx}">${icon} ${nm}</span>
@@ -1451,7 +1740,10 @@ function readParams(){
     pH2:   +document.getElementById('pH2').value,
     pQ3:   +document.getElementById('pQ3').value,
     pH3:   +document.getElementById('pH3').value,
+    event_type:document.getElementById('event_type').value,
     T_trip:+document.getElementById('T_trip').value,
+    filtro_dH:+document.getElementById('filtro_dH').value||0,
+    p_residual:+document.getElementById('p_residual').value||0,
     use_inertia:document.getElementById('use_inertia').checked,
     WR2:   (()=>{const r=calcInertia();return r?r.I:0;})(),
     n_rated:+document.getElementById('n_rated').value,
