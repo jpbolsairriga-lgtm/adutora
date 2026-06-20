@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Transiente Hidráulico MOC v3.7 — Bolsa Irriga</title>
+<title>Transiente Hidráulico MOC v3.8 — Bolsa Irriga</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@0.14.0/dist/Leaflet.GoogleMutant.js"></script>
@@ -109,7 +109,7 @@ button.del-seg:hover{background:#ffcdd2}
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v3.7 · 19/06/2026</span></h1>
+      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v3.8 · 20/06/2026</span></h1>
       <p>Método das Características &middot; Multi-Trecho &middot; Inércia da Bomba &middot; FCV &middot; Comparação Hammer</p>
     </div>
   </div>
@@ -905,8 +905,14 @@ function runMOC(p){
       const Rl=R_arr[nd_f-1],Rr=R_arr[nd_f];
       const CP=H[nd_f-1]+Bl*Q[nd_f-1]-Rl*Q[nd_f-1]*Math.abs(Q[nd_f-1]);
       const CM=H[nd_f+1]-Br*Q[nd_f+1]+Rr*Q[nd_f+1]*Math.abs(Q[nd_f+1]);
+      // FCV bidirecional: mesma resistência K para fluxo direto e reverso
+      const _fcvD=CP-CM;
       let Q_f=0;
-      if(CP>CM){const disc=(Bl+Br)**2+4*K_fcv*(CP-CM);Q_f=disc>=0?(-(Bl+Br)+Math.sqrt(disc))/(2*K_fcv):0;}
+      if(Math.abs(_fcvD)>1e-9){
+        const _sg=_fcvD>0?1:-1;
+        const _disc=(Bl+Br)**2+4*K_fcv*Math.abs(_fcvD);
+        if(_disc>=0) Q_f=_sg*(-(Bl+Br)+Math.sqrt(_disc))/(2*K_fcv);
+      }
       const Huf=CP-Bl*Q_f,Hdf=CM+Br*Q_f;
       Hn[nd_f]=Hdf; Qn[nd_f]=Q_f; fcvH_up[nd_f]=Huf;
       if(Huf>_fcvHmax)_fcvHmax=Huf;
@@ -1511,11 +1517,15 @@ window.addEventListener('load',()=>{
     initMap([-15,-50],4);
   }
 
-  // Sardinha: DEFOFO JEI PN80 DN150 — celeridade PVC-O (Korteweg)
-  const dfIdx=PIPE_DB.findIndex(p=>p.g==='DEFOFO JEI PN80'&&p.dn===150);
-  const dfPipe=PIPE_DB[dfIdx>=0?dfIdx:19];
-  const a_def=calcWaveSpeed(dfPipe.Di,dfPipe.e,dfPipe.type);
-  _segments=[{pipeIdx:dfIdx>=0?dfIdx:19, Di:dfPipe.Di, e:dfPipe.e, a:a_def, C_hw:150, L:933.4}];
+  // Sardinha: dois trechos conforme Hammer — PN80 (213.3m) + PN60 (726.5m), DN150
+  const _p80i=PIPE_DB.findIndex(p=>p.g==='DEFOFO JEI PN80'&&p.dn===150);
+  const _p60i=PIPE_DB.findIndex(p=>p.g==='DEFOFO JEI PN60'&&p.dn===150);
+  const _p80=PIPE_DB[_p80i>=0?_p80i:19];
+  const _p60=PIPE_DB[_p60i>=0?_p60i:_p80i>=0?_p80i:19];
+  _segments=[
+    {pipeIdx:_p80i>=0?_p80i:19, Di:_p80.Di, e:_p80.e, a:calcWaveSpeed(_p80.Di,_p80.e,_p80.type), C_hw:150, L:213.3},
+    {pipeIdx:_p60i>=0?_p60i:19, Di:_p60.Di, e:_p60.e, a:calcWaveSpeed(_p60.Di,_p60.e,_p60.type), C_hw:150, L:726.5},
+  ];
   renderSegments();
   calcInertia();
   onRun();
