@@ -109,7 +109,7 @@ button.del-seg:hover{background:#ffcdd2}
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v4.3 · 22/06/2026</span></h1>
+      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v4.4 · 22/06/2026</span></h1>
       <p>Método das Características &middot; Multi-Trecho &middot; Inércia da Bomba &middot; FCV &middot; Comparação Hammer</p>
     </div>
   </div>
@@ -272,6 +272,16 @@ button.del-seg:hover{background:#ffcdd2}
         <label style="margin-bottom:.35rem">Curvas de nível KML</label>
         <input type="file" id="kml-curvas" accept=".kml" style="width:100%;font-size:.8rem">
         <div style="font-size:.73rem;color:var(--mu);margin-top:.3rem"><b id="curvas-count">—</b> curvas carregadas</div>
+      </div>
+
+      <div style="border-top:1px solid var(--bdr);padding-top:.55rem">
+        <label style="margin-bottom:.35rem;font-weight:700">Traçar Rota no Mapa</label>
+        <div style="display:flex;gap:.4rem;margin-bottom:.35rem">
+          <button class="btn btn-sm" id="btn-draw-route" onclick="toggleDrawRoute()" style="flex:1;background:#1976d2;color:#fff;border:none;font-size:.75rem">✏ Traçar</button>
+          <button class="btn btn-sm" onclick="clearDrawRoute()" style="flex:1;background:#e53935;color:#fff;border:none;font-size:.75rem">✕ Limpar</button>
+        </div>
+        <div id="draw-route-info" style="font-size:.71rem;color:var(--mu);margin-bottom:.3rem">Clique no mapa para adicionar pontos da rota</div>
+        <button id="btn-fetch-elev" onclick="fetchRouteElevation()" style="display:none;width:100%;padding:.28rem .5rem;background:#2e7d32;color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:.75rem;font-weight:700">📡 Buscar Elevação (Google API)</button>
       </div>
 
       <div style="border-top:1px solid var(--bdr);padding-top:.55rem">
@@ -472,6 +482,10 @@ let _curvasLayer = null;
 let _mapVisible  = false;
 let _gApiLoaded  = false;
 let _gApiLoading = false;
+let _drawMode    = false;
+let _drawnWaypoints = [];
+let _drawPolyline   = null;
+let _drawMarkers    = [];
 
 // ═══════════════════════════════════════════════════════════
 // KML — TRAÇADO (com altitude) e CURVAS DE NÍVEL
@@ -605,6 +619,90 @@ function clearKmls(){
   document.getElementById('curvas-count').textContent='—';
   document.getElementById('map-elev-info').textContent='';
   updateLenBar(); updateSegElev(); renderMapLayers();
+}
+
+// ── Traçar Rota no Mapa ──────────────────────────────────────
+function _onMapClickDraw(e){
+  const{lat,lng}=e.latlng;
+  _drawnWaypoints.push({lat,lon:lng});
+  const m=L.circleMarker([lat,lng],{radius:5,color:'#ff9800',fillColor:'#ff9800',fillOpacity:1,weight:2}).addTo(_mapInst);
+  _drawMarkers.push(m);
+  if(_drawPolyline) _drawPolyline.remove();
+  if(_drawnWaypoints.length>1){
+    _drawPolyline=L.polyline(_drawnWaypoints.map(p=>[p.lat,p.lon]),{color:'#ff9800',weight:3,opacity:.9}).addTo(_mapInst);
+  }
+  let dist=0;
+  for(let i=1;i<_drawnWaypoints.length;i++)
+    dist+=haversine(_drawnWaypoints[i-1].lon,_drawnWaypoints[i-1].lat,_drawnWaypoints[i].lon,_drawnWaypoints[i].lat);
+  document.getElementById('draw-route-info').textContent=`${_drawnWaypoints.length} pts · ${(dist/1000).toFixed(3)} km`;
+  const btn=document.getElementById('btn-fetch-elev');
+  if(btn) btn.style.display=_drawnWaypoints.length>=2?'':'none';
+}
+
+function toggleDrawRoute(){
+  if(!_mapInst||!_mapVisible){
+    if(!_mapVisible) toggleMap();
+    setTimeout(toggleDrawRoute,400); return;
+  }
+  _drawMode=!_drawMode;
+  const btn=document.getElementById('btn-draw-route');
+  if(_drawMode){
+    btn.textContent='■ Parar'; btn.style.background='#f57f17';
+    _mapInst.getContainer().style.cursor='crosshair';
+    _mapInst.on('click',_onMapClickDraw);
+  } else {
+    btn.textContent='✏ Traçar'; btn.style.background='#1976d2';
+    _mapInst.getContainer().style.cursor='';
+    _mapInst.off('click',_onMapClickDraw);
+  }
+}
+
+function clearDrawRoute(){
+  _drawMarkers.forEach(m=>m.remove()); _drawMarkers=[];
+  if(_drawPolyline){_drawPolyline.remove();_drawPolyline=null;}
+  _drawnWaypoints=[];
+  const info=document.getElementById('draw-route-info');
+  if(info) info.textContent='Clique no mapa para adicionar pontos da rota';
+  const btn=document.getElementById('btn-fetch-elev');
+  if(btn) btn.style.display='none';
+}
+
+async function fetchRouteElevation(){
+  const key=localStorage.getItem('mapskey_pl');
+  if(!key||key.length<10){alert('Configure a Chave API Google Maps.');return;}
+  if(_drawnWaypoints.length<2){alert('Trace a rota primeiro (mínimo 2 pontos).');return;}
+  const btn=document.getElementById('btn-fetch-elev');
+  const info=document.getElementById('draw-route-info');
+  if(btn) btn.disabled=true;
+  if(info) info.textContent='Buscando elevações...';
+  try{
+    const nSamples=Math.min(512,Math.max(100,_drawnWaypoints.length*5));
+    const path=_drawnWaypoints.map(p=>p.lat+','+p.lon).join('|');
+    const url=`https://maps.googleapis.com/maps/api/elevation/json?path=${encodeURIComponent(path)}&samples=${nSamples}&key=${key}`;
+    const r=await fetch(url);
+    const data=await r.json();
+    if(data.status!=='OK') throw new Error(data.status+': '+(data.error_message||''));
+    const results=data.results;
+    const profile=[];
+    let cumDist=0;
+    for(let i=0;i<results.length;i++){
+      if(i>0) cumDist+=haversine(profile[i-1].lon,profile[i-1].lat,results[i].location.lng,results[i].location.lat);
+      profile.push({dist:cumDist,lat:results[i].location.lat,lon:results[i].location.lng,elev:results[i].elevation});
+    }
+    _kmlTrace={length_m:cumDist,profile,hasElev:true};
+    const lenTxt=document.getElementById('kml-len');
+    const elevInfo=document.getElementById('map-elev-info');
+    if(lenTxt) lenTxt.textContent=(cumDist/1000).toFixed(3)+' km';
+    if(elevInfo) elevInfo.textContent='✓ elevação do mapa';
+    if(info) info.textContent=`${results.length} amostras · ${(cumDist/1000).toFixed(3)} km — elevação carregada ✓`;
+    renderMapLayers();
+    updateSegElev();
+  }catch(e){
+    alert('Erro ao buscar elevação: '+e.message);
+    if(info) info.textContent='Erro: '+e.message;
+  }finally{
+    if(btn) btn.disabled=false;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1231,11 +1329,12 @@ function drawChart(res, hammer, frameH){
     return res.HR_s+(res.HR_d-res.HR_s)*(res.dist[node_i]/res.dist[res.N]);
   }
 
-  // Y range — loop explícito (evita bug de zeros em TypedArray)
+  // Y range — exclui H_ss[0] (cabeça da bomba antes da FCV — não plotada, inflaria escala)
   let yMin=+Infinity, yMax=-Infinity;
   const upd=v=>{const n=+v; if(n>50&&isFinite(n)){if(n<yMin)yMin=n;if(n>yMax)yMax=n;}};
   for(let i=0;i<=res.N;i++){
-    upd(res.Hmax[i]); upd(res.Hmin[i]); upd(res.H_ss[i]);
+    upd(res.Hmax[i]); upd(res.Hmin[i]);
+    if(i>0) upd(res.H_ss[i]); // H_ss[0]=cabeça bomba excluída da escala Y
     if(res.hasElev&&res.elev_arr[i]>100) upd(res.elev_arr[i]);
     if(frameH) upd(frameH[i]);
   }
@@ -1388,8 +1487,16 @@ function drawChart(res, hammer, frameH){
   ctx.closePath();
   ctx.fillStyle='rgba(100,160,230,0.12)';ctx.fill();
 
-  // H_ss começa no nó 1 (evita spike visual da cabeça da bomba antes da FCV)
-  polyLine(dArr.slice(1),Array.from(res.H_ss).slice(1),'#2e7d32',[6,4],1.5);
+  // H_ss: começa em x=0 mas usa cabeça após FCV (não a cabeça da bomba antes da FCV)
+  {const hss_p=Array.from(res.H_ss);
+   if(res.fcvList&&res.fcvList.length>0) hss_p[0]=hss_p[res.fcvList[0].nd];
+   polyLine(dArr,hss_p,'#2e7d32',[6,4],1.5);
+   // Label de pressão na entrada (mca acima de HR_s)
+   const pEntry=hss_p[0]-res.HR_s;
+   if(pEntry>0){const[cx,cy]=toC(0,hss_p[0]);
+     ctx.fillStyle='#2e7d32';ctx.font='bold 9px Segoe UI';ctx.textAlign='left';
+     ctx.fillText(pEntry.toFixed(1)+' mca',cx+4,cy-4);}
+  }
   polyLine(dArr,hmax,'#c62828',[],2);
   polyLine(dArr,hmin,'#1565c0',[],2);
 
