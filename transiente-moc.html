@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Transiente Hidráulico MOC v4.18 — Bolsa Irriga</title>
+<title>Transiente Hidráulico MOC v4.19 — Bolsa Irriga</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@0.14.0/dist/Leaflet.GoogleMutant.js"></script>
@@ -109,7 +109,7 @@ button.del-seg:hover{background:#ffcdd2}
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v4.18 · 22/06/2026</span></h1>
+      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v4.19 · 22/06/2026</span></h1>
       <p>Método das Características &middot; Multi-Trecho &middot; Inércia da Bomba &middot; FCV &middot; Comparação Hammer</p>
     </div>
   </div>
@@ -1262,12 +1262,23 @@ function runMOC(p){
           const Hnet=Math.max(0,Hn[0]-HR_s);
           const dAdt=-(1000*g*Hnet*q)/(WR2*eta_bep*Math.max(0.02,alpha)*omega0*omega0);
           alpha=Math.max(0,alpha+dAdt*dt);
-          if(q<=1e-6||alpha<0.02){pump_active=false;t_cv_close=t;Qn[0]=0;Hn[0]=Math.max(CM0,HR_s);}
+          if(q<=1e-6||alpha<0.02){
+            pump_active=false; t_cv_close=t;
+            // Transição para BC de sucção
+            const _Qb=(HR_s-CM0)/B_arr[0];
+            if(_Qb>=0){Qn[0]=_Qb;Hn[0]=HR_s;}else{Qn[0]=0;Hn[0]=Math.max(CM0,HR_s);}
+          }
         } else {
           if(t_cv_close<0)t_cv_close=t;
-          pump_active=false; Qn[0]=0; Hn[0]=Math.max(CM0,HR_s);
+          pump_active=false;
+          const _Qb=(HR_s-CM0)/B_arr[0];
+          if(_Qb>=0){Qn[0]=_Qb;Hn[0]=HR_s;}else{Qn[0]=0;Hn[0]=Math.max(CM0,HR_s);}
         }
-      } else {Qn[0]=0; Hn[0]=Math.max(CM0,HR_s);}
+      } else {
+        // Bomba parada: reservatório de sucção enquanto Q≥0; VR fecha se onda inverte
+        const _Qb=(HR_s-CM0)/B_arr[0];
+        if(_Qb>=0){Qn[0]=_Qb;Hn[0]=HR_s;}else{Qn[0]=0;Hn[0]=Math.max(CM0,HR_s);}
+      }
     }
 
     // ── BC do reservatório de entrega / válvula de linha
