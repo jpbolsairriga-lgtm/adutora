@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Transiente Hidráulico MOC v4.2 — Bolsa Irriga</title>
+<title>Transiente Hidráulico MOC v4.3 — Bolsa Irriga</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@0.14.0/dist/Leaflet.GoogleMutant.js"></script>
@@ -109,7 +109,7 @@ button.del-seg:hover{background:#ffcdd2}
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v4.2 · 22/06/2026</span></h1>
+      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v4.3 · 22/06/2026</span></h1>
       <p>Método das Características &middot; Multi-Trecho &middot; Inércia da Bomba &middot; FCV &middot; Comparação Hammer</p>
     </div>
   </div>
@@ -147,12 +147,12 @@ button.del-seg:hover{background:#ffcdd2}
     </div>
     <div class="fg">
       <label>Perda no filtro</label>
-      <div class="iu"><input type="number" id="filtro_dH" value="0" step="0.5" min="0"><span class="u">mca</span></div>
+      <div class="iu"><input type="number" id="filtro_dH" value="0" step="0.5" min="0" oninput="liveAMH()"><span class="u">mca</span></div>
       <small>Queda concentrada no filtro (tela / disco)</small>
     </div>
     <div class="fg">
       <label>Pressão residual mín.</label>
-      <div class="iu"><input type="number" id="p_residual" value="10" step="1" min="0"><span class="u">mca</span></div>
+      <div class="iu"><input type="number" id="p_residual" value="10" step="1" min="0" oninput="liveAMH()"><span class="u">mca</span></div>
       <small>Mínima exigida no final da rede (referência)</small>
     </div>
   </div>
@@ -353,8 +353,8 @@ button.del-seg:hover{background:#ffcdd2}
     <div class="tile tg"><div class="tl">ΔH Joukowsky</div><div class="tv"><span id="st-jou">—</span><small>m</small></div></div>
     <div class="tile tb2"><div class="tl">VR fecha em</div><div class="tv"><span id="st-cv">—</span></div></div>
     <div class="tile"><div class="tl">Δt simulação</div><div class="tv"><span id="st-dt">—</span><small>s</small></div></div>
-    <div class="tile" style="background:#e8f5e9;border:1px solid #a5d6a7"><div class="tl">TDH regime perm.</div><div class="tv"><span id="st-tdh">—</span><small>mca</small></div></div>
-    <div class="tile" style="background:#e3f2fd;border:1px solid #90caf9"><div class="tl">AMH req. (sem FCV)</div><div class="tv"><span id="st-amh">—</span><small>mca</small></div></div>
+    <div class="tile" style="background:#f3e5f5;border:1px solid #ce93d8"><div class="tl">H Bomba @ Q₀ (c/FCV)</div><div class="tv"><span id="st-tdh">—</span><small>mca</small></div></div>
+    <div class="tile" style="background:#e3f2fd;border:1px solid #90caf9;min-width:200px"><div class="tl">AMH Hidráulica</div><div class="tv"><span id="st-amh">—</span><small>mca</small></div><div id="amh-breakdown" style="font-size:.65rem;color:#546e7a;margin-top:.2rem;line-height:1.5"></div></div>
   </div>
 
   <div id="compare-panel">
@@ -1576,13 +1576,29 @@ function updateCompare(){
 // ═══════════════════════════════════════════════════════════
 // STATS
 // ═══════════════════════════════════════════════════════════
+function liveAMH(){
+  if(!_res) return;
+  const dz=_res.HR_d-_res.HR_s;
+  const hf=_res.hf_total||0;
+  const filtro=+document.getElementById('filtro_dH').value||0;
+  const pRes=+document.getElementById('p_residual').value||0;
+  const amh=dz+hf+filtro+pRes;
+  document.getElementById('st-amh').textContent=amh.toFixed(2);
+  const bd=document.getElementById('amh-breakdown');
+  if(bd){
+    let txt=`Δz ${dz.toFixed(1)} + hf ${hf.toFixed(1)}`;
+    if(filtro>0) txt+=` + filtro ${filtro.toFixed(1)}`;
+    if(pRes>0)   txt+=` + p_res ${pRes.toFixed(1)}`;
+    bd.textContent=txt+' = '+amh.toFixed(2)+' mca';
+  }
+}
+
 function updateStats(res){
   const mx=Math.max(...res.Hmax),mn=Math.min(...res.Hmin);
-  const pd=res.H_ss_pump; // H_ss[0] = cabeça da bomba em regime permanente
+  const pd=res.H_ss_pump;
 
-  // ΔH na bomba: compara com o nó 0 (bomba), NÃO com o mínimo/máximo global
-  const hmax0=res.Hmax[0]; // máx observado no nó da bomba durante transiente
-  const hmin0=res.Hmin[0]; // mín observado no nó da bomba durante transiente
+  const hmax0=res.Hmax[0];
+  const hmin0=res.Hmin[0];
 
   document.getElementById('st-hmax').textContent=mx.toFixed(1);
   document.getElementById('st-hmin').textContent=mn.toFixed(1);
@@ -1592,14 +1608,11 @@ function updateStats(res){
   document.getElementById('st-cv').textContent=res.t_cv_close>=0?res.t_cv_close.toFixed(2)+' s':'—';
   document.getElementById('st-dt').textContent=res.dt.toFixed(4);
 
-  // TDH em regime permanente (cabeça fornecida pela bomba a Q₀)
-  const tdh=pd-res.HR_s;
-  document.getElementById('st-tdh').textContent=tdh.toFixed(2);
+  // Cabeça fornecida pela bomba a Q₀ (inclui FCV — não é a AMH do sistema)
+  document.getElementById('st-tdh').textContent=(pd-res.HR_s).toFixed(2);
 
-  // AMH requerida pelo sistema (sem FCV — apenas desnível + hf + filtro + p_residual)
-  // Isso muda quando se altera p_residual ou filtro_dH
-  const amh_req=(res.HR_d-res.HR_s)+(res.hf_total||0)+(res.filtro_dH||0)+(res.p_residual||0);
-  document.getElementById('st-amh').textContent=amh_req.toFixed(2);
+  // AMH Hidráulica — atualiza ao vivo via liveAMH()
+  liveAMH();
 
   document.getElementById('anim-cavit').textContent=
     res.cavitDist>=0?'⚠ CAVITAÇÃO em x='+res.cavitDist.toFixed(0)+'m':'';
