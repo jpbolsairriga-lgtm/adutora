@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Transiente Hidráulico MOC v4.5 — Bolsa Irriga</title>
+<title>Transiente Hidráulico MOC v4.6 — Bolsa Irriga</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@0.14.0/dist/Leaflet.GoogleMutant.js"></script>
@@ -109,7 +109,7 @@ button.del-seg:hover{background:#ffcdd2}
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v4.5 · 22/06/2026</span></h1>
+      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v4.6 · 22/06/2026</span></h1>
       <p>Método das Características &middot; Multi-Trecho &middot; Inércia da Bomba &middot; FCV &middot; Comparação Hammer</p>
     </div>
   </div>
@@ -363,8 +363,7 @@ button.del-seg:hover{background:#ffcdd2}
     <div class="tile tg"><div class="tl">ΔH Joukowsky</div><div class="tv"><span id="st-jou">—</span><small>m</small></div></div>
     <div class="tile tb2"><div class="tl">VR fecha em</div><div class="tv"><span id="st-cv">—</span></div></div>
     <div class="tile"><div class="tl">Δt simulação</div><div class="tv"><span id="st-dt">—</span><small>s</small></div></div>
-    <div class="tile" style="background:#f3e5f5;border:1px solid #ce93d8"><div class="tl">H Bomba @ Q₀ (c/FCV)</div><div class="tv"><span id="st-tdh">—</span><small>mca</small></div></div>
-    <div class="tile" style="background:#e3f2fd;border:1px solid #90caf9;min-width:200px"><div class="tl">AMH Hidráulica</div><div class="tv"><span id="st-amh">—</span><small>mca</small></div><div id="amh-breakdown" style="font-size:.65rem;color:#546e7a;margin-top:.2rem;line-height:1.5"></div></div>
+    <div class="tile" style="background:#e3f2fd;border:1px solid #90caf9;min-width:220px"><div class="tl">AMH Hidráulica</div><div class="tv"><span id="st-amh">—</span><small>mca</small></div><div id="amh-breakdown" style="font-size:.65rem;color:#546e7a;margin-top:.2rem;line-height:1.5"></div></div>
   </div>
 
   <div id="compare-panel">
@@ -1708,8 +1707,25 @@ function liveAMH(){
     let txt=`Δz ${dz.toFixed(1)} + hf ${hf.toFixed(1)}`;
     if(filtro>0) txt+=` + filtro ${filtro.toFixed(1)}`;
     if(pRes>0)   txt+=` + p_res ${pRes.toFixed(1)}`;
-    bd.textContent=txt+' = '+amh.toFixed(2)+' mca';
+    txt+=' = '+amh.toFixed(2)+' mca';
+    const tdh=_res.H_ss_pump-_res.HR_s;
+    const delta=tdh-amh;
+    const sign=delta>=0?'+':'';
+    txt+=`<br><span style="color:#6a1b9a">TDH bomba (curva H-Q): ${tdh.toFixed(2)} mca</span>`;
+    txt+=`<br><span style="color:${delta>=0?'#2e7d32':'#c62828'}">Folga: ${sign}${delta.toFixed(2)} mca ${delta>=0?'(bomba superdimensionada)':'⚠ subdimensionada'}</span>`;
+    bd.innerHTML=txt;
   }
+}
+
+function computeHreq(res){
+  const pres_c=res.p_residual||0, filtro_c=res.filtro_dH||0;
+  const H=new Float64Array(res.N+1);
+  H[res.N]=res.HR_d+pres_c;
+  const sumR=Array.from(res.R_arr).reduce((s,r)=>s+r,0);
+  for(let i=res.N-1;i>=0;i--)
+    H[i]=H[i+1]+(res.hf_total||0)*(sumR>0?res.R_arr[i]/sumR:1/res.N);
+  if(filtro_c>0) H[0]+=filtro_c;
+  return H;
 }
 
 function updateStats(res){
@@ -1726,9 +1742,6 @@ function updateStats(res){
   document.getElementById('st-jou').textContent=res.dH_jou.toFixed(1);
   document.getElementById('st-cv').textContent=res.t_cv_close>=0?res.t_cv_close.toFixed(2)+' s':'—';
   document.getElementById('st-dt').textContent=res.dt.toFixed(4);
-
-  // Cabeça fornecida pela bomba a Q₀ (inclui FCV — não é a AMH do sistema)
-  document.getElementById('st-tdh').textContent=(pd-res.HR_s).toFixed(2);
 
   // AMH Hidráulica — atualiza ao vivo via liveAMH()
   liveAMH();
@@ -2009,17 +2022,18 @@ function abrirTabela(){
   const res=_res;
   const N=res.N;
   const step=Math.max(1,Math.floor(N/100));
-  const cols=['Nó','Dist. (m)','Cota (m)','HGL (m)','P regime (mca)','Hmax (m)','Hmin (m)','ΔH+ (m)','ΔH− (m)','PN','Cavitação'];
+  const cols=['Nó','Dist. (m)','Cota (m)','HGL req. (m)','P regime (mca)','Hmax (m)','Hmin (m)','ΔH+ (m)','ΔH− (m)','PN','Cavitação'];
   const thStyle='position:sticky;top:0;background:#f0e6ff;padding:.38rem .55rem;border:1px solid #d0c0e8;font-size:.72rem;font-weight:800;color:#4a0080;white-space:nowrap';
   document.getElementById('mocTableHead').innerHTML='<tr>'+cols.map(c=>`<th style="${thStyle}">${c}</th>`).join('')+'</tr>';
 
   const rows=[];
+  const hreq=computeHreq(res);
   const idxSet=new Set();
   for(let i=0;i<=N;i+=step) idxSet.add(i);
   idxSet.add(N);
   [...idxSet].sort((a,b)=>a-b).forEach(i=>{
     const elev=getElevNode(res,i);
-    const hss=res.H_ss[i];
+    const hss=hreq[i];
     const hmax=res.Hmax[i];
     const hmin=res.Hmin[i];
     const pn=getPNNode(res,i);
@@ -2058,11 +2072,12 @@ function exportarCSV(){
   if(!_res){alert('Execute o cálculo primeiro.');return;}
   const res=_res;
   const N=res.N;
-  const cols=['Nó','Dist. (m)','Cota (m)','HGL (m)','P regime (mca)','Hmax (m)','Hmin (m)','ΔH+ (m)','ΔH− (m)','PN','Cavitação'];
+  const cols=['Nó','Dist. (m)','Cota (m)','HGL req. (m)','P regime (mca)','Hmax (m)','Hmin (m)','ΔH+ (m)','ΔH− (m)','PN','Cavitação'];
   const lines=['﻿'+cols.join(';')];
+  const hreq=computeHreq(res);
   for(let i=0;i<=N;i++){
     const elev=getElevNode(res,i);
-    const hss=res.H_ss[i];
+    const hss=hreq[i];
     const hmax=res.Hmax[i];
     const hmin=res.Hmin[i];
     const pn=getPNNode(res,i);
