@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Transiente Hidráulico MOC v4.16 — Bolsa Irriga</title>
+<title>Transiente Hidráulico MOC v4.17 — Bolsa Irriga</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@0.14.0/dist/Leaflet.GoogleMutant.js"></script>
@@ -1530,7 +1530,39 @@ function drawChart(res, hammer, frameH){
      ctx.fillText(pEntry.toFixed(1)+' mca',cx+4,cy-4);}
   }
   polyLine(dArr,hmax,'#c62828',[],2);
+  // Hmin: linha azul base; sobrepinta em vermelho os trechos com cavitação real (Hmin < cota−10m)
   polyLine(dArr,hmin,'#1565c0',[],2);
+  if(res.hasElev){
+    // Preenche área de subpressão entre cota e Hmin (onde Hmin < cota)
+    ctx.beginPath();
+    let areaStarted=false;
+    for(let i=0;i<=res.N;i++){
+      if(hmin[i]<res.elev_arr[i]){
+        const[cx,cy]=toC(res.dist[i],res.elev_arr[i]);
+        if(!areaStarted){
+          if(i>0){const[px]=toC(res.dist[i-1],res.elev_arr[i-1]);ctx.moveTo(px,toC(res.dist[i-1],res.elev_arr[i-1])[1]);}
+          else ctx.moveTo(cx,cy);
+          areaStarted=true;
+        } else ctx.lineTo(cx,cy);
+      } else if(areaStarted){ctx.lineTo(toC(res.dist[i],res.elev_arr[i])[0],toC(res.dist[i],res.elev_arr[i])[1]);areaStarted=false;}
+    }
+    // Retorna pelo Hmin para fechar o contorno
+    for(let i=res.N;i>=0;i--){if(hmin[i]<res.elev_arr[i]) ctx.lineTo(toC(res.dist[i],hmin[i])[0],toC(res.dist[i],hmin[i])[1]);}
+    ctx.closePath();
+    ctx.fillStyle='rgba(255,120,0,0.18)';ctx.fill();
+    // Segmento de Hmin em vermelho onde há cavitação real (Hmin < cota−10m)
+    let cavSeg=null;
+    const flushCav=()=>{if(cavSeg&&cavSeg.length>1){
+      ctx.beginPath();ctx.strokeStyle='#e53935';ctx.lineWidth=3;ctx.setLineDash([]);
+      cavSeg.forEach(([cx,cy],k)=>{k?ctx.lineTo(cx,cy):ctx.moveTo(cx,cy);});
+      ctx.stroke();cavSeg=null;}};
+    for(let i=0;i<=res.N;i++){
+      const c=hmin[i]<res.elev_arr[i]-10;
+      if(c){if(!cavSeg){cavSeg=[];if(i>0)cavSeg.push(toC(res.dist[i-1],hmin[i-1]));}cavSeg.push(toC(res.dist[i],hmin[i]));}
+      else if(cavSeg){cavSeg.push(toC(res.dist[i],hmin[i]));flushCav();}
+    }
+    flushCav();
+  }
 
   // Linhas de limite PN por trecho (elev + PN_mca)
   {
@@ -1577,7 +1609,11 @@ function drawChart(res, hammer, frameH){
 
   // Legenda
   const leg=[['#c62828','─','Hmax'],['#1565c0','─','Hmin'],['#546e7a','--','Reg.perm.'],['#2e7d32','--','P.mín.req.']];
-  if(res.hasElev) leg.push(['#8d6e63','─','Terreno']);
+  if(res.hasElev){
+    leg.push(['#8d6e63','─','Terreno']);
+    if(hmin.some((h,i)=>h<res.elev_arr[i]))  leg.push(['rgba(255,120,0,.5)','█','Subpressão']);
+    if(hmin.some((h,i)=>h<res.elev_arr[i]-10)) leg.push(['#e53935','─','Hmin cav.']);
+  }
   if(frameH) leg.push(['#ff6f00','─','HGL(t)']);
   if(hammer) leg.push(['rgba(230,81,0,.8)','•','Ham Hmax'],['rgba(21,101,192,.8)','•','Ham Hmin']);
   // PN entries (únicos)
