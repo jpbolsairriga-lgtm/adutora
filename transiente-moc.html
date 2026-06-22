@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Transiente Hidráulico MOC v4.17 — Bolsa Irriga</title>
+<title>Transiente Hidráulico MOC v4.18 — Bolsa Irriga</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@0.14.0/dist/Leaflet.GoogleMutant.js"></script>
@@ -109,7 +109,7 @@ button.del-seg:hover{background:#ffcdd2}
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v4.17 · 22/06/2026</span></h1>
+      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v4.18 · 22/06/2026</span></h1>
       <p>Método das Características &middot; Multi-Trecho &middot; Inércia da Bomba &middot; FCV &middot; Comparação Hammer</p>
     </div>
   </div>
@@ -596,13 +596,13 @@ document.getElementById('kml-trace').addEventListener('change',e=>{
     if(_kmlTrace.hasElev&&_kmlTrace.profile.length>=2){
       const p=_kmlTrace.profile;
       const eIni=p[0].elev.toFixed(2), eFim=p[p.length-1].elev.toFixed(2);
-      // Preenche HR_s/HR_d somente se ainda estiverem vazios
+      // NÃO preenche automaticamente — mostra aviso vermelho para forçar entrada manual
       const inpS=document.getElementById('HR_s'), inpD=document.getElementById('HR_d');
-      if(!inpS.value){ inpS.value=eIni; inpS.style.background='#fff8e1'; }
-      if(!inpD.value){ inpD.value=eFim; inpD.style.background='#fff8e1'; }
       const hS=document.getElementById('HR_s_hint'), hD=document.getElementById('HR_d_hint');
-      if(hS) hS.textContent='⚠ Cota do tubo (KML): '+eIni+' m — ajuste para o nível d\'água real';
-      if(hD) hD.textContent='⚠ Cota do tubo (KML): '+eFim+' m — ajuste para o nível d\'água real';
+      if(hS) hS.innerHTML='<span style="color:#c62828;font-weight:700">⛔ KML fornece cota do tubo ('+eIni+' m) — NÃO é o nível d\'água. Informe o nível real do reservatório.</span>';
+      if(hD) hD.innerHTML='<span style="color:#c62828;font-weight:700">⛔ KML fornece cota do tubo ('+eFim+' m) — NÃO é o nível d\'água. Informe o nível real do reservatório.</span>';
+      if(!inpS.value){inpS.style.border='2px solid #c62828';inpS.style.background='#ffebee';}
+      if(!inpD.value){inpD.style.border='2px solid #c62828';inpD.style.background='#ffebee';}
       document.getElementById('map-elev-info').textContent='✓ altitude no traçado — verifique HR_s e HR_d (≠ nível do reservatório)';
     } else {
       document.getElementById('map-elev-info').textContent='⚠ KML sem altitude — preencha HR_s e HR_d manualmente';
@@ -1262,12 +1262,12 @@ function runMOC(p){
           const Hnet=Math.max(0,Hn[0]-HR_s);
           const dAdt=-(1000*g*Hnet*q)/(WR2*eta_bep*Math.max(0.02,alpha)*omega0*omega0);
           alpha=Math.max(0,alpha+dAdt*dt);
-          if(q<=1e-6||alpha<0.02){pump_active=false;t_cv_close=t;Qn[0]=0;Hn[0]=CM0;}
+          if(q<=1e-6||alpha<0.02){pump_active=false;t_cv_close=t;Qn[0]=0;Hn[0]=Math.max(CM0,HR_s);}
         } else {
           if(t_cv_close<0)t_cv_close=t;
-          pump_active=false; Qn[0]=0; Hn[0]=CM0;
+          pump_active=false; Qn[0]=0; Hn[0]=Math.max(CM0,HR_s);
         }
-      } else {Qn[0]=0; Hn[0]=CM0;}
+      } else {Qn[0]=0; Hn[0]=Math.max(CM0,HR_s);}
     }
 
     // ── BC do reservatório de entrega / válvula de linha
