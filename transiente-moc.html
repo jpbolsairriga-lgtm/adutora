@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Transiente Hidráulico MOC v4.15 — Bolsa Irriga</title>
+<title>Transiente Hidráulico MOC v4.16 — Bolsa Irriga</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@0.14.0/dist/Leaflet.GoogleMutant.js"></script>
@@ -109,7 +109,7 @@ button.del-seg:hover{background:#ffcdd2}
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v4.15 · 22/06/2026</span></h1>
+      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v4.16 · 22/06/2026</span></h1>
       <p>Método das Características &middot; Multi-Trecho &middot; Inércia da Bomba &middot; FCV &middot; Comparação Hammer</p>
     </div>
   </div>
@@ -1305,9 +1305,10 @@ function runMOC(p){
   const A0=Math.PI/4*(segs[0].Di/1000)**2;
   const dH_jou=segs[0].a*(Q0/A0)/g;
 
+  // Cavitação real: pressão abaixo da pressão de vapor (~10 mca = Patm − Pvapor na altitude)
   let cavitDist=-1;
   if(hasElev){
-    for(let i=0;i<=N;i++){if(Hmin[i]<elev_arr[i]-1){cavitDist=dist[i];break;}}
+    for(let i=0;i<=N;i++){if(Hmin[i]<elev_arr[i]-10){cavitDist=dist[i];break;}}
   }
 
   // Perda de carga total por Hazen-Williams (a Q0, sem FCV, sem filtro)
@@ -2062,7 +2063,7 @@ function abrirTabela(){
   const res=_res;
   const N=res.N;
   const step=Math.max(1,Math.floor(N/100));
-  const cols=['Nó','Dist. (m)','Cota (m)','HGL req. (m)','P regime (mca)','Hmax (m)','Hmin (m)','ΔH+ (m)','ΔH− (m)','PN','Cavitação'];
+  const cols=['Nó','Dist. (m)','Cota (m)','HGL req. (m)','P regime (mca)','Hmax (m)','Hmin (m)','ΔH+ (m)','ΔH− (m)','PN','Cavit. (Hmin<cota−10m)'];
   const thStyle='position:sticky;top:0;background:#f0e6ff;padding:.38rem .55rem;border:1px solid #d0c0e8;font-size:.72rem;font-weight:800;color:#4a0080;white-space:nowrap';
   document.getElementById('mocTableHead').innerHTML='<tr>'+cols.map(c=>`<th style="${thStyle}">${c}</th>`).join('')+'</tr>';
 
@@ -2077,7 +2078,7 @@ function abrirTabela(){
     const hmax=res.Hmax[i];
     const hmin=res.Hmin[i];
     const pn=getPNNode(res,i);
-    const hasCav=hmin<elev;
+    const hasCav=hmin<elev-10; // cavitação real: Hmin < cota − 10 mca (pressão de vapor)
     const vals=[
       i,
       res.dist[i].toFixed(1),
@@ -2101,10 +2102,10 @@ function abrirTabela(){
   document.getElementById('mocTableBody').innerHTML=rows.join('');
 
   let cavCount=0;
-  for(let i=0;i<=N;i++) if(_res.Hmin[i]<getElevNode(_res,i)) cavCount++;
+  for(let i=0;i<=N;i++) if(_res.Hmin[i]<getElevNode(_res,i)-10) cavCount++;
   document.getElementById('mocTableFooter').textContent=
     `${rows.length} linhas exibidas (passo ${step}) · ${N+1} nós totais · `+
-    (cavCount>0?cavCount+' nó(s) com risco de cavitação':'Sem risco de cavitação');
+    (cavCount>0?cavCount+' nó(s) com risco real de cavitação (Hmin < cota − 10m)':'Sem risco real de cavitação');
   document.getElementById('mocTableModal').style.display='flex';
 }
 
@@ -2132,7 +2133,7 @@ function exportarCSV(){
       (hmax-hss).toFixed(3),
       (hss-hmin).toFixed(3),
       pn!=null?'PN'+pn:'',
-      hmin<elev?'Sim':'Não'
+      hmin<elev-10?'Sim':'Não'
     ].join(';'));
   }
   const blob=new Blob([lines.join('\r\n')],{type:'text/csv;charset=utf-8;'});
