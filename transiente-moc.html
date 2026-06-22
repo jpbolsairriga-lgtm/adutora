@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Transiente Hidráulico MOC v4.6 — Bolsa Irriga</title>
+<title>Transiente Hidráulico MOC v4.7 — Bolsa Irriga</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@0.14.0/dist/Leaflet.GoogleMutant.js"></script>
@@ -109,7 +109,7 @@ button.del-seg:hover{background:#ffcdd2}
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v4.6 · 22/06/2026</span></h1>
+      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v4.7 · 22/06/2026</span></h1>
       <p>Método das Características &middot; Multi-Trecho &middot; Inércia da Bomba &middot; FCV &middot; Comparação Hammer</p>
     </div>
   </div>
@@ -122,6 +122,65 @@ button.del-seg:hover{background:#ffcdd2}
 </header>
 
 <div class="page">
+
+<!-- ── Mapa + KML ── -->
+<div class="card">
+  <div class="ct">🗺 Traçado &amp; Altimetria</div>
+  <div class="map-card-body">
+
+    <div class="map-sidebar">
+      <div class="fg">
+        <label>Chave API Google Maps</label>
+        <div class="iu">
+          <input type="password" id="api-key-input" placeholder="AIzaSy..." oninput="onApiKey(this.value)">
+          <button class="u" onclick="onApiKey(document.getElementById('api-key-input').value)" style="cursor:pointer;background:var(--bl2);color:#fff;border-color:var(--bl2);font-weight:700;border-radius:0 8px 8px 0">OK</button>
+        </div>
+        <small>Sem chave → usa OpenStreetMap</small>
+      </div>
+
+      <div style="border-top:1px solid var(--bdr);padding-top:.55rem">
+        <label style="margin-bottom:.35rem">Traçado KML (com altitude)</label>
+        <input type="file" id="kml-trace" accept=".kml" style="width:100%;font-size:.8rem">
+        <div style="display:flex;align-items:center;gap:.5rem;margin-top:.3rem;flex-wrap:wrap">
+          <span style="font-size:.73rem;color:var(--mu)">Compr.: <b id="kml-len">—</b></span>
+          <span id="map-elev-info" style="font-size:.72rem;color:#2d9e5a"></span>
+        </div>
+      </div>
+
+      <div style="border-top:1px solid var(--bdr);padding-top:.55rem">
+        <label style="margin-bottom:.35rem">Curvas de nível KML</label>
+        <input type="file" id="kml-curvas" accept=".kml" style="width:100%;font-size:.8rem">
+        <div style="font-size:.73rem;color:var(--mu);margin-top:.3rem"><b id="curvas-count">—</b> curvas carregadas</div>
+      </div>
+
+      <div style="border-top:1px solid var(--bdr);padding-top:.55rem">
+        <label style="margin-bottom:.35rem;font-weight:700">Traçar Rota no Mapa</label>
+        <div style="display:flex;gap:.4rem;margin-bottom:.35rem">
+          <button class="btn btn-sm" id="btn-draw-route" onclick="toggleDrawRoute()" style="flex:1;background:#1976d2;color:#fff;border:none;font-size:.75rem">✏ Traçar</button>
+          <button class="btn btn-sm" onclick="clearDrawRoute()" style="flex:1;background:#e53935;color:#fff;border:none;font-size:.75rem">✕ Limpar</button>
+        </div>
+        <div id="draw-route-info" style="font-size:.71rem;color:var(--mu);margin-bottom:.3rem">Clique no mapa para adicionar pontos da rota</div>
+        <button id="btn-fetch-elev" onclick="fetchRouteElevation()" style="display:none;width:100%;padding:.28rem .5rem;background:#2e7d32;color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:.75rem;font-weight:700">📡 Buscar Elevação (Google API)</button>
+      </div>
+
+      <div style="border-top:1px solid var(--bdr);padding-top:.55rem">
+        <label style="margin-bottom:.35rem">Comparação Hammer CSV</label>
+        <input type="file" id="hammer-file" accept=".csv" style="width:100%;font-size:.8rem">
+        <div class="fg" style="margin-top:.45rem">
+          <label>Offset x Hammer → MOC</label>
+          <div class="iu"><input type="number" id="hammer-offset" value="6.4" step="0.1"><span class="u">m</span></div>
+        </div>
+      </div>
+
+      <button class="btn btn-out btn-sm" style="width:100%" onclick="clearKmls()">✕ Limpar KMLs</button>
+      <button class="btn btn-sm" id="map-toggle-btn" style="width:100%;background:#546e7a;color:#fff;border:none" onclick="toggleMap()">🗺 Ocultar Mapa</button>
+    </div>
+
+    <div class="map-main" id="map-panel">
+      <div id="map-div"></div>
+    </div>
+  </div>
+</div>
 
 <!-- ── Parâmetros do Sistema ── -->
 <div class="card">
@@ -241,65 +300,6 @@ button.del-seg:hover{background:#ffcdd2}
       </tr></thead>
       <tbody id="seg-tbody"></tbody>
     </table>
-  </div>
-</div>
-
-<!-- ── Mapa + KML ── -->
-<div class="card">
-  <div class="ct">🗺 Traçado &amp; Altimetria</div>
-  <div class="map-card-body">
-
-    <div class="map-sidebar">
-      <div class="fg">
-        <label>Chave API Google Maps</label>
-        <div class="iu">
-          <input type="password" id="api-key-input" placeholder="AIzaSy..." oninput="onApiKey(this.value)">
-          <button class="u" onclick="onApiKey(document.getElementById('api-key-input').value)" style="cursor:pointer;background:var(--bl2);color:#fff;border-color:var(--bl2);font-weight:700;border-radius:0 8px 8px 0">OK</button>
-        </div>
-        <small>Sem chave → usa OpenStreetMap</small>
-      </div>
-
-      <div style="border-top:1px solid var(--bdr);padding-top:.55rem">
-        <label style="margin-bottom:.35rem">Traçado KML (com altitude)</label>
-        <input type="file" id="kml-trace" accept=".kml" style="width:100%;font-size:.8rem">
-        <div style="display:flex;align-items:center;gap:.5rem;margin-top:.3rem;flex-wrap:wrap">
-          <span style="font-size:.73rem;color:var(--mu)">Compr.: <b id="kml-len">—</b></span>
-          <span id="map-elev-info" style="font-size:.72rem;color:#2d9e5a"></span>
-        </div>
-      </div>
-
-      <div style="border-top:1px solid var(--bdr);padding-top:.55rem">
-        <label style="margin-bottom:.35rem">Curvas de nível KML</label>
-        <input type="file" id="kml-curvas" accept=".kml" style="width:100%;font-size:.8rem">
-        <div style="font-size:.73rem;color:var(--mu);margin-top:.3rem"><b id="curvas-count">—</b> curvas carregadas</div>
-      </div>
-
-      <div style="border-top:1px solid var(--bdr);padding-top:.55rem">
-        <label style="margin-bottom:.35rem;font-weight:700">Traçar Rota no Mapa</label>
-        <div style="display:flex;gap:.4rem;margin-bottom:.35rem">
-          <button class="btn btn-sm" id="btn-draw-route" onclick="toggleDrawRoute()" style="flex:1;background:#1976d2;color:#fff;border:none;font-size:.75rem">✏ Traçar</button>
-          <button class="btn btn-sm" onclick="clearDrawRoute()" style="flex:1;background:#e53935;color:#fff;border:none;font-size:.75rem">✕ Limpar</button>
-        </div>
-        <div id="draw-route-info" style="font-size:.71rem;color:var(--mu);margin-bottom:.3rem">Clique no mapa para adicionar pontos da rota</div>
-        <button id="btn-fetch-elev" onclick="fetchRouteElevation()" style="display:none;width:100%;padding:.28rem .5rem;background:#2e7d32;color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:.75rem;font-weight:700">📡 Buscar Elevação (Google API)</button>
-      </div>
-
-      <div style="border-top:1px solid var(--bdr);padding-top:.55rem">
-        <label style="margin-bottom:.35rem">Comparação Hammer CSV</label>
-        <input type="file" id="hammer-file" accept=".csv" style="width:100%;font-size:.8rem">
-        <div class="fg" style="margin-top:.45rem">
-          <label>Offset x Hammer → MOC</label>
-          <div class="iu"><input type="number" id="hammer-offset" value="6.4" step="0.1"><span class="u">m</span></div>
-        </div>
-      </div>
-
-      <button class="btn btn-out btn-sm" style="width:100%" onclick="clearKmls()">✕ Limpar KMLs</button>
-      <button class="btn btn-sm" id="map-toggle-btn" style="width:100%;background:#546e7a;color:#fff;border:none" onclick="toggleMap()">🗺 Ocultar Mapa</button>
-    </div>
-
-    <div class="map-main" id="map-panel">
-      <div id="map-div"></div>
-    </div>
   </div>
 </div>
 
