@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Transiente Hidráulico MOC v4.3 — Bolsa Irriga</title>
+<title>Transiente Hidráulico MOC v4.5 — Bolsa Irriga</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@0.14.0/dist/Leaflet.GoogleMutant.js"></script>
@@ -109,7 +109,7 @@ button.del-seg:hover{background:#ffcdd2}
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v4.4 · 22/06/2026</span></h1>
+      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v4.5 · 22/06/2026</span></h1>
       <p>Método das Características &middot; Multi-Trecho &middot; Inércia da Bomba &middot; FCV &middot; Comparação Hammer</p>
     </div>
   </div>
@@ -674,27 +674,32 @@ async function fetchRouteElevation(){
   const btn=document.getElementById('btn-fetch-elev');
   const info=document.getElementById('draw-route-info');
   if(btn) btn.disabled=true;
-  if(info) info.textContent='Buscando elevações...';
+  if(info) info.textContent='Buscando elevações via Google Maps API...';
   try{
+    await ensureGoogleApi(key);
     const nSamples=Math.min(512,Math.max(100,_drawnWaypoints.length*5));
-    const path=_drawnWaypoints.map(p=>p.lat+','+p.lon).join('|');
-    const url=`https://maps.googleapis.com/maps/api/elevation/json?path=${encodeURIComponent(path)}&samples=${nSamples}&key=${key}`;
-    const r=await fetch(url);
-    const data=await r.json();
-    if(data.status!=='OK') throw new Error(data.status+': '+(data.error_message||''));
-    const results=data.results;
+    const path=_drawnWaypoints.map(p=>new google.maps.LatLng(p.lat,p.lon));
+    const elevator=new google.maps.ElevationService();
+    const results=await new Promise((resolve,reject)=>{
+      elevator.getElevationAlongPath({path,samples:nSamples},(res,status)=>{
+        if(status==='OK') resolve(res);
+        else reject(new Error('Elevation API: '+status));
+      });
+    });
     const profile=[];
     let cumDist=0;
     for(let i=0;i<results.length;i++){
-      if(i>0) cumDist+=haversine(profile[i-1].lon,profile[i-1].lat,results[i].location.lng,results[i].location.lat);
-      profile.push({dist:cumDist,lat:results[i].location.lat,lon:results[i].location.lng,elev:results[i].elevation});
+      if(i>0) cumDist+=haversine(profile[i-1].lon,profile[i-1].lat,
+        results[i].location.lng(),results[i].location.lat());
+      profile.push({dist:cumDist,lat:results[i].location.lat(),
+        lon:results[i].location.lng(),elev:results[i].elevation});
     }
     _kmlTrace={length_m:cumDist,profile,hasElev:true};
     const lenTxt=document.getElementById('kml-len');
     const elevInfo=document.getElementById('map-elev-info');
     if(lenTxt) lenTxt.textContent=(cumDist/1000).toFixed(3)+' km';
     if(elevInfo) elevInfo.textContent='✓ elevação do mapa';
-    if(info) info.textContent=`${results.length} amostras · ${(cumDist/1000).toFixed(3)} km — elevação carregada ✓`;
+    if(info) info.textContent=`${results.length} amostras · ${(cumDist/1000).toFixed(3)} km ✓`;
     renderMapLayers();
     updateSegElev();
   }catch(e){
@@ -1329,12 +1334,21 @@ function drawChart(res, hammer, frameH){
     return res.HR_s+(res.HR_d-res.HR_s)*(res.dist[node_i]/res.dist[res.N]);
   }
 
-  // Y range — exclui H_ss[0] (cabeça da bomba antes da FCV — não plotada, inflaria escala)
+  // HGL requerida — computa de trás para frente usando R_arr (distribuição real por trecho)
+  const filtro_c=+document.getElementById('filtro_dH').value||0;
+  const pres_c=+document.getElementById('p_residual').value||0;
+  const H_req=new Float64Array(res.N+1);
+  H_req[res.N]=res.HR_d+pres_c;
+  const sum_R=Array.from(res.R_arr).reduce((s,r)=>s+r,0);
+  for(let i=res.N-1;i>=0;i--)
+    H_req[i]=H_req[i+1]+(res.hf_total||0)*(sum_R>0?res.R_arr[i]/sum_R:1/res.N);
+  if(filtro_c>0) H_req[0]+=filtro_c;
+
+  // Y range — usa H_req em vez de H_ss (evita escala inflada pela cabeça da bomba)
   let yMin=+Infinity, yMax=-Infinity;
   const upd=v=>{const n=+v; if(n>50&&isFinite(n)){if(n<yMin)yMin=n;if(n>yMax)yMax=n;}};
   for(let i=0;i<=res.N;i++){
-    upd(res.Hmax[i]); upd(res.Hmin[i]);
-    if(i>0) upd(res.H_ss[i]); // H_ss[0]=cabeça bomba excluída da escala Y
+    upd(res.Hmax[i]); upd(res.Hmin[i]); upd(H_req[i]);
     if(res.hasElev&&res.elev_arr[i]>100) upd(res.elev_arr[i]);
     if(frameH) upd(frameH[i]);
   }
@@ -1487,13 +1501,11 @@ function drawChart(res, hammer, frameH){
   ctx.closePath();
   ctx.fillStyle='rgba(100,160,230,0.12)';ctx.fill();
 
-  // H_ss: começa em x=0 mas usa cabeça após FCV (não a cabeça da bomba antes da FCV)
-  {const hss_p=Array.from(res.H_ss);
-   if(res.fcvList&&res.fcvList.length>0) hss_p[0]=hss_p[res.fcvList[0].nd];
-   polyLine(dArr,hss_p,'#2e7d32',[6,4],1.5);
-   // Label de pressão na entrada (mca acima de HR_s)
-   const pEntry=hss_p[0]-res.HR_s;
-   if(pEntry>0){const[cx,cy]=toC(0,hss_p[0]);
+  // HGL requerida (regime permanente = o que o sistema PRECISA)
+  polyLine(dArr,Array.from(H_req),'#2e7d32',[6,4],1.5);
+  {const pEntry=H_req[0]-res.HR_s; // = AMH Hidráulica
+   if(pEntry>0&&isFinite(pEntry)){
+     const[cx,cy]=toC(0,H_req[0]);
      ctx.fillStyle='#2e7d32';ctx.font='bold 9px Segoe UI';ctx.textAlign='left';
      ctx.fillText(pEntry.toFixed(1)+' mca',cx+4,cy-4);}
   }
@@ -1544,7 +1556,7 @@ function drawChart(res, hammer, frameH){
   ctx.save();ctx.translate(14,PAD.t+PH/2);ctx.rotate(-Math.PI/2);ctx.fillText('HGL (m)',0,0);ctx.restore();
 
   // Legenda
-  const leg=[['#c62828','─','Hmax'],['#1565c0','─','Hmin'],['#2e7d32','--','H_ss']];
+  const leg=[['#c62828','─','Hmax'],['#1565c0','─','Hmin'],['#2e7d32','--','HGL req.']];
   if(res.hasElev) leg.push(['#8d6e63','─','Terreno']);
   if(frameH) leg.push(['#ff6f00','─','HGL(t)']);
   if(hammer) leg.push(['rgba(230,81,0,.8)','•','Ham Hmax'],['rgba(21,101,192,.8)','•','Ham Hmin']);
