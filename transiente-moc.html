@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Transiente Hidráulico MOC v4.11 — Bolsa Irriga</title>
+<title>Transiente Hidráulico MOC v4.12 — Bolsa Irriga</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@0.14.0/dist/Leaflet.GoogleMutant.js"></script>
@@ -109,7 +109,7 @@ button.del-seg:hover{background:#ffcdd2}
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v4.11 · 22/06/2026</span></h1>
+      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v4.12 · 22/06/2026</span></h1>
       <p>Método das Características &middot; Multi-Trecho &middot; Inércia da Bomba &middot; FCV &middot; Comparação Hammer</p>
     </div>
   </div>
@@ -177,8 +177,8 @@ button.del-seg:hover{background:#ffcdd2}
   <div class="ct">⚙ Parâmetros do Sistema</div>
 
   <div class="g4" style="margin-bottom:.6rem">
-    <div class="fg"><label>Nível Fonte HR_s</label><div class="iu"><input type="number" id="HR_s" value="" step="0.01" placeholder="m"><span class="u">m</span></div></div>
-    <div class="fg"><label>Nível Entrega HR_d</label><div class="iu"><input type="number" id="HR_d" value="" step="0.01" placeholder="m"><span class="u">m</span></div></div>
+    <div class="fg"><label>Nível Fonte HR_s <small style="color:var(--mu);font-weight:400">(automático — KML)</small></label><div class="iu" style="background:#f5f5f5;border-radius:8px;padding:.35rem .6rem;min-height:38px;align-items:center"><span id="HR_s_disp" style="font-weight:700;color:var(--bl2)">—</span><span class="u" style="margin-left:.3rem">m</span></div></div>
+    <div class="fg"><label>Nível Entrega HR_d <small style="color:var(--mu);font-weight:400">(automático — KML)</small></label><div class="iu" style="background:#f5f5f5;border-radius:8px;padding:.35rem .6rem;min-height:38px;align-items:center"><span id="HR_d_disp" style="font-weight:700;color:var(--bl2)">—</span><span class="u" style="margin-left:.3rem">m</span></div></div>
     <div class="fg"><label>Vazão nominal Q₀</label><div class="iu"><input type="number" id="Q0" value="" step="1" min="0" placeholder="m³/h"><span class="u">m³/h</span></div></div>
     <div class="fg">
       <label>Tipo de Evento</label>
@@ -585,20 +585,8 @@ document.getElementById('kml-trace').addEventListener('change',e=>{
     _kmlTrace=parseKmlTrace(ev.target.result);
     if(!_kmlTrace){alert('KML do traçado não reconhecido.');return;}
     document.getElementById('kml-len').textContent=(_kmlTrace.length_m/1000).toFixed(3)+' km';
-    // Auto-preenche HR_s e HR_d com elevação do primeiro e último ponto do traçado
-    if(_kmlTrace.hasElev&&_kmlTrace.profile.length>=2){
-      const p=_kmlTrace.profile;
-      const elevIni=p[0].elev, elevFim=p[p.length-1].elev;
-      const inpS=document.getElementById('HR_s'), inpD=document.getElementById('HR_d');
-      inpS.value=elevIni.toFixed(2);
-      inpD.value=elevFim.toFixed(2);
-      inpS.style.background='#e8f5e9'; inpD.style.background='#e8f5e9';
-      document.getElementById('map-elev-info').textContent=
-        `✓ altitude no traçado — HR_s=${elevIni.toFixed(2)} m · HR_d=${elevFim.toFixed(2)} m (ajuste se necessário)`;
-    } else {
-      document.getElementById('map-elev-info').textContent=
-        '⚠ KML sem altitude — preencha HR_s e HR_d manualmente';
-    }
+    document.getElementById('map-elev-info').textContent=
+      _kmlTrace.hasElev?'✓ altitude no traçado':'⚠ KML sem altitude — cotas não disponíveis';
     updateLenBar(); updateSegElev(); renderMapLayers();
   }; fr.readAsText(f,'UTF-8');
 });
@@ -895,6 +883,12 @@ function updateSegElev(){
     cf.textContent=e1!=null?e1.toFixed(1):'—';
     xAcc+=seg.L;
   });
+  // Atualiza display HR_s / HR_d
+  const xTot=_segments.reduce((s,sg)=>s+sg.L,0);
+  const eIni=getElevAtDist(0), eFim=xTot>0?getElevAtDist(xTot):null;
+  const dS=document.getElementById('HR_s_disp'), dD=document.getElementById('HR_d_disp');
+  if(dS) dS.textContent=eIni!=null?eIni.toFixed(2):'—';
+  if(dD) dD.textContent=eFim!=null?eFim.toFixed(2):'—';
 }
 
 function toggleTrechos(){
@@ -1899,9 +1893,12 @@ function readParams(){
     L:s.L, Di:s.Di, e:s.e, a:s.a, C_hw:s.C_hw, pipeIdx:s.pipeIdx
   }));
   if(!segs.length) throw new Error('Adicione pelo menos um trecho.');
+  const xTot_p=segs.reduce((s,sg)=>s+sg.L,0);
+  const HR_s_v=getElevAtDist(0)||0;
+  const HR_d_v=getElevAtDist(xTot_p)||0;
   return {
-    HR_s:  +document.getElementById('HR_s').value,
-    HR_d:  +document.getElementById('HR_d').value,
+    HR_s:  HR_s_v,
+    HR_d:  HR_d_v,
     Q0:    +document.getElementById('Q0').value/3600,
     pQ1:   +document.getElementById('pQ1').value,
     pH1:   +document.getElementById('pH1').value,
@@ -1927,12 +1924,11 @@ function readParams(){
 function onRun(){
   try{
     // Validação dos campos obrigatórios
-    const HR_s_val=+document.getElementById('HR_s').value;
-    const HR_d_val=+document.getElementById('HR_d').value;
     const Q0_val=+document.getElementById('Q0').value;
+    const xTot_v=_segments.reduce((s,sg)=>s+sg.L,0);
+    const HR_s_val=getElevAtDist(0), HR_d_val=xTot_v>0?getElevAtDist(xTot_v):null;
     const erros=[];
-    if(!HR_s_val) erros.push('Nível Fonte HR_s (preencha ou importe o KML com altitude)');
-    if(!HR_d_val) erros.push('Nível Entrega HR_d (preencha ou importe o KML com altitude)');
+    if(!HR_s_val||!HR_d_val) erros.push('Importe um KML com altitude para determinar HR_s e HR_d automaticamente');
     if(!Q0_val)   erros.push('Vazão nominal Q₀');
     if(_segments.length===0) erros.push('Adicione ao menos um trecho de tubulação');
     if(erros.length){
