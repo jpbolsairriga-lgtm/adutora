@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sistematização de Plantio — v2</title>
+<title>Sistematização de Plantio — v2.1</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;}
@@ -96,7 +96,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v2</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v2.1</span></h1>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
   </div>
@@ -485,6 +485,25 @@ function catmullRom(pts, segs=20) {
     }
   }
   return res;
+}
+// Reamostrar curva com M pontos igualmente espaçados por comprimento de arco
+function resampleCurve(pts, M) {
+  if(pts.length < 2 || M < 2) return pts;
+  const arcLen = [0];
+  for(let i = 1; i < pts.length; i++) arcLen.push(arcLen[i-1] + haversineM(pts[i-1], pts[i]));
+  const total = arcLen[arcLen.length-1];
+  if(total < 1e-9) return pts;
+  const step = total / (M - 1);
+  const result = [];
+  let j = 0;
+  for(let k = 0; k < M; k++) {
+    const target = Math.min(k * step, total);
+    while(j < arcLen.length - 2 && arcLen[j+1] < target) j++;
+    const segLen = arcLen[j+1] - arcLen[j];
+    const t = segLen < 1e-9 ? 0 : (target - arcLen[j]) / segLen;
+    result.push({ lat: pts[j].lat + t*(pts[j+1].lat - pts[j].lat), lng: pts[j].lng + t*(pts[j+1].lng - pts[j].lng) });
+  }
+  return result;
 }
 
 // ── Eventos do mapa ───────────────────────────────────────────────────────────
@@ -953,19 +972,25 @@ function _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingK
       return added > 0;
     } catch(e) { return false; }
   }
-  function addSplineRow(projKm) {
-    const dir = projKm >= 0 ? perpBrg : perpBrg + 180;
-    const ctrlOff = guidePts.map(pt => {
-      if(Math.abs(projKm) < 1e-9) return {lat:pt.lat, lng:pt.lng};
-      const [lng,lat] = turf.destination(turf.point([pt.lng,pt.lat]), Math.abs(projKm), dir, {units:'kilometers'}).geometry.coordinates;
-      return {lat, lng};
+  // MODO SUAVE — offset perpendicular local à tangente de cada ponto da guia
+  const _SM = 400;
+  const _sg0 = resampleCurve(catmullRom(guidePts, 60), _SM);
+  const _tan0 = _sg0.map((p,i) => {
+    const a = _sg0[Math.max(0,i-1)], b = _sg0[Math.min(_SM-1,i+1)];
+    return turf.bearing(turf.point([a.lng,a.lat]), turf.point([b.lng,b.lat]));
+  });
+
+  function addSplineRow(n, perpSign) {
+    const dist = n * spacingKm;
+    const pts = _sg0.map((p,i) => {
+      if(n === 0) return [p.lng, p.lat];
+      const [lng,lat] = turf.destination(turf.point([p.lng,p.lat]), dist, _tan0[i]+perpSign*90, {units:'kilometers'}).geometry.coordinates;
+      return [lng,lat];
     });
-    const sp = catmullRom(ctrlOff, 60);
-    const spPts = sp.map(p => [p.lng, p.lat]);
     const N = 200, extS = [], extE = [];
-    for(let i = N; i >= 1; i--) extS.push(turf.destination(turf.point(spPts[0]), (i/N)*ext, rowBrgGlobal+180, {units:'kilometers'}).geometry.coordinates);
-    for(let i = 1; i <= N; i++) extE.push(turf.destination(turf.point(spPts[spPts.length-1]), (i/N)*ext, rowBrgGlobal, {units:'kilometers'}).geometry.coordinates);
-    const allPts = [...extS, ...spPts, ...extE];
+    for(let i = N; i >= 1; i--) extS.push(turf.destination(turf.point(pts[0]), (i/N)*ext, rowBrgGlobal+180, {units:'kilometers'}).geometry.coordinates);
+    for(let i = 1; i <= N; i++) extE.push(turf.destination(turf.point(pts[pts.length-1]), (i/N)*ext, rowBrgGlobal, {units:'kilometers'}).geometry.coordinates);
+    const allPts = [...extS, ...pts, ...extE];
     let seg = null, added = 0;
     const flush = () => {
       if(seg && seg.length >= 2) {
@@ -990,10 +1015,15 @@ function _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingK
     flush();
     return added > 0;
   }
-  const addRow = modoGuia === 'spline' ? addSplineRow : addRetaRow;
-  addRow(0);
-  for(let n = 1; n <= nBoth; n++) addRow(n * spacingKm);
-  for(let n = 1; n <= nBoth; n++) addRow(-n * spacingKm);
+  if(modoGuia === 'spline') {
+    addSplineRow(0, 1);
+    for(let n = 1; n <= nBoth; n++) addSplineRow(n,  1);
+    for(let n = 1; n <= nBoth; n++) addSplineRow(n, -1);
+  } else {
+    addRetaRow(0);
+    for(let n = 1; n <= nBoth; n++) addRetaRow(n * spacingKm);
+    for(let n = 1; n <= nBoth; n++) addRetaRow(-n * spacingKm);
+  }
   return count;
 }
 
@@ -1039,6 +1069,7 @@ function gerarLinhas() {
     if(totalCount === 0) { setStatus('Nenhuma linha gerada. Verifique se a guia passa pelos talhões selecionados.', 'err'); return; }
     limparGuia();
     _updateLabelScale();
+    polyMarkers.forEach(m => m.dragging && m.dragging.disable());
     $('btnTravarTodos').style.display = 'flex';
     setStatus(`${totalCount} linhas geradas em ${talhoesMultiSel.size} talhão(ões). Clique em "Travar Todos" para confirmar.`, 'ok');
     return;
@@ -1099,21 +1130,25 @@ function gerarLinhas() {
     } catch(e) { return false; }
   }
 
-  // MODO SUAVE — translada pontos de controle perpendicularmente → catmullRom
-  // Clipping por sampling + lineIntersect exato nas transições
-  function addSplineRow(projKm) {
-    const dir = projKm >= 0 ? perpBrg : perpBrg + 180;
-    const ctrlOff = gp.map(pt => {
-      if(Math.abs(projKm) < 1e-9) return {lat:pt.lat, lng:pt.lng};
-      const [lng,lat] = turf.destination(turf.point([pt.lng,pt.lat]), Math.abs(projKm), dir, {units:'kilometers'}).geometry.coordinates;
-      return {lat, lng};
+  // MODO SUAVE — offset perpendicular local à tangente de cada ponto da guia
+  const _SM2 = 400;
+  const _sg02 = resampleCurve(catmullRom(gp, 60), _SM2);
+  const _tan2 = _sg02.map((p,i) => {
+    const a = _sg02[Math.max(0,i-1)], b = _sg02[Math.min(_SM2-1,i+1)];
+    return turf.bearing(turf.point([a.lng,a.lat]), turf.point([b.lng,b.lat]));
+  });
+
+  function addSplineRow(n, perpSign) {
+    const dist = n * spacingKm;
+    const pts = _sg02.map((p,i) => {
+      if(n === 0) return [p.lng, p.lat];
+      const [lng,lat] = turf.destination(turf.point([p.lng,p.lat]), dist, _tan2[i]+perpSign*90, {units:'kilometers'}).geometry.coordinates;
+      return [lng,lat];
     });
-    const sp = catmullRom(ctrlOff, 60);
-    const spPts = sp.map(p => [p.lng, p.lat]);
     const N = 200, extS = [], extE = [];
-    for(let i = N; i >= 1; i--) extS.push(turf.destination(turf.point(spPts[0]), (i/N)*ext, rowBrgGlobal+180, {units:'kilometers'}).geometry.coordinates);
-    for(let i = 1; i <= N; i++) extE.push(turf.destination(turf.point(spPts[spPts.length-1]), (i/N)*ext, rowBrgGlobal, {units:'kilometers'}).geometry.coordinates);
-    const allPts = [...extS, ...spPts, ...extE];
+    for(let i = N; i >= 1; i--) extS.push(turf.destination(turf.point(pts[0]), (i/N)*ext, rowBrgGlobal+180, {units:'kilometers'}).geometry.coordinates);
+    for(let i = 1; i <= N; i++) extE.push(turf.destination(turf.point(pts[pts.length-1]), (i/N)*ext, rowBrgGlobal, {units:'kilometers'}).geometry.coordinates);
+    const allPts = [...extS, ...pts, ...extE];
     let seg = null, added = 0;
     const flush = () => {
       if(seg && seg.length >= 2) {
@@ -1139,11 +1174,15 @@ function gerarLinhas() {
     return added > 0;
   }
 
-  const addRow = modoGuia === 'spline' ? addSplineRow : addRetaRow;
-
-  addRow(0);
-  for(let n = 1; n <= nBoth; n++) addRow( n * spacingKm);
-  for(let n = 1; n <= nBoth; n++) addRow(-n * spacingKm);
+  if(modoGuia === 'spline') {
+    addSplineRow(0, 1);
+    for(let n = 1; n <= nBoth; n++) addSplineRow(n,  1);
+    for(let n = 1; n <= nBoth; n++) addSplineRow(n, -1);
+  } else {
+    addRetaRow(0);
+    for(let n = 1; n <= nBoth; n++) addRetaRow( n * spacingKm);
+    for(let n = 1; n <= nBoth; n++) addRetaRow(-n * spacingKm);
+  }
 
   if(count === 0) { setStatus('Nenhuma linha gerada. Verifique se a guia cruza o talhão.', 'err'); return; }
   $('iLinhas').textContent = count;
@@ -1163,6 +1202,7 @@ function gerarLinhas() {
   areaHaAtual = ha;
   mostrarLabel(ha, spacing, count, metrosLin);
   // Aguarda decisão do usuário: classificar declividade, travar ou redesenhar
+  polyMarkers.forEach(m => m.dragging && m.dragging.disable());
   $('btnTravarTalhao').style.display = 'flex';
   $('btnRedesenharLinhas').style.display = 'flex';
   $('divDeclivAtivo').style.display = '';
@@ -2169,6 +2209,7 @@ function redesenharLinhas() {
   linhasDecl.forEach(l => l.remove()); linhasDecl = [];
   linhas.forEach(l => l.remove()); linhas = [];
   if(infoMarker){ infoMarker.remove(); infoMarker = null; }
+  polyMarkers.forEach(m => m.dragging && m.dragging.enable());
   $('iLinhas').textContent = '—'; $('iEspac').textContent = '—';
   $('btnTravarTalhao').style.display = 'none';
   $('btnRedesenharLinhas').style.display = 'none';
