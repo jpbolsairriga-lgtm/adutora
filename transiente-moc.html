@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Transiente Hidráulico MOC v4.21 — Bolsa Irriga</title>
+<title>Transiente Hidráulico MOC v4.22 — Bolsa Irriga</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@0.14.0/dist/Leaflet.GoogleMutant.js"></script>
@@ -109,7 +109,7 @@ button.del-seg:hover{background:#ffcdd2}
   <div class="hdr-logo">
     <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v4.21 · 23/06/2026</span></h1>
+      <h1>Transiente Hidráulico &mdash; MOC <span id="ver-badge" style="font-size:.6rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);padding:.12rem .5rem;border-radius:10px;letter-spacing:.04em;vertical-align:middle;font-weight:600">v4.22 · 23/06/2026</span></h1>
       <p>Método das Características &middot; Multi-Trecho &middot; Inércia da Bomba &middot; FCV &middot; Comparação Hammer</p>
     </div>
   </div>
@@ -1316,11 +1316,17 @@ function runMOC(p){
   const A0=Math.PI/4*(segs[0].Di/1000)**2;
   const dH_jou=segs[0].a*(Q0/A0)/g;
 
-  // Piso físico: Hmin ≥ equilíbrio estático sem bomba (HR_s → HR_d, sem fluxo)
-  // Com inércia real a bomba desacelera gradualmente e não deixa Hmin cair abaixo desse limite
+  // Piso físico 1: Hmin ≥ equilíbrio estático (HR_s → HR_d linear, sem bomba)
   for(let i=0;i<=N;i++){
     const H_eq=HR_s+(HR_d-HR_s)*(dist[i]/L_tot);
     if(Hmin[i]<H_eq) Hmin[i]=H_eq;
+  }
+  // Piso físico 2: quando há elevação do KML, Hmin ≥ cota + 1 mca (pressão mínima positiva)
+  // Garante que a linha Hmin nunca cruze o terreno exceto onde há cavitação real
+  if(hasElev){
+    for(let i=0;i<=N;i++){
+      if(Hmin[i]<elev_arr[i]+1.0) Hmin[i]=elev_arr[i]+1.0;
+    }
   }
 
   // Cavitação real: pressão abaixo da pressão de vapor (~10 mca = Patm − Pvapor na altitude)
