@@ -54,7 +54,7 @@ canvas.chart{width:100%;border-radius:4px}
 <div id="sidebar">
   <div class="card">
     <div class="h1">&#127748; Bulbo de Molhamento</div>
-    <div class="sub">Richards 2D · Van Genuchten-Mualem · v1.5</div>
+    <div class="sub">Richards 2D · Van Genuchten-Mualem · v1.6</div>
   </div>
 
   <!-- Gotejador -->
@@ -324,9 +324,11 @@ function runStep(dt){
   for(let k=0; k<N; k++) thN[k] = vgTheta(hOld[k], soil);
 
   const Kmin   = soil.Ks * K_MIN_FRAC;
-  const MAX_PICARD = 15;
-  const GS_SWEEPS  = 6;
+  const MAX_PICARD = 25;
+  const GS_SWEEPS  = 12;
   const TOL_H = 1e-3;
+  // Nós emissores têm h fixado por injectEmitter — não atualizar no Picard
+  const fixedEmit = (t_sim < t_irrig);
 
   let converged = false;
   let iter = 0;
@@ -336,6 +338,8 @@ function runStep(dt){
       for(let j = 0; j < Nz; j++){
         for(let i = 0; i < Nr; i++){
           const k = idx(i, j);
+          // Emitter: h definido por injectEmitter, Picard não mexe
+          if(fixedEmit && j === 0 && i < N_EMIT) continue;
           const hk = h[k];
 
           const C_cap = Math.max(vgC(hk, soil), C_MIN);
@@ -405,7 +409,7 @@ function runStep(dt){
     : 0.05;
   let dt_next = dt;
   if(converged && iter < 4)      dt_next = Math.min(dt * 1.5, dt_max);
-  else if(!converged || iter > 12) dt_next = Math.max(dt * 0.5, 1e-6);
+  else if(!converged || iter > 12) dt_next = Math.max(dt * 0.5, 1e-4);
 
   return dt_next;
 }
