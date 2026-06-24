@@ -232,12 +232,16 @@ function initSim(){
   soil = readSoil(1);
   soil.m = 1 - 1/soil.n;
 
+  calcEmitVol();
+
   h      = new Float64Array(N).fill(h0_ini);
   hOld   = new Float64Array(N);
   theta0 = new Float64Array(N).fill(vgTheta(h0_ini, soil));
 
   t_sim  = 0;
-  dt_cur = 0.001;  // h
+  // dt inicial proporcional ao tempo para saturar a zona emissora
+  const th_ini = vgTheta(h0_ini, soil);
+  dt_cur = Math.max(1e-5, Math.min(0.001, (soil.ths - th_ini) * emitVol / Q_cm3h * 0.1));
   Rt = []; Zt = []; times = [];
 }
 
@@ -255,86 +259,110 @@ function readSoil(n){
 // ═══════════════════════════════════════════════════════════
 // SOLVER — Modified Picard + Gauss-Seidel (Celia 1990)
 // ═══════════════════════════════════════════════════════════
+
+// Fonte do gotejador: distribui Q sobre os primeiros n_emit×n_emit nós
+// para evitar singularidade no nó único (0,0)
+const N_EMIT = 2; // raio de distribuição em nós
+
+// K e C mínimos para manter condicionamento numérico quando solo está muito seco
+const K_MIN_FRAC = 1e-8; // fração de Ks
+const C_MIN = 1e-8;      // cm⁻¹
+const H_MIN = -1e5;      // cm (cap. mínima de pressão)
+const H_MAX = 0.5;       // cm (solo não pressuriza acima da superfície)
+
+// Pré-calcula volume de cada nó da zona emissora
+let emitVol = 0; // volume total da zona emissora (cm³)
+
+function calcEmitVol(){
+  emitVol = 0;
+  for(let jj=0; jj<N_EMIT; jj++){
+    for(let ii=0; ii<N_EMIT; ii++){
+      const ri_in  = ii === 0 ? 0 : (ii - 0.5) * dr;
+      const ri_out = (ii + 0.5) * dr;
+      emitVol += Math.PI * (ri_out*ri_out - ri_in*ri_in) * dz;
+    }
+  }
+}
+
 function runStep(dt){
   hOld.set(h);
   const thN = new Float64Array(N);
   for(let k=0; k<N; k++) thN[k] = vgTheta(hOld[k], soil);
 
-  const MAX_PICARD = 20;
-  const GS_SWEEPS  = 8;
-  const TOL_H = 1e-4;
+  const Kmin   = soil.Ks * K_MIN_FRAC;
+  const MAX_PICARD = 15;
+  const GS_SWEEPS  = 6;
+  const TOL_H = 1e-3;
+
+  // Fonte por unidade de volume da zona emissora [cm³/h / cm³ = 1/h]
+  const src = (t_sim < t_irrig) ? Q_cm3h / emitVol : 0;
 
   let converged = false;
   let iter = 0;
   for(; iter < MAX_PICARD && !converged; iter++){
     let maxDh = 0;
-    // Gauss-Seidel sweeps
     for(let sw = 0; sw < GS_SWEEPS; sw++){
       for(let j = 0; j < Nz; j++){
         for(let i = 0; i < Nr; i++){
           const k = idx(i, j);
-          const s = soil;
-          const C_cap = Math.max(vgC(h[k], s), 1e-10);
-          const th_k  = vgTheta(h[k], s);
-          const massCorr = (th_k - thN[k] - C_cap*(h[k] - hOld[k])) / dt;
+          const hk = h[k];
 
-          // Inter-node K (arithmetic mean)
-          const Kc = vgK(h[k], s);
+          const C_cap = Math.max(vgC(hk, soil), C_MIN);
+          const th_k  = vgTheta(hk, soil);
+          const massCorr = (th_k - thN[k] - C_cap*(hk - hOld[k])) / dt;
+          const Kc    = Math.max(vgK(hk, soil), Kmin);
 
-          // r-direction coefficients
+          // r-direction
           let ar_p = 0, ar_m = 0;
           const ri = getR(i);
           if(i === 0){
-            if(i < Nr-1){
-              const Krp = 0.5*(Kc + vgK(h[idx(i+1,j)], s));
+            if(Nr > 1){
+              const Krp = 0.5*(Kc + Math.max(vgK(h[idx(1,j)], soil), Kmin));
               ar_p = 2 * Krp / (dr*dr);
             }
           } else {
             if(i < Nr-1){
-              const rp = ri + 0.5*dr;
-              const Krp = 0.5*(Kc + vgK(h[idx(i+1,j)], s));
-              ar_p = rp * Krp / (ri * dr * dr);
+              const Krp = 0.5*(Kc + Math.max(vgK(h[idx(i+1,j)], soil), Kmin));
+              ar_p = (ri + 0.5*dr) * Krp / (ri * dr * dr);
             }
-            const rm = ri - 0.5*dr;
-            const Krm = 0.5*(Kc + vgK(h[idx(i-1,j)], s));
-            ar_m = rm * Krm / (ri * dr * dr);
+            const Krm = 0.5*(Kc + Math.max(vgK(h[idx(i-1,j)], soil), Kmin));
+            ar_m = (ri - 0.5*dr) * Krm / (ri * dr * dr);
           }
 
-          // z-direction coefficients
+          // z-direction
           let az_p = 0, az_m = 0, grav_rhs = 0;
           if(j < Nz-1){
-            const Kzp = 0.5*(Kc + vgK(h[idx(i,j+1)], s));
+            const Kzp = 0.5*(Kc + Math.max(vgK(h[idx(i,j+1)], soil), Kmin));
             az_p = Kzp / (dz*dz);
             grav_rhs += Kzp / dz;
           } else {
+            // Drenagem livre no fundo
             grav_rhs += Kc / dz;
           }
           if(j > 0){
-            const Kzm = 0.5*(Kc + vgK(h[idx(i,j-1)], s));
+            const Kzm = 0.5*(Kc + Math.max(vgK(h[idx(i,j-1)], soil), Kmin));
             az_m = Kzm / (dz*dz);
             grav_rhs -= Kzm / dz;
           }
-          // j=0 top: no flux (az_m = 0 already)
 
-          const ac = C_cap/dt + ar_p + ar_m + az_p + az_m;
+          // ac nunca pode ser zero
+          const ac = C_cap/dt + ar_p + ar_m + az_p + az_m + 1e-30;
           let rhs = C_cap/dt * hOld[k] - massCorr + grav_rhs;
 
-          // Neighbor contributions
           if(i > 0)    rhs += ar_m * h[idx(i-1,j)];
           if(i < Nr-1) rhs += ar_p * h[idx(i+1,j)];
           if(j > 0)    rhs += az_m * h[idx(i,j-1)];
           if(j < Nz-1) rhs += az_p * h[idx(i,j+1)];
 
-          // Emitter source at node (0,0)
-          if(i===0 && j===0 && t_sim < t_irrig){
-            // Volume of axis cell = π*(dr/2)²*dz
-            const Vcell = Math.PI * (dr/2)*(dr/2) * dz;
-            rhs += Q_cm3h / Vcell;
-          }
+          // Fonte do gotejador (zona N_EMIT×N_EMIT)
+          if(i < N_EMIT && j < N_EMIT && src > 0) rhs += src;
 
-          const h_new = rhs / ac;
+          let h_new = rhs / ac;
+          // Clampar h para faixa fisicamente válida
+          h_new = Math.max(H_MIN, Math.min(H_MAX, h_new));
+
           if(sw === GS_SWEEPS-1){
-            const dh = Math.abs(h_new - h[k]);
+            const dh = Math.abs(h_new - hk);
             if(dh > maxDh) maxDh = dh;
           }
           h[k] = h_new;
@@ -346,8 +374,8 @@ function runStep(dt){
 
   // Adaptive dt
   let dt_next = dt;
-  if(converged && iter < 5)     dt_next = Math.min(dt * 1.3, 0.1);
-  else if(!converged || iter>15) dt_next = Math.max(dt * 0.5, 1e-5);
+  if(converged && iter < 4)      dt_next = Math.min(dt * 1.5, 0.05);
+  else if(!converged || iter > 12) dt_next = Math.max(dt * 0.5, 1e-6);
 
   return dt_next;
 }
