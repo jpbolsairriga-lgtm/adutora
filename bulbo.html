@@ -435,65 +435,133 @@ const CMAP = (function(){
   };
 })();
 
+// Calcula passo "bonito" para régua
+function niceStep(range, targetTicks){
+  const rough = range / targetTicks;
+  const mag   = Math.pow(10, Math.floor(Math.log10(rough)));
+  for(const s of [1,2,5,10]){ if(s*mag >= rough) return s*mag; }
+  return 10*mag;
+}
+
 function drawMap(){
-  const cvs = document.getElementById('cvMap');
+  const cvs  = document.getElementById('cvMap');
   const wrap = document.getElementById('canvasWrap');
-  const W = wrap.clientWidth - 10;
+  const W = wrap.clientWidth  - 10;
   const H = wrap.clientHeight - 10;
 
-  // Pixel per grid cell
-  const px = Math.floor(Math.min(W/Nr, H/Nz));
-  const cw = px * Nr, ch = px * Nz;
-  if(cvs.width !== cw || cvs.height !== ch){
-    cvs.width = cw; cvs.height = ch;
+  // Espaço reservado para réguas
+  const RW = 36; // régua esquerda (profundidade)
+  const RH = 22; // régua superior (raio)
+
+  // px por célula — bulbo completo = 2*Nr colunas
+  const px = Math.max(1, Math.floor(Math.min((W - RW) / (2*Nr), (H - RH) / Nz)));
+  const mapW = px * 2 * Nr;
+  const mapH = px * Nz;
+  const totalW = RW + mapW;
+  const totalH = RH + mapH;
+
+  if(cvs.width !== totalW || cvs.height !== totalH){
+    cvs.width = totalW; cvs.height = totalH;
   }
   const ctx = cvs.getContext('2d');
-  const img = ctx.createImageData(cw, ch);
+  ctx.fillStyle = '#0d1520';
+  ctx.fillRect(0, 0, totalW, totalH);
+
+  // ── Imagem do bulbo espelhado ──────────────────────────────
+  const thMin = soil.thr, thMax = soil.ths;
+  const img = ctx.createImageData(mapW, mapH);
   const d   = img.data;
 
-  // θ range from soil params
-  const thMin = soil.thr;
-  const thMax = soil.ths;
-
-  for(let j=0; j<Nz; j++){
-    for(let i=0; i<Nr; i++){
-      const k = idx(i,j);
-      const th = vgTheta(h[k], soil);
-      const v  = (th - thMin) / (thMax - thMin);
-      const [r,g,b] = CMAP(v);
-      // Draw px×px block
-      for(let dy=0; dy<px; dy++){
-        for(let dx=0; dx<px; dx++){
-          const pi = ((j*px+dy)*cw + (i*px+dx))*4;
-          d[pi]=r; d[pi+1]=g; d[pi+2]=b; d[pi+3]=255;
+  for(let j = 0; j < Nz; j++){
+    for(let i = 0; i < Nr; i++){
+      const th = vgTheta(h[idx(i,j)], soil);
+      const v  = Math.max(0, Math.min(1, (th - thMin) / (thMax - thMin)));
+      const [cr,cg,cb] = CMAP(v);
+      for(let dy = 0; dy < px; dy++){
+        const row = (j*px + dy) * mapW;
+        for(let dx = 0; dx < px; dx++){
+          // Metade direita: coluna Nr+i
+          const pr = (row + (Nr + i)*px + dx) * 4;
+          d[pr]=cr; d[pr+1]=cg; d[pr+2]=cb; d[pr+3]=255;
+          // Metade esquerda (espelhada): coluna Nr-1-i
+          const pl = (row + (Nr-1-i)*px + dx) * 4;
+          d[pl]=cr; d[pl+1]=cg; d[pl+2]=cb; d[pl+3]=255;
         }
       }
     }
   }
-  ctx.putImageData(img, 0, 0);
+  ctx.putImageData(img, RW, RH);
 
-  // Overlay: bulbo contour (threshold)
-  ctx.strokeStyle = '#ffffff';
-  ctx.lineWidth   = 1.5;
-  ctx.setLineDash([4,4]);
-  // Draw axis labels
+  // ── Régua vertical — profundidade z ───────────────────────
+  const Zmax_cm = (Nz-1) * dz;
+  const Rmax_cm = (Nr-1) * dr;
+  const zStep   = niceStep(Zmax_cm, 6);
+
+  ctx.textAlign = 'right';
+  ctx.font = '9px monospace';
+  for(let z = 0; z <= Zmax_cm + 0.01; z += zStep){
+    const cy = RH + (z / Zmax_cm) * mapH;
+    ctx.strokeStyle = '#2a4060';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(RW-5, cy); ctx.lineTo(RW, cy); ctx.stroke();
+    // linha de grade
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.beginPath(); ctx.moveTo(RW, cy); ctx.lineTo(RW + mapW, cy); ctx.stroke();
+    ctx.fillStyle = '#7a9ab8';
+    ctx.fillText(z.toFixed(0), RW-7, cy+3);
+  }
+  // Título eixo z
+  ctx.save();
+  ctx.translate(10, RH + mapH/2);
+  ctx.rotate(-Math.PI/2);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#4a6a88';
+  ctx.font = '9px sans-serif';
+  ctx.fillText('Prof. (cm)', 0, 0);
+  ctx.restore();
+
+  // ── Régua horizontal — raio r (−Rmax … 0 … +Rmax) ────────
+  const cx0 = RW + Nr * px; // centro (r=0) em pixels
+  const rStep = niceStep(Rmax_cm, 5);
+
+  ctx.textAlign = 'center';
+  ctx.font = '9px monospace';
+  for(let r_val = 0; r_val <= Rmax_cm + 0.01; r_val += rStep){
+    for(const sign of (r_val === 0 ? [0] : [-1, 1])){
+      const cx = cx0 + sign * (r_val / Rmax_cm) * Nr * px;
+      ctx.strokeStyle = '#2a4060';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(cx, RH-5); ctx.lineTo(cx, RH); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+      ctx.beginPath(); ctx.moveTo(cx, RH); ctx.lineTo(cx, RH + mapH); ctx.stroke();
+      ctx.fillStyle = '#7a9ab8';
+      ctx.fillText(r_val.toFixed(0), cx, RH-8);
+    }
+  }
+  // Linha central (r=0)
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  ctx.setLineDash([3,4]);
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(cx0, RH); ctx.lineTo(cx0, RH+mapH); ctx.stroke();
   ctx.setLineDash([]);
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.fillRect(0, 0, 50, 14);
-  ctx.fillStyle = '#aaa';
-  ctx.font = '9px monospace';
-  ctx.fillText(`t=${t_sim.toFixed(2)}h`, 3, 10);
+  // Título eixo r
+  ctx.fillStyle = '#4a6a88';
+  ctx.font = '9px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('Raio (cm)', RW + 4, 12);
 
-  // Axis labels
-  ctx.fillStyle = 'rgba(0,0,0,0.5)';
-  ctx.fillRect(0, ch-14, 40, 14);
-  ctx.fillStyle = '#8ca0b8';
+  // ── Tempo e unidades ──────────────────────────────────────
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(RW+2, RH+2, 64, 14);
+  ctx.fillStyle = '#aac4d8';
   ctx.font = '9px monospace';
-  ctx.fillText(`r→${(Nr-1)*dr|0}cm`, 2, ch-3);
+  ctx.textAlign = 'left';
+  ctx.fillText(`t = ${t_sim.toFixed(3)} h`, RW+5, RH+12);
 
-  // Update colorbar
+  // ── Colorbar e tiles ──────────────────────────────────────
   updateColorbar(thMin, thMax);
-  // Update tiles
   const m = getBulboMetrics();
   document.getElementById('tR').textContent    = m.R.toFixed(1);
   document.getElementById('tZ').textContent    = m.Z.toFixed(1);
