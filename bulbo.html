@@ -54,7 +54,7 @@ canvas.chart{width:100%;border-radius:4px}
 <div id="sidebar">
   <div class="card">
     <div class="h1">&#127748; Bulbo de Molhamento</div>
-    <div class="sub">Richards 2D · Van Genuchten-Mualem · v1.3</div>
+    <div class="sub">Richards 2D · Van Genuchten-Mualem · v1.4</div>
   </div>
 
   <!-- Gotejador -->
@@ -306,7 +306,10 @@ function runStep(dt){
           const k = idx(i, j);
           const hk = h[k];
 
-          const C_cap = Math.max(vgC(hk, soil), C_MIN);
+          // Nós emissores saturados (h≥0) precisam de capacitância mínima maior
+          // para manter dominância diagonal quando vgC retorna ≈1e-12
+          const is_emit = (j === 0 && i < N_EMIT);
+          const C_cap = Math.max(vgC(hk, soil), (is_emit && hk >= 0) ? 1e-4 : C_MIN);
           const th_k  = vgTheta(hk, soil);
           const massCorr = (th_k - thN[k] - C_cap*(hk - hOld[k])) / dt;
           const Kc    = Math.max(vgK(hk, soil), Kmin);
@@ -357,8 +360,10 @@ function runStep(dt){
           if(j === 0 && i < N_EMIT && src > 0) rhs += src;
 
           let h_new = rhs / ac;
-          // Clampar h para faixa fisicamente válida
-          h_new = Math.max(H_MIN, Math.min(H_MAX, h_new));
+          // Nós emissores durante irrigação: permite h>0 (ponding)
+          // para que Q maior → carga maior → gradiente maior → bulbo diferente
+          const h_max_node = (is_emit && t_sim < t_irrig) ? 50.0 : H_MAX;
+          h_new = Math.max(H_MIN, Math.min(h_max_node, h_new));
 
           if(sw === GS_SWEEPS-1){
             const dh = Math.abs(h_new - hk);
