@@ -54,7 +54,7 @@ canvas.chart{width:100%;border-radius:4px}
 <div id="sidebar">
   <div class="card">
     <div class="h1">&#127748; Bulbo de Molhamento</div>
-    <div class="sub">Richards 2D · Van Genuchten-Mualem · v1.9</div>
+    <div class="sub">Richards 2D · Van Genuchten-Mualem · v2.0</div>
   </div>
 
   <!-- Gotejador -->
@@ -288,7 +288,7 @@ function readSoil(n){
 
 // Fonte do gotejador: distribui Q sobre os primeiros n_emit×n_emit nós
 // para evitar singularidade no nó único (0,0)
-const N_EMIT = 2; // raio de distribuição em nós
+const N_EMIT = 3; // raio de distribuição em nós (~5 cm → Ks×A>2 L/h para areia)
 
 // K e C mínimos para manter condicionamento numérico quando solo está muito seco
 const K_MIN_FRAC = 1e-8; // fração de Ks
@@ -383,20 +383,21 @@ function runStep(dt){
             ar_m = (ri - 0.5*dr) * Krm / (ri * dr * dr);
           }
 
-          // z-direction
+          // z-direction — gravidade: ∂θ/∂t = ∂/∂D[K∂h/∂D] − ∂K/∂D (D=profundidade↓)
+          // grav_rhs = (K_{j−1/2} − K_{j+1/2})/dz: K maior acima → empurra água para baixo
           let az_p = 0, az_m = 0, grav_rhs = 0;
           if(j < Nz-1){
             const Kzp = 0.5*(Kc + Math.max(vgK(h[idx(i,j+1)], soil), Kmin));
             az_p = Kzp / (dz*dz);
-            grav_rhs += Kzp / dz;
+            grav_rhs -= Kzp / dz;   // −K_{j+1/2}/dz
           } else {
-            // Drenagem livre no fundo
-            grav_rhs += Kc / dz;
+            // Drenagem livre no fundo: fluxo sai por gravidade = Kc
+            grav_rhs -= Kc / dz;
           }
           if(j > 0){
             const Kzm = 0.5*(Kc + Math.max(vgK(h[idx(i,j-1)], soil), Kmin));
             az_m = Kzm / (dz*dz);
-            grav_rhs -= Kzm / dz;
+            grav_rhs += Kzm / dz;   // +K_{j−1/2}/dz
           }
 
           // ac nunca pode ser zero
