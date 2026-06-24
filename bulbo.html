@@ -54,7 +54,7 @@ canvas.chart{width:100%;border-radius:4px}
 <div id="sidebar">
   <div class="card">
     <div class="h1">&#127748; Bulbo de Molhamento</div>
-    <div class="sub">Richards 2D · Van Genuchten-Mualem · v1.8</div>
+    <div class="sub">Richards 2D · Van Genuchten-Mualem · v1.9</div>
   </div>
 
   <!-- Gotejador -->
@@ -311,41 +311,29 @@ function calcEmitVol(){
   }
 }
 
-// Pond (lâmina de superfície): acumula Q×dt e infiltra apenas o que K×A permite por passo.
-// Isso permite dt grande para solos argilosos sem instabilidade numérica.
+// BC Neumann→Dirichlet: injeta Q×dt diretamente em j=0 enquanto há capacidade;
+// quando j=0 satura, muda para Dirichlet (h≈0) e acumula excesso no pond virtual.
+// Richards redistribui de j=0 para j>0 naturalmente pelo solver.
 function injectEmitter(dt){
-  // Acumula água do emissor no reservatório virtual de superfície
-  const dt_eff = Math.max(0, Math.min(dt, t_irrig - t_sim));
-  if(dt_eff > 0) pondVol += Q_cm3h * dt_eff;
-  if(pondVol < 1e-12) return;
+  if(t_sim >= t_irrig) return;
 
-  // Capacidade de infiltração deste passo: K_superfície × A × dt × (1 + h_lâmina/dz)
-  const h_lamina = pondVol / A_emit_total;  // cm de lâmina equivalente (carga positiva)
-  let max_inject = 0;
-  for(let i = 0; i < N_EMIT; i++){
-    const K_s = Math.max(vgK(h[idx(i,0)], soil), soil.Ks * K_MIN_FRAC);
-    max_inject += K_s * emitAreas[i] * dt * (1 + h_lamina / Math.max(dz, 1));
-  }
-  max_inject = Math.min(pondVol, max_inject);
-  if(max_inject < 1e-14) return;
+  const dt_eff = Math.min(dt, t_irrig - t_sim);
+  const q_rate = Q_cm3h / A_emit_total;  // cm/h — taxa uniforme sobre a área emissora
 
-  // Injeta apenas max_inject cm³ no solo (j=0 primeiro, overflow para j=1...)
-  let absorbed = 0;
   for(let i = 0; i < N_EMIT; i++){
-    let dW_i = max_inject * emitAreas[i] / A_emit_total;
-    for(let j = 0; j < Nz && dW_i > 1e-12; j++){
-      const k = idx(i, j);
-      const th_cur = vgTheta(h[k], soil);
-      const cap = (soil.ths - th_cur) * emitAreas[i] * dz;
-      if(cap > 1e-12){
-        const fill = Math.min(cap, dW_i);
-        h[k] = inverseVGH(Math.min(th_cur + fill / (emitAreas[i] * dz), soil.ths - 1e-12), soil);
-        dW_i -= fill;
-        absorbed += fill;
-      }
+    const k      = idx(i, 0);
+    const th_cur = vgTheta(h[k], soil);
+    const dV     = q_rate * emitAreas[i] * dt_eff;            // cm³ a injetar nesta célula
+    const cap    = (soil.ths - th_cur) * emitAreas[i] * dz;  // cm³ de capacidade disponível
+    if(dV <= cap){
+      // Solo absorve: BC Neumann — injeta diretamente como Δθ
+      h[k] = inverseVGH(Math.min(th_cur + dV / (emitAreas[i] * dz), soil.ths - 1e-12), soil);
+    } else {
+      // Solo saturado: BC Dirichlet (h≈0) — excesso acumula no pond
+      h[k] = inverseVGH(soil.ths - 1e-12, soil);
+      pondVol += dV - cap;
     }
   }
-  pondVol -= absorbed;
   if(pondVol < 0) pondVol = 0;
 }
 
@@ -773,8 +761,8 @@ function loop(){
   const stepsPerFrame = parseInt(document.getElementById('inSpeed').value) || 10;
   for(let s=0; s<stepsPerFrame && t_sim < t_max; s++){
     const dt = Math.min(dt_cur, t_max - t_sim);
-    injectEmitter(dt);     // injeta Q×dt cm³ diretamente como Δθ
-    dt_cur = runStep(dt);  // redistribui via Richards
+    injectEmitter(dt);     // BC Neumann→Dirichlet em j=0; Richards redistribui para j>0
+    dt_cur = runStep(dt);
     t_sim += dt;
   }
   const m = getBulboMetrics();
