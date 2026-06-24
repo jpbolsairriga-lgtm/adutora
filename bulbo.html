@@ -54,7 +54,7 @@ canvas.chart{width:100%;border-radius:4px}
 <div id="sidebar">
   <div class="card">
     <div class="h1">&#127748; Bulbo de Molhamento</div>
-    <div class="sub">Richards 2D · Van Genuchten-Mualem · v1.0</div>
+    <div class="sub">Richards 2D · Van Genuchten-Mualem · v1.1</div>
   </div>
 
   <!-- Gotejador -->
@@ -72,27 +72,15 @@ canvas.chart{width:100%;border-radius:4px}
     <div class="field-row"><label>Limiar bulbo</label><input type="number" id="inThr" value="0.05" step="0.01"><span class="unit">Δθ</span></div>
   </div>
 
-  <!-- Camada 1 -->
+  <!-- Solo -->
   <div class="card">
-    <div class="sec-title">Camada 1 — Horizonte A</div>
-    <div class="field-row"><label>Espessura</label><input type="number" id="inD1" value="30" min="5" step="5"><span class="unit">cm</span></div>
-    <div class="field-row"><label>Solo</label><select id="selS1" onchange="onSoilChange(1)"></select></div>
+    <div class="sec-title">Solo — Homogêneo</div>
+    <div class="field-row"><label>Textura</label><select id="selS1" onchange="onSoilChange(1)"></select></div>
     <div class="field-row"><label>θr</label><input type="number" id="s1thr" step="0.001"><span class="unit">—</span></div>
     <div class="field-row"><label>θs</label><input type="number" id="s1ths" step="0.001"><span class="unit">—</span></div>
     <div class="field-row"><label>α</label><input type="number" id="s1alpha" step="0.001"><span class="unit">1/cm</span></div>
     <div class="field-row"><label>n</label><input type="number" id="s1n" step="0.01"><span class="unit">—</span></div>
     <div class="field-row"><label>Ks</label><input type="number" id="s1Ks" step="0.01"><span class="unit">cm/h</span></div>
-  </div>
-
-  <!-- Camada 2 -->
-  <div class="card">
-    <div class="sec-title">Camada 2 — Horizonte B</div>
-    <div class="field-row"><label>Solo</label><select id="selS2" onchange="onSoilChange(2)"></select></div>
-    <div class="field-row"><label>θr</label><input type="number" id="s2thr" step="0.001"><span class="unit">—</span></div>
-    <div class="field-row"><label>θs</label><input type="number" id="s2ths" step="0.001"><span class="unit">—</span></div>
-    <div class="field-row"><label>α</label><input type="number" id="s2alpha" step="0.001"><span class="unit">—</span></div>
-    <div class="field-row"><label>n</label><input type="number" id="s2n" step="0.01"><span class="unit">—</span></div>
-    <div class="field-row"><label>Ks</label><input type="number" id="s2Ks" step="0.01"><span class="unit">cm/h</span></div>
   </div>
 
   <!-- Domínio -->
@@ -204,15 +192,13 @@ function vgC(h, s){
 // ═══════════════════════════════════════════════════════════
 let Nr, Nz, dr, dz, N;
 let h, hOld, theta0;
-let soilArr;        // soil params per node
+let soil;           // single soil for whole domain
 let t_sim, dt_cur;
 let t_irrig;        // irrigation duration (h)
 let t_max;          // total sim time (h)
 let Q_cm3h;         // emitter flow in cm³/h
 let h0_ini;
 let thr_delta;      // bulbo threshold above initial θ
-let layer1_depth;   // cm
-let soil1, soil2;
 let running = false, paused = false;
 let rafId = null;
 let Rt = [], Zt = [], times = [];  // time series
@@ -223,7 +209,7 @@ let Rt = [], Zt = [], times = [];  // time series
 const idx = (i, j) => j * Nr + i;
 const getR = (i) => i * dr;
 const getZ = (j) => j * dz;
-const getSoil = (i, j) => soilArr[j < Math.round(layer1_depth/dz) ? 0 : 1];
+const getSoil = () => soil;
 
 // ═══════════════════════════════════════════════════════════
 // INIT SIMULATION
@@ -237,24 +223,18 @@ function initSim(){
   dz = Zmax / (Nz - 1);
   N = Nr * Nz;
 
-  h0_ini      = parseFloat(document.getElementById('inH0').value) || -200;
-  thr_delta   = parseFloat(document.getElementById('inThr').value) || 0.05;
-  Q_cm3h      = parseFloat(document.getElementById('inQ').value) * 1000; // L/h → cm³/h
-  t_irrig     = parseFloat(document.getElementById('inT').value) || 4;
-  t_max       = parseFloat(document.getElementById('inTmax').value) || 6;
-  layer1_depth= parseFloat(document.getElementById('inD1').value) || 30;
+  h0_ini    = parseFloat(document.getElementById('inH0').value) || -200;
+  thr_delta = parseFloat(document.getElementById('inThr').value) || 0.05;
+  Q_cm3h    = parseFloat(document.getElementById('inQ').value) * 1000; // L/h → cm³/h
+  t_irrig   = parseFloat(document.getElementById('inT').value) || 4;
+  t_max     = parseFloat(document.getElementById('inTmax').value) || 6;
 
-  soil1 = readSoil(1); soil2 = readSoil(2);
+  soil = readSoil(1);
+  soil.m = 1 - 1/soil.n;
 
-  // Pre-compute soil per node
-  soilArr = [soil1, soil2];
-  // Also set m = 1 - 1/n on both
-  soilArr.forEach(s => s.m = 1 - 1/s.n);
-
-  h    = new Float64Array(N).fill(h0_ini);
-  hOld = new Float64Array(N);
-  theta0 = new Float64Array(N);
-  for(let k=0; k<N; k++) theta0[k] = vgTheta(h0_ini, getSoil(k % Nr, Math.floor(k/Nr)));
+  h      = new Float64Array(N).fill(h0_ini);
+  hOld   = new Float64Array(N);
+  theta0 = new Float64Array(N).fill(vgTheta(h0_ini, soil));
 
   t_sim  = 0;
   dt_cur = 0.001;  // h
@@ -278,10 +258,7 @@ function readSoil(n){
 function runStep(dt){
   hOld.set(h);
   const thN = new Float64Array(N);
-  for(let k=0; k<N; k++){
-    const s = getSoil(k % Nr, Math.floor(k/Nr));
-    thN[k] = vgTheta(hOld[k], s);
-  }
+  for(let k=0; k<N; k++) thN[k] = vgTheta(hOld[k], soil);
 
   const MAX_PICARD = 20;
   const GS_SWEEPS  = 8;
@@ -296,7 +273,7 @@ function runStep(dt){
       for(let j = 0; j < Nz; j++){
         for(let i = 0; i < Nr; i++){
           const k = idx(i, j);
-          const s = getSoil(i, j);
+          const s = soil;
           const C_cap = Math.max(vgC(h[k], s), 1e-10);
           const th_k  = vgTheta(h[k], s);
           const massCorr = (th_k - thN[k] - C_cap*(h[k] - hOld[k])) / dt;
@@ -308,34 +285,32 @@ function runStep(dt){
           let ar_p = 0, ar_m = 0;
           const ri = getR(i);
           if(i === 0){
-            // Axis: L'Hôpital → 2K * ∂²h/∂r² at r=0
             if(i < Nr-1){
-              const Krp = 0.5*(Kc + vgK(h[idx(i+1,j)], getSoil(i+1,j)));
+              const Krp = 0.5*(Kc + vgK(h[idx(i+1,j)], s));
               ar_p = 2 * Krp / (dr*dr);
             }
           } else {
             if(i < Nr-1){
               const rp = ri + 0.5*dr;
-              const Krp = 0.5*(Kc + vgK(h[idx(i+1,j)], getSoil(i+1,j)));
+              const Krp = 0.5*(Kc + vgK(h[idx(i+1,j)], s));
               ar_p = rp * Krp / (ri * dr * dr);
             }
             const rm = ri - 0.5*dr;
-            const Krm = 0.5*(Kc + vgK(h[idx(i-1,j)], getSoil(i-1,j)));
+            const Krm = 0.5*(Kc + vgK(h[idx(i-1,j)], s));
             ar_m = rm * Krm / (ri * dr * dr);
           }
 
           // z-direction coefficients
           let az_p = 0, az_m = 0, grav_rhs = 0;
           if(j < Nz-1){
-            const Kzp = 0.5*(Kc + vgK(h[idx(i,j+1)], getSoil(i,j+1)));
+            const Kzp = 0.5*(Kc + vgK(h[idx(i,j+1)], s));
             az_p = Kzp / (dz*dz);
             grav_rhs += Kzp / dz;
           } else {
-            // Free drainage at bottom: add gravity flux
             grav_rhs += Kc / dz;
           }
           if(j > 0){
-            const Kzm = 0.5*(Kc + vgK(h[idx(i,j-1)], getSoil(i,j-1)));
+            const Kzm = 0.5*(Kc + vgK(h[idx(i,j-1)], s));
             az_m = Kzm / (dz*dz);
             grav_rhs -= Kzm / dz;
           }
@@ -382,12 +357,11 @@ function runStep(dt){
 // ═══════════════════════════════════════════════════════════
 function getBulboMetrics(){
   let maxR = 0, maxZ = 0, vol = 0;
+  const th_ini = vgTheta(h0_ini, soil);
   for(let j=0; j<Nz; j++){
     for(let i=0; i<Nr; i++){
       const k = idx(i,j);
-      const s = getSoil(i,j);
-      const th_now = vgTheta(h[k], s);
-      const th_ini = vgTheta(h0_ini, s);
+      const th_now = vgTheta(h[k], soil);
       if(th_now - th_ini >= thr_delta){
         const r = getR(i);
         if(r > maxR) maxR = r;
@@ -450,14 +424,13 @@ function drawMap(){
   const d   = img.data;
 
   // θ range from soil params
-  const thMin = Math.min(soil1.thr, soil2.thr);
-  const thMax = Math.max(soil1.ths, soil2.ths);
+  const thMin = soil.thr;
+  const thMax = soil.ths;
 
   for(let j=0; j<Nz; j++){
     for(let i=0; i<Nr; i++){
       const k = idx(i,j);
-      const s = getSoil(i,j);
-      const th = vgTheta(h[k], s);
+      const th = vgTheta(h[k], soil);
       const v  = (th - thMin) / (thMax - thMin);
       const [r,g,b] = CMAP(v);
       // Draw px×px block
@@ -482,22 +455,6 @@ function drawMap(){
   ctx.fillStyle = '#aaa';
   ctx.font = '9px monospace';
   ctx.fillText(`t=${t_sim.toFixed(2)}h`, 3, 10);
-
-  // Layer boundary line
-  const jLayer = Math.round(layer1_depth/dz);
-  if(jLayer > 0 && jLayer < Nz){
-    ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-    ctx.lineWidth   = 1;
-    ctx.setLineDash([6,4]);
-    ctx.beginPath();
-    ctx.moveTo(0, jLayer*px);
-    ctx.lineTo(cw, jLayer*px);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.font = '8px sans-serif';
-    ctx.fillText('Camada 2', 3, jLayer*px - 2);
-  }
 
   // Axis labels
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
@@ -587,9 +544,8 @@ function drawProfZ(){
   ctx.fillStyle = '#0f1923'; ctx.fillRect(0,0,W,120);
   if(!running && times.length===0) return;
 
-  const s1 = soil1, s2 = soil2;
-  const thMin = Math.min(s1.thr, s2.thr);
-  const thMax = Math.max(s1.ths, s2.ths);
+  const thMin = soil.thr;
+  const thMax = soil.ths;
   const Zmax  = getZ(Nz-1);
   const pad = {l:8, r:6, t:8, b:18};
   const pw = W-pad.l-pad.r, ph = 120-pad.t-pad.b;
@@ -603,8 +559,7 @@ function drawProfZ(){
   ctx.strokeStyle='#4fc3f7'; ctx.lineWidth=1.5; ctx.beginPath();
   for(let j=0;j<Nz;j++){
     const k=idx(0,j);
-    const ss=getSoil(0,j);
-    const th=vgTheta(h[k],ss);
+    const th=vgTheta(h[k],soil);
     const x=tx(th), y=ty(getZ(j));
     j?ctx.lineTo(x,y):ctx.moveTo(x,y);
   }
@@ -623,9 +578,8 @@ function drawProfR(){
   ctx.fillStyle = '#0f1923'; ctx.fillRect(0,0,W,120);
   if(!running && times.length===0) return;
 
-  const s1 = soil1;
-  const thMin = s1.thr;
-  const thMax = s1.ths;
+  const thMin = soil.thr;
+  const thMax = soil.ths;
   const Rmax  = getR(Nr-1);
   const pad = {l:8, r:6, t:8, b:18};
   const pw = W-pad.l-pad.r, ph = 120-pad.t-pad.b;
@@ -639,8 +593,7 @@ function drawProfR(){
   ctx.strokeStyle='#a5d6a7'; ctx.lineWidth=1.5; ctx.beginPath();
   for(let i=0;i<Nr;i++){
     const k=idx(i,0);
-    const ss=getSoil(i,0);
-    const th=vgTheta(h[k],ss);
+    const th=vgTheta(h[k],soil);
     const x=tx(getR(i)), y=ty(th);
     i?ctx.lineTo(x,y):ctx.moveTo(x,y);
   }
@@ -720,9 +673,9 @@ function resetSim(){
 
 function onSoilChange(n){
   const sel = document.getElementById(`selS${n}`);
-  const idx2 = parseInt(sel.value);
-  if(idx2 < 0) return;
-  const s = SOILS[idx2];
+  const si = parseInt(sel.value);
+  if(si < 0) return;
+  const s = SOILS[si];
   document.getElementById(`s${n}thr`).value   = s.thr;
   document.getElementById(`s${n}ths`).value   = s.ths;
   document.getElementById(`s${n}alpha`).value = s.alpha;
@@ -731,13 +684,10 @@ function onSoilChange(n){
 }
 
 function initUI(){
-  // Populate selects
-  [1,2].forEach(n=>{
-    const sel = document.getElementById(`selS${n}`);
-    sel.innerHTML = SOILS.map((s,i)=>`<option value="${i}">${s.name}</option>`).join('');
-    sel.value = n===1 ? 2 : 3; // Franco-arenoso / Franco por padrão
-    onSoilChange(n);
-  });
+  const sel = document.getElementById('selS1');
+  sel.innerHTML = SOILS.map((s,i)=>`<option value="${i}">${s.name}</option>`).join('');
+  sel.value = 2; // Franco-arenoso por padrão
+  onSoilChange(1);
 }
 
 initUI();
