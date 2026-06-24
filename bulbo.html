@@ -54,7 +54,7 @@ canvas.chart{width:100%;border-radius:4px}
 <div id="sidebar">
   <div class="card">
     <div class="h1">&#127748; Bulbo de Molhamento</div>
-    <div class="sub">Richards 2D · Van Genuchten-Mualem · v1.4</div>
+    <div class="sub">Richards 2D · Van Genuchten-Mualem · v1.5</div>
   </div>
 
   <!-- Gotejador -->
@@ -187,6 +187,16 @@ function vgC(h, s){
          Math.pow(Math.abs(h), s.n - 1) / Math.pow(1 + x, s.m + 1);
 }
 
+// Inversa de vgTheta: dado θ retorna h (cm, ≤ 0)
+function inverseVGH(theta, s){
+  if(theta >= s.ths) return 0;
+  if(theta <= s.thr) return H_MIN;
+  const Se = Math.max(1e-12, (theta - s.thr) / (s.ths - s.thr));
+  const inner = Math.pow(Se, -1/s.m) - 1;
+  if(inner <= 0) return 0;
+  return -Math.pow(inner, 1/s.n) / s.alpha;
+}
+
 // ═══════════════════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════════════════
@@ -202,6 +212,7 @@ let thr_delta;      // bulbo threshold above initial θ
 let running = false, paused = false;
 let rafId = null;
 let Rt = [], Zt = [], times = [];  // time series
+let emitAreas = [], A_emit_total = 0;
 
 // ═══════════════════════════════════════════════════════════
 // GRID HELPERS
@@ -274,12 +285,36 @@ const H_MAX = 0.5;       // cm (solo não pressuriza acima da superfície)
 let emitVol = 0; // volume total da zona emissora (cm³)
 
 function calcEmitVol(){
-  // Fonte apenas na camada superficial j=0 — gotejador aplica na superfície do solo
-  emitVol = 0;
+  emitVol = 0; emitAreas = []; A_emit_total = 0;
   for(let ii=0; ii<N_EMIT; ii++){
     const ri_in  = ii === 0 ? 0 : (ii - 0.5) * dr;
     const ri_out = (ii + 0.5) * dr;
-    emitVol += Math.PI * (ri_out*ri_out - ri_in*ri_in) * dz;
+    const A_i = Math.PI * (ri_out*ri_out - ri_in*ri_in);
+    emitAreas.push(A_i);
+    A_emit_total += A_i;
+    emitVol += A_i * dz;
+  }
+}
+
+// Injeta Q×dt_eff cm³ diretamente como Δθ nas células emissoras (conservação de massa garantida)
+function injectEmitter(dt){
+  const dt_eff = Math.max(0, Math.min(dt, t_irrig - t_sim));
+  if(dt_eff <= 0 || Q_cm3h <= 0) return;
+  const dW_total = Q_cm3h * dt_eff;
+  for(let i=0; i<N_EMIT; i++){
+    let dW_i = dW_total * emitAreas[i] / A_emit_total;
+    // cascata: satura j=0 primeiro, overflow para j=1, j=2...
+    for(let j=0; j<Nz && dW_i>1e-12; j++){
+      const k = idx(i,j);
+      const th_cur = vgTheta(h[k], soil);
+      const cap = (soil.ths - th_cur) * emitAreas[i] * dz;
+      if(cap > 1e-12){
+        const fill = Math.min(cap, dW_i);
+        const th_new = th_cur + fill / (emitAreas[i] * dz);
+        h[k] = inverseVGH(Math.min(th_new, soil.ths - 1e-12), soil);
+        dW_i -= fill;
+      }
+    }
   }
 }
 
@@ -293,9 +328,6 @@ function runStep(dt){
   const GS_SWEEPS  = 6;
   const TOL_H = 1e-3;
 
-  // Fonte por unidade de volume da zona emissora [cm³/h / cm³ = 1/h]
-  const src = (t_sim < t_irrig) ? Q_cm3h / emitVol : 0;
-
   let converged = false;
   let iter = 0;
   for(; iter < MAX_PICARD && !converged; iter++){
@@ -306,10 +338,7 @@ function runStep(dt){
           const k = idx(i, j);
           const hk = h[k];
 
-          // Nós emissores saturados (h≥0) precisam de capacitância mínima maior
-          // para manter dominância diagonal quando vgC retorna ≈1e-12
-          const is_emit = (j === 0 && i < N_EMIT);
-          const C_cap = Math.max(vgC(hk, soil), (is_emit && hk >= 0) ? 1e-4 : C_MIN);
+          const C_cap = Math.max(vgC(hk, soil), C_MIN);
           const th_k  = vgTheta(hk, soil);
           const massCorr = (th_k - thN[k] - C_cap*(hk - hOld[k])) / dt;
           const Kc    = Math.max(vgK(hk, soil), Kmin);
@@ -356,14 +385,8 @@ function runStep(dt){
           if(j > 0)    rhs += az_m * h[idx(i,j-1)];
           if(j < Nz-1) rhs += az_p * h[idx(i,j+1)];
 
-          // Fonte do gotejador: apenas na superfície (j=0), distribuída radialmente
-          if(j === 0 && i < N_EMIT && src > 0) rhs += src;
-
           let h_new = rhs / ac;
-          // Nós emissores durante irrigação: permite h>0 (ponding)
-          // para que Q maior → carga maior → gradiente maior → bulbo diferente
-          const h_max_node = (is_emit && t_sim < t_irrig) ? 50.0 : H_MAX;
-          h_new = Math.max(H_MIN, Math.min(h_max_node, h_new));
+          h_new = Math.max(H_MIN, Math.min(H_MAX, h_new));
 
           if(sw === GS_SWEEPS-1){
             const dh = Math.abs(h_new - hk);
@@ -376,9 +399,12 @@ function runStep(dt){
     if(maxDh < TOL_H) converged = true;
   }
 
-  // Adaptive dt
+  // Adaptive dt — limita durante irrigação para que injectEmitter seja gradual
+  const dt_max = (t_sim < t_irrig)
+    ? Math.min(0.01, emitVol / Math.max(Q_cm3h, 1) * 0.05)
+    : 0.05;
   let dt_next = dt;
-  if(converged && iter < 4)      dt_next = Math.min(dt * 1.5, 0.05);
+  if(converged && iter < 4)      dt_next = Math.min(dt * 1.5, dt_max);
   else if(!converged || iter > 12) dt_next = Math.max(dt * 0.5, 1e-6);
 
   return dt_next;
@@ -713,7 +739,8 @@ function loop(){
   if(!running || paused){ rafId = null; return; }
   for(let s=0; s<STEPS_PER_FRAME && t_sim < t_max; s++){
     const dt = Math.min(dt_cur, t_max - t_sim);
-    dt_cur = runStep(dt);
+    injectEmitter(dt);     // injeta Q×dt cm³ diretamente como Δθ
+    dt_cur = runStep(dt);  // redistribui via Richards
     t_sim += dt;
   }
   const m = getBulboMetrics();
