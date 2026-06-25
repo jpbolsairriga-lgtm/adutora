@@ -1,0 +1,1470 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Estudo de Plantio — Bolsa Irriga</title>
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+<style>
+:root{--bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;--gn:#1b6e3a;--gn2:#2d9e5a;--gn3:#d4edda;--rd:#c62828;--am:#e07b00;--am2:#fff8e1;--bg:#f4f7fb;--bdr:#d0e4f0;--tx:#1a2535;--mu:#607080;--sh:0 2px 16px rgba(0,80,160,.10)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--tx);font-size:14px}
+header{background:linear-gradient(135deg,#003d5c,var(--bl2),var(--bl3));color:#fff;box-shadow:0 3px 20px rgba(0,0,0,.2)}
+.hdr{max-width:1360px;margin:0 auto;padding:.9rem 1.5rem;display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap}
+.hdr-logo{display:flex;align-items:center;gap:.9rem}
+.hdr-logo img{height:60px;width:60px;object-fit:contain;background:#fff;border-radius:10px;padding:6px;box-shadow:0 2px 10px rgba(0,0,0,.18)}
+.hdr-brand h1{font-size:1.3rem;font-weight:800}.hdr-brand p{opacity:.82;font-size:.78rem;margin-top:.1rem}
+.hdr-dev{text-align:right;font-size:.74rem;line-height:1.7;opacity:.92;border-left:2px solid rgba(255,255,255,.25);padding-left:1.1rem}
+.hdr-dev .dn{font-size:.9rem;font-weight:800}
+.page{max-width:1360px;margin:1.2rem auto;padding:0 1rem}
+.card{background:#fff;border-radius:12px;padding:1.1rem 1.3rem;margin-bottom:1rem;box-shadow:var(--sh);border:1px solid var(--bdr)}
+.ct{font-size:.74rem;font-weight:800;color:var(--bl2);text-transform:uppercase;letter-spacing:.08em;margin-bottom:.75rem;padding-bottom:.42rem;border-bottom:2px solid var(--bl4);display:flex;align-items:center;gap:.45rem}
+.ct::before{content:'';width:4px;height:1.1em;background:var(--bl3);border-radius:2px;flex-shrink:0}
+.fg{display:flex;flex-direction:column;gap:.18rem}
+label{font-size:.7rem;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.05em}
+.fg small{font-size:.65rem;color:var(--mu)}
+.iu{display:flex}
+.iu input{flex:1;border-radius:8px 0 0 8px}
+.iu .u{background:var(--bdr);border:1.5px solid var(--bdr);border-left:none;padding:.45rem .5rem;font-size:.75rem;color:var(--mu);border-radius:0 8px 8px 0;white-space:nowrap;display:flex;align-items:center}
+input[type=number],input[type=text],select{padding:.45rem .65rem;border:1.5px solid var(--bdr);border-radius:8px;font-size:.88rem;color:var(--tx);background:#fafeff;outline:none;transition:border-color .18s;width:100%}
+input:focus,select:focus{border-color:var(--bl3);box-shadow:0 0 0 3px rgba(0,180,216,.13)}
+.btn{padding:.55rem 1.1rem;border:none;border-radius:8px;font-size:.84rem;font-weight:800;cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;gap:.35rem}
+.btn-blue{background:var(--bl2);color:#fff}.btn-blue:hover{background:#005f94}
+.btn-green{background:var(--gn);color:#fff}.btn-green:hover{background:#145530}
+.btn-red{background:#c62828;color:#fff}.btn-red:hover{background:#8e1c1c}
+.btn-out{background:#fff;color:var(--bl2);border:2px solid var(--bl2)}.btn-out:hover{background:#e3f2fd}
+.btn-full{width:100%;justify-content:center;margin-bottom:.38rem}
+.btn:disabled{opacity:.4;cursor:default}
+/* Map layout */
+.map-body{display:flex;min-height:580px}
+.map-sb{width:270px;flex-shrink:0;border-right:1px solid var(--bdr);overflow-y:auto;display:flex;flex-direction:column}
+.map-main{flex:1;display:flex;flex-direction:column;min-width:0}
+#map-div{flex:1;min-height:440px;background:#e8edf2;position:relative}
+#elev-canvas{width:100%;height:155px;display:block;background:#f8fbff;border-top:1px solid var(--bdr)}
+/* Sidebar sections */
+.sb-sec{padding:.65rem .8rem;border-bottom:1px solid #f0f0f0}
+.sb-title{font-size:.68rem;font-weight:800;color:var(--bl2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.45rem;display:flex;align-items:center;gap:.3rem}
+.sb-title::before{content:'';width:3px;height:.9em;background:var(--bl3);border-radius:2px}
+.sb-status{font-size:.72rem;padding:.35rem .55rem;border-radius:6px;display:none;margin-bottom:.35rem;line-height:1.45}
+.sb-status.info{background:#e3f2fd;color:#003d5c;border-left:3px solid var(--bl2);display:block}
+.sb-status.ok{background:var(--gn3);color:#1b4d2e;border-left:3px solid var(--gn2);display:block}
+.sb-status.err{background:#ffebee;color:#c62828;border-left:3px solid #c62828;display:block}
+.sb-status.warn{background:var(--am2);color:#7c4d00;border-left:3px solid #f59e0b;display:block}
+.cap-box{background:#f0f7ff;border:1px solid var(--bdr);border-radius:7px;padding:.35rem .6rem;margin:.3rem 0}
+.cap-v{font-size:.95rem;font-weight:800;color:#003d5c}
+.cap-l{font-size:.62rem;color:var(--mu);text-transform:uppercase;letter-spacing:.04em}
+/* Legenda cores */
+.leg-line{display:flex;align-items:center;gap:.45rem;font-size:.72rem;color:var(--mu);margin:.2rem 0}
+.leg-sw{width:24px;height:3px;border-radius:2px;flex-shrink:0}
+/* Tabela de declividade */
+.decliv-tbl{width:100%;border-collapse:collapse;font-size:.7rem;margin-top:.4rem}
+.decliv-tbl th{background:#f0f4f8;color:var(--mu);font-size:.62rem;text-transform:uppercase;padding:.22rem .3rem;border:1px solid var(--bdr);letter-spacing:.04em}
+.decliv-tbl td{padding:.2rem .3rem;border:1px solid #e8edf2;vertical-align:middle}
+.decliv-sw{display:inline-block;width:14px;height:10px;border-radius:2px;vertical-align:middle}
+.decliv-bar{height:6px;border-radius:3px;margin-top:2px}
+/* Tutorial modal */
+#tutModal{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:200;display:none;align-items:center;justify-content:center}
+#tutModal.open{display:flex}
+#tutBox{background:#fff;border-radius:14px;width:min(600px,96vw);max-height:90vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,.3)}
+.tut-hdr{background:linear-gradient(135deg,#003d5c,#0077b6);color:#fff;padding:1rem 1.3rem;border-radius:14px 14px 0 0;display:flex;align-items:center;gap:.7rem}
+.tut-hdr h2{font-size:.95rem;font-weight:900;flex:1}
+.tut-step{display:flex;gap:.8rem;margin:.9rem 1.3rem;align-items:flex-start}
+.tut-num{width:26px;height:26px;border-radius:50%;background:var(--bl2);color:#fff;font-size:.75rem;font-weight:900;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:.1rem}
+.tut-content h3{font-size:.8rem;font-weight:800;color:#003d5c;margin-bottom:.15rem}
+.tut-content p{font-size:.76rem;color:#3a4a5a;line-height:1.55}
+.tut-api{display:flex;align-items:center;gap:.4rem;font-size:.74rem;background:#f0f7ff;border:1px solid var(--bdr);border-radius:6px;padding:.22rem .5rem;margin:.15rem 0}
+.tut-warn{background:#fff8e1;border:1px solid #ffe082;border-radius:7px;padding:.4rem .7rem;font-size:.74rem;color:#7a5500;line-height:1.5;margin:.4rem 1.3rem}
+.tut-link{display:inline-flex;align-items:center;gap:.3rem;background:var(--bl2);color:#fff;border-radius:6px;padding:.22rem .6rem;font-size:.73rem;font-weight:700;text-decoration:none;margin:.2rem 0}
+.tut-footer{background:#f0f7ff;border-top:1px solid var(--bdr);padding:.65rem 1.3rem;border-radius:0 0 14px 14px;font-size:.72rem;color:var(--mu);text-align:center}
+@media(max-width:700px){.map-body{flex-direction:column}.map-sb{width:100%;border-right:none;border-bottom:1px solid var(--bdr)}}
+</style>
+</head>
+<body>
+<header>
+<div class="hdr">
+  <div class="hdr-logo">
+    <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
+    <div class="hdr-brand">
+      <h1>Estudo de Plantio</h1>
+      <p>Contorno do talhão &middot; Perfil de eleva&ccedil;&atilde;o &middot; Linhas de plantio com offset</p>
+    </div>
+  </div>
+  <div class="hdr-dev"><div class="dn">Jo&atilde;o Paulo de Oliveira</div>Eng. Agr&ocirc;nomo &middot; Especialista em Irriga&ccedil;&atilde;o<br>bolsairriga.com.br &middot; (16) 3702-6571</div>
+</div>
+</header>
+
+<div class="page">
+
+<!-- API Key -->
+<div class="card">
+  <div class="ct">&#128273; Chave API Google</div>
+  <div style="display:flex;gap:.7rem;align-items:flex-end;flex-wrap:wrap">
+    <div class="fg" style="flex:1;min-width:200px">
+      <label>Google Maps API Key</label>
+      <div class="iu">
+        <input type="password" id="apiKey" placeholder="AIzaSy...">
+        <span class="u" onclick="salvarKey()" style="cursor:pointer;background:#0077b6;color:#fff;border-color:#0077b6;font-weight:700">OK</span>
+      </div>
+    </div>
+    <button class="btn btn-blue" onclick="initMaps()">&#128506; Carregar Mapa</button>
+    <button class="btn btn-out" id="btnTut">&#10067; Tutorial API</button>
+  </div>
+</div>
+
+<!-- Mapa -->
+<div class="card" style="padding:0;overflow:hidden">
+  <div class="map-body">
+
+    <!-- Sidebar -->
+    <div class="map-sb">
+
+      <!-- Status global -->
+      <div class="sb-sec">
+        <div id="mstatus" class="sb-status"></div>
+        <div class="leg-line"><div class="leg-sw" style="background:#0077b6;height:2px;border:1px dashed #0077b6"></div>Contorno do talh&atilde;o</div>
+        <div class="leg-line"><div class="leg-sw" style="background:#ff6b00"></div>Linha base / perfil</div>
+        <div class="leg-line"><div class="leg-sw" style="background:#1565C0"></div>Linhas de plantio</div>
+      </div>
+
+      <!-- Importar KML -->
+      <div class="sb-sec">
+        <div class="sb-title">&#9654; Importar KML</div>
+        <div id="stImport" class="sb-status"></div>
+        <input type="file" id="fileKml" accept=".kml,.kmz" style="display:none" onchange="importarKML(this)">
+        <button class="btn btn-out btn-full" onclick="$('fileKml').click()">&#128194; Importar arquivo KML</button>
+        <button class="btn btn-full" id="btnUsarImport" style="display:none;background:#1b6e3a;color:#fff" onclick="usarPoligonosImportados()">&#10003; Usar pol&iacute;gono(s) como talh&atilde;o</button>
+        <button class="btn btn-out btn-full" id="btnLimparImport" style="display:none;font-size:.78rem" onclick="limparImport()">&#10005; Limpar importa&ccedil;&atilde;o</button>
+      </div>
+
+      <!-- Polígono -->
+      <div class="sb-sec">
+        <div class="sb-title">&#9654; &Aacute;rea do Talh&atilde;o</div>
+        <div id="stPoly" class="sb-status"></div>
+        <button class="btn btn-blue btn-full" id="btnPoly" onclick="setMode('POLYGON')">&#9726; Desenhar Contorno</button>
+        <button class="btn btn-out btn-full" id="btnFecharPoly" style="display:none" onclick="fecharPoligono()">&#10003; Fechar Pol&iacute;gono</button>
+        <button class="btn btn-out btn-full" id="btnLimparPoly" style="display:none" onclick="limparPoligono()">&#10005; Limpar Contorno</button>
+        <button class="btn btn-full" id="btnKmlContorno" style="display:none;background:#607080;color:#fff;font-size:.78rem" onclick="exportarKML()">&#128462; Exportar contorno KML</button>
+        <div id="areaBox" class="cap-box" style="display:none">
+          <div class="cap-v" id="areaVal">—</div>
+          <div class="cap-l">&#193;rea do talh&atilde;o</div>
+        </div>
+      </div>
+
+      <!-- Linha Base -->
+      <div class="sb-sec">
+        <div class="sb-title">&#9654; Linha Base</div>
+        <div id="stLinha" class="sb-status"></div>
+        <div style="display:flex;gap:.4rem;margin-bottom:.4rem">
+          <button id="btnModeReta" class="btn btn-blue" style="flex:1;padding:.32rem;font-size:.75rem" onclick="setLineMode('straight')">&#9135; Reta</button>
+          <button id="btnModeSpline" class="btn btn-out" style="flex:1;padding:.32rem;font-size:.75rem" onclick="setLineMode('spline')">&#12316; Suave (Spline)</button>
+        </div>
+        <button class="btn btn-green btn-full" id="btnLinha" onclick="setMode('POLYLINE')">&#9998; Desenhar Linha Base</button>
+        <button class="btn btn-out btn-full" id="btnFinLinha" style="display:none" onclick="finalizarLinha()">&#10003; Finalizar Linha</button>
+        <button class="btn btn-out btn-full" id="btnLimparLinha" style="display:none" onclick="limparLinha()">&#10005; Limpar e Redesenhar</button>
+        <div id="linhaInfo" style="display:none;font-size:.72rem;color:var(--mu);margin:.3rem 0">Arraste os pontos para ajustar</div>
+      </div>
+
+      <!-- Perfil de Elevação -->
+      <div class="sb-sec" id="secPerfil" style="display:none">
+        <div class="sb-title">&#9654; Perfil de Eleva&ccedil;&atilde;o</div>
+        <div id="stPerfil" class="sb-status"></div>
+        <button class="btn btn-blue btn-full" id="btnPerfil" onclick="gerarPerfil()">&#9650; Gerar Perfil</button>
+      </div>
+
+      <!-- Offset / Linhas de Plantio -->
+      <div class="sb-sec" id="secOffset" style="display:none">
+        <div class="sb-title">&#9654; Linhas de Plantio</div>
+        <div id="stOffset" class="sb-status"></div>
+        <div class="fg" style="margin-bottom:.45rem">
+          <label>Espa&ccedil;amento entre linhas</label>
+          <div class="iu"><input type="number" id="espacamento" value="12" min="0.5" step="0.5"><span class="u">m</span></div>
+        </div>
+        <div style="display:flex;gap:.5rem;margin-bottom:.45rem">
+          <div class="fg" style="flex:1;margin:0">
+            <label>Cor das linhas</label>
+            <input type="color" id="corLinhas" value="#FFD600" style="width:100%;height:32px;border:1px solid #ccd6e0;border-radius:6px;padding:2px;cursor:pointer">
+          </div>
+          <div class="fg" style="flex:1;margin:0">
+            <label>Espessura (px)</label>
+            <input type="number" id="espessuraLinhas" value="1.5" min="0.5" max="10" step="0.5" style="width:100%">
+          </div>
+        </div>
+        <button class="btn btn-green btn-full" onclick="gerarOffset()">&#10038; Gerar Linhas de Plantio</button>
+        <button class="btn btn-out btn-full" id="btnLimparOffset" style="display:none" onclick="limparOffset()">&#10005; Limpar Linhas</button>
+        <button class="btn btn-full" id="btnExportKml" style="display:none;background:#2e7d32;color:#fff" onclick="exportarKML()">&#128462; Exportar KML (Google Earth)</button>
+        <button class="btn btn-full" id="btnRelatorio" style="display:none;background:#4a148c;color:#fff" onclick="abrirModalRelatorio()">&#128196; Gerar Relat&oacute;rio PDF</button>
+        <div class="fg" style="margin-bottom:.35rem">
+          <label>Resolu&ccedil;&atilde;o da declividade</label>
+          <div class="iu"><input type="number" id="resolucaoDeclividade" value="20" min="5" max="500" step="5"><span class="u">m</span></div>
+        </div>
+        <button class="btn btn-full" id="btnClassificar" style="display:none;background:#37474f;color:#fff" onclick="classificarDeclividade()">&#9968; Classificar Declividade</button>
+        <button class="btn btn-out btn-full" id="btnLimparClassif" style="display:none;font-size:.78rem" onclick="limparClassificacao()">&#10005; Limpar Classifica&ccedil;&atilde;o</button>
+        <button class="btn btn-full" id="btnNovaArea" style="display:none;background:#1a237e;color:#fff" onclick="novaArea()">&#10010; Nova &Aacute;rea</button>
+        <button class="btn btn-out btn-full" id="btnLimparTudo" style="display:none;color:#b71c1c;border-color:#b71c1c" onclick="limparTudo()">&#128465; Limpar Tudo</button>
+        <div id="offsetInfo" class="cap-box" style="display:none">
+          <div class="cap-v" id="nLinhas">—</div>
+          <div class="cap-l">Linhas geradas</div>
+        </div>
+        <!-- Divisão / Carreador -->
+        <div style="border-top:1px solid #eef2f8;margin-top:.5rem;padding-top:.5rem">
+          <div class="sb-title" style="margin-bottom:.35rem">&#9654; Divis&atilde;o / Carreador</div>
+          <div class="fg" style="margin-bottom:.45rem">
+            <label>Largura do carreador</label>
+            <div class="iu"><input type="number" id="larguraCarreador" value="12" min="1" step="0.5"><span class="u">m</span></div>
+          </div>
+          <div id="stCarreador" class="sb-status"></div>
+          <button class="btn btn-blue btn-full" onclick="criarCarreador()">&#9632; Criar Divis&atilde;o / Carreador</button>
+          <button class="btn btn-out btn-full" id="btnLimparCarreador" style="display:none;font-size:.78rem" onclick="limparCarreador()">&#10005; Limpar Divis&atilde;o</button>
+        </div>
+        <!-- Legenda de declividade -->
+        <div id="secDeclividade" style="display:none;margin-top:.4rem">
+          <div class="sb-title">&#9654; Declividade</div>
+          <div id="stDeclividade" class="sb-status"></div>
+          <div id="tabelaDeclividade"></div>
+        </div>
+      </div>
+
+    </div><!-- /sidebar -->
+
+    <!-- Map + Profile -->
+    <div class="map-main">
+      <div id="map-div">
+        <div id="map-placeholder" style="display:flex;align-items:center;justify-content:center;height:100%;flex-direction:column;gap:.8rem;color:var(--mu)">
+          <span style="font-size:2.5rem">&#127758;</span>
+          <p style="font-size:.9rem">Insira a chave API e clique em <b>Carregar Mapa</b></p>
+        </div>
+      </div>
+      <canvas id="elev-canvas" style="display:none"></canvas>
+    </div>
+
+  </div><!-- /map-body -->
+</div><!-- /card mapa -->
+
+<!-- Modal Relatório -->
+<div id="modalRel" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:300;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:14px;padding:1.6rem 1.8rem;width:100%;max-width:400px;box-shadow:0 8px 40px rgba(0,0,0,.3)">
+    <div style="font-size:.9rem;font-weight:800;color:#003d5c;margin-bottom:1rem">&#128196; Dados do Relat&oacute;rio</div>
+    <div class="fg" style="margin-bottom:.6rem"><label>Produtor / Cliente</label><input type="text" id="relCliente" placeholder="Nome do produtor"></div>
+    <div class="fg" style="margin-bottom:.6rem"><label>Propriedade / Fazenda</label><input type="text" id="relFazenda" placeholder="Nome da propriedade"></div>
+    <div class="fg" style="margin-bottom:.6rem"><label>Consultor Respons&aacute;vel</label><input type="text" id="relConsultor" placeholder="Nome do consultor"></div>
+    <div class="fg" style="margin-bottom:1rem"><label>Data</label><input type="date" id="relData"></div>
+    <div style="display:flex;gap:.6rem">
+      <button class="btn btn-green" style="flex:1" onclick="gerarRelatorio()">&#128196; Gerar PDF</button>
+      <button class="btn btn-out" style="flex:1" onclick="$('modalRel').style.display='none'">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+</div><!-- /page -->
+
+<!-- Tutorial -->
+<div id="tutModal" onclick="if(event.target===this)fecharTut()">
+<div id="tutBox">
+  <div class="tut-hdr"><span style="font-size:1.2rem">&#128273;</span><h2>Como configurar a Chave API do Google Maps</h2><button onclick="fecharTut()" style="background:none;border:none;color:#fff;font-size:1.2rem;cursor:pointer">&#10005;</button></div>
+  <div class="tut-warn"><b>Aten&ccedil;&atilde;o:</b> O Google oferece <b>US$ 200 de cr&eacute;dito gratuito por m&ecirc;s</b> — suficiente para uso profissional sem custo.</div>
+  <div class="tut-step"><div class="tut-num">1</div><div class="tut-content"><h3>Acessar o Google Cloud Console</h3><p>Acesse com sua conta Google e crie um projeto.</p><a class="tut-link" href="https://console.cloud.google.com" target="_blank">&#8599; Abrir Console</a></div></div>
+  <div class="tut-step"><div class="tut-num">2</div><div class="tut-content"><h3>Ativar faturamento</h3><p>V&aacute; em <b>Faturamento</b> e vincule um cart&atilde;o. N&atilde;o ser&aacute; cobrado dentro do cr&eacute;dito mensal.</p></div></div>
+  <div class="tut-step"><div class="tut-num">3</div><div class="tut-content"><h3>Ativar as APIs</h3>
+    <div class="tut-api"><span style="color:#2e7d32">&#10003;</span> <b>Maps JavaScript API</b></div>
+    <div class="tut-api"><span style="color:#2e7d32">&#10003;</span> <b>Maps Elevation API</b></div>
+    <a class="tut-link" href="https://console.cloud.google.com/apis/library" target="_blank">&#8599; Biblioteca de APIs</a></div></div>
+  <div class="tut-step"><div class="tut-num">4</div><div class="tut-content"><h3>Criar e restringir a chave</h3><p>APIs &amp; Servi&ccedil;os → Credenciais → Criar Chave. Restrinja selecionando as APIs acima.</p><a class="tut-link" href="https://console.cloud.google.com/apis/credentials" target="_blank">&#8599; Credenciais</a></div></div>
+  <div class="tut-footer">D&uacute;vidas: <b>bolsairriga.com.br</b> &middot; (16) 3702-6571</div>
+</div>
+</div>
+
+<script>
+// ── Utilitários ──────────────────────────────────────────────────
+const $=id=>document.getElementById(id);
+function setStatus(id,msg,type='info'){const el=$(id);if(!msg){el.style.display='none';return;}el.textContent=msg;el.className='sb-status '+type;el.style.display='block';}
+function setMStatus(msg,type){setStatus('mstatus',msg,type);}
+
+// ── Tutorial ─────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded',()=>{
+  $('btnTut').addEventListener('click',()=>$('tutModal').classList.add('open'));
+});
+function fecharTut(){$('tutModal').classList.remove('open');}
+function salvarKey(){const k=$('apiKey').value.trim();if(k){localStorage.setItem('mapskey_pl',k);setMStatus('Chave salva.','ok');}}
+
+// ── Estado ───────────────────────────────────────────────────────
+let map, elevService;
+let mode = 'IDLE';           // 'POLYGON' | 'POLYLINE' | 'IDLE'
+let drawPoly = null;         // google.maps.Polygon
+let polyTempPts = [];        // pontos em desenho
+let polyTempLine = null;     // linha guia em desenho
+let drawLine = null;         // google.maps.Polyline (editável)
+let lineTempPts = [];
+let offsetLines = [];
+let areas = [];          // áreas arquivadas [{poly, offsets, cor, esp}]
+let classifiedSegs = []; // segmentos coloridos por declividade
+let lineMode = 'straight'; // 'straight' | 'spline'
+let importedOverlays = []; // features importadas de KML
+let carreadorPolys = [];   // polígonos resultantes do carreador
+let perfilSamples = null;
+let splineMarkers = [];    // marcadores arrastáveis dos pontos de controle do spline
+
+const SLOPE_CLASSES=[
+  {max:3,  color:'#00C853',label:'0–3%',  desc:'Plano / Drenagem'},
+  {max:5,  color:'#AEEA00',label:'3–5%',  desc:'Suave / Mecanizável'},
+  {max:8,  color:'#FFD600',label:'5–8%',  desc:'Moderado / Erosão'},
+  {max:15, color:'#FF6D00',label:'8–15%', desc:'Crítico / Nível'},
+  {max:20, color:'#FF3D00',label:'15–20%',desc:'Risco / Terraceamento'},
+  {max:1e9,color:'#D50000',label:'>20%',  desc:'Manual / Conservação'},
+];
+
+// ── Google Maps ───────────────────────────────────────────────────
+function initMaps(){
+  const key=$('apiKey').value.trim()||localStorage.getItem('mapskey_pl');
+  if(!key){setMStatus('Insira a chave API.','err');return;}
+  $('apiKey').value=key;localStorage.setItem('mapskey_pl',key);
+  if(window.google&&window.google.maps){initMap();return;}
+  setMStatus('Carregando Google Maps...','info');
+  const s=document.createElement('script');
+  s.src=`https://maps.googleapis.com/maps/api/js?key=${key}&callback=initMap&v=weekly`;
+  s.async=true;s.onerror=()=>setMStatus('Erro ao carregar Maps. Verifique a chave.','err');
+  document.head.appendChild(s);
+}
+window.initMap=function(){
+  $('map-placeholder').style.display='none';
+  map=new google.maps.Map($('map-div'),{
+    center:{lat:-15.8,lng:-47.9},zoom:5,
+    mapTypeId:'hybrid',streetViewControl:false,
+    gestureHandling:'greedy',disableDoubleClickZoom:true
+  });
+  elevService=new google.maps.ElevationService();
+  map.addListener('click',e=>onMapClick(e.latLng));
+  map.addListener('dblclick',e=>onMapDblClick(e.latLng));
+  setMStatus('Mapa carregado. Inicie desenhando o contorno do talhão.','ok');
+};
+
+// ── Modo de desenho ───────────────────────────────────────────────
+function setMode(m){
+  mode=m;
+  // Desativa cliques no polígono ao traçar a linha (permite clicar dentro do contorno)
+  if(drawPoly) drawPoly.setOptions({clickable: m!=='POLYLINE', editable: m!=='POLYLINE'});
+  if(m==='POLYGON'){
+    $('map-div').style.cursor='crosshair';
+    setMStatus('Clique para adicionar vértices. Duplo clique ou botão para fechar.','info');
+    setStatus('stPoly','Clique no mapa para iniciar o contorno...','info');
+  } else if(m==='POLYLINE'){
+    $('map-div').style.cursor='crosshair';
+    setMStatus('Clique para adicionar pontos — pode clicar dentro ou fora do contorno. Duplo clique para finalizar.','info');
+    setStatus('stLinha','Clique no mapa para iniciar a linha...','info');
+  } else {
+    $('map-div').style.cursor='';
+    if(drawPoly) drawPoly.setOptions({clickable:true, editable:true});
+  }
+}
+
+function onMapClick(latLng){
+  if(mode==='POLYGON') addPolyPt(latLng);
+  else if(mode==='POLYLINE') addLinePt(latLng);
+}
+function onMapDblClick(latLng){
+  if(mode==='POLYGON'&&polyTempPts.length>=3) fecharPoligono();
+  else if(mode==='POLYLINE'&&lineTempPts.length>=2) finalizarLinha();
+}
+
+// ── Polígono ──────────────────────────────────────────────────────
+function addPolyPt(latLng){
+  polyTempPts.push(latLng);
+  // Linha guia
+  if(polyTempLine) polyTempLine.setMap(null);
+  polyTempLine=new google.maps.Polyline({
+    path:[...polyTempPts,polyTempPts[0]],map,
+    strokeColor:'#0077b6',strokeWeight:2,strokeOpacity:.7,strokeDashArray:'5,5'
+  });
+  if(polyTempPts.length>=3) $('btnFecharPoly').style.display='';
+  setStatus('stPoly',polyTempPts.length+' ponto(s) — duplo clique ou botão para fechar','info');
+}
+
+function fecharPoligono(){
+  if(polyTempPts.length<3){setStatus('stPoly','Mínimo 3 pontos.','err');return;}
+  if(polyTempLine){polyTempLine.setMap(null);polyTempLine=null;}
+  if(drawPoly) drawPoly.setMap(null);
+  drawPoly=new google.maps.Polygon({
+    paths:polyTempPts,map,
+    strokeColor:'#0077b6',strokeWeight:2.5,strokeOpacity:.9,
+    fillColor:'#0077b6',fillOpacity:.07,
+    editable:true,zIndex:2
+  });
+  const area=computeAreaHa(polyTempPts);
+  polyTempPts=[];
+  mode='IDLE';$('map-div').style.cursor='';
+  $('btnFecharPoly').style.display='none';
+  $('btnLimparPoly').style.display='';
+  $('btnKmlContorno').style.display='';
+  $('areaBox').style.display='';
+  $('areaVal').textContent=area.toFixed(2)+' ha';
+  setStatus('stPoly','Contorno fechado — '+area.toFixed(2)+' ha. Arraste para ajustar.','ok');
+  setMStatus('Contorno definido. Desenhe a linha guia (define a direção das linhas de plantio).','info');
+}
+
+function limparPoligono(){
+  if(drawPoly){drawPoly.setMap(null);drawPoly=null;}
+  if(polyTempLine){polyTempLine.setMap(null);polyTempLine=null;}
+  polyTempPts=[];
+  $('btnFecharPoly').style.display='none';$('btnLimparPoly').style.display='none';
+  $('btnKmlContorno').style.display='none';$('areaBox').style.display='none';
+  setStatus('stPoly','','');limparOffset();
+}
+
+function computeAreaHa(pts){
+  const coords=pts.map(p=>[p.lng(),p.lat()]);
+  coords.push(coords[0]);
+  const poly=turf.polygon([coords]);
+  return turf.area(poly)/10000;
+}
+
+// ── Spline / Linha Suave ──────────────────────────────────────────
+function setLineMode(m){
+  lineMode=m;
+  $('btnModeReta').className='btn '+(m==='straight'?'btn-blue':'btn-out');
+  $('btnModeSpline').className='btn '+(m==='spline'?'btn-blue':'btn-out');
+}
+
+function catmullRomSpline(pts,segs=20){
+  // Catmull-Rom passa por todos os pontos de controle com transição suave
+  if(pts.length<2)return pts;
+  const n=pts.length;const res=[];
+  for(let i=0;i<n-1;i++){
+    const p0=pts[Math.max(0,i-1)];
+    const p1=pts[i];
+    const p2=pts[Math.min(n-1,i+1)];
+    const p3=pts[Math.min(n-1,i+2)];
+    const lim=i===n-2?segs:segs-1;
+    for(let j=0;j<=lim;j++){
+      const t=j/segs,t2=t*t,t3=t2*t;
+      const lat=.5*((2*p1.lat())+(-p0.lat()+p2.lat())*t+(2*p0.lat()-5*p1.lat()+4*p2.lat()-p3.lat())*t2+(-p0.lat()+3*p1.lat()-3*p2.lat()+p3.lat())*t3);
+      const lng=.5*((2*p1.lng())+(-p0.lng()+p2.lng())*t+(2*p0.lng()-5*p1.lng()+4*p2.lng()-p3.lng())*t2+(-p0.lng()+3*p1.lng()-3*p2.lng()+p3.lng())*t3);
+      res.push({lat,lng});
+    }
+  }
+  return res;
+}
+
+// ── Linha Base ────────────────────────────────────────────────────
+function limparSplineMarkers(){
+  splineMarkers.forEach(m=>m.setMap(null));
+  splineMarkers=[];
+}
+
+function redrawSpline(){
+  if(drawLine){drawLine.setMap(null);drawLine=null;}
+  if(lineTempPts.length<2)return;
+  drawLine=new google.maps.Polyline({
+    path:catmullRomSpline(lineTempPts),
+    map,strokeColor:'#ff6b00',strokeWeight:3,strokeOpacity:.9,zIndex:5
+  });
+}
+
+function addLinePt(latLng){
+  limparSplineMarkers();
+  lineTempPts.push(latLng);
+  if(drawLine){drawLine.setMap(null);drawLine=null;}
+  const path=(lineMode==='spline'&&lineTempPts.length>=2)?catmullRomSpline(lineTempPts):lineTempPts;
+  drawLine=new google.maps.Polyline({
+    path,map,strokeColor:'#ff6b00',strokeWeight:3,strokeOpacity:.9,zIndex:5
+  });
+  if(lineTempPts.length>=2){
+    $('btnFinLinha').style.display='';
+    const modo=lineMode==='spline'?'suave':'reta';
+    setStatus('stLinha',lineTempPts.length+' pontos ('+modo+') — duplo clique ou botão para finalizar','info');
+  }
+}
+
+function finalizarLinha(){
+  if(!drawLine||lineTempPts.length<2)return;
+  setMode('IDLE');
+  if(lineMode==='straight'){
+    drawLine.setEditable(true);
+  } else {
+    // Spline: cria marcadores arrastáveis nos pontos de controle
+    limparSplineMarkers();
+    lineTempPts.forEach((pt,i)=>{
+      const mk=new google.maps.Marker({
+        position:pt,map,draggable:true,
+        icon:{path:google.maps.SymbolPath.CIRCLE,scale:7,
+          fillColor:'#ff6b00',fillOpacity:1,strokeColor:'#fff',strokeWeight:2},
+        zIndex:20
+      });
+      google.maps.event.addListener(mk,'drag',()=>{
+        lineTempPts[i]=mk.getPosition();
+        redrawSpline();
+      });
+      splineMarkers.push(mk);
+    });
+  }
+  $('btnFinLinha').style.display='none';
+  $('btnLimparLinha').style.display='';
+  $('linhaInfo').style.display='block';
+  $('linhaInfo').textContent=lineMode==='spline'?'Arraste os pontos laranja para ajustar a curva':'Arraste os pontos para ajustar';
+  $('secPerfil').style.display='';
+  $('secOffset').style.display='';
+  setStatus('stLinha','Linha '+(lineMode==='spline'?'suave':'reta')+' definida.','ok');
+  setMStatus('Linha base definida. Gere o perfil ou as linhas de plantio.','ok');
+}
+
+function limparLinha(){
+  limparSplineMarkers();
+  if(drawLine){drawLine.setMap(null);drawLine=null;}
+  lineTempPts=[];
+  setMode('IDLE');
+  $('btnFinLinha').style.display='none';$('btnLimparLinha').style.display='none';
+  $('linhaInfo').style.display='none';$('secPerfil').style.display='none';
+  $('secOffset').style.display='none';
+  $('elev-canvas').style.display='none';
+  setStatus('stLinha','','');
+  perfilSamples=null;
+  // NÃO chama limparOffset — linhas de plantio geradas ficam no mapa
+  setMStatus('Linha limpa. Desenhe uma nova linha base.','info');
+}
+
+// ── Perfil de Elevação ────────────────────────────────────────────
+function haversine(p1,p2){
+  const R=6371000;
+  const la1=(typeof p1.lat==='function'?p1.lat():p1.lat)*Math.PI/180;
+  const la2=(typeof p2.lat==='function'?p2.lat():p2.lat)*Math.PI/180;
+  const lo1=(typeof p1.lng==='function'?p1.lng():p1.lng)*Math.PI/180;
+  const lo2=(typeof p2.lng==='function'?p2.lng():p2.lng)*Math.PI/180;
+  const a=Math.sin((la2-la1)/2)**2+Math.cos(la1)*Math.cos(la2)*Math.sin((lo2-lo1)/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+function fmtDist(d){return d>=1000?(d/1000).toFixed(2)+' km':Math.round(d)+' m';}
+
+async function gerarPerfil(){
+  if(!drawLine){setStatus('stPerfil','Desenhe a linha base primeiro.','err');return;}
+  const ptsAll=drawLine.getPath().getArray();
+  if(ptsAll.length<2){setStatus('stPerfil','A linha precisa de pelo menos 2 pontos.','err');return;}
+  // API aceita até ~512 pontos no path; reduz splines longas mantendo forma
+  const MAX_PATH=100;
+  let pts=ptsAll;
+  if(ptsAll.length>MAX_PATH){
+    const step=Math.ceil(ptsAll.length/MAX_PATH);
+    pts=ptsAll.filter((_,i)=>i%step===0||i===ptsAll.length-1);
+  }
+  const nSamples=Math.min(512,Math.max(50,pts.length*5));
+  setStatus('stPerfil','Buscando elevações...','info');
+  $('btnPerfil').disabled=true;
+  try{
+    const results=await Promise.race([
+      new Promise((res,rej)=>{
+        elevService.getElevationAlongPath({path:pts,samples:nSamples},(r,s)=>{
+          if(s==='OK'&&r)res(r);else rej(new Error(s||'UNKNOWN'));
+        });
+      }),
+      new Promise((_,rej)=>setTimeout(()=>rej(new Error('TIMEOUT')),25000))
+    ]);
+    perfilSamples=results;
+    desenharPerfilElevacao(results);
+    const dists=[0];
+    for(let i=1;i<results.length;i++)dists.push(dists[i-1]+haversine(results[i-1].location,results[i].location));
+    const elevs=results.map(s=>s.elevation);
+    const totalDist=dists[dists.length-1];
+    setStatus('stPerfil',`Perfil gerado: ${fmtDist(totalDist)}, ${Math.min(...elevs).toFixed(1)}–${Math.max(...elevs).toFixed(1)} m`,'ok');
+  }catch(e){
+    setStatus('stPerfil','⚠ Erro: '+e.message,'err');
+  }finally{$('btnPerfil').disabled=false;}
+}
+
+function desenharPerfilElevacao(samples){
+  const cv=$('elev-canvas');cv.style.display='block';
+  cv.width=cv.offsetWidth||700;cv.height=155;
+  const W=cv.width,H=cv.height;
+  const ctx=cv.getContext('2d');
+  const elevs=samples.map(s=>s.elevation);
+  const dists=[0];
+  for(let i=1;i<samples.length;i++)dists.push(dists[i-1]+haversine(samples[i-1].location,samples[i].location));
+  const totalDist=dists[dists.length-1];
+  const minE=Math.min(...elevs),maxE=Math.max(...elevs),eR=maxE-minE||1;
+  const pad={t:12,r:14,b:26,l:48};const cw=W-pad.l-pad.r,ch=H-pad.t-pad.b;
+  const xS=d=>pad.l+(d/totalDist)*cw,yS=e=>pad.t+ch-((e-minE)/eR)*ch;
+  ctx.fillStyle='#f8fbff';ctx.fillRect(0,0,W,H);
+  for(let i=0;i<=4;i++){const e=minE+(eR/4)*i,y=yS(e);ctx.strokeStyle='#e8edf2';ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+cw,y);ctx.stroke();ctx.fillStyle='#90a4b4';ctx.font='9px Segoe UI';ctx.textAlign='right';ctx.fillText(Math.round(e),pad.l-4,y+3);}
+  for(let i=0;i<=5;i++){const d=totalDist/5*i;ctx.strokeStyle='#e8edf2';ctx.beginPath();ctx.moveTo(xS(d),pad.t);ctx.lineTo(xS(d),pad.t+ch);ctx.stroke();ctx.fillStyle='#90a4b4';ctx.font='9px Segoe UI';ctx.textAlign='center';ctx.fillText(d>=1000?(d/1000).toFixed(1)+'k':Math.round(d)+'',xS(d),pad.t+ch+14);}
+  // Gradiente terreno
+  const tg=ctx.createLinearGradient(0,yS(maxE),0,yS(minE));
+  tg.addColorStop(0,'rgba(139,69,19,.7)');tg.addColorStop(0.5,'rgba(107,191,0,.6)');tg.addColorStop(1,'rgba(34,139,34,.5)');
+  let area='',path='';
+  samples.forEach((s,i)=>{const x=xS(dists[i]),y=yS(s.elevation);if(i===0){path=`M${x},${y}`;area=`M${x},${pad.t+ch} L${x},${y}`;}else{path+=` L${x},${y}`;area+=` L${x},${y}`;}});
+  area+=` L${xS(totalDist)},${pad.t+ch} Z`;
+  const a=new Path2D(area);ctx.fillStyle=tg;ctx.fill(a);
+  ctx.beginPath();let first=true;
+  samples.forEach((s,i)=>{const x=xS(dists[i]),y=yS(s.elevation);if(first){ctx.moveTo(x,y);first=false;}else ctx.lineTo(x,y);});
+  ctx.strokeStyle='#ff6b00';ctx.lineWidth=2;ctx.stroke();
+  ctx.fillStyle='#2e7d32';ctx.beginPath();ctx.arc(xS(0),yS(elevs[0]),4,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#c62828';ctx.beginPath();ctx.arc(xS(totalDist),yS(elevs[elevs.length-1]),4,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#607080';ctx.font='9px Segoe UI';ctx.textAlign='center';ctx.fillText('Distância (m)',pad.l+cw/2,H-2);
+}
+
+// ── Clipping curvo ao polígono ────────────────────────────────────
+// Percorre coordenada a coordenada, detecta cruzamentos exatos com
+// o contorno e mantém apenas o trecho interno — preserva a curvatura
+function clipCurveToPolygon(coords,turfPoly,polyBound){
+  if(coords.length<2)return null;
+
+  // Abordagem 1: ponto a ponto com booleanPointInPolygon
+  // Também detecta quando um segmento longo atravessa o polígono com ambos os extremos fora
+  const result=[];
+  let inside=turf.booleanPointInPolygon(turf.point(coords[0]),turfPoly);
+  if(inside)result.push(coords[0]);
+  for(let i=1;i<coords.length;i++){
+    const currIn=turf.booleanPointInPolygon(turf.point(coords[i]),turfPoly);
+    try{
+      const seg=turf.lineString([coords[i-1],coords[i]]);
+      const ixs=turf.lineIntersect(seg,polyBound);
+      if(ixs.features.length>0){
+        const sorted=ixs.features
+          .map(f=>f.geometry.coordinates)
+          .sort((a,b)=>turf.distance(turf.point(coords[i-1]),turf.point(a))-turf.distance(turf.point(coords[i-1]),turf.point(b)));
+        if(inside!==currIn){
+          // Transição normal: adiciona primeiro cruzamento
+          result.push(sorted[0]);
+        } else if(!inside&&!currIn&&sorted.length>=2){
+          // Ambos fora mas segmento cruza o polígono (entra e sai no mesmo segmento)
+          result.push(sorted[0]);
+          result.push(sorted[sorted.length-1]);
+        }
+      }
+    }catch(e){}
+    if(currIn)result.push(coords[i]);
+    inside=currIn;
+  }
+  if(result.length>=2)return result;
+
+  // Abordagem 2: lineSplit como fallback
+  try{
+    const split=turf.lineSplit(turf.lineString(coords),polyBound);
+    if(!split||!split.features||split.features.length===0)return null;
+    const ins=split.features.filter(seg=>{
+      const c=seg.geometry.coordinates;
+      return turf.booleanPointInPolygon(turf.point(c[Math.floor(c.length/2)]),turfPoly);
+    });
+    if(ins.length===0){
+      // Último recurso: usa lineIntersect na linha completa
+      try{
+        const allIxs=turf.lineIntersect(turf.lineString(coords),polyBound);
+        const pts=allIxs.features.map(f=>f.geometry.coordinates)
+          .sort((a,b)=>turf.distance(turf.point(coords[0]),turf.point(a))-turf.distance(turf.point(coords[0]),turf.point(b)));
+        return pts.length>=2?[pts[0],pts[pts.length-1]]:null;
+      }catch(e){return null;}
+    }
+    const r=[...ins[0].geometry.coordinates];
+    for(let i=1;i<ins.length;i++)r.push(...ins[i].geometry.coordinates.slice(1));
+    return r.length>=2?r:null;
+  }catch(e){return null;}
+}
+
+// ── Offset / Linhas de Plantio ────────────────────────────────────
+function gerarOffset(){
+  if(!drawPoly){setStatus('stOffset','Desenhe o contorno do talhão primeiro.','err');return;}
+  if(!drawLine){setStatus('stOffset','Desenhe a linha guia primeiro (define a direção das linhas).','err');return;}
+  const spacing=parseFloat($('espacamento').value)||12;
+  const corLinha=$('corLinhas').value||'#FFD600';
+  const espessura=parseFloat($('espessuraLinhas').value)||1.5;
+  const spacingKm=spacing/1000;
+
+  // ── Polígono ──────────────────────────────────────────────────────
+  const polyPts=drawPoly.getPath().getArray().map(p=>[p.lng(),p.lat()]);
+  polyPts.push([...polyPts[0]]);
+  const turfPoly=turf.polygon([polyPts]);
+  turf.rewind(turfPoly,{mutate:true});
+  const polyBound=turf.polygonToLine(turfPoly);
+
+  // ── Direção das linhas (bearing corda da guia) ────────────────────
+  const linePts=drawLine.getPath().getArray().map(p=>[p.lng(),p.lat()]);
+  const rowBrg=turf.bearing(turf.point(linePts[0]),turf.point(linePts[linePts.length-1]));
+  const perpBrg=rowBrg+90;
+
+  // ── Extensão: diagonal do bbox × 1.5 ─────────────────────────────
+  const bbox=turf.bbox(turfPoly);
+  const ext=turf.distance(turf.point([bbox[0],bbox[1]]),turf.point([bbox[2],bbox[3]]))*1.5;
+
+  // ── Âncora: centróide do polígono ─────────────────────────────────
+  const anchor=turf.centroid(turfPoly).geometry.coordinates;
+
+  // ── Extensão perpendicular para cobrir o polígono inteiro ─────────
+  let minD=0,maxD=0;
+  drawPoly.getPath().getArray().forEach(v=>{
+    const vp=[v.lng(),v.lat()];
+    const d=turf.distance(turf.point(anchor),turf.point(vp),{units:'kilometers'});
+    const b=turf.bearing(turf.point(anchor),turf.point(vp));
+    const s=d*Math.cos((b-perpBrg)*Math.PI/180);
+    minD=Math.min(minD,s);maxD=Math.max(maxD,s);
+  });
+  const nPos=Math.ceil(maxD/spacingKm)+1;
+  const nNeg=Math.ceil(-minD/spacingKm)+1;
+
+  limparOffset();
+  setStatus('stOffset','Gerando linhas...','info');
+  let count=0;
+
+  const N_EXT=200; // amostras de extensão — resolução ≈7m para pegar cantos estreitos
+
+  // Sampling com lineIntersect exato na transição dentro/fora.
+  function emitSegments(pts){
+    let seg=null,added=0;
+    const flush=()=>{
+      if(seg&&seg.length>=2){
+        offsetLines.push(new google.maps.Polyline({
+          path:seg.map(p=>({lat:p[1],lng:p[0]})),
+          map,strokeColor:corLinha,strokeWeight:espessura,strokeOpacity:.95,zIndex:10,clickable:false
+        }));
+        count++;added++;
+      }
+      seg=null;
+    };
+    for(let i=0;i<pts.length;i++){
+      const inside=turf.booleanPointInPolygon(turf.point(pts[i]),turfPoly);
+      if(inside){
+        if(!seg){
+          seg=[];
+          if(i>0){try{const ix=turf.lineIntersect(turf.lineString([pts[i-1],pts[i]]),polyBound);
+            if(ix.features.length>0)seg.push(ix.features[0].geometry.coordinates);}catch(e){}}
+        }
+        seg.push(pts[i]);
+      } else if(seg){
+        try{const ix=turf.lineIntersect(turf.lineString([pts[i-1],pts[i]]),polyBound);
+          if(ix.features.length>0)seg.push(ix.features[0].geometry.coordinates);}catch(e){}
+        flush();
+      }
+    }
+    flush();
+    return added;
+  }
+
+  // Linha reta via lineIntersect direto — 100% preciso, sem amostragem.
+  // Pega qualquer canto do polígono independente da largura.
+  function addStraightRow(distKm,sign){
+    const dir=sign>0?perpBrg:rowBrg-90;
+    const ref=distKm===0?anchor
+      :turf.destination(turf.point(anchor),distKm,dir,{units:'kilometers'}).geometry.coordinates;
+    const p1=turf.destination(turf.point(ref),ext,rowBrg,{units:'kilometers'}).geometry.coordinates;
+    const p2=turf.destination(turf.point(ref),ext,rowBrg+180,{units:'kilometers'}).geometry.coordinates;
+    try{
+      const ixs=turf.lineIntersect(turf.lineString([p2,p1]),polyBound);
+      if(!ixs.features.length)return false;
+      const sorted=ixs.features.map(f=>f.geometry.coordinates)
+        .sort((a,b)=>turf.distance(turf.point(p2),turf.point(a))-turf.distance(turf.point(p2),turf.point(b)));
+      let added=0;
+      for(let i=0;i+1<sorted.length;i+=2){
+        const s=sorted[i],e=sorted[i+1];
+        const mid=[(s[0]+e[0])/2,(s[1]+e[1])/2];
+        if(!turf.booleanPointInPolygon(turf.point(mid),turfPoly))continue;
+        offsetLines.push(new google.maps.Polyline({
+          path:[{lat:s[1],lng:s[0]},{lat:e[1],lng:e[0]}],
+          map,strokeColor:corLinha,strokeWeight:espessura,strokeOpacity:.95,zIndex:10,clickable:false
+        }));
+        count++;added++;
+      }
+      return added>0;
+    }catch(e){return false;}
+  }
+
+  function addRow(distKm,sign){
+    const dir=sign>0?perpBrg:rowBrg-90;
+
+    if(lineMode==='spline'&&lineTempPts.length>=2){
+      // SPLINE: translada pontos de controle, regera spline, extensão em rowBrg
+      const ctrlOff=lineTempPts.map(pt=>{
+        const [lng,lat]=turf.destination(turf.point([pt.lng(),pt.lat()]),distKm,dir,{units:'kilometers'}).geometry.coordinates;
+        return {lat:()=>lat,lng:()=>lng};
+      });
+      const sp=catmullRomSpline(ctrlOff,30);
+      const spPts=sp.map(p=>[p.lng,p.lat]);
+      const extS=[],extE=[];
+      for(let i=N_EXT;i>=1;i--)
+        extS.push(turf.destination(turf.point(spPts[0]),(i/N_EXT)*ext,rowBrg+180,{units:'kilometers'}).geometry.coordinates);
+      for(let i=1;i<=N_EXT;i++)
+        extE.push(turf.destination(turf.point(spPts[spPts.length-1]),(i/N_EXT)*ext,rowBrg,{units:'kilometers'}).geometry.coordinates);
+      // Usa sampling para spline; sem fallback reta (evita mistura de ângulos)
+      return emitSegments([...extS,...spPts,...extE])>0;
+    }
+
+    // RETA: lineIntersect direto — cobre 100% do polígono incluindo cantos estreitos
+    return addStraightRow(distKm,sign);
+  }
+
+  addRow(0,1);
+  for(let n=1;n<=nPos;n++) addRow(n*spacingKm,1);
+  for(let n=1;n<=nNeg;n++) addRow(n*spacingKm,-1);
+
+  if(count===0){
+    setStatus('stOffset','Nenhuma linha gerada — verifique se a guia cruza o talhão.','err');
+    return;
+  }
+
+  // Linha base some automaticamente — pronta para nova
+  limparSplineMarkers();
+  if(drawLine){drawLine.setMap(null);drawLine=null;}
+  lineTempPts=[];
+  $('btnLimparLinha').style.display='none';
+  $('linhaInfo').style.display='none';
+  setStatus('stLinha','','');
+
+  $('nLinhas').textContent=count+' linhas';
+  $('offsetInfo').style.display='';
+  $('btnLimparOffset').style.display='';
+  $('btnExportKml').style.display='';
+  $('btnClassificar').style.display='';
+  $('btnRelatorio').style.display='';
+  $('btnNovaArea').style.display='';
+  $('btnLimparTudo').style.display='';
+  setStatus('stOffset',count+' linhas geradas. Exporte em KML ou adicione nova área.','ok');
+}
+
+function limparOffset(){
+  offsetLines.forEach(l=>l.setMap(null));offsetLines=[];
+  classifiedSegs.forEach(s=>s.pl.setMap(null));classifiedSegs=[];
+  if(drawLine) drawLine.setMap(map);
+  ['offsetInfo','btnLimparOffset','btnExportKml','btnClassificar','btnRelatorio',
+   'btnLimparClassif','secDeclividade'].forEach(id=>{const e=$(id);if(e)e.style.display='none';});
+  setStatus('stOffset','','');
+}
+
+function limparClassificacao(){
+  classifiedSegs.forEach(s=>s.pl.setMap(null));classifiedSegs=[];
+  // Restaura todas as linhas: talhão atual + arquivadas
+  offsetLines.forEach(l=>l.setMap(map));
+  areas.forEach(a=>a.offsets.forEach(l=>l.setMap(map)));
+  $('btnLimparClassif').style.display='none';
+  $('secDeclividade').style.display='none';
+  $('btnClassificar').style.display='';
+  setStatus('stDeclividade','','');
+}
+
+// ── Classificação de Declividade ──────────────────────────────────
+function slopeClass(pct){return SLOPE_CLASSES.find(c=>pct<=c.max)||SLOPE_CLASSES[5];}
+
+function sampleLineEvenly(gmPath,n){
+  const pts=gmPath.getArray();
+  if(pts.length<2)return [{lat:pts[0].lat(),lng:pts[0].lng()},{lat:pts[0].lat(),lng:pts[0].lng()}];
+  const dists=[0];
+  for(let i=1;i<pts.length;i++)dists.push(dists[i-1]+haversine(pts[i-1],pts[i]));
+  const total=dists[dists.length-1];
+  const result=[];
+  for(let s=0;s<n;s++){
+    const tgt=total*s/(n-1);
+    let j=0;
+    while(j<dists.length-2&&dists[j+1]<tgt)j++;
+    const seg=dists[j+1]-dists[j];
+    const t=seg>0?(tgt-dists[j])/seg:0;
+    const p0=pts[j],p1=pts[Math.min(j+1,pts.length-1)];
+    result.push({lat:p0.lat()+(p1.lat()-p0.lat())*t,lng:p0.lng()+(p1.lng()-p0.lng())*t});
+  }
+  return result;
+}
+
+async function getElevsForPoints(latlngs){
+  const BATCH=512;const results=[];
+  for(let i=0;i<latlngs.length;i+=BATCH){
+    const r=await new Promise((res,rej)=>
+      elevService.getElevationForLocations({locations:latlngs.slice(i,i+BATCH)},(r,s)=>
+        s==='OK'&&r?res(r):rej(new Error(s||'ERR'))
+      )
+    );
+    results.push(...r);
+  }
+  return results;
+}
+
+async function classificarDeclividade(){
+  // Classifica TODAS as linhas: talhão atual + talhões arquivados
+  const todasLinhas=[...offsetLines,...areas.flatMap(a=>a.offsets)];
+  if(todasLinhas.length===0){setStatus('stDeclividade','Gere as linhas primeiro.','err');return;}
+  const resM=parseFloat($('resolucaoDeclividade').value)||20;
+  $('btnClassificar').disabled=true;
+  setStatus('stDeclividade','Buscando elevações…','info');
+  $('secDeclividade').style.display='';
+
+  function nSamples(gmPath){
+    const pts=gmPath.getArray();
+    let dist=0;
+    for(let i=1;i<pts.length;i++)dist+=haversine(pts[i-1],pts[i]);
+    return Math.max(2,Math.round(dist/resM)+1);
+  }
+  const linesSamples=todasLinhas.map(pl=>sampleLineEvenly(pl.getPath(),nSamples(pl.getPath())));
+  const allPts=linesSamples.flat();
+
+  try{
+    const elevs=await getElevsForPoints(allPts);
+
+    classifiedSegs.forEach(s=>s.pl.setMap(null));classifiedSegs=[];
+
+    const counts=SLOPE_CLASSES.map(()=>0);
+    let idx=0;
+    const N_each=linesSamples.map(s=>s.length);
+    todasLinhas.forEach((_,li)=>{
+      const samps=linesSamples[li];
+      const ev=elevs.slice(idx,idx+N_each[li]);idx+=N_each[li];
+      for(let s=0;s<samps.length-1;s++){
+        const dH=Math.abs(ev[s+1].elevation-ev[s].elevation);
+        const dX=haversine(samps[s],samps[s+1]);
+        const pct=dX>0?(dH/dX)*100:0;
+        const cls=slopeClass(pct);
+        const ci=SLOPE_CLASSES.indexOf(cls);
+        if(ci>=0)counts[ci]++;
+        const pl=new google.maps.Polyline({
+          path:[samps[s],samps[s+1]],map,
+          strokeColor:cls.color,strokeWeight:2.5,strokeOpacity:.95,zIndex:11,clickable:false
+        });
+        classifiedSegs.push({pl,ci:ci>=0?ci:SLOPE_CLASSES.length-1});
+      }
+    });
+
+    const total=counts.reduce((a,b)=>a+b,0)||1;
+    let html='<table class="decliv-tbl"><tr><th>Cor</th><th>Decliv.</th><th>Recomendação</th><th>%</th></tr>';
+    SLOPE_CLASSES.forEach((c,i)=>{
+      const pct=((counts[i]/total)*100).toFixed(0);
+      if(counts[i]===0)return;
+      html+=`<tr>
+        <td><span class="decliv-sw" style="background:${c.color}"></span></td>
+        <td style="font-weight:700">${c.label}</td>
+        <td>${c.desc}</td>
+        <td style="font-weight:700">${pct}%</td>
+      </tr>`;
+    });
+    html+='</table>';
+    $('tabelaDeclividade').innerHTML=html;
+
+    // Oculta todas as linhas originais (atual + arquivadas)
+    if(classifiedSegs.length>0){
+      todasLinhas.forEach(l=>l.setMap(null));
+    }
+
+    $('btnLimparClassif').style.display='';
+    $('btnClassificar').style.display='none';
+    setStatus('stDeclividade','Declividade classificada — '+todasLinhas.length+' linhas, '+SLOPE_CLASSES.filter((_,i)=>counts[i]>0).length+' classes.','ok');
+  }catch(e){
+    setStatus('stDeclividade','Erro: '+e.message+'. Linhas originais mantidas.','err');
+  }finally{
+    $('btnClassificar').disabled=false;
+  }
+}
+
+// ── Múltiplas Áreas ───────────────────────────────────────────────
+function novaArea(){
+  // Arquiva a área atual
+  if(drawPoly||offsetLines.length>0){
+    areas.push({poly:drawPoly,offsets:[...offsetLines],
+      cor:$('corLinhas').value||'#FFD600',esp:parseFloat($('espessuraLinhas').value)||1.5});
+  }
+  // Zera estado corrente (mantém tudo no mapa)
+  drawPoly=null;
+  if(drawLine){drawLine.setEditable(false);drawLine=null;} // remove handles, mantém linha visível
+  offsetLines=[];
+  polyTempPts=[]; lineTempPts=[];
+  if(polyTempLine){polyTempLine.setMap(null);polyTempLine=null;}
+  perfilSamples=null;
+  // Reset UI
+  ['secPerfil','secOffset','btnLimparOffset','btnExportKml','btnNovaArea',
+   'offsetInfo','elev-canvas','btnLimparPoly','btnKmlContorno','areaBox',
+   'btnLimparLinha','btnFinLinha','linhaInfo'].forEach(id=>{
+    const el=$(id);if(el)el.style.display='none';
+  });
+  $('btnLimparTudo').style.display='';
+  setStatus('stPoly','',''); setStatus('stLinha','',''); setStatus('stOffset','','');
+  setMode('IDLE');
+  setMStatus('Área '+(areas.length)+' salva. Desenhe o contorno do novo talhão.','ok');
+}
+
+function limparTudo(){
+  const total=areas.length+(drawPoly?1:0);
+  if(total>0&&!confirm('Limpar '+(total===1?'a área':'as '+total+' áreas')+' do mapa?'))return;
+  limparSplineMarkers();
+  if(drawPoly){drawPoly.setMap(null);drawPoly=null;}
+  if(drawLine){drawLine.setMap(null);drawLine=null;}
+  if(polyTempLine){polyTempLine.setMap(null);polyTempLine=null;}
+  offsetLines.forEach(l=>l.setMap(null)); offsetLines=[];
+  classifiedSegs.forEach(s=>s.pl.setMap(null)); classifiedSegs=[];
+  carreadorPolys.forEach(p=>p.setMap(null)); carreadorPolys=[];
+  areas.forEach(a=>{if(a.poly)a.poly.setMap(null);a.offsets.forEach(l=>l.setMap(null));});
+  areas=[];
+  polyTempPts=[]; lineTempPts=[]; perfilSamples=null;
+  ['secPerfil','secOffset','btnLimparOffset','btnExportKml','btnNovaArea','btnLimparTudo',
+   'offsetInfo','elev-canvas','btnLimparPoly','btnKmlContorno','areaBox',
+   'btnLimparLinha','btnFinLinha','linhaInfo'].forEach(id=>{
+    const el=$(id);if(el)el.style.display='none';
+  });
+  setStatus('stPoly','',''); setStatus('stLinha','',''); setStatus('stOffset','','');
+  setMode('IDLE');
+  setMStatus('Mapa limpo. Desenhe o contorno do talhão.','info');
+}
+
+// ── Exportar KML ──────────────────────────────────────────────────
+function exportarKML(){
+  const date=new Date().toLocaleDateString('pt-BR');
+  let kml=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n<name>Estudo de Plantio — Bolsa Irriga</name>\n<description>Gerado em ${date}</description>\n`;
+  kml+=`<Style id="sContorno"><LineStyle><color>ffb67700</color><width>2.5</width></LineStyle><PolyStyle><color>110077b6</color></PolyStyle></Style>\n`;
+
+  function hexToKml(hex){
+    const h=hex.replace('#','');
+    return 'ff'+h.slice(4,6)+h.slice(2,4)+h.slice(0,2);
+  }
+  function polyCoords(poly){
+    const pts=poly.getPath().getArray();
+    const c=pts.map(p=>`${p.lng().toFixed(7)},${p.lat().toFixed(7)},0`).join(' ');
+    return c+' '+`${pts[0].lng().toFixed(7)},${pts[0].lat().toFixed(7)},0`;
+  }
+  function lineCoords(l){
+    return l.getPath().getArray().map(p=>`${p.lng().toFixed(7)},${p.lat().toFixed(7)},0`).join(' ');
+  }
+
+  // Monta lista de todas as áreas (arquivadas + atual)
+  const todas=[
+    ...areas,
+    ...(drawPoly||offsetLines.length>0?[{poly:drawPoly,offsets:[...offsetLines],
+      cor:$('corLinhas').value||'#FFD600',esp:parseFloat($('espessuraLinhas').value)||1.5}]:[])
+  ];
+
+  // Styles para cada área
+  todas.forEach((a,idx)=>{
+    kml+=`<Style id="sP${idx}"><LineStyle><color>${hexToKml(a.cor)}</color><width>${a.esp}</width></LineStyle></Style>\n`;
+  });
+  SLOPE_CLASSES.forEach((cls,ci)=>{
+    kml+=`<Style id="sDcl${ci}"><LineStyle><color>${hexToKml(cls.color)}</color><width>2</width></LineStyle></Style>\n`;
+  });
+
+  // Camada 1: Contornos
+  kml+=`<Folder><name>Contornos dos Talh&#245;es</name>\n`;
+  todas.forEach((a,idx)=>{
+    if(!a.poly)return;
+    const n=todas.length>1?` ${idx+1}`:'';
+    kml+=`<Placemark><name>Talh&#227;o${n}</name><styleUrl>#sContorno</styleUrl>`;
+    kml+=`<Polygon><outerBoundaryIs><LinearRing><tessellate>1</tessellate><coordinates>${polyCoords(a.poly)}</coordinates></LinearRing></outerBoundaryIs></Polygon>`;
+    kml+=`</Placemark>\n`;
+  });
+  kml+=`</Folder>\n`;
+
+  // Camada 2: Linhas de Plantio (sem classificação)
+  const temLinhas=todas.some(a=>a.offsets.length>0);
+  const isCurrentClassif=classifiedSegs.length>0;
+  if(temLinhas){
+    kml+=`<Folder><name>Linhas de Plantio</name>\n`;
+    todas.forEach((a,idx)=>{
+      if(a.offsets.length===0)return;
+      const n=todas.length>1?` Talh&#227;o ${idx+1}`:'';
+      kml+=`<Folder><name>Linhas${n} (${a.offsets.length})</name>\n`;
+      a.offsets.forEach((l,i)=>{
+        kml+=`<Placemark><name>Linha ${i+1}</name><styleUrl>#sP${idx}</styleUrl>`;
+        kml+=`<LineString><tessellate>1</tessellate><coordinates>${lineCoords(l)}</coordinates></LineString>`;
+        kml+=`</Placemark>\n`;
+      });
+      kml+=`</Folder>\n`;
+    });
+    kml+=`</Folder>\n`;
+  }
+
+  // Camada 3: Declividade (se classificado)
+  if(isCurrentClassif){
+    kml+=`<Folder><name>Declividade — Talh&#227;o Atual</name>\n`;
+    SLOPE_CLASSES.forEach((cls,ci)=>{
+      const segs=classifiedSegs.filter(s=>s.ci===ci);
+      if(segs.length===0)return;
+      kml+=`<Folder><name>${cls.label} — ${cls.desc}</name>\n`;
+      segs.forEach((s,i)=>{
+        kml+=`<Placemark><name>Seg ${i+1}</name><styleUrl>#sDcl${ci}</styleUrl>`;
+        kml+=`<LineString><tessellate>1</tessellate><coordinates>${lineCoords(s.pl)}</coordinates></LineString>`;
+        kml+=`</Placemark>\n`;
+      });
+      kml+=`</Folder>\n`;
+    });
+    kml+=`</Folder>\n`;
+  }
+
+  kml+=`</Document></kml>`;
+  const blob=new Blob([kml],{type:'application/vnd.google-earth.kml+xml'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=`estudo-plantio-${date.replace(/\//g,'-')}.kml`;
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),60000);
+}
+
+// ── Importar KML ──────────────────────────────────────────────────
+function parseKMLCoords(text){
+  return text.trim().split(/[\s\n]+/).map(c=>{
+    const p=c.trim().split(',');
+    if(p.length<2)return null;
+    const lng=parseFloat(p[0]),lat=parseFloat(p[1]);
+    return(!isNaN(lat)&&!isNaN(lng))?{lat,lng}:null;
+  }).filter(Boolean);
+}
+
+function kmlAbgrToHex(abgr){
+  if(!abgr||abgr.length<8)return null;
+  return '#'+abgr.slice(6,8)+abgr.slice(4,6)+abgr.slice(2,4);
+}
+
+function importarKML(input){
+  const file=input.files[0];if(!file)return;
+  input.value='';
+  const reader=new FileReader();
+  reader.onload=e=>{
+    try{
+      const xml=new DOMParser().parseFromString(e.target.result,'text/xml');
+      // Parse styles
+      const styles={};
+      Array.from(xml.getElementsByTagName('Style')).forEach(s=>{
+        const id=s.getAttribute('id');if(!id)return;
+        const ls=s.getElementsByTagName('LineStyle')[0];
+        const ps=s.getElementsByTagName('PolyStyle')[0];
+        styles[id]={};
+        if(ls){
+          const c=ls.getElementsByTagName('color')[0];
+          const w=ls.getElementsByTagName('width')[0];
+          if(c)styles[id].lc=kmlAbgrToHex(c.textContent.trim());
+          if(w)styles[id].lw=parseFloat(w.textContent)||1.5;
+        }
+        if(ps){
+          const c=ps.getElementsByTagName('color')[0];
+          if(c)styles[id].fc=kmlAbgrToHex(c.textContent.trim());
+        }
+      });
+      // Parse placemarks
+      let nPoly=0,nLine=0;
+      const bounds=new google.maps.LatLngBounds();
+      Array.from(xml.getElementsByTagName('Placemark')).forEach(pm=>{
+        const su=pm.querySelector('styleUrl');
+        const sid=su?su.textContent.replace('#','').trim():'';
+        const st=styles[sid]||{};
+        // Polygon
+        const polyEl=pm.querySelector('Polygon')||pm.getElementsByTagName('Polygon')[0];
+        if(polyEl){
+          const coordEl=polyEl.querySelector('coordinates')||polyEl.getElementsByTagName('coordinates')[0];
+          if(coordEl){
+            const pts=parseKMLCoords(coordEl.textContent);
+            if(pts.length>=3){
+              const pg=new google.maps.Polygon({
+                paths:pts,map,editable:false,
+                strokeColor:st.lc||'#0077b6',strokeWeight:2,strokeOpacity:.9,
+                fillColor:st.fc||'#0077b6',fillOpacity:.1,zIndex:2
+              });
+              importedOverlays.push(pg);
+              pts.forEach(p=>bounds.extend(p));nPoly++;
+            }
+          }
+        }
+        // LineString
+        const lineEl=pm.querySelector('LineString')||pm.getElementsByTagName('LineString')[0];
+        if(lineEl){
+          const coordEl=lineEl.querySelector('coordinates')||lineEl.getElementsByTagName('coordinates')[0];
+          if(coordEl){
+            const pts=parseKMLCoords(coordEl.textContent);
+            if(pts.length>=2){
+              const pl=new google.maps.Polyline({
+                path:pts,map,
+                strokeColor:st.lc||'#FFD600',strokeWeight:st.lw||1.5,strokeOpacity:.9,zIndex:5
+              });
+              importedOverlays.push(pl);
+              pts.forEach(p=>bounds.extend(p));nLine++;
+            }
+          }
+        }
+      });
+      if(nPoly+nLine===0){setStatus('stImport','Nenhuma geometria encontrada no KML.','err');return;}
+      if(!bounds.isEmpty())map.fitBounds(bounds);
+      $('btnLimparImport').style.display='';
+      if(nPoly>0)$('btnUsarImport').style.display='';
+      setStatus('stImport',`${nPoly} polígono(s), ${nLine} linha(s) importada(s).`,'ok');
+    }catch(err){setStatus('stImport','Erro: '+err.message,'err');}
+  };
+  reader.readAsText(file);
+}
+
+function limparImport(){
+  importedOverlays.forEach(o=>o.setMap(null));importedOverlays=[];
+  $('btnLimparImport').style.display='none';
+  $('btnUsarImport').style.display='none';
+  setStatus('stImport','','');
+}
+
+function usarPoligonosImportados(){
+  const polys=importedOverlays.filter(o=>o instanceof google.maps.Polygon);
+  if(polys.length===0){setStatus('stImport','Nenhum polígono no arquivo importado.','err');return;}
+
+  // Limpa estado atual de trabalho
+  if(drawPoly){drawPoly.setMap(null);drawPoly=null;}
+  if(drawLine){drawLine.setMap(null);drawLine=null;}
+  if(polyTempLine){polyTempLine.setMap(null);polyTempLine=null;}
+  offsetLines.forEach(l=>l.setMap(null));offsetLines=[];
+  classifiedSegs.forEach(s=>s.pl.setMap(null));classifiedSegs=[];
+  carreadorPolys.forEach(p=>p.setMap(null));carreadorPolys=[];
+  polyTempPts=[];lineTempPts=[];perfilSamples=null;
+
+  polys.forEach((imp,i)=>{
+    const path=imp.getPath().getArray();
+    imp.setMap(null); // remove overlay read-only
+    importedOverlays=importedOverlays.filter(o=>o!==imp);
+
+    const poly=new google.maps.Polygon({
+      paths:path,map,
+      strokeColor:'#0077b6',strokeWeight:2.5,strokeOpacity:.9,
+      fillColor:'#0077b6',fillOpacity:.07,
+      editable:i===0, // só o primeiro é editável como drawPoly ativo
+      zIndex:2
+    });
+
+    if(i===0){
+      drawPoly=poly;
+      const area=computeAreaHa(path);
+      $('areaVal').textContent=area.toFixed(2)+' ha';
+      $('areaBox').style.display='';
+      $('btnLimparPoly').style.display='';
+      $('btnKmlContorno').style.display='';
+      setStatus('stPoly','Contorno importado — '+area.toFixed(2)+' ha. Desenhe a linha base.','ok');
+      setMStatus('Contorno importado. Agora desenhe a linha base.','ok');
+    } else {
+      // Polígonos adicionais → arquiva como áreas sem linhas
+      areas.push({poly,offsets:[],cor:$('corLinhas').value||'#FFD600',esp:parseFloat($('espessuraLinhas').value)||1.5});
+    }
+  });
+
+  // Reset UI sections
+  ['secPerfil','secOffset','btnLimparOffset','btnExportKml','btnNovaArea',
+   'offsetInfo','elev-canvas','btnLimparLinha','btnFinLinha','linhaInfo',
+   'secDeclividade','btnClassificar','btnRelatorio','btnLimparClassif'].forEach(id=>{
+    const e=$(id);if(e)e.style.display='none';
+  });
+  if(polys.length>1)$('btnLimparTudo').style.display='';
+  $('btnUsarImport').style.display='none';
+  setStatus('stImport',polys.length+' talhão(ões) configurado(s) a partir do KML.','ok');
+}
+
+// ── Carreador / Divisão de Polígono ───────────────────────────────
+function criarCarreador(){
+  if(!drawPoly){setStatus('stCarreador','Desenhe o contorno primeiro.','err');return;}
+  if(!drawLine){setStatus('stCarreador','Desenhe a linha do carreador primeiro.','err');return;}
+  const largM=parseFloat($('larguraCarreador').value)||12;
+  const halfKm=largM/2/1000;
+
+  const polyPts=drawPoly.getPath().getArray().map(p=>[p.lng(),p.lat()]);
+  polyPts.push([...polyPts[0]]);
+  const turfPoly=turf.polygon([polyPts]);
+  const linePts2=drawLine.getPath().getArray().map(p=>[p.lng(),p.lat()]);
+  const lineGeo=turf.lineString(linePts2);
+
+  // Não limpa carreadorPolys anteriores (divisões passadas ficam no mapa)
+  // Apenas remove o drawPoly que está sendo dividido agora
+  if(drawPoly){drawPoly.setMap(null);drawPoly=null;}
+
+  try{
+    const buffer=turf.buffer(lineGeo,halfKm,{units:'kilometers'});
+    const remaining=turf.difference(turfPoly,buffer);
+    if(!remaining){setStatus('stCarreador','A linha não divide o polígono.','err');return;}
+
+    const parts=turf.flatten(remaining);
+    const cores=['#EF6C00','#7B1FA2','#00695C','#C62828','#37474F','#1565C0'];
+
+    parts.features.forEach((feat,i)=>{
+      const c=cores[i%2];
+      const coords=feat.geometry.type==='MultiPolygon'?feat.geometry.coordinates:[feat.geometry.coordinates];
+      coords.forEach(rings=>{
+        const paths=rings.map(ring=>ring.map(co=>({lat:co[1],lng:co[0]})));
+        const pg=new google.maps.Polygon({
+          paths,map,clickable:true,editable:true,
+          strokeColor:c,strokeWeight:2.5,strokeOpacity:.9,
+          fillColor:c,fillOpacity:.22,zIndex:4
+        });
+        pg._carCor=c; // guarda cor para restaurar ao sair do ativo
+        google.maps.event.addListener(pg,'click',()=>ativarAreaCarreador(pg));
+        carreadorPolys.push(pg);
+      });
+    });
+
+    // Linha base some após divisão — pronta para nova
+    limparSplineMarkers();
+    if(drawLine){drawLine.setMap(null);drawLine=null;}
+    lineTempPts=[];
+    $('btnLimparLinha').style.display='none';
+    $('linhaInfo').style.display='none';
+    $('secOffset').style.display='none';
+    $('secPerfil').style.display='none';
+    setStatus('stLinha','','');
+
+    $('btnLimparCarreador').style.display='';
+    setStatus('stCarreador',parts.features.length+' área(s). Clique em uma para ativá-la como talhão.','ok');
+  }catch(err){setStatus('stCarreador','Erro: '+err.message,'err');}
+}
+
+function ativarAreaCarreador(pg){
+  // Se já havia um drawPoly de carreador ativo, devolve ele para carreadorPolys
+  if(drawPoly&&drawPoly!==pg&&drawPoly._carCor){
+    const oldPg=drawPoly;
+    const oldCor=oldPg._carCor;
+    oldPg.setOptions({
+      strokeColor:oldCor,fillColor:oldCor,fillOpacity:.18,
+      strokeOpacity:.9,editable:true,clickable:true,zIndex:4
+    });
+    if(!carreadorPolys.includes(oldPg)){
+      carreadorPolys.push(oldPg);
+      google.maps.event.addListener(oldPg,'click',()=>ativarAreaCarreador(oldPg));
+    }
+  }
+
+  // Arquiva linhas de plantio do talhão anterior (ficam no mapa via areas[])
+  if(offsetLines.length>0){
+    areas.push({poly:drawPoly,offsets:[...offsetLines],
+      cor:$('corLinhas').value||'#FFD600',esp:parseFloat($('espessuraLinhas').value)||1.5});
+    offsetLines=[];
+    ['btnLimparOffset','btnExportKml','btnRelatorio',
+     'btnLimparClassif','offsetInfo','secDeclividade','btnNovaArea'].forEach(id=>{
+      const e=$(id);if(e)e.style.display='none';
+    });
+    // Mantém btnClassificar visível — há linhas arquivadas para classificar
+    $('btnClassificar').style.display='';
+    $('secDeclividade').style.display='';
+  }
+  // Limpa linha base do talhão anterior
+  limparSplineMarkers();
+  if(drawLine){drawLine.setMap(null);drawLine=null;}
+  lineTempPts=[];
+  $('btnLimparLinha').style.display='none';
+  $('linhaInfo').style.display='none';
+  $('secOffset').style.display='none';
+  $('secPerfil').style.display='none';
+  setStatus('stLinha','','');
+
+  // Remove pg de carreadorPolys e ativa como drawPoly
+  carreadorPolys=carreadorPolys.filter(p=>p!==pg);
+  pg.setOptions({
+    strokeColor:'#F9A825',strokeWeight:2.5,strokeOpacity:.95,
+    fillColor:'#FFF9C4',fillOpacity:.20,
+    editable:true,clickable:false,zIndex:2
+  });
+  drawPoly=pg;
+
+  const area=computeAreaHa(pg.getPath().getArray());
+  $('areaVal').textContent=area.toFixed(2)+' ha';
+  $('areaBox').style.display='';
+  $('btnLimparPoly').style.display='';
+  $('btnKmlContorno').style.display='';
+  setStatus('stCarreador','Talhão ativado: '+area.toFixed(2)+' ha. Desenhe a linha base e gere as linhas.','ok');
+  setMStatus('Talhão ativo (amarelo). Clique em outro talhão para trocar.','ok');
+}
+
+function limparCarreador(){
+  carreadorPolys.forEach(p=>p.setMap(null));carreadorPolys=[];
+  $('btnLimparCarreador').style.display='none';
+  setStatus('stCarreador','','');
+}
+
+// ── Relatório PDF ─────────────────────────────────────────────────
+function abrirModalRelatorio(){
+  const hoje=new Date();
+  $('relData').value=hoje.toISOString().slice(0,10);
+  $('modalRel').style.display='flex';
+}
+
+function gerarRelatorio(){
+  $('modalRel').style.display='none';
+  const cliente=$('relCliente').value||'—';
+  const fazenda=$('relFazenda').value||'—';
+  const consultor=$('relConsultor').value||'—';
+  const dataVal=$('relData').value;
+  const dataFmt=dataVal?new Date(dataVal+'T12:00').toLocaleDateString('pt-BR'):new Date().toLocaleDateString('pt-BR');
+  const key=localStorage.getItem('mapskey_pl')||$('apiKey').value;
+  const area=$('areaVal').textContent||'—';
+  const nLin=$('nLinhas').textContent||'—';
+  const espac=$('espacamento').value||'—';
+  const cor=$('corLinhas').value||'#FFD600';
+
+  // Monta URL do mapa estático com polígono
+  let staticUrl='';
+  if(drawPoly&&key){
+    const pts=drawPoly.getPath().getArray();
+    const pathStr=pts.map(p=>p.lat().toFixed(6)+','+p.lng().toFixed(6)).join('|');
+    const center=pts.reduce((a,p)=>({lat:a.lat+p.lat()/pts.length,lng:a.lng+p.lng()/pts.length}),{lat:0,lng:0});
+    staticUrl=`https://maps.googleapis.com/maps/api/staticmap?size=640x400&maptype=satellite`+
+      `&path=color:0x0077b6ff|weight:2|fillcolor:0x0077b611|${pathStr}`+
+      `&center=${center.lat.toFixed(6)},${center.lng.toFixed(6)}&zoom=15&key=${key}`;
+  }
+
+  // Tabela de declividade
+  let declivHtml='';
+  if(classifiedSegs.length>0){
+    const tbl=$('tabelaDeclividade').innerHTML;
+    declivHtml=`<div class="section"><div class="stitle">Classificação de Declividade</div>${tbl}</div>`;
+  }
+
+  const html=`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
+<title>Estudo de Plantio — Bolsa Irriga</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',Arial,sans-serif;font-size:11pt;color:#1a2535;background:#fff;padding:20mm 18mm}
+.header{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #0077b6;padding-bottom:10px;margin-bottom:14px}
+.brand{display:flex;align-items:center;gap:12px}
+.brand h1{font-size:16pt;font-weight:900;color:#003d5c}
+.brand p{font-size:8pt;color:#607080}
+.hdr-right{text-align:right;font-size:8pt;color:#607080;line-height:1.7}
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;background:#f0f7ff;padding:10px 12px;border-radius:8px;border:1px solid #d0e4f0}
+.info-item label{font-size:7pt;font-weight:800;color:#607080;text-transform:uppercase;letter-spacing:.05em;display:block}
+.info-item span{font-size:10pt;font-weight:700;color:#003d5c}
+.section{margin-bottom:14px}
+.stitle{font-size:9pt;font-weight:800;color:#0077b6;text-transform:uppercase;letter-spacing:.06em;border-left:4px solid #00b4d8;padding-left:8px;margin-bottom:8px}
+.stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stat-box{background:#f0f7ff;border:1px solid #d0e4f0;border-radius:7px;padding:8px 10px;text-align:center}
+.stat-box .v{font-size:14pt;font-weight:900;color:#003d5c}
+.stat-box .l{font-size:7pt;color:#607080;text-transform:uppercase;letter-spacing:.04em}
+.map-img{width:100%;border-radius:8px;border:1px solid #d0e4f0;display:block;margin-bottom:4px}
+.map-cap{font-size:7.5pt;color:#607080;text-align:center;margin-bottom:12px}
+table{width:100%;border-collapse:collapse;font-size:9pt}
+th{background:#0077b6;color:#fff;padding:5px 8px;text-align:left;font-size:8pt}
+td{padding:4px 8px;border-bottom:1px solid #e8edf2}
+tr:nth-child(even) td{background:#f8fbff}
+.footer{margin-top:16px;border-top:1px solid #d0e4f0;padding-top:8px;font-size:7.5pt;color:#607080;text-align:center;line-height:1.8}
+.decliv-sw{display:inline-block;width:12px;height:8px;border-radius:2px;vertical-align:middle}
+@media print{body{padding:10mm 12mm}.no-print{display:none}}
+</style></head><body>
+<div class="header">
+  <div class="brand">
+    <div><h1>Bolsa Irriga</h1><p>Estudo de Plantio — Laudo Técnico</p></div>
+  </div>
+  <div class="hdr-right">
+    João Paulo de Oliveira · Eng. Agrônomo<br>
+    CREA/CFE · Especialista em Irrigação<br>
+    <b>${dataFmt}</b>
+  </div>
+</div>
+
+<div class="info-grid">
+  <div class="info-item"><label>Produtor / Cliente</label><span>${cliente}</span></div>
+  <div class="info-item"><label>Propriedade / Fazenda</label><span>${fazenda}</span></div>
+  <div class="info-item"><label>Consultor Responsável</label><span>${consultor}</span></div>
+  <div class="info-item"><label>Data do Laudo</label><span>${dataFmt}</span></div>
+</div>
+
+${staticUrl?`<div class="section"><div class="stitle">Imagem de Satélite — Talhão</div>
+  <img class="map-img" src="${staticUrl}" onerror="this.style.display='none'">
+  <div class="map-cap">Imagem Google Maps Satellite · Contorno do talhão em azul</div>
+</div>`:''}
+
+<div class="section"><div class="stitle">Resumo do Talhão</div>
+<div class="stat-grid">
+  <div class="stat-box"><div class="v">${area}</div><div class="l">Área do talhão</div></div>
+  <div class="stat-box"><div class="v">${nLin}</div><div class="l">Linhas de plantio</div></div>
+  <div class="stat-box"><div class="v">${espac} m</div><div class="l">Espaçamento</div></div>
+</div></div>
+
+${declivHtml}
+
+<div class="footer">
+  Bolsa Irriga® — Av. Elias Abrão, nº 140 · Franca – SP · (16) 3702-6571 · bolsairriga.com.br<br>
+  © ${new Date().getFullYear()} João Paulo de Oliveira · Laudo gerado automaticamente — conferir dados em campo
+</div>
+<div class="no-print" style="text-align:center;margin-top:20px">
+  <button onclick="window.print()" style="padding:10px 28px;background:#0077b6;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">🖨 Imprimir / Salvar PDF</button>
+</div>
+</body></html>`;
+
+  const win=window.open('','_blank');
+  win.document.write(html);
+  win.document.close();
+}
+
+// ── Init ──────────────────────────────────────────────────────────
+const savedKey=localStorage.getItem('mapskey_pl');
+if(savedKey)$('apiKey').value=savedKey;
+</script>
+</body>
+</html>

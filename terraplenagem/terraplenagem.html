@@ -1,0 +1,2129 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reservatório Escavado — Terraplenagem</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{display:flex;height:100vh;font-family:'Segoe UI',sans-serif;background:#1a1a2e;}
+#sidebar{width:282px;min-width:282px;background:#16213e;color:#e0e0e0;display:flex;flex-direction:column;overflow-y:auto;z-index:1000;}
+#map{flex:1;position:relative;}
+.logo{padding:12px 14px 8px;border-bottom:1px solid #0f3460;}
+.logo h1{font-size:13px;color:#e2b96e;letter-spacing:.02em;}
+.logo p{font-size:10px;color:#7a8499;margin-top:2px;}
+.sec{padding:9px 12px;border-bottom:1px solid #0f3460;}
+.sec-title{font-size:9.5px;font-weight:700;letter-spacing:.1em;color:#7a8499;text-transform:uppercase;margin-bottom:7px;}
+.btn{display:flex;align-items:center;gap:7px;width:100%;padding:8px 11px;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;transition:.15s;margin-bottom:4px;text-align:left;}
+.btn:last-child{margin-bottom:0;}
+.btn-poly{background:#1565c0;color:#fff;}
+.btn-poly:hover{background:#1976d2;}
+.btn-finish{background:#00695c;color:#fff;display:none;}
+.btn-clr{background:transparent;color:#ef9a9a;border:1px solid #c62828;font-size:11px;}
+.btn-clr:hover{background:#c62828;color:#fff;}
+.btn-action{background:#e65100;color:#fff;}
+.btn-action:hover{background:#ef6c00;}
+.btn-action:disabled{background:#37474f;color:#607d8b;cursor:not-allowed;}
+.btn-sec{background:#004d40;color:#fff;}
+.btn-sec:hover{background:#00695c;}
+.btn-pdf{background:#b71c1c;color:#fff;}
+.btn-pdf:hover{background:#c62828;}
+label{display:block;font-size:10px;color:#90a4ae;margin-bottom:2px;margin-top:6px;}
+label:first-child{margin-top:0;}
+input[type=number],select,input[type=text],input[type=password]{width:100%;background:#0f3460;color:#e0e0e0;border:1px solid #1e4a7a;border-radius:4px;padding:5px 7px;font-size:12px;}
+.row2{display:flex;gap:7px;}
+.row2>div{flex:1;}
+.info-box{background:#0f3460;border-radius:5px;padding:8px;font-size:11px;}
+.info-row{display:flex;justify-content:space-between;margin-bottom:3px;padding-bottom:3px;border-bottom:1px solid rgba(255,255,255,.04);}
+.info-row:last-child{margin-bottom:0;border-bottom:none;padding-bottom:0;}
+.info-label{color:#78909c;font-size:10px;}
+.info-val{color:#e2b96e;font-weight:700;font-size:10.5px;}
+/* Results table */
+.res-cat{font-size:8.5px;font-weight:700;letter-spacing:.09em;color:#546e7a;text-transform:uppercase;background:#0a2035;padding:4px 8px 3px;margin:4px -12px 0;border-top:1px solid #0f3460;border-bottom:1px solid #0f3460;}
+.res-row{display:flex;justify-content:space-between;align-items:baseline;padding:2.5px 0;border-bottom:1px solid rgba(255,255,255,.04);gap:4px;}
+.res-lbl{color:#78909c;font-size:9.5px;flex:1;}
+.res-val{color:#e2b96e;font-weight:700;font-size:9.5px;text-align:right;white-space:nowrap;}
+.res-val.pos{color:#a5d6a7;}
+.res-val.neg{color:#ef9a9a;}
+.res-val.tot{color:#fff;font-size:10.5px;}
+.res-val.sub{color:#80cbc4;}
+.res-row.indent{padding-left:10px;}
+.res-row.subtot{background:rgba(255,255,255,.04);}
+#status{padding:7px 12px;font-size:11px;min-height:30px;border-top:1px solid #0f3460;color:#90a4ae;flex-shrink:0;}
+#status.ok{color:#a5d6a7;}
+#status.err{color:#ef9a9a;}
+#status.info{color:#81d4fa;}
+.leaflet-container{background:#111;}
+.vertex-marker{width:9px;height:9px;background:#fff;border:2px solid #1565c0;border-radius:50%;cursor:grab;margin:-4.5px 0 0 -4.5px;}
+.pt-marker{width:18px;height:18px;background:#c62828;border:2px solid #fff;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:9px;font-weight:900;cursor:default;margin:-9px 0 0 -9px;}
+.search-item{padding:5px 7px;font-size:10.5px;color:#cfd8dc;cursor:pointer;border-bottom:1px solid #1e4a7a;line-height:1.35;}
+.search-item:last-child{border-bottom:none;}
+.search-item:hover{background:#1565c0;color:#fff;}
+.search-item strong{display:block;font-size:11.5px;color:#e2b96e;}
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9999;align-items:center;justify-content:center;}
+.modal-bg.open{display:flex;}
+.modal{background:#16213e;border:1px solid #1e4a7a;border-radius:10px;padding:18px;max-width:1100px;width:96%;color:#e0e0e0;font-size:12px;line-height:1.55;position:relative;max-height:94vh;overflow-y:auto;}
+.modal h2{font-size:14px;font-weight:700;color:#e2b96e;margin-bottom:10px;}
+.modal-close{position:absolute;top:10px;right:12px;background:none;border:none;color:#78909c;font-size:18px;cursor:pointer;}
+.modal-close:hover{color:#e0e0e0;}
+.divider{height:1px;background:#0f3460;margin:6px 0;}
+#mapLegend{display:none;position:absolute;bottom:28px;left:8px;background:rgba(12,22,48,.92);border:1px solid #1e4a7a;border-radius:6px;padding:7px 10px;font-size:10.5px;color:#e0e0e0;z-index:500;line-height:1.9;min-width:170px;}
+#northArrow{display:none;position:absolute;top:10px;right:10px;background:rgba(12,22,48,.88);border-radius:50%;width:36px;height:36px;z-index:500;align-items:center;justify-content:center;flex-direction:column;font-size:9px;color:#e0e0e0;font-weight:700;line-height:1;}
+#drawTip{display:none;position:absolute;background:rgba(0,0,0,.82);color:#fff;font-size:12px;font-weight:700;padding:4px 11px;border-radius:5px;pointer-events:none;z-index:800;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.4);}
+.modo-btn{flex:1;padding:7px 4px;border:1px solid #1e4a7a;border-radius:5px;background:#0f3460;color:#90a4ae;font-size:11px;font-weight:600;cursor:pointer;text-align:center;}
+.modo-btn.ativo{background:#1565c0;color:#fff;border-color:#1565c0;}
+.modo-btn:hover:not(.ativo){background:#1e4a7a;color:#e0e0e0;}
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <div class="logo">
+    <div style="display:flex;align-items:center;gap:7px;margin-bottom:3px;">
+      <img src="../logo perfil branca.png" alt="" onerror="this.style.display='none'" style="height:28px;width:28px;object-fit:contain;background:#fff;border-radius:5px;padding:2px;">
+      <h1>Reservatório Escavado <span style="font-size:9px;color:#78909c;font-weight:400">Terraplenagem</span></h1>
+    </div>
+    <p>João Paulo de Oliveira · Eng. Agrônomo</p>
+  </div>
+
+  <!-- Tipo de Cálculo -->
+  <div class="sec">
+    <div class="sec-title">Tipo de Cálculo</div>
+    <div style="display:flex;gap:6px;">
+      <button id="btnModo1" class="modo-btn ativo" onclick="setCalcMode(1)">📐 Polígono no Mapa</button>
+      <button id="btnModo2" class="modo-btn" onclick="setCalcMode(2)">📂 Importar KML</button>
+    </div>
+  </div>
+
+  <!-- Google Maps Key -->
+  <div class="sec">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">
+      <div class="sec-title" style="margin-bottom:0;">Google Maps API</div>
+      <button style="background:none;border:1px solid #37474f;color:#78909c;border-radius:50%;width:20px;height:20px;font-size:10px;cursor:pointer;" onclick="$('modalChave').classList.add('open')">?</button>
+    </div>
+    <div style="display:flex;gap:5px;">
+      <input type="password" id="gmKey" placeholder="Cole sua chave AIzaSy…" style="flex:1;font-size:10px;" onkeydown="if(event.key==='Enter') salvarKey()">
+      <button onclick="salvarKey()" style="background:#1565c0;color:#fff;border:none;border-radius:4px;padding:5px 9px;cursor:pointer;font-weight:700;font-size:12px;">✓</button>
+    </div>
+    <div id="keyStatus" style="font-size:10px;color:#78909c;margin-top:3px;">Chave necessária para elevações</div>
+  </div>
+
+  <!-- Buscar Local -->
+  <div class="sec">
+    <div class="sec-title">Buscar Local</div>
+    <div style="display:flex;gap:5px;">
+      <input type="text" id="searchInput" placeholder="Cidade, fazenda, endereço…" style="flex:1;font-size:11px;" onkeydown="if(event.key==='Enter') buscarLocal()">
+      <button onclick="buscarLocal()" style="background:#1565c0;color:#fff;border:none;border-radius:4px;padding:5px 9px;cursor:pointer;font-weight:700;">🔍</button>
+    </div>
+    <div id="searchResults" style="display:none;margin-top:3px;background:#0f3460;border-radius:4px;max-height:120px;overflow-y:auto;"></div>
+  </div>
+
+  <!-- 1. Espelho -->
+  <div class="sec">
+    <div class="sec-title">1. Espelho d'Água (Contorno NA)</div>
+    <!-- Modo 1: desenhar no mapa -->
+    <div id="secDesenho">
+      <button class="btn btn-poly" id="btnPoly" onclick="iniciarPoligono()">◼ Desenhar Contorno</button>
+      <button class="btn btn-finish" id="btnFechar" onclick="fecharPoligono()">✓ Fechar Contorno</button>
+      <button class="btn btn-clr" id="btnLimparPoly" onclick="limparPoligono()" style="display:none;">✕ Limpar</button>
+    </div>
+    <!-- Modo 2: importar KML -->
+    <div id="secImportarKML" style="display:none;">
+      <button class="btn btn-poly" onclick="document.getElementById('kmlFileInput').click()">📂 Abrir arquivo KML</button>
+      <input type="file" id="kmlFileInput" accept=".kml,.kmz" style="display:none;" onchange="importarKML(this)">
+      <button class="btn btn-clr" id="btnLimparKML" onclick="limparPoligono()" style="display:none;">✕ Limpar KML</button>
+      <div id="kmlNome" style="display:none;margin-top:4px;font-size:10px;color:#81d4fa;padding:3px 6px;background:#0f3460;border-radius:4px;word-break:break-all;"></div>
+    </div>
+    <!-- Info comum -->
+    <div id="polyInfo" style="display:none;margin-top:5px;background:#0f3460;border-radius:4px;padding:5px 9px;font-size:11px;">
+      <div style="display:flex;justify-content:space-between;margin-bottom:2px;">
+        <span style="color:#78909c;">Área espelho:</span>
+        <span id="iPolyArea" style="color:#e2b96e;font-weight:700;">—</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;">
+        <span style="color:#78909c;">Perímetro:</span>
+        <span id="iPolyPerim" style="color:#81d4fa;font-weight:700;">—</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. Parâmetros -->
+  <div class="sec">
+    <div class="sec-title">2. Parâmetros do Projeto</div>
+    <!-- Modo 1: volume útil como entrada -->
+    <div id="secVutil">
+      <label>Volume útil (m³)</label>
+      <input type="number" id="pVutil" value="10000" min="100" max="5000000" step="100" oninput="updateVutilHint()">
+      <div id="vutilHint" style="font-size:10px;color:#81d4fa;margin:-3px 0 5px;line-height:1.6;"></div>
+    </div>
+    <!-- Modo 2: profundidade H como entrada, volume é saída -->
+    <div id="secHdireto" style="display:none;">
+      <label>Profundidade H (m) <span style="color:#546e7a;font-size:9px;">altura útil de escavação</span></label>
+      <input type="number" id="pHdireto" value="3.0" min="0.5" max="30" step="0.1">
+    </div>
+    <label>Altura morta — h<sub>m</sub> (m) <small style="color:#607080;">(lâmina não captável no fundo)</small></label>
+    <input type="number" id="pHmort" value="0.5" min="0" max="5" step="0.1">
+    <div class="divider"></div>
+    <label>Talude interno — Ti (H : 1V)</label>
+    <input type="number" id="pTi" value="3" min="0.5" max="10" step="0.5">
+    <label>Talude externo — Te (H : 1V)</label>
+    <input type="number" id="pTe" value="1.5" min="0.5" max="10" step="0.5">
+    <label>Largura da crista (m)</label>
+    <input type="number" id="pLc" value="5" min="1" max="20" step="0.5">
+    <label>Borda livre (m)</label>
+    <input type="number" id="pBL" value="0.5" min="0.1" max="3" step="0.1">
+    <div class="divider"></div>
+    <label>Ajuste de cota NA (m) <span style="color:#546e7a;font-size:9px;">0 = NA na cota mais alta do perímetro</span></label>
+    <input type="number" id="pNaAbove" value="0" min="-5" max="20" step="0.1">
+    <div class="divider"></div>
+    <div class="row2">
+      <div>
+        <label>Empolamento Fe</label>
+        <input type="number" id="pFe" value="1.40" min="1" max="2" step="0.05">
+      </div>
+      <div>
+        <label>Compactação FC</label>
+        <input type="number" id="pFc" value="1.30" min="1" max="2" step="0.05">
+      </div>
+    </div>
+    <div class="divider"></div>
+    <div class="row2">
+      <div>
+        <label>Esp. limpeza (m)</label>
+        <input type="number" id="pHlimp" value="0.20" min="0.05" max="1" step="0.05">
+      </div>
+      <div>
+        <label>V caminhão (m³)</label>
+        <input type="number" id="pCaminhao" value="10" min="1" max="100" step="1">
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. Grade -->
+  <div class="sec">
+    <div class="sec-title">3. Grade de Elevação</div>
+    <select id="pGrid">
+      <option value="20">20 × 20 (rápido)</option>
+      <option value="25" selected>25 × 25 (padrão)</option>
+      <option value="30">30 × 30 (detalhado)</option>
+      <option value="40">40 × 40 (fino)</option>
+    </select>
+    <div id="gridInfo" style="margin-top:4px;font-size:10px;color:#78909c;">Desenhe o polígono para ver estimativa</div>
+  </div>
+
+  <!-- Dimensionar -->
+  <div class="sec">
+    <button class="btn btn-action" id="btnDim" onclick="dimensionar()" disabled>⚙ Dimensionar Reservatório</button>
+  </div>
+
+  <!-- Resultados -->
+  <div class="sec" id="secRes" style="display:none;">
+    <div class="sec-title">Resultados</div>
+    <div id="boxRes"></div>
+    <div style="margin-top:8px;display:flex;flex-direction:column;gap:4px;">
+      <button class="btn btn-sec" onclick="$('modalCortes').classList.add('open')">📊 Cortes Transversais</button>
+      <button class="btn" style="background:#4a148c;color:#fff;" onclick="equalizarTerra()">⚖ Equalizar Corte/Aterro</button>
+<button class="btn" style="background:#37474f;color:#fff;" onclick="gerarPlantaTecnica()">📋 Planta Técnica</button>
+      <button class="btn" style="background:#2e7d32;color:#fff;" onclick="gerarKML()">🗺️ Exportar KML</button>
+      <button class="btn" style="background:#1565c0;color:#fff;" onclick="gerarKML3D()">🌍 KML 3D — Google Earth</button>
+      <button class="btn btn-pdf" onclick="gerarPDF()">📄 Relatório PDF</button>
+    </div>
+  </div>
+
+  <!-- Dados do relatório -->
+  <div class="sec" id="secPDF" style="display:none;">
+    <div class="sec-title">Dados do Relatório</div>
+    <label>Consultor</label>
+    <input type="text" id="rConsultor" value="João Paulo de Oliveira">
+    <label>Cliente</label>
+    <input type="text" id="rCliente" placeholder="Nome do cliente">
+    <label>Propriedade</label>
+    <input type="text" id="rProp" placeholder="Nome da fazenda / projeto">
+  </div>
+
+  <div id="status">Desenhe o contorno do espelho d'água para começar.</div>
+</div>
+
+<div id="map">
+  <div id="drawTip"></div>
+  <div id="mapLegend"></div>
+  <div id="northArrow" style="display:none;position:absolute;top:10px;right:10px;background:rgba(12,22,48,.88);border-radius:50%;width:36px;height:36px;z-index:500;align-items:center;justify-content:center;flex-direction:column;font-size:9px;color:#e0e0e0;font-weight:700;line-height:1.2;text-align:center;">↑<br>N</div>
+</div>
+
+<!-- Modal Cortes Transversais -->
+<div class="modal-bg" id="modalCortes" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal" style="max-width:1060px;">
+    <button class="modal-close" onclick="$('modalCortes').classList.remove('open')">✕</button>
+    <h2>📊 Cortes Transversais</h2>
+    <div id="cortesContent" style="margin-top:8px;"></div>
+  </div>
+</div>
+
+
+<!-- Modal Chave API -->
+<div class="modal-bg" id="modalChave" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="$('modalChave').classList.remove('open')">✕</button>
+    <h2>🔑 Chave Google Maps API</h2>
+    <p style="color:#90a4ae;font-size:11px;margin-bottom:8px;">A chave ativa o mapa satélite Google e o serviço de elevação — necessário para calcular corte e aterro.</p>
+    <ol style="padding-left:16px;font-size:11px;color:#cfd8dc;">
+      <li style="margin-bottom:6px;">Acesse <strong>console.cloud.google.com</strong> e crie/selecione um projeto.</li>
+      <li style="margin-bottom:6px;">Ative <strong>Maps JavaScript API</strong> e <strong>Maps Elevation API</strong>.</li>
+      <li style="margin-bottom:6px;">Em <strong>Credenciais → + Criar Credencial → Chave de API</strong>, copie a chave.</li>
+      <li>Cole a chave no campo acima e pressione ✓.</li>
+    </ol>
+    <button onclick="$('modalChave').classList.remove('open')" style="margin-top:10px;width:100%;background:#1565c0;color:#fff;border:none;border-radius:5px;padding:8px;font-size:12px;font-weight:700;cursor:pointer;">Entendi</button>
+  </div>
+</div>
+
+<!-- ── Modal Vista 3D ────────────────────────────────────────────────────── -->
+<div id="modal3d" style="display:none;position:fixed;inset:0;background:#0d1b2a;z-index:10000;">
+  <canvas id="canvas3d" style="width:100%;height:100%;display:block;"></canvas>
+  <div id="m3d-inf" style="position:absolute;top:14px;left:14px;background:rgba(5,10,18,.72);color:#ffffffcc;font-size:11.5px;line-height:1.9;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,215,0,.22);pointer-events:none;display:none;"></div>
+  <div style="position:absolute;bottom:14px;left:50%;transform:translateX(-50%);color:#ffffff44;font-size:10px;letter-spacing:.6px;pointer-events:none;">Arraste: rotacionar &nbsp;·&nbsp; Scroll: zoom &nbsp;·&nbsp; Botão direito: mover</div>
+  <button onclick="fecharVista3D()" style="position:absolute;top:14px;right:14px;background:rgba(255,255,255,.13);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:7px;padding:7px 16px;font-size:13px;font-weight:700;cursor:pointer;">✕ Fechar</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.127.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.127.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.gridlayer.googlemutant@latest/dist/Leaflet.GoogleMutant.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+<script>
+// ── Utilitários ───────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+
+function updateVutilHint(){
+  const v=+($('pVutil').value)||0;
+  const h=$('vutilHint'); if(!h)return;
+  if(v<=0){h.textContent='';return;}
+  const Ti=2, ratio=1.5; // proporção 3:2 (lado longo × lado curto), talude 1:2
+  const parts=[2,3,4,5].map(H=>{
+    // Prismatóide L×W com W=L/ratio e talude Ti em todos os lados
+    // Ae=L×W (NA), Am=(L-H·Ti)×(W-H·Ti), Af=(L-2H·Ti)×(W-2H·Ti)
+    let lo=2*H*Ti*ratio+2,hi=4000;
+    for(let k=0;k<60;k++){
+      const L=(lo+hi)/2,W=L/ratio;
+      const Ae=L*W,Am=Math.max(0,L-H*Ti)*Math.max(0,W-H*Ti),Af=Math.max(0,L-2*H*Ti)*Math.max(0,W-2*H*Ti);
+      if(H/6*(Ae+4*Am+Af)<v)lo=L;else hi=L;
+    }
+    const L=Math.round((lo+hi)/2),W=Math.round(L/ratio);
+    return '<span style="white-space:nowrap">'+H+'m: ~'+L+'×'+W+'m</span>';
+  });
+  h.innerHTML='<span style="color:#78909c;">Ref. (3:2, Ti=1:2):</span> '+parts.join(' &nbsp;|&nbsp; ');
+}
+
+function setStatus(msg, tipo=''){const el=$('status');if(el){el.textContent=msg;el.className=tipo;}}
+function fmt(n,d=0){return(+n).toLocaleString('pt-BR',{minimumFractionDigits:d,maximumFractionDigits:d});}
+function haversineM(a,b){const R=6371000,dLat=(b.lat-a.lat)*Math.PI/180,dLng=(b.lng-a.lng)*Math.PI/180;const s=Math.sin(dLat/2)**2+Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.sin(dLng/2)**2;return R*2*Math.asin(Math.sqrt(s));}
+
+// ── Mapa ─────────────────────────────────────────────────────────────────────
+const map = L.map('map',{zoomControl:true,doubleClickZoom:false,preferCanvas:true}).setView([-21,-52],13);
+L.control.scale({imperial:false,position:'bottomright'}).addTo(map);
+const esriLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{attribution:'© Esri',maxZoom:21}).addTo(map);
+const esriLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',{maxZoom:21,opacity:.85}).addTo(map);
+let googleLayer=null;
+
+function ativarGoogleMaps(key){
+  if(!key) return;
+  if(window.google&&window.google.maps){_ativarMutant();return;}
+  const s=document.createElement('script');
+  s.src=`https://maps.googleapis.com/maps/api/js?key=${key}&v=weekly`;
+  s.onload=_ativarMutant;
+  s.onerror=()=>setStatus('Chave Google Maps inválida.','err');
+  document.head.appendChild(s);
+}
+function _ativarMutant(){
+  try{esriLayer.remove();esriLabels.remove();googleLayer=L.gridLayer.googleMutant({type:'hybrid',maxZoom:21}).addTo(map);$('keyStatus').textContent='Google Maps ativo ✓';$('keyStatus').style.color='#a5d6a7';}catch(e){setStatus('Erro ao ativar Google Maps.','err');}
+}
+function salvarKey(){const k=$('gmKey').value.trim();if(!k)return;localStorage.setItem('mapskey_terra',k);ativarGoogleMaps(k);}
+const savedKey=localStorage.getItem('mapskey_terra');
+if(savedKey){$('gmKey').value=savedKey;$('keyStatus').textContent='Carregando…';$('keyStatus').style.color='#81d4fa';ativarGoogleMaps(savedKey);}
+updateVutilHint();
+
+// ── Estado ────────────────────────────────────────────────────────────────────
+let modo='idle';
+let calcMode=1;
+let polyPts=[],polyMarkers=[],polyLayer=null,polyTempLine=null,rubberLine=null;
+let turfPoly=null;
+let gridCells=[],perimCells=[];
+let resultado=null;
+let overlayLayers=[];
+let corteMarkers=[],corteLines=[];
+
+function mkIcon(){return L.divIcon({className:'vertex-marker',iconSize:[9,9],iconAnchor:[4,4]});}
+function mkPtIcon(lbl){return L.divIcon({className:'pt-marker',html:lbl,iconSize:[18,18],iconAnchor:[9,9]});}
+
+// ── Busca ──────────────────────────────────────────────────────────────────────
+function buscarLocal(){
+  const q=$('searchInput').value.trim();if(!q)return;
+  const box=$('searchResults');box.style.display='block';
+  box.innerHTML='<div class="search-item" style="color:#78909c;">Buscando…</div>';
+  function show(items){
+    if(!items.length){box.innerHTML='<div class="search-item" style="color:#ef9a9a;">Sem resultados.</div>';return;}
+    box.innerHTML='';
+    items.forEach(r=>{const el=document.createElement('div');el.className='search-item';el.innerHTML=`<strong>${r.nome}</strong>${r.sub}`;el.onclick=()=>{map.setView([r.lat,r.lng],15);box.style.display='none';$('searchInput').value=r.nome;};box.appendChild(el);});
+  }
+  function usarNominatim(){fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=br&accept-language=pt-BR&q=${encodeURIComponent(q)}`).then(r=>r.json()).then(data=>show(data.map(r=>({nome:r.display_name.split(',')[0].trim(),sub:' — '+r.display_name.split(',').slice(1,3).join(',').trim(),lat:+r.lat,lng:+r.lon})))).catch(()=>{box.innerHTML='<div class="search-item" style="color:#ef9a9a;">Erro.</div>';});}
+  if(window.google&&window.google.maps&&window.google.maps.Geocoder){new google.maps.Geocoder().geocode({address:q,language:'pt-BR'},(res,status)=>{if(status==='OK'&&res&&res.length)show(res.slice(0,5).map(r=>({nome:r.formatted_address.split(',')[0].trim(),sub:' — '+r.formatted_address.split(',').slice(1).join(',').trim(),lat:r.geometry.location.lat(),lng:r.geometry.location.lng()})));else usarNominatim();});}else usarNominatim();
+}
+document.addEventListener('click',e=>{if(!e.target.closest('#searchResults')&&e.target.id!=='searchInput'){const b=$('searchResults');if(b)b.style.display='none';}});
+
+// ── Polígono ──────────────────────────────────────────────────────────────────
+function iniciarPoligono(){
+  limparPoligono();modo='poly';map.getContainer().style.cursor='crosshair';
+  $('btnPoly').style.background='#42a5f5';$('btnFechar').style.display='flex';
+  setStatus('Clique para adicionar vértices. Duplo-clique ou ✓ para fechar.','info');
+}
+function geoDistM(lat1,lng1,lat2,lng2){
+  var R=6371000,dLat=(lat2-lat1)*Math.PI/180,dLng=(lng2-lng1)*Math.PI/180;
+  var a=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)*Math.sin(dLng/2);
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+function calcPolyPerim(){
+  if(polyPts.length<2)return 0;
+  let d=0;
+  for(let i=1;i<polyPts.length;i++)d+=geoDistM(polyPts[i-1].lat,polyPts[i-1].lng,polyPts[i].lat,polyPts[i].lng);
+  return d;
+}
+function addPolyPt(ll){
+  const prev=polyPts.length>0?polyPts[polyPts.length-1]:null;
+  polyPts.push({lat:ll.lat,lng:ll.lng});
+  const mk=L.marker(ll,{icon:mkIcon(),draggable:true}).addTo(map);
+  const i=polyPts.length-1;
+  mk.on('drag',()=>{polyPts[i]={lat:mk.getLatLng().lat,lng:mk.getLatLng().lng};updatePolyDisplay();});
+  mk.on('dragend',()=>buildTurfPoly());
+  polyMarkers.push(mk);updatePolyDisplay();
+  if(prev){
+    const seg=geoDistM(prev.lat,prev.lng,ll.lat,ll.lng);
+    const tot=calcPolyPerim();
+    setStatus('Segmento: '+seg.toFixed(1)+' m  |  Parcial: '+tot.toFixed(0)+' m ('+polyPts.length+' vértices)','info');
+  }else{setStatus('1º vértice. Clique para continuar, duplo-clique ou ✓ para fechar.','info');}
+}
+function updatePolyDisplay(){
+  if(polyTempLine){polyTempLine.remove();polyTempLine=null;}
+  const pts=polyMarkers.map(m=>m.getLatLng());
+  if(pts.length>=2){
+    polyTempLine=L.polyline([...pts,pts[0]],{color:'#42a5f5',weight:2,dashArray:'6,4',opacity:.8}).addTo(map);
+    const p=$('iPolyPerim');if(p)p.textContent=calcPolyPerim().toFixed(0)+' m';
+  }
+}
+// ── Alternância de modo ────────────────────────────────────────────────────────
+function setCalcMode(m){
+  calcMode=m;
+  $('btnModo1').classList.toggle('ativo',m===1);
+  $('btnModo2').classList.toggle('ativo',m===2);
+  $('secDesenho').style.display=m===1?'block':'none';
+  $('secImportarKML').style.display=m===2?'block':'none';
+  $('secVutil').style.display=m===1?'block':'none';
+  $('secHdireto').style.display=m===2?'block':'none';
+  limparPoligono();
+  setStatus(m===1?'Desenhe o contorno do espelho d\'água para começar.':'Importe um KML com o limite do reservatório.','');
+}
+
+// ── Importar KML ───────────────────────────────────────────────────────────────
+function parseKMLPoly(text){
+  // Tenta encontrar a primeira sequência <coordinates>
+  const match=text.match(/<coordinates[^>]*>([\s\S]*?)<\/coordinates>/i);
+  if(!match)return null;
+  const raw=match[1].trim();
+  const pts=raw.split(/\s+/).filter(s=>s.includes(',')).map(s=>{
+    const parts=s.split(',');
+    const lng=parseFloat(parts[0]),lat=parseFloat(parts[1]);
+    return(isFinite(lng)&&isFinite(lat))?{lat,lng}:null;
+  }).filter(Boolean);
+  if(pts.length<3)return null;
+  // Remove ponto de fechamento duplicado se houver
+  const last=pts[pts.length-1];
+  if(Math.abs(pts[0].lat-last.lat)<1e-9&&Math.abs(pts[0].lng-last.lng)<1e-9)pts.pop();
+  return pts.length>=3?pts:null;
+}
+
+function importarKML(input){
+  const file=input.files[0];
+  if(!file)return;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    const pts=parseKMLPoly(e.target.result);
+    if(!pts){setStatus('KML inválido ou sem polígono encontrado.','err');return;}
+    // Limpa estado anterior
+    polyMarkers.forEach(m=>m.remove());polyMarkers=[];
+    if(polyLayer){polyLayer.remove();polyLayer=null;}
+    polyPts=pts;
+    buildTurfPoly();
+    if(!turfPoly){setStatus('Polígono KML inválido (menos de 3 pontos).','err');return;}
+    polyLayer=L.polygon(polyPts,{color:'#29b6f6',fillColor:'#64b5f6',fillOpacity:.25,weight:2}).addTo(map);
+    map.fitBounds(polyLayer.getBounds(),{padding:[30,30]});
+    $('btnLimparKML').style.display='flex';
+    $('kmlNome').style.display='block';
+    $('kmlNome').textContent='📄 '+file.name+' — '+pts.length+' vértices';
+    $('polyInfo').style.display='block';
+    const ha=(turf.area(turfPoly)/10000).toFixed(2);
+    $('iPolyArea').textContent=ha+' ha ('+fmt(turf.area(turfPoly))+' m²)';
+    $('btnDim').disabled=false;atualizarGridInfo();
+    setStatus('KML carregado ('+pts.length+' vértices). Ajuste os parâmetros e clique em Dimensionar.','ok');
+    // Reseta o input para permitir reimportar o mesmo arquivo
+    input.value='';
+  };
+  reader.readAsText(file);
+}
+
+function fecharPoligono(){
+  if(polyPts.length<3){setStatus('Mínimo 3 pontos.','err');return;}
+  if(polyTempLine){polyTempLine.remove();polyTempLine=null;}
+  cleanRubber();
+  modo='idle';map.getContainer().style.cursor='';
+  $('btnPoly').style.background='#1565c0';$('btnFechar').style.display='none';
+  polyPts=polyMarkers.map(m=>({lat:m.getLatLng().lat,lng:m.getLatLng().lng}));
+  if(polyLayer){polyLayer.remove();polyLayer=null;}
+  polyLayer=L.polygon(polyPts,{color:'#29b6f6',fillColor:'#64b5f6',fillOpacity:.25,weight:2}).addTo(map);
+  buildTurfPoly();
+  $('btnLimparPoly').style.display='flex';$('polyInfo').style.display='block';
+  const ha=(turf.area(turfPoly)/10000).toFixed(2);
+  $('iPolyArea').textContent=ha+' ha ('+fmt(turf.area(turfPoly))+' m²)';
+  $('btnDim').disabled=false;atualizarGridInfo();
+  setStatus('Contorno fechado. Defina os parâmetros e clique em Dimensionar.','ok');
+}
+function limparPoligono(){
+  cleanRubber();
+  polyMarkers.forEach(m=>m.remove());polyMarkers=[];polyPts=[];
+  if(polyLayer){polyLayer.remove();polyLayer=null;}
+  if(polyTempLine){polyTempLine.remove();polyTempLine=null;}
+  turfPoly=null;
+  $('btnLimparPoly').style.display='none';
+  $('btnLimparKML').style.display='none';
+  $('polyInfo').style.display='none';
+  $('kmlNome').style.display='none';
+  $('btnDim').disabled=true;$('secRes').style.display='none';$('secPDF').style.display='none';
+  gridCells=[];perimCells=[];resultado=null;
+  limparOverlays();limparCorteMarkers();
+  $('mapLegend').style.display='none';
+  document.getElementById('northArrow').style.display='none';
+  if(calcMode===1)setStatus('Desenhe o contorno do espelho d\'água para começar.','');
+  else setStatus('Importe um KML com o limite do reservatório.','');
+}
+function buildTurfPoly(){
+  if(polyPts.length<3){turfPoly=null;return;}
+  const coords=polyPts.map(p=>[p.lng,p.lat]);coords.push(coords[0]);
+  try{turfPoly=turf.polygon([coords]);turf.rewind(turfPoly,{mutate:true});}catch(e){turfPoly=null;}
+}
+function atualizarGridInfo(){
+  if(!turfPoly){$('gridInfo').textContent='Desenhe o polígono para ver estimativa';return;}
+  const N=parseInt($('pGrid').value)||25;
+  const approx=Math.round(N*N*0.78)+60;
+  $('gridInfo').textContent=`~${approx} pontos de elevação · ${Math.ceil(approx/500)} requisição(ões) API`;
+}
+$('pGrid').addEventListener('change',atualizarGridInfo);
+
+function cleanRubber(){
+  if(rubberLine){rubberLine.remove();rubberLine=null;}
+  $('drawTip').style.display='none';
+}
+map.on('click',e=>{if(modo==='poly')addPolyPt(e.latlng);});
+map.on('dblclick',e=>{if(modo==='poly'&&polyPts.length>=3)fecharPoligono();});
+map.on('mousemove',e=>{
+  if(modo==='poly'&&polyPts.length>0){
+    const prev=polyPts[polyPts.length-1];
+    const seg=geoDistM(prev.lat,prev.lng,e.latlng.lat,e.latlng.lng);
+    const tot=calcPolyPerim()+seg;
+    // Linha elástica do último vértice ao cursor
+    const ll1=[prev.lat,prev.lng], ll2=[e.latlng.lat,e.latlng.lng];
+    if(!rubberLine){
+      rubberLine=L.polyline([ll1,ll2],{color:'#fff',weight:1.5,dashArray:'5,5',opacity:.75,interactive:false}).addTo(map);
+    }else{rubberLine.setLatLngs([ll1,ll2]);}
+    // Tooltip flutuante no mapa
+    const tip=$('drawTip');
+    const pt=map.latLngToContainerPoint(e.latlng);
+    tip.style.left=(pt.x+16)+'px';
+    tip.style.top=(pt.y-12)+'px';
+    tip.style.display='block';
+    tip.textContent=seg.toFixed(1)+' m  (perímetro: '+tot.toFixed(0)+' m)';
+  }else if(rubberLine||$('drawTip').style.display==='block'){cleanRubber();}
+});
+
+// ── Elevações ─────────────────────────────────────────────────────────────────
+async function fetchElevations(points){
+  if(!window.google||!window.google.maps)throw new Error('Chave Google Maps API necessária para buscar elevações.');
+  const elevator=new google.maps.ElevationService();
+  const BATCH=500,elevs=new Array(points.length).fill(null);
+  for(let i=0;i<points.length;i+=BATCH){
+    const batch=points.slice(i,i+BATCH);
+    const locs=batch.map(p=>new google.maps.LatLng(p.lat,p.lng));
+    await new Promise((res,rej)=>{elevator.getElevationForLocations({locations:locs},(results,status)=>{if(status!=='OK'||!results){rej(new Error('Elevation API: '+status));return;}results.forEach((r,j)=>{elevs[i+j]=r.elevation;});res();});});
+  }
+  return elevs;
+}
+
+function buildSamplePoints(N){
+  if(!turfPoly)return{inside:[],perim:[]};
+  const bbox=turf.bbox(turfPoly);
+  const latMin=bbox[1],latMax=bbox[3],lngMin=bbox[0],lngMax=bbox[2];
+  const dLat=(latMax-latMin)/(N-1),dLng=(lngMax-lngMin)/(N-1);
+  const inside=[];
+  for(let r=0;r<N;r++){for(let c=0;c<N;c++){const lat=latMin+r*dLat,lng=lngMin+c*dLng;if(turf.booleanPointInPolygon(turf.point([lng,lat]),turfPoly))inside.push({lat,lng});}}
+  const NPERIM=60,perim=[];
+  const line=turf.polygonToLine(turfPoly);
+  const totalLen=turf.length(line,{units:'kilometers'});
+  for(let i=0;i<NPERIM;i++){const d=totalLen*i/NPERIM;const pt=turf.along(line,d,{units:'kilometers'});perim.push({lat:pt.geometry.coordinates[1],lng:pt.geometry.coordinates[0]});}
+  return{inside,perim};
+}
+
+// ── Algoritmos ────────────────────────────────────────────────────────────────
+function polyArea(g){try{return turf.area(g);}catch(e){return 0;}}
+function bufferedArea(tPoly,offsetM){
+  if(offsetM>=0)return polyArea(tPoly);
+  try{const b=turf.buffer(tPoly,offsetM/1000,{units:'kilometers',steps:32});return b?polyArea(b):0;}catch(e){return 0;}
+}
+function bufferedPoly(tPoly,offsetM){
+  try{return turf.buffer(tPoly,offsetM/1000,{units:'kilometers',steps:32});}catch(e){return null;}
+}
+function prismatoidVol(Ae,Am,Af,H){return(H/6)*(Ae+4*Am+Af);}
+function bisectDepth(tPoly,Ae,Ti,Vdesired){
+  let lo=0.05,hi=60;
+  for(let i=0;i<80;i++){
+    const H=(lo+hi)/2;
+    const Af=bufferedArea(tPoly,-H*Ti);
+    const Am=bufferedArea(tPoly,-H*Ti/2);
+    const Vt=prismatoidVol(Ae,Am,Af,H);
+    if(Math.abs(Vt-Vdesired)<0.5||Math.abs(Vt-Vdesired)/Math.max(Vdesired,1)<0.0001)return H;
+    if(Vt<Vdesired)lo=H;else hi=H;
+  }
+  return(lo+hi)/2;
+}
+
+const _bc={};
+function distToEdgeM(tPoly,lat,lng){
+  let boundary=_bc.line;
+  if(!boundary){boundary=turf.polygonToLine(tPoly);_bc.line=boundary;}
+  const near=turf.nearestPointOnLine(boundary,turf.point([lng,lat]));
+  return near.properties.dist*1000;
+}
+
+function calcCorte(cells,tPoly,z_na,z_fundo,H,Ti){
+  _bc.line=null;let Vcut=0;
+  cells.forEach(cell=>{
+    const distM=distToEdgeM(tPoly,cell.lat,cell.lng);
+    const z_floor=(distM>=H*Ti)?z_fundo:(z_na-distM/Ti);
+    Vcut+=Math.max(0,cell.elev-z_floor)*cell.areaM2;
+  });
+  return Vcut;
+}
+
+function calcAterro(perimPts,z_crista,Lc,Te){
+  let Vfill=0;
+  for(let i=0;i<perimPts.length;i++){
+    const A=perimPts[i],B=perimPts[(i+1)%perimPts.length];
+    const segLen=haversineM(A,B);
+    const h=Math.max(0,z_crista-A.elev);
+    Vfill+=(Lc*h+Te*h*h/2)*segLen;
+  }
+  return Vfill;
+}
+
+// ── Equalizar Corte/Aterro — bisseção no z_na (Civil 3D mass balance) ────────
+function equalizarTerra(){
+  if(!resultado||!gridCells.length||!perimCells.length){alert('Dimensione o reservatório primeiro.');return;}
+  const r=resultado,p=r.p,H=r.H;
+
+  // Pré-calcula distâncias ao contorno uma única vez (independentes de z_na)
+  const boundary=turf.polygonToLine(turfPoly);
+  const cellDists=gridCells.map(cell=>{
+    const near=turf.nearestPointOnLine(boundary,turf.point([cell.lng,cell.lat]));
+    return near.properties.dist*1000;
+  });
+  function calcCorteRapido(z_na,z_fundo){
+    let Vc=0;
+    for(let i=0;i<gridCells.length;i++){
+      const d=cellDists[i];
+      const zf=(d>=H*p.Ti)?z_fundo:(z_na-d/p.Ti);
+      Vc+=Math.max(0,gridCells[i].elev-zf)*gridCells[i].areaM2;
+    }
+    return Vc;
+  }
+  // f(z_na) = Vcut - Vfill_nec → positivo = sobra, negativo = falta
+  // f decresce com z_na (NA alto → mais aterro, menos corte)
+  function delta(z_na){
+    return calcCorteRapido(z_na,z_na-H)-calcAterro(perimCells,z_na+p.BL,p.Lc,p.Te)*p.Fc;
+  }
+
+  const z_max=perimCells.reduce((s,c)=>Math.max(s,c.elev),-Infinity);
+  const z_min=perimCells.reduce((s,c)=>Math.min(s,c.elev),Infinity);
+  const lo0=z_min-3, hi0=z_max+3;
+  const fLo=delta(lo0), fHi=delta(hi0);
+
+  if(fLo<=0){setStatus('⚠ Corte insuficiente mesmo no nível mínimo — terreno côncavo. Resultado mantido.','err');return;}
+  if(fHi>=0){setStatus('⚠ Excesso de corte em qualquer nível — nível máximo já era suficiente.','ok');return;}
+
+  // Bisseção: f(lo0)>0, f(hi0)<0
+  let lo=lo0,hi=hi0;
+  for(let k=0;k<60;k++){const mid=(lo+hi)/2;if(delta(mid)>0)lo=mid;else hi=mid;}
+  const z_na_eq=+((lo+hi)/2).toFixed(2);
+  const z_cr_eq=+(z_na_eq+p.BL).toFixed(2);
+  const z_fd_eq=+(z_na_eq-H).toFixed(2);
+
+  // Recalcular valores derivados
+  const h_at_avg=Math.max(0,+(z_cr_eq-r.z_terreno).toFixed(2));
+  const h_esc_avg=Math.max(0,+(r.z_terreno-z_fd_eq).toFixed(2));
+  const Vcut=calcCorteRapido(z_na_eq,z_fd_eq);
+  const Vfill_tin=calcAterro(perimCells,z_cr_eq,p.Lc,p.Te);
+  const Vfill_nec=Vfill_tin*p.Fc;
+  const balanco=+(Vcut-Vfill_nec).toFixed(0);
+  const V_bota=Math.max(0,balanco);
+  const peExtBuf=r.cristaBuf?(buildVariablePeExt(r.cristaBuf,perimCells,z_cr_eq,p.Te)||bufferedPoly(r.cristaBuf,h_at_avg*p.Te)):null;
+  const A_pe_total=peExtBuf?turf.area(peExtBuf):r.Ae;
+  const V_limpeza=A_pe_total*p.h_limp;
+  const n_bota=V_bota>0?Math.ceil(V_bota/p.V_caminhao):0;
+  const n_limp=Math.ceil(V_limpeza/p.V_caminhao);
+
+  Object.assign(resultado,{
+    z_na:z_na_eq,z_crista:z_cr_eq,z_fundo:z_fd_eq,
+    h_at_avg,h_esc_avg,
+    Vcut,Vfill_tin,Vfill_nec,Vfill_delta:Vfill_nec-Vfill_tin,balanco,
+    peExtBuf,A_pe_total,V_limpeza,V_bota,n_bota,n_limp,
+    h_at_A:Math.max(0,z_cr_eq-r.z_t_A),
+    h_at_C:Math.max(0,z_cr_eq-r.z_t_C),
+  });
+
+  mostrarResultados();desenharOverlays();marcarCortes();gerarCortesSVG();
+  const dif=(z_na_eq-z_max).toFixed(2);
+  setStatus('⚖ Equalizado: NA='+z_na_eq+' m ('+dif+' m vs cota máx). Corte ≈ Aterro — saldo: '+balanco.toLocaleString('pt-BR')+' m³.','ok');
+}
+
+// ── Limpar overlays ───────────────────────────────────────────────────────────
+function limparOverlays(){overlayLayers.forEach(l=>l.remove());overlayLayers=[];}
+function limparCorteMarkers(){corteMarkers.forEach(m=>m.remove());corteMarkers=[];corteLines.forEach(l=>l.remove());corteLines=[];}
+
+// ── Talude externo de largura variável (baseado na cota real do terreno) ──────
+function buildVariablePeExt(cristaBufGeo, perimCells, z_crista, Te) {
+  if(!cristaBufGeo||!perimCells||!perimCells.length) return null;
+  const coords = cristaBufGeo.geometry.coordinates[0];
+  const n = coords.length - 1;
+  // centroide para orientar a normal de saída
+  let cx=0, cy=0;
+  for(let i=0;i<n;i++){cx+=coords[i][0];cy+=coords[i][1];}
+  cx/=n; cy/=n;
+  // interpolação da cota mais próxima do perímetro
+  function nearestElev(lng, lat) {
+    let best=perimCells[0], bestD=Infinity;
+    const c0=Math.cos(lat*Math.PI/180);
+    for(const c of perimCells){
+      const d=(c.lng-lng)*(c.lng-lng)*c0*c0+(c.lat-lat)*(c.lat-lat);
+      if(d<bestD){bestD=d;best=c;}
+    }
+    return best.elev;
+  }
+  const ring=[];
+  for(let i=0;i<n;i++){
+    const prev=coords[(i-1+n)%n], curr=coords[i], next=coords[(i+1)%n];
+    const e1=[curr[0]-prev[0],curr[1]-prev[1]], e2=[next[0]-curr[0],next[1]-curr[1]];
+    let tx=(e1[0]+e2[0]), ty=(e1[1]+e2[1]);
+    const tm=Math.sqrt(tx*tx+ty*ty);
+    if(tm<1e-15){ring.push([...curr]);continue;}
+    tx/=tm; ty/=tm;
+    // normal perpendicular (apontando para fora do centroide)
+    let nx=ty, ny=-tx;
+    if((curr[0]-cx)*nx+(curr[1]-cy)*ny<0){nx=-nx;ny=-ny;}
+    const elev=nearestElev(curr[0],curr[1]);
+    const h_at=Math.max(0, z_crista-elev);
+    const dm=h_at*Te;
+    const c0=Math.cos(curr[1]*Math.PI/180);
+    ring.push([curr[0]+nx*dm/(111320*c0), curr[1]+ny*dm/111320]);
+  }
+  ring.push([...ring[0]]);
+  try{
+    const poly=turf.polygon([ring]);
+    turf.rewind(poly,{mutate:true});
+    return poly;
+  }catch(e){return null;}
+}
+
+// ── DIMENSIONAR ───────────────────────────────────────────────────────────────
+async function dimensionar(){
+  if(!turfPoly){setStatus('Desenhe o contorno do espelho d\'água primeiro.','err');return;}
+  if(!window.google||!window.google.maps){setStatus('Ative o Google Maps (chave API) para buscar elevações.','err');return;}
+
+  const p={
+    Vutil:    calcMode===1?(+($('pVutil').value)||10000):0,
+    h_mort:   +($('pHmort').value)||0,
+    Ti:       +($('pTi').value)||3,
+    Te:       +($('pTe').value)||1.5,
+    Lc:       +($('pLc').value)||5,
+    BL:       +($('pBL').value)||0.5,
+    h_na_ab:  +($('pNaAbove').value)||0,
+    Fe:       +($('pFe').value)||1.40,
+    Fc:       +($('pFc').value)||1.30,
+    h_limp:   +($('pHlimp').value)||0.20,
+    V_caminhao: +($('pCaminhao').value)||10,
+    N:        parseInt($('pGrid').value)||25,
+  };
+  $('btnDim').disabled=true;$('btnDim').textContent='⏳ Buscando elevações…';
+  setStatus('Buscando elevações — aguarde…','info');
+
+  try{
+    const {inside,perim}=buildSamplePoints(p.N);
+    if(!inside.length)throw new Error('Nenhum ponto da grade dentro do polígono.');
+
+    const allPts=[...inside,...perim];
+    setStatus(`Buscando ${allPts.length} elevações…`,'info');
+    const elevs=await fetchElevations(allPts);
+
+    const ni=inside.length;
+    const bbox=turf.bbox(turfPoly);
+    const avgLat=(bbox[1]+bbox[3])/2;
+    const mPerDegLat=111320,mPerDegLng=111320*Math.cos(avgLat*Math.PI/180);
+    const cellAreaM2=(((bbox[3]-bbox[1])/p.N)*mPerDegLat)*(((bbox[2]-bbox[0])/p.N)*mPerDegLng);
+
+    gridCells=inside.map((pt,i)=>({...pt,elev:elevs[i]??0,areaM2:cellAreaM2}));
+    perimCells=perim.map((pt,i)=>({...pt,elev:elevs[ni+i]??0}));
+
+    // Cotas
+    const z_terreno=perimCells.reduce((s,c)=>s+c.elev,0)/perimCells.length;
+    const z_terreno_max=perimCells.reduce((s,c)=>Math.max(s,c.elev),-Infinity);
+    // NA sobe até o ponto mais alto do perímetro (reservatório cheio = BL abaixo da crista)
+    const z_na=+(z_terreno_max+p.h_na_ab).toFixed(2);
+    const z_crista=+(z_na+p.BL).toFixed(2);
+
+    // ── Modo 2: KML = pé externo → derivar NA por inversão ──────────────────
+    let perimCellsKml=null; // guarda perimCells do pé externo para buildVariablePeExt
+    if(calcMode===2){
+      perimCellsKml=[...perimCells];
+      const h_at_m2=Math.max(0.01,z_crista-z_terreno);
+      const crist_m2=bufferedPoly(turfPoly,-(h_at_m2*p.Te));
+      const naOff=p.Lc-p.BL*p.Ti;
+      const naBuf_m2=crist_m2?(naOff>0?bufferedPoly(crist_m2,-naOff):crist_m2):null;
+      if(!naBuf_m2)throw new Error('Parâmetros geram polígono NA inválido. Reduza taludes ou largura de crista.');
+      // Nearest-neighbor para estimar elevação nos pontos internos
+      const allCells=[...gridCells,...perimCells];
+      function elevNN(la,lo){let best=Infinity,el=z_terreno;allCells.forEach(c=>{const d=(c.lat-la)**2+(c.lng-lo)**2;if(d<best){best=d;el=c.elev;}});return el;}
+      // Filtrar gridCells para dentro da NA polygon
+      gridCells=gridCells.filter(pt=>{try{return turf.booleanPointInPolygon(turf.point([pt.lng,pt.lat]),naBuf_m2);}catch(e){return false;}});
+      // Perim da NA com elevação estimada
+      const naLine=turf.polygonToLine(naBuf_m2);
+      const naLen=turf.length(naLine,{units:'kilometers'});
+      perimCells=[];
+      for(let i=0;i<60;i++){const d=naLen*i/60;const pt=turf.along(naLine,d,{units:'kilometers'});const la=pt.geometry.coordinates[1],lo=pt.geometry.coordinates[0];perimCells.push({lat:la,lng:lo,elev:elevNN(la,lo)});}
+      // Atualizar turfPoly e mapa para NA polygon
+      turfPoly=naBuf_m2;
+      polyPts=naBuf_m2.geometry.coordinates[0].map(c=>({lat:c[1],lng:c[0]}));
+      if(polyLayer)polyLayer.remove();
+      polyLayer=L.polygon(polyPts,{color:'#29b6f6',fillColor:'#64b5f6',fillOpacity:.25,weight:2}).addTo(map);
+    }
+
+    setStatus('Calculando geometria…','info');
+    const Ae=turf.area(turfPoly);
+    let H,h_m,Vmort=0,Af,Am,Vtotal_calc,Vutil_calc,z_fundo;
+    if(calcMode===1){
+      // Passe 1: estima H ignorando volume morto
+      const H1=bisectDepth(turfPoly,Ae,p.Ti,p.Vutil);
+      const Af1=bufferedArea(turfPoly,-H1*p.Ti);
+      h_m=Math.min(p.h_mort,H1*0.9);
+      if(h_m>0){
+        const Af_top=bufferedArea(turfPoly,-(H1-h_m)*p.Ti);
+        const Am_mort=bufferedArea(turfPoly,-(H1-h_m/2)*p.Ti);
+        Vmort=prismatoidVol(Af1,Am_mort,Af_top,h_m);
+      }
+      // Passe 2: H correto com volume morto incluído
+      H=bisectDepth(turfPoly,Ae,p.Ti,p.Vutil+Vmort);
+    }else{
+      // Modo 2: H fornecido diretamente, volume é calculado
+      H=+($('pHdireto').value)||3;
+      h_m=Math.min(p.h_mort,H*0.9);
+      if(h_m>0){
+        const Af_hm=bufferedArea(turfPoly,-H*p.Ti);
+        const Af_top=bufferedArea(turfPoly,-(H-h_m)*p.Ti);
+        const Am_mort=bufferedArea(turfPoly,-(H-h_m/2)*p.Ti);
+        Vmort=prismatoidVol(Af_hm,Am_mort,Af_top,h_m);
+      }
+    }
+    z_fundo=+(z_na-H).toFixed(2);
+    Af=bufferedArea(turfPoly,-H*p.Ti);
+    Am=bufferedArea(turfPoly,-H*p.Ti/2);
+    Vtotal_calc=prismatoidVol(Ae,Am,Af,H);
+    Vutil_calc=Vtotal_calc-Vmort;
+
+    const h_prof=+(H+p.BL).toFixed(2);
+    const h_esc_avg=Math.max(0,+(z_terreno-z_fundo).toFixed(2));
+    const h_at_avg=Math.max(0,+(z_crista-z_terreno).toFixed(2));
+
+    // Corte e aterro
+    setStatus('Calculando corte e aterro…','info');
+    const Vcut=calcCorte(gridCells,turfPoly,z_na,z_fundo,H,p.Ti);
+    const Vfill_tin=calcAterro(perimCells,z_crista,p.Lc,p.Te);
+    const Vfill_nec=Vfill_tin*p.Fc;
+    const Vfill_delta=Vfill_nec-Vfill_tin;
+    const balanco=Vcut-Vfill_nec;
+    const comp_pct=Math.round((p.Fc-1)*100);
+
+    // Geomembrana
+    const boundary=turf.polygonToLine(turfPoly);
+    const Perim_na=turf.length(boundary,{units:'kilometers'})*1000;
+    const fundoBuf=bufferedPoly(turfPoly,-H*p.Ti);
+    const Perim_fd=fundoBuf?turf.length(turf.polygonToLine(fundoBuf),{units:'kilometers'})*1000:0;
+    const slopeLen=Math.sqrt(H*H+(H*p.Ti)*(H*p.Ti));  // from fundo to NA
+    const slopeAbove=Math.sqrt(p.BL*p.BL+(p.BL*p.Ti)*(p.BL*p.Ti));  // NA to crista_inner
+    const A_fundo=Af;
+    const A_talude=(Perim_na+Perim_fd)/2*slopeLen;
+    const A_borda=Perim_na*(slopeAbove+1.0);
+    const A_subtotal=A_fundo+A_talude+A_borda;
+    const A_sobreposi=A_subtotal*0.035;
+    const A_sobra=A_subtotal*0.10;
+    const A_total=A_subtotal+A_sobreposi+A_sobra;
+
+    // Polígonos para overlays e PDF
+    const cristaBuf=bufferedPoly(turfPoly,(p.Lc-p.BL*p.Ti));
+    const peExtBuf=cristaBuf?(buildVariablePeExt(cristaBuf,perimCellsKml||perimCells,z_crista,p.Te)||bufferedPoly(cristaBuf,h_at_avg*p.Te)):null;
+
+    // Limpeza e transporte
+    const A_pe_total=peExtBuf?turf.area(peExtBuf):Ae;
+    const V_limpeza=A_pe_total*p.h_limp;
+    const V_bota=Math.max(0,balanco);
+    const n_bota=V_bota>0?Math.ceil(V_bota/p.V_caminhao):0;
+    const n_limp=Math.ceil(V_limpeza/p.V_caminhao);
+
+    // Cross-section: A-B = longitudinal, C-D = transversal — ambos passam pelo centroide
+    const _cent=turf.centroid(turfPoly).geometry.coordinates; // [lng,lat]
+    const _cLng=_cent[0],_cLat=_cent[1];
+    // PCA nos perimCells → eixo principal real do polígono
+    {let _sxx=0,_syy=0,_sxy=0;
+    perimCells.forEach(pt=>{const dx=pt.lng-_cLng,dy=pt.lat-_cLat;_sxx+=dx*dx;_syy+=dy*dy;_sxy+=dx*dy;});
+    const _disc2=Math.sqrt(Math.max(0,(_sxx-_syy)**2+4*_sxy*_sxy));
+    const _lam=(_sxx+_syy+_disc2)/2;
+    const _v1x=_sxy,_v1y=_lam-_sxx,_v2x=_lam-_syy,_v2y=_sxy;
+    const _use1=(_v1x*_v1x+_v1y*_v1y>=_v2x*_v2x+_v2y*_v2y);
+    let _ex=_use1?_v1x:_v2x,_ey=_use1?_v1y:_v2y;
+    if(Math.abs(_ex)+Math.abs(_ey)<1e-12){_ex=1;_ey=0;}
+    const _eL=Math.sqrt(_ex*_ex+_ey*_ey);
+    var _uLg=_ex/_eL,_uLa=_ey/_eL;}
+    // Linha pelo centroide → intersecções com borda do polígono
+    const _BIG=0.05;
+    function _cutLine(dLng,dLat){
+      const ln=turf.lineString([[_cLng-dLng*_BIG,_cLat-dLat*_BIG],[_cLng+dLng*_BIG,_cLat+dLat*_BIG]]);
+      const xs=turf.lineIntersect(ln,turf.polygonToLine(turfPoly)).features;
+      if(xs.length<2) return null;
+      const c0=xs[0].geometry.coordinates,c1=xs[xs.length-1].geometry.coordinates;
+      function _elAt(lat2,lng2){let b=Infinity,el=z_na;perimCells.forEach(c=>{const d=(c.lat-lat2)**2+(c.lng-lng2)**2;if(d<b){b=d;el=c.elev;}});return el;}
+      return {ptL:{lat:c0[1],lng:c0[0]},ptR:{lat:c1[1],lng:c1[0]},z_tL:_elAt(c0[1],c0[0]),z_tR:_elAt(c1[1],c1[0])};
+    }
+    const _lc=_cutLine(_uLg,_uLa)||{ptL:perimCells[0],ptR:perimCells[0],z_tL:z_na,z_tR:z_na};
+    const _tc=_cutLine(-_uLa,_uLg)||{ptL:perimCells[0],ptR:perimCells[0],z_tL:z_na,z_tR:z_na};
+    const z_t_A=_lc.z_tL,z_t_B=_lc.z_tR,z_t_C=_tc.z_tL,z_t_D=_tc.z_tR;
+    const h_at_A=Math.max(0,z_crista-z_t_A);
+    const h_at_C=Math.max(0,z_crista-z_t_C);
+
+    resultado={
+      p, z_terreno, z_na, z_crista, z_fundo, H,
+      Ae, Af, Am, Vtotal_calc, Vutil_calc, Vmort, h_m,
+      h_prof, h_esc_avg, h_at_avg, comp_pct,
+      Vcut, Vfill_tin, Vfill_nec, Vfill_delta, balanco,
+      A_fundo, A_talude, A_borda, A_subtotal, A_sobreposi, A_sobra, A_total,
+      Perim_na, Perim_fd,
+      z_t_A, z_t_B, z_t_C, z_t_D, h_at_A, h_at_C,
+      pt_A:_lc.ptL, pt_B:_lc.ptR, pt_C:_tc.ptL, pt_D:_tc.ptR,
+      fundoBuf, cristaBuf, peExtBuf,
+      A_pe_total, V_limpeza, V_bota, n_bota, n_limp,
+    };
+
+    mostrarResultados();
+    desenharOverlays();
+    marcarCortes();
+    gerarCortesSVG();
+    setStatus('Dimensionamento concluído ✓','ok');
+  }catch(e){
+    console.error(e);setStatus('Erro: '+e.message,'err');
+  }finally{
+    $('btnDim').disabled=false;$('btnDim').textContent='⚙ Dimensionar Reservatório';
+  }
+}
+
+// ── Hachura SVG no mapa ───────────────────────────────────────────────────────
+function injetarHachura(){
+  const pane=map.getPane('overlayPane'); if(!pane)return;
+  const svg=pane.querySelector('svg'); if(!svg)return;
+  let defs=svg.querySelector('defs');
+  if(!defs){defs=document.createElementNS('http://www.w3.org/2000/svg','defs');svg.insertBefore(defs,svg.firstChild);}
+  const cfgs=[
+    {id:'hNA', color:'#29b6f6', angle:45,  w:7, sw:2.8},
+    {id:'hFD', color:'#0d47a1', angle:-45, w:7, sw:2.8},
+    {id:'hCR', color:'#8d6e45', angle:45,  w:7, sw:2.2},
+    {id:'hPE', color:'#2e7d32', angle:-45, w:9, sw:1.8},
+  ];
+  cfgs.forEach(cfg=>{
+    const ex=defs.querySelector('#'+cfg.id); if(ex)ex.remove();
+    const pat=document.createElementNS('http://www.w3.org/2000/svg','pattern');
+    pat.id=cfg.id; pat.setAttribute('patternUnits','userSpaceOnUse');
+    pat.setAttribute('width',cfg.w); pat.setAttribute('height',cfg.w);
+    pat.setAttribute('patternTransform','rotate('+cfg.angle+')');
+    const ln=document.createElementNS('http://www.w3.org/2000/svg','line');
+    ln.setAttribute('x1',cfg.w/2); ln.setAttribute('y1','0');
+    ln.setAttribute('x2',cfg.w/2); ln.setAttribute('y2',cfg.w);
+    ln.setAttribute('stroke',cfg.color); ln.setAttribute('stroke-width',cfg.sw);
+    pat.appendChild(ln); defs.appendChild(pat);
+  });
+}
+function applyHatch(lyr,id){
+  if(lyr&&lyr._path){lyr._path.setAttribute('fill','url(#'+id+')');}
+}
+map.on('zoomend moveend',injetarHachura);
+
+// ── Overlays no mapa ──────────────────────────────────────────────────────────
+function desenharOverlays(){
+  limparOverlays();
+  const r=resultado;
+  injetarHachura();
+
+  // Pé externo — verde (simula grama/talude externo revegetado)
+  if(r.peExtBuf){
+    const coords=r.peExtBuf.geometry.coordinates[0].map(c=>[c[1],c[0]]);
+    const lyr=L.polygon(coords,{color:'#1b5e20',fill:true,fillColor:'#4caf50',fillOpacity:.38,weight:2,dashArray:'7,4',opacity:.9}).addTo(map);
+    applyHatch(lyr,'hPE'); overlayLayers.push(lyr);
+  }
+  // Crista — marrom (simula terra compactada)
+  if(r.cristaBuf){
+    const coords=r.cristaBuf.geometry.coordinates[0].map(c=>[c[1],c[0]]);
+    const lyr=L.polygon(coords,{color:'#4e342e',fill:true,fillColor:'#8d6e45',fillOpacity:.50,weight:2.5,opacity:.95}).addTo(map);
+    applyHatch(lyr,'hCR'); overlayLayers.push(lyr);
+  }
+  // Espelho NA
+  if(polyLayer){
+    polyLayer.setStyle({color:'#29b6f6',fillColor:'#29b6f6',fillOpacity:.38,weight:2});
+    applyHatch(polyLayer,'hNA');
+  }
+  // Fundo
+  if(r.fundoBuf){
+    const coords=r.fundoBuf.geometry.coordinates[0].map(c=>[c[1],c[0]]);
+    const lyr=L.polygon(coords,{color:'#1565c0',fillColor:'#0d47a1',fillOpacity:.72,weight:1.5}).addTo(map);
+    applyHatch(lyr,'hFD'); overlayLayers.push(lyr);
+  }
+
+  // Legenda
+  const leg=$('mapLegend');
+  leg.innerHTML=`<div style="font-size:9px;font-weight:700;color:#90a4ae;letter-spacing:.08em;margin-bottom:4px;">PLANTA BAIXA</div>`
+    +`<div><span style="display:inline-block;width:16px;height:8px;background:#64b5f6;border:1.5px solid #29b6f6;vertical-align:middle;margin-right:5px;opacity:.8;"></span>Água (NA)</div>`
+    +`<div><span style="display:inline-block;width:16px;height:8px;background:#0d47a1;border:1.5px solid #1565c0;vertical-align:middle;margin-right:5px;"></span>Fundo</div>`
+    +`<div><span style="display:inline-block;width:16px;height:3px;background:#8d6e45;vertical-align:middle;margin-right:5px;margin-top:3px;"></span>Crista</div>`
+    +`<div><span style="display:inline-block;width:16px;height:0;border-top:2px dashed #1b5e20;vertical-align:middle;margin-right:5px;margin-top:5px;"></span>Talude externo</div>`
+    +`<div style="color:#c62828;">— — A-B (longitudinal)</div>`
+    +`<div style="color:#1565c0;">— — C-D (transversal)</div>`;
+  leg.style.display='block';
+  document.getElementById('northArrow').style.display='flex';
+}
+
+// ── Marcadores A, B, C, D ─────────────────────────────────────────────────────
+function marcarCortes(){
+  limparCorteMarkers();
+  const r=resultado;
+  const pts=[{pt:r.pt_A,lbl:'A'},{pt:r.pt_B,lbl:'B'},{pt:r.pt_C,lbl:'C'},{pt:r.pt_D,lbl:'D'}];
+  pts.forEach(({pt,lbl})=>{
+    const mk=L.marker([pt.lat,pt.lng],{icon:mkPtIcon(lbl)}).addTo(map);
+    corteMarkers.push(mk);
+  });
+  // A-B line
+  corteLines.push(L.polyline([[r.pt_A.lat,r.pt_A.lng],[r.pt_B.lat,r.pt_B.lng]],{color:'#c62828',weight:1.5,dashArray:'8,5',opacity:.8}).addTo(map));
+  // C-D line
+  corteLines.push(L.polyline([[r.pt_C.lat,r.pt_C.lng],[r.pt_D.lat,r.pt_D.lng]],{color:'#1565c0',weight:1.5,dashArray:'8,5',opacity:.8}).addTo(map));
+}
+
+// ── Resultados (sidebar) ──────────────────────────────────────────────────────
+function mostrarResultados(){
+  const r=resultado;
+  const balancoClass=r.balanco>0?'pos':'neg';
+  const balancoTxt=(r.balanco>0?'+':'')+fmt(r.balanco)+' m³ '+(r.balanco>0?'(excedente)':'(importar)');
+
+  function row(lbl,val,cls='',indent=false){
+    return `<div class="res-row${indent?' indent':''}">`
+      +`<span class="res-lbl">${lbl}</span>`
+      +`<span class="res-val${cls?' '+cls:''}">${val}</span></div>`;
+  }
+  function cat(t){return `<div class="res-cat">${t}</div>`;}
+
+  $('boxRes').innerHTML=
+    cat('Parâmetros do Projeto')
+    +row('Talude interno','1 : '+r.p.Ti)
+    +row('Talude externo','1 : '+r.p.Te)
+    +row('Largura da crista',r.p.Lc.toFixed(1)+' m')
+    +row('Borda livre',r.p.BL.toFixed(1)+' m')
+    +row('Empolamento Fe',r.p.Fe.toFixed(2))
+    +row('Compactação FC',r.p.Fc.toFixed(2)+' ('+r.comp_pct+'%)')
+
+    +cat('Geometria')
+    +row('Profundidade total',r.h_prof.toFixed(2)+' m')
+    +row('Altura de escavação',r.h_esc_avg.toFixed(2)+' m')
+    +row('Altura de aterro',r.h_at_avg.toFixed(2)+' m')
+    +row('Área do fundo',fmt(r.Af)+' m²')
+    +row('Área do espelho máx',fmt(r.Ae)+' m²')
+
+    +cat('Cotas de Elevação')
+    +row('Cota do fundo',r.z_fundo.toFixed(2)+' m')
+    +row('Cota do terreno',r.z_terreno.toFixed(2)+' m')
+    +row('Cota da crista',r.z_crista.toFixed(2)+' m')
+    +row('NA normal',r.z_na.toFixed(2)+' m')
+
+    +cat('Volumes')
+    +row('Volume total',fmt(r.Vtotal_calc)+' m³')
+    +row('Volume morto (h='+r.h_m.toFixed(2)+' m)',fmt(r.Vmort)+' m³')
+    +row('Volume útil',fmt(r.Vutil_calc)+' m³')
+
+    +cat('Movimentação de Terra')
+    +row('Corte — TIN',fmt(r.Vcut)+' m³')
+    +row('Aterro — TIN',fmt(r.Vfill_tin)+' m³')
+    +row('+ Compactação ('+r.comp_pct+'%)','+'+fmt(r.Vfill_delta)+' m³','sub',true)
+    +`<div class="res-row subtot"><span class="res-lbl">= Aterro necessário</span><span class="res-val">${fmt(r.Vfill_nec)} m³</span></div>`
+    +`<div class="res-row"><span class="res-lbl">Saldo de material</span><span class="res-val ${balancoClass}">${balancoTxt}</span></div>`
+
+    +cat('Geomembrana')
+    +row('Fundo',fmt(r.A_fundo)+' m²')
+    +row('Talude interno',fmt(r.A_talude)+' m²')
+    +row('Borda de fixação',fmt(r.A_borda)+' m²')
+    +`<div class="res-row subtot"><span class="res-lbl">+ Subtotal líquido</span><span class="res-val sub">${fmt(r.A_subtotal)} m²</span></div>`
+    +row('+ Sobreposição (3,5%)','+'+fmt(r.A_sobreposi)+' m²','sub',true)
+    +row('+ Sobra (10%)','+'+fmt(r.A_sobra)+' m²','sub',true)
+    +`<div class="res-row"><span class="res-lbl" style="font-weight:700;color:#e0e0e0;">Total</span><span class="res-val tot">${fmt(r.A_total)} m²</span></div>`
+
+    +cat('Limpeza e Transporte')
+    +row('Camada vegetal',r.p.h_limp.toFixed(2)+' m')
+    +row('Volume de limpeza',fmt(r.V_limpeza)+' m³')
+    +row('Área total (c/ taludes)',fmt(r.A_pe_total)+' m²')
+    +row('Volume por caminhão',r.p.V_caminhao+' m³')
+    +(r.n_bota>0?`<div class="res-row"><span class="res-lbl">Bota-fora excedente</span><span class="res-val pos">${r.n_bota} caminhões</span></div>`:'')
+    +row('Transporte limpeza',r.n_limp+' caminhões');
+
+  $('secRes').style.display='';
+  $('secPDF').style.display='';
+}
+
+// ── SVG Corte Transversal (seção completa A→B) ───────────────────────────────
+function svgCorte(id, titleStr, ptLabelL, ptLabelR, z_tL, z_tR, r, terrainProfile){
+  var p=r.p, Ti=p.Ti, Te=p.Te, Lc=p.Lc, BL=p.BL;
+  var H=r.H, zNa=r.z_na, zCr=r.z_crista, zFd=r.z_fundo;
+  var h_atL=Math.max(0,zCr-z_tL), h_atR=Math.max(0,zCr-z_tR);
+  var rFd=Math.max(4,Math.sqrt(r.Af/Math.PI)), fd_w=2*rFd;
+
+  // Coordenadas horizontais (m desde o pé externo esquerdo)
+  var x0=0, x1=h_atL*Te, x2=x1+Lc;
+  var x3=x2+(H+BL)*Ti, x4=x3+fd_w;
+  var x5=x4+(H+BL)*Ti, x6=x5+Lc, x7=x6+h_atR*Te;
+  var xNaL=x2+BL*Ti, xNaR=x4+H*Ti;
+  // Onde o terreno intersecta o talude interno (para linha de terreno)
+  var xTL=Math.min(x2+h_atL*Ti,x3), xTR=Math.max(x5-h_atR*Ti,x4);
+
+  // Canvas SVG
+  var W=760, SH=338, pt_=44, pb_=90, pl_=60, pr_=118;
+  var plotW=W-pl_-pr_, plotH=SH-pt_-pb_;
+  var zMin=Math.min(zFd,z_tL,z_tR)-2.8, zMax=zCr+3.0, zSp=zMax-zMin;
+  var xTot=Math.max(x7,1);
+  function sx(xm){return pl_+plotW*xm/xTot;}
+  function sy(z){return pt_+plotH*(1-(z-zMin)/zSp);}
+
+  var X0=sx(x0),X1=sx(x1),X2=sx(x2),X3=sx(x3),X4=sx(x4);
+  var X5=sx(x5),X6=sx(x6),X7=sx(x7);
+  var XNL=sx(xNaL),XNR=sx(xNaR),XTL=sx(xTL),XTR=sx(xTR);
+  var Yc=sy(zCr),Yn=sy(zNa),Yf=sy(zFd),YtL=sy(z_tL),YtR=sy(z_tR),Ybot=pt_+plotH;
+
+  // Poligonal de terreno: plana até x2 (z_tL), perfil amostrado de x2 a x5, plana até x7 (z_tR)
+  var tPts=[[X0,YtL],[X2,YtL]];
+  if(terrainProfile&&terrainProfile.length>0){
+    terrainProfile.forEach(function(tp){
+      if(tp.frac>0&&tp.frac<1) tPts.push([sx(x2+tp.frac*(x5-x2)),sy(tp.elev)]);
+    });
+  }
+  tPts.push([X5,YtR],[X7,YtR]);
+  var tPtsStr=tPts.map(function(p){return p[0].toFixed(1)+','+p[1].toFixed(1);}).join(' ');
+  var tPtsRevStr=[...tPts].reverse().map(function(p){return p[0].toFixed(1)+','+p[1].toFixed(1);}).join(' ');
+
+  function mk(segs,close){
+    return segs.map(function(s,i){return(i?'L':'M')+s[0].toFixed(1)+','+s[1].toFixed(1);}).join(' ')+(close?' Z':'');
+  }
+
+  var uid='s'+id;
+  var out=['<svg viewBox="0 0 '+W+' '+SH+'" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block;background:#fff;font-family:Arial,sans-serif;">'];
+
+  out.push('<defs>');
+  // CORTE: fundo rosa + hachura 45°
+  out.push('<pattern id="hC'+uid+'" patternUnits="userSpaceOnUse" width="9" height="9" patternTransform="rotate(45 0 0)"><rect width="9" height="9" fill="#fdecea"/><line x1="4.5" y1="0" x2="4.5" y2="9" stroke="#e57373" stroke-width="2.8"/></pattern>');
+  // ATERRO: fundo azul-claro + hachura -45°
+  out.push('<pattern id="hA'+uid+'" patternUnits="userSpaceOnUse" width="9" height="9" patternTransform="rotate(-45 0 0)"><rect width="9" height="9" fill="#e8f0fe"/><line x1="4.5" y1="0" x2="4.5" y2="9" stroke="#5c85d6" stroke-width="2.8"/></pattern>');
+  // Marcadores de seta vermelha
+  out.push('<marker id="arR'+uid+'" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><polygon points="0 0,7 3.5,0 7" fill="#c62828"/></marker>');
+  out.push('<marker id="arL'+uid+'" markerWidth="7" markerHeight="7" refX="1" refY="3.5" orient="auto"><polygon points="7 0,0 3.5,7 7" fill="#c62828"/></marker>');
+  // Clip abaixo do terreno → CORTE (segue a poligonal de terreno)
+  out.push('<clipPath id="clipC'+uid+'"><polygon points="'+tPtsStr+' '+W+','+SH+' 0,'+SH+'"/></clipPath>');
+  // Clip acima do terreno → ATERRO
+  out.push('<clipPath id="clipA'+uid+'"><polygon points="0,0 '+W+',0 '+tPtsRevStr+'"/></clipPath>');
+  out.push('</defs>');
+  out.push('<rect width="'+W+'" height="'+SH+'" fill="#fff"/>');
+
+  // 1. Corpo — CORTE (rosa, clip abaixo do terreno = área escavada)
+  var bodyD=mk([[X0,YtL],[X1,Yc],[X2,Yc],[X3,Yf],[X4,Yf],[X5,Yc],[X6,Yc],[X7,YtR]],true);
+  out.push('<path d="'+bodyD+'" fill="url(#hC'+uid+')" clip-path="url(#clipC'+uid+')" stroke="none"/>');
+
+  // 2. Corpo — ATERRO (azul, clip acima do terreno = área aterrada)
+  out.push('<path d="'+bodyD+'" fill="url(#hA'+uid+')" clip-path="url(#clipA'+uid+')" stroke="none"/>');
+
+  // 3. Linha de terreno natural (dourada) — poligonal com ondulação real
+  out.push('<polyline points="'+tPtsStr+'" fill="none" stroke="#c4963a" stroke-width="2.5" stroke-linejoin="round"/>');
+
+  // 3b. Linha de NA — nível de alagamento
+  out.push('<line x1="'+XNL.toFixed(1)+'" y1="'+Yn.toFixed(1)+'" x2="'+XNR.toFixed(1)+'" y2="'+Yn.toFixed(1)+'" stroke="#1565c0" stroke-width="2.2" stroke-dasharray="10,4"/>');
+
+  // 3c. Volume morto
+  if(r.h_m>0.05){
+    var XMortL=sx(x3-r.h_m*Ti),XMortR=sx(x4+r.h_m*Ti),Ymort=sy(zFd+r.h_m);
+    out.push('<line x1="'+XMortL.toFixed(1)+'" y1="'+Ymort.toFixed(1)+'" x2="'+XMortR.toFixed(1)+'" y2="'+Ymort.toFixed(1)+'" stroke="#f57f17" stroke-width="2" stroke-dasharray="14,5"/>');
+  }
+
+  // 4. Perfil do talude (contorno azul escuro)
+  var pts=[X0,YtL,X1,Yc,X2,Yc,X3,Yf,X4,Yf,X5,Yc,X6,Yc,X7,YtR];
+  var ptStr='';for(var i=0;i<pts.length;i+=2)ptStr+=pts[i].toFixed(1)+','+pts[i+1].toFixed(1)+' ';
+  out.push('<polyline points="'+ptStr.trim()+'" fill="none" stroke="#1a237e" stroke-width="2.4" stroke-linejoin="round"/>');
+
+  // 5. Linhas de referência tracejadas + rótulos à direita
+  var refs=[
+    {z:zCr,c:'#8e24aa',d:'9,4',lbl:zCr.toFixed(2)+' Crista'},
+    {z:zNa,c:'#1565c0',d:'12,5',lbl:zNa.toFixed(2)+' NA norm.'},
+    {z:zFd,c:'#00838f',d:'6,4',lbl:zFd.toFixed(2)+' Fundo'}
+  ];
+  if(r.h_m>0.05) refs.push({z:zFd+r.h_m,c:'#f57f17',d:'14,5',lbl:(zFd+r.h_m).toFixed(2)+' V. morto'});
+  refs.forEach(function(rf){
+    var y=sy(rf.z); if(y<pt_-8||y>Ybot+8)return;
+    out.push('<line x1="'+pl_+'" y1="'+y.toFixed(1)+'" x2="'+(W-pr_+2)+'" y2="'+y.toFixed(1)+'" stroke="'+rf.c+'" stroke-width="1" stroke-dasharray="'+rf.d+'"/>');
+    out.push('<text x="'+(W-pr_+8)+'" y="'+(y+4.5).toFixed(1)+'" font-size="9" fill="'+rf.c+'" font-weight="bold">'+rf.lbl+'</text>');
+  });
+
+  // 6. Rótulos de inclinação dos taludes
+  function slopeLabel(xa,ya,xb,yb,txt){
+    if(Math.abs(xb-xa)<18)return;
+    var mx=((xa+xb)/2).toFixed(1),my=((ya+yb)/2+6).toFixed(1);
+    out.push('<text x="'+mx+'" y="'+my+'" font-size="10" text-anchor="middle" fill="#1a237e" font-weight="bold">'+txt+'</text>');
+  }
+  if(h_atL>0.3)slopeLabel(X0,YtL,X1,Yc,'1:'+Te);
+  slopeLabel(X2,Yc,X3,Yf,'1:'+Ti);
+  slopeLabel(X4,Yf,X5,Yc,'1:'+Ti);
+  if(h_atR>0.3)slopeLabel(X6,Yc,X7,YtR,'1:'+Te);
+
+  // 7. Setas de cota — crista e dimensões horizontais
+  function arrow(xa,xb,y,lbl){
+    if(xb-xa<18)return;
+    out.push('<line x1="'+xa.toFixed(1)+'" y1="'+y+'" x2="'+xb.toFixed(1)+'" y2="'+y+'" stroke="#c62828" stroke-width="1.6" marker-start="url(#arL'+uid+')" marker-end="url(#arR'+uid+')"/>');
+    out.push('<line x1="'+xa.toFixed(1)+'" y1="'+(y-6)+'" x2="'+xa.toFixed(1)+'" y2="'+(y+6)+'" stroke="#c62828" stroke-width="1.2"/>');
+    out.push('<line x1="'+xb.toFixed(1)+'" y1="'+(y-6)+'" x2="'+xb.toFixed(1)+'" y2="'+(y+6)+'" stroke="#c62828" stroke-width="1.2"/>');
+    out.push('<text x="'+((xa+xb)/2).toFixed(1)+'" y="'+(y-5)+'" font-size="10" text-anchor="middle" fill="#c62828" font-weight="bold">'+lbl+'</text>');
+  }
+  // Crista esquerda e direita
+  if(X2-X1>18)arrow(X1,X2,Yc-18,Lc.toFixed(2)+' m');
+  if(X6-X5>18)arrow(X5,X6,Yc-18,Lc.toFixed(2)+' m');
+  // Dimensões individuais horizontais no fundo
+  function dim(xa,xb,y,lbl,clr){
+    var len=xb-xa;
+    out.push('<line x1="'+xa.toFixed(1)+'" y1="'+y+'" x2="'+xb.toFixed(1)+'" y2="'+y+'" stroke="'+clr+'" stroke-width="1.2"/>');
+    out.push('<line x1="'+xa.toFixed(1)+'" y1="'+(y-5)+'" x2="'+xa.toFixed(1)+'" y2="'+(y+5)+'" stroke="'+clr+'" stroke-width="1.2"/>');
+    out.push('<line x1="'+xb.toFixed(1)+'" y1="'+(y-5)+'" x2="'+xb.toFixed(1)+'" y2="'+(y+5)+'" stroke="'+clr+'" stroke-width="1.2"/>');
+    if(len>30){out.push('<text x="'+((xa+xb)/2).toFixed(1)+'" y="'+(y-7)+'" font-size="8.5" text-anchor="middle" fill="'+clr+'" font-weight="bold">'+lbl+'</text>');}
+    else if(len>10){out.push('<text x="'+((xa+xb)/2).toFixed(1)+'" y="'+(y+15)+'" font-size="7.5" text-anchor="middle" fill="'+clr+'" transform="rotate(-50,'+((xa+xb)/2).toFixed(1)+','+(y+15)+')">'+lbl+'</text>');}
+  }
+  // Linhas divisórias verticais entre segmentos
+  [X1,X2,X3,X4,X5,X6].forEach(function(xx){
+    out.push('<line x1="'+xx.toFixed(1)+'" y1="'+(Ybot+2)+'" x2="'+xx.toFixed(1)+'" y2="'+(Ybot+54)+'" stroke="#ddd" stroke-width="0.7" stroke-dasharray="2,2"/>');
+  });
+  // Cada segmento com cor própria
+  var yd=Ybot+42;
+  if(h_atL>0.1)dim(X0,X1,yd,(h_atL*Te).toFixed(2)+' m','#546e7a');
+  if(X2-X1>1)dim(X1,X2,yd,Lc.toFixed(2)+' m','#8d6e45');
+  dim(X2,X3,yd,((H+BL)*Ti).toFixed(2)+' m','#1565c0');
+  if(X4-X3>1)dim(X3,X4,yd,fd_w.toFixed(2)+' m','#00695c');
+  dim(X4,X5,yd,((H+BL)*Ti).toFixed(2)+' m','#1565c0');
+  if(X6-X5>1)dim(X5,X6,yd,Lc.toFixed(2)+' m','#8d6e45');
+  if(h_atR>0.1)dim(X6,X7,yd,(h_atR*Te).toFixed(2)+' m','#546e7a');
+  // Largura total — seta vermelha
+  var ytot=Ybot+68;
+  out.push('<line x1="'+X0.toFixed(1)+'" y1="'+ytot+'" x2="'+X7.toFixed(1)+'" y2="'+ytot+'" stroke="#c62828" stroke-width="1.5" marker-start="url(#arL'+uid+')" marker-end="url(#arR'+uid+')"/>');
+  out.push('<line x1="'+X0.toFixed(1)+'" y1="'+(ytot-6)+'" x2="'+X0.toFixed(1)+'" y2="'+(ytot+6)+'" stroke="#c62828" stroke-width="1.2"/>');
+  out.push('<line x1="'+X7.toFixed(1)+'" y1="'+(ytot-6)+'" x2="'+X7.toFixed(1)+'" y2="'+(ytot+6)+'" stroke="#c62828" stroke-width="1.2"/>');
+  out.push('<text x="'+((X0+X7)/2).toFixed(1)+'" y="'+(ytot-7)+'" font-size="10" text-anchor="middle" fill="#c62828" font-weight="bold">Largura total: '+x7.toFixed(2)+' m</text>');
+
+  // 8. Eixo Y (elevação)
+  out.push('<line x1="'+pl_+'" y1="'+pt_+'" x2="'+pl_+'" y2="'+Ybot+'" stroke="#ccc" stroke-width="0.9"/>');
+  out.push('<line x1="'+pl_+'" y1="'+Ybot+'" x2="'+(W-pr_)+'" y2="'+Ybot+'" stroke="#ccc" stroke-width="0.9"/>');
+  var yStep=Math.max(0.5,Math.round(zSp/8*2)/2);
+  for(var zz=Math.ceil(zMin*2)/2;zz<=zMax+0.01;zz+=yStep){
+    var yy=sy(zz); if(yy<pt_-1||yy>Ybot+1)continue;
+    out.push('<text x="'+(pl_-5)+'" y="'+(yy+3.5).toFixed(1)+'" font-size="9" text-anchor="end" fill="#444">'+zz.toFixed(1)+'</text>');
+    out.push('<line x1="'+pl_+'" y1="'+yy.toFixed(1)+'" x2="'+(pl_-3)+'" y2="'+yy.toFixed(1)+'" stroke="#999" stroke-width="0.9"/>');
+    if(yy>pt_+3&&yy<Ybot-3)out.push('<line x1="'+pl_+'" y1="'+yy.toFixed(1)+'" x2="'+(W-pr_)+'" y2="'+yy.toFixed(1)+'" stroke="#f0f0f0" stroke-width="0.6"/>');
+  }
+
+  // 9. Rótulos dos eixos
+  out.push('<text x="'+(pl_+plotW/2)+'" y="'+(SH-10)+'" font-size="10" text-anchor="middle" fill="#555">Distância (m)</text>');
+  out.push('<text x="14" y="'+(pt_+plotH/2)+'" font-size="10" text-anchor="middle" fill="#555" transform="rotate(-90,14,'+(pt_+plotH/2)+')">Elevação (m)</text>');
+
+  // 10. Título
+  out.push('<text x="'+pl_+'" y="'+(pt_-14)+'" font-size="11.5" font-weight="bold" fill="#1a237e">'+titleStr+'</text>');
+
+  // 11. Legenda horizontal no topo direito
+  var ll=230,lt=6;
+  var legW=r.h_m>0.05?530:470;
+  out.push('<rect x="'+(ll-4)+'" y="'+lt+'" width="'+legW+'" height="18" rx="3" fill="rgba(255,255,255,0.88)" stroke="#ccc" stroke-width="0.5"/>');
+  // Corte
+  out.push('<rect x="'+(ll+2)+'" y="'+(lt+4)+'" width="12" height="9" fill="url(#hC'+uid+')" stroke="#e57373" stroke-width="0.5"/>');
+  out.push('<text x="'+(ll+17)+'" y="'+(lt+13)+'" font-size="9" fill="#333">Corte</text>');
+  // Aterro
+  out.push('<rect x="'+(ll+62)+'" y="'+(lt+4)+'" width="12" height="9" fill="url(#hA'+uid+')" stroke="#5c85d6" stroke-width="0.5"/>');
+  out.push('<text x="'+(ll+77)+'" y="'+(lt+13)+'" font-size="9" fill="#333">Aterro</text>');
+  // Terreno nat.
+  out.push('<line x1="'+(ll+134)+'" y1="'+(lt+9)+'" x2="'+(ll+148)+'" y2="'+(lt+9)+'" stroke="#c4963a" stroke-width="2.2"/>');
+  out.push('<text x="'+(ll+151)+'" y="'+(lt+13)+'" font-size="9" fill="#333">Terreno nat.</text>');
+  // NA
+  out.push('<line x1="'+(ll+236)+'" y1="'+(lt+9)+'" x2="'+(ll+252)+'" y2="'+(lt+9)+'" stroke="#1565c0" stroke-width="2" stroke-dasharray="6,3"/>');
+  out.push('<text x="'+(ll+255)+'" y="'+(lt+13)+'" font-size="9" fill="#333">NA</text>');
+  // Perfil talude
+  out.push('<line x1="'+(ll+290)+'" y1="'+(lt+9)+'" x2="'+(ll+304)+'" y2="'+(lt+9)+'" stroke="#1a237e" stroke-width="2.4"/>');
+  out.push('<text x="'+(ll+307)+'" y="'+(lt+13)+'" font-size="9" fill="#333">Perfil talude</text>');
+  // V. morto (condicional)
+  if(r.h_m>0.05){
+    out.push('<line x1="'+(ll+400)+'" y1="'+(lt+9)+'" x2="'+(ll+414)+'" y2="'+(lt+9)+'" stroke="#f57f17" stroke-width="2" stroke-dasharray="7,3"/>');
+    out.push('<text x="'+(ll+417)+'" y="'+(lt+13)+'" font-size="9" fill="#333">V. morto</text>');
+  }
+
+  // 12. Rótulos dos pontos (A/B ou C/D)
+  out.push('<text x="'+X0.toFixed(1)+'" y="'+(Ybot+14)+'" font-size="13" text-anchor="middle" font-weight="bold" fill="#c62828">'+ptLabelL+'</text>');
+  out.push('<text x="'+X7.toFixed(1)+'" y="'+(Ybot+14)+'" font-size="13" text-anchor="middle" font-weight="bold" fill="#c62828">'+ptLabelR+'</text>');
+
+  out.push('</svg>');
+  return out.join('\n');
+}
+
+function gerarCortesSVG(){
+  const r=resultado;
+  const cc=$('cortesContent');
+  cc.innerHTML='';
+  function addCorte(hdr,svgHtml){
+    const w=document.createElement('div');
+    w.style.cssText='margin-bottom:20px;';
+    w.innerHTML='<div style="font-size:11px;font-weight:700;color:#e2b96e;margin-bottom:6px;">'+hdr+'</div>'+svgHtml;
+    cc.appendChild(w);
+  }
+  // Amostra elevações ao longo do transecto (ptL→ptR) usando nearest-neighbor em gridCells+perimCells
+  function sampleTransect(ptL,ptR,N){
+    const allC=[...gridCells,...perimCells];
+    const out=[];
+    for(let i=0;i<N;i++){
+      const frac=i/(N-1);
+      const lat2=ptL.lat+(ptR.lat-ptL.lat)*frac;
+      const lng2=ptL.lng+(ptR.lng-ptL.lng)*frac;
+      let best=Infinity,elev=r.z_na;
+      for(const c of allC){const d=(c.lat-lat2)**2+(c.lng-lng2)**2;if(d<best){best=d;elev=c.elev;}}
+      out.push({frac,elev});
+    }
+    return out;
+  }
+  const profAB=sampleTransect(r.pt_A,r.pt_B,24);
+  const profCD=sampleTransect(r.pt_C,r.pt_D,24);
+  addCorte('CORTE A-B — LONGITUDINAL ('+r.h_at_A.toFixed(2)+' m)',
+    svgCorte('ab','CORTE A-B — LONGITUDINAL ('+r.h_at_A.toFixed(2)+' m)','A','B',r.z_t_A,r.z_t_B,r,profAB));
+  addCorte('CORTE C-D — TRANSVERSAL ('+r.h_at_C.toFixed(2)+' m)',
+    svgCorte('cd','CORTE C-D — TRANSVERSAL ('+r.h_at_C.toFixed(2)+' m)','C','D',r.z_t_C,r.z_t_D,r,profCD));
+}
+
+// ── Vista 3D — Three.js WebGL (modal inline) ──────────────────────────────────
+let _3d_raf=null,_3d_renderer=null;
+function fecharVista3D(){
+  $('modal3d').style.display='none';
+  if(_3d_raf){cancelAnimationFrame(_3d_raf);_3d_raf=null;}
+  if(_3d_renderer){_3d_renderer.dispose();_3d_renderer=null;}
+  // Substituir canvas: dispose() perde o contexto WebGL; canvas novo garante contexto limpo
+  const modal=$('modal3d'),old=$('canvas3d');
+  if(old){const nc=document.createElement('canvas');nc.id='canvas3d';nc.style.cssText='width:100%;height:100%;display:block;';modal.replaceChild(nc,old);}
+}
+function gerarVista3D(){
+  if(!resultado||!polyPts||polyPts.length<3){alert('Dimensione o reservatório primeiro.');return;}
+  if(typeof THREE==='undefined'){alert('Three.js não carregou. Verifique conexão com internet.');return;}
+  const r=resultado,p=r.p;
+  // Converter para metros locais
+  const cLat=polyPts.reduce((s,pt)=>s+pt.lat,0)/polyPts.length;
+  const cLng=polyPts.reduce((s,pt)=>s+pt.lng,0)/polyPts.length;
+  const mLng=Math.cos(cLat*Math.PI/180)*111320,mLat=111320;
+  const toXY=(lat,lng)=>({x:(lng-cLng)*mLng,y:(lat-cLat)*mLat});
+  function convRing(pts,ll){
+    const a=pts.map(c=>ll?toXY(c[1],c[0]):toXY(c.lat,c.lng));
+    if(a.length>1){const f=a[0],l=a[a.length-1];if(Math.hypot(f.x-l.x,f.y-l.y)<0.1)a.pop();}
+    return a;
+  }
+  function scaleOut(ring,fac){
+    let cx=0,cy=0;ring.forEach(q=>{cx+=q.x;cy+=q.y;});cx/=ring.length;cy/=ring.length;
+    return ring.map(q=>({x:cx+(q.x-cx)*fac,y:cy+(q.y-cy)*fac}));
+  }
+  const naR=convRing(polyPts,false);
+  const fdR=r.fundoBuf?convRing(r.fundoBuf.geometry.coordinates[0],true):null;
+  const crR=r.cristaBuf?convRing(r.cristaBuf.geometry.coordinates[0],true):null;
+  const peR=r.peExtBuf?convRing(r.peExtBuf.geometry.coordinates[0],true):null;
+  const outerR=peR?scaleOut(peR,1.75):crR?scaleOut(crR,2.1):scaleOut(naR,2.5);
+  const D={
+    naR,fdR,crR,peR,outerR,
+    zF:-(r.H),zN:0,zC:p.BL,
+    H:r.H,BL:p.BL,Ti:p.Ti,
+    Vutil:Math.round(r.Vutil_calc),
+    Ae:Math.round(r.Ae),
+    zFabs:r.z_fundo.toFixed(2),zNabs:r.z_na.toFixed(2),zCabs:r.z_crista.toFixed(2)
+  };
+  if(_3d_raf){cancelAnimationFrame(_3d_raf);_3d_raf=null;}
+  if(_3d_renderer){_3d_renderer.dispose();_3d_renderer=null;}
+  $('modal3d').style.display='block';$('m3d-inf').style.display='none';
+  // Aguarda 1 frame para o canvas ser exibido antes de criar contexto WebGL
+  requestAnimationFrame(function(){if($('modal3d').style.display==='none')return;try{
+  const W3=window.innerWidth,H3=window.innerHeight;
+  const cv=$('canvas3d');cv.width=W3;cv.height=H3;
+
+  function _closeOff(ring){if(ring.length<2)return ring;const f=ring[0],l=ring[ring.length-1];return(Math.hypot(f.x-l.x,f.y-l.y)<0.01)?ring.slice(0,-1):ring;}
+  function _resample(ring,N){ring=_closeOff(ring);const n=ring.length,cum=[0];for(let i=0;i<n;i++){const j=(i+1)%n;cum.push(cum[i]+Math.hypot(ring[j].x-ring[i].x,ring[j].y-ring[i].y));}const tot=cum[n],out=[];for(let k=0;k<N;k++){const t=(k/N)*tot;for(let s=0;s<n;s++){if(t>=cum[s]&&t<=cum[s+1]+1e-9){const u=(cum[s+1]>cum[s])?(t-cum[s])/(cum[s+1]-cum[s]):0;const j=(s+1)%n;out.push({x:ring[s].x*(1-u)+ring[j].x*u,y:ring[s].y*(1-u)+ring[j].y*u});break;}}}return out;}
+  function _fanGeo(ring,y){const N=ring.length;let cx=0,cy=0;ring.forEach(q=>{cx+=q.x;cy+=q.y;});cx/=N;cy/=N;const pos=new Float32Array((N+1)*3),idx=[];pos[0]=cx;pos[1]=y;pos[2]=-cy;for(let i=0;i<N;i++){pos[(i+1)*3]=ring[i].x;pos[(i+1)*3+1]=y;pos[(i+1)*3+2]=-ring[i].y;idx.push(0,(i+1)%N+1,i+1);}const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(pos,3));g.setIndex(idx);g.computeVertexNormals();return g;}
+  function _stripGeo(rA,yA,rB,yB){const N=rA.length;const pos=new Float32Array(N*2*3),idx=[];for(let i=0;i<N;i++){pos[i*6]=rA[i].x;pos[i*6+1]=yA;pos[i*6+2]=-rA[i].y;pos[i*6+3]=rB[i].x;pos[i*6+4]=yB;pos[i*6+5]=-rB[i].y;}for(let i=0;i<N;i++){const j=(i+1)%N,a=i*2,b=i*2+1,c=j*2,d=j*2+1;idx.push(a,c,b);idx.push(b,c,d);}const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(pos,3));g.setIndex(idx);g.computeVertexNormals();return g;}
+
+  const scene3=new THREE.Scene();scene3.background=new THREE.Color(0x0d1b2a);scene3.fog=new THREE.Fog(0x0d1b2a,5000,12000);
+  const cam3=new THREE.PerspectiveCamera(38,W3/H3,0.5,30000);
+  const rdr3=new THREE.WebGLRenderer({antialias:true,canvas:cv});
+  rdr3.setSize(W3,H3);rdr3.setPixelRatio(Math.min(devicePixelRatio,2));
+  rdr3.shadowMap.enabled=true;rdr3.shadowMap.type=THREE.PCFSoftShadowMap;
+  rdr3.toneMapping=THREE.ACESFilmicToneMapping;rdr3.toneMappingExposure=1.1;
+  _3d_renderer=rdr3;
+  scene3.add(new THREE.AmbientLight(0xfff5e0,0.38));
+  const sun3=new THREE.DirectionalLight(0xfffae8,2.4);
+  sun3.castShadow=true;sun3.shadow.mapSize.set(2048,2048);
+  const sc3=sun3.shadow.camera;sc3.near=10;sc3.far=7000;sc3.left=sc3.bottom=-2000;sc3.right=sc3.top=2000;
+  scene3.add(sun3);
+  const fill3=new THREE.DirectionalLight(0x2040a0,0.22);fill3.position.set(-1,0.4,-1).normalize().multiplyScalar(600);scene3.add(fill3);
+  const ctl3=new THREE.OrbitControls(cam3,cv);
+  ctl3.enableDamping=true;ctl3.dampingFactor=0.07;ctl3.minDistance=20;ctl3.maxDistance=9000;ctl3.maxPolarAngle=Math.PI*0.490;
+  const mat3=new THREE.MeshPhongMaterial({color:0xD4A017,shininess:32,specular:new THREE.Color(0x553300),side:THREE.DoubleSide});
+  function addM3(geo){const m=new THREE.Mesh(geo,mat3);m.castShadow=true;m.receiveShadow=true;scene3.add(m);return m;}
+
+  const NS=96,zF=D.zF,zN=D.zN,zC=D.zC;
+  const naR3=_resample(D.naR,NS),fdR3=D.fdR?_resample(D.fdR,NS):null;
+  const crR3=D.crR?_resample(D.crR,NS):null,peR3=D.peR?_resample(D.peR,NS):null;
+  // Cache de células para lookup de elevação — usado no talude externo e na grade de terreno
+  const allCellsTerr=[...gridCells,...perimCells];
+  function terrY(gx,gy){let b=Infinity,el=r.z_na;const lt=cLat+gy/mLat,lg=cLng+gx/mLng;for(const c of allCellsTerr){const d=(c.lat-lt)**2+(c.lng-lg)**2;if(d<b){b=d;el=c.elev;}}return el-r.z_na;}
+  if(fdR3)addM3(_fanGeo(fdR3,zF));
+  if(fdR3){addM3(_stripGeo(fdR3,zF,naR3,zN));}else{let cx0=0,cy0=0;naR3.forEach(q=>{cx0+=q.x;cy0+=q.y;});cx0/=NS;cy0/=NS;addM3(_stripGeo(naR3.map(()=>({x:cx0,y:cy0})),zF,naR3,zN));}
+  if(crR3)addM3(_stripGeo(naR3,zN,crR3,zC));
+  // Talude externo: pé na cota real do terreno (corrige triangulos e cria rampa correta)
+  if(crR3){
+    const peBase=peR3||_resample(scaleOut(crR3,1.3),NS);
+    const _N=crR3.length,_p=new Float32Array(_N*2*3),_ix=[];
+    for(let _i=0;_i<_N;_i++){const _yb=Math.min(terrY(peBase[_i].x,peBase[_i].y),zC-0.05);_p[_i*6]=crR3[_i].x;_p[_i*6+1]=zC;_p[_i*6+2]=-crR3[_i].y;_p[_i*6+3]=peBase[_i].x;_p[_i*6+4]=_yb;_p[_i*6+5]=-peBase[_i].y;}
+    for(let _i=0;_i<_N;_i++){const _j=(_i+1)%_N,_a=_i*2,_b=_i*2+1,_c=_j*2,_d=_j*2+1;_ix.push(_a,_c,_b,_b,_c,_d);}
+    const _eg=new THREE.BufferGeometry();_eg.setAttribute('position',new THREE.BufferAttribute(_p,3));_eg.setIndex(_ix);_eg.computeVertexNormals();addM3(_eg);
+  }
+  let bx0=Infinity,bx1=-Infinity,by0=Infinity,by1=-Infinity;
+  [...naR3,...(crR3||[]),...(peR3||[])].forEach(q=>{if(q.x<bx0)bx0=q.x;if(q.x>bx1)bx1=q.x;if(q.y<by0)by0=q.y;if(q.y>by1)by1=q.y;});
+  const bcx=(bx0+bx1)/2,bcy=(by0+by1)/2,span=Math.max(bx1-bx0,by1-by0,D.H*5),ext=span*1.4;
+  // Grade de terreno NGT×NGT com elevação real; todos os vértices usam cota real
+  const NGT=44, innerPolyGeo=r.peExtBuf||r.cristaBuf||turfPoly;
+  const gxStep=(2*ext)/NGT, gyStep=(2*ext)/NGT;
+  const terrV=[];
+  for(let jj=0;jj<=NGT;jj++){
+    for(let ii=0;ii<=NGT;ii++){
+      const gx=(bcx-ext)+ii*gxStep,gy=(bcy-ext)+jj*gyStep;
+      const lng2=cLng+gx/mLng,lat2=cLat+gy/mLat;
+      const ins=turf.booleanPointInPolygon([lng2,lat2],innerPolyGeo);
+      terrV.push({gx,gy,yEl:ins?zC:terrY(gx,gy),ins});
+    }
+  }
+  const tPos=[],tIdx=[];
+  const tVI=(ii,jj)=>jj*(NGT+1)+ii;
+  for(let jj=0;jj<NGT;jj++){
+    for(let ii=0;ii<NGT;ii++){
+      const va=terrV[tVI(ii,jj)],vb=terrV[tVI(ii+1,jj)],vc=terrV[tVI(ii,jj+1)],vd=terrV[tVI(ii+1,jj+1)];
+      if(va.ins&&vb.ins&&vc.ins&&vd.ins)continue;
+      const b=tPos.length/3;
+      tPos.push(va.gx,va.yEl,-va.gy,vb.gx,vb.yEl,-vb.gy,vc.gx,vc.yEl,-vc.gy,vd.gx,vd.yEl,-vd.gy);
+      tIdx.push(b,b+1,b+2,b+1,b+3,b+2);
+    }
+  }
+  const tGeo=new THREE.BufferGeometry();
+  tGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(tPos),3));
+  tGeo.setIndex(tIdx);tGeo.computeVertexNormals();
+  addM3(tGeo);
+  function addLoop3(ring,y,hex){const pts=ring.map(q=>new THREE.Vector3(q.x,y,-q.y));pts.push(pts[0].clone());scene3.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:hex})));}
+  if(crR3)addLoop3(crR3,zC,0xffd700);if(peR3)addLoop3(peR3,zN,0xa07830);
+  cam3.position.set(bcx+span*0.55,span*0.50+zC,-(bcy)+span*0.68);
+  cam3.lookAt(bcx,-D.H*0.25,-bcy);ctl3.target.set(bcx,-D.H*0.25,-bcy);ctl3.update();
+  sun3.position.set(span+200,span*1.1+200,span*0.7+200);
+  sc3.left=-span*1.5;sc3.right=span*1.5;sc3.bottom=-span*1.5;sc3.top=span*1.5;sc3.updateProjectionMatrix();
+  $('m3d-inf').style.display='block';
+  $('m3d-inf').innerHTML='<b style="font-size:12.5px;letter-spacing:.4px">RESERVATÓRIO ESCAVADO — VISTA 3D</b><br>'
+    +'Vol. útil: <b>'+D.Vutil.toLocaleString('pt-BR')+' m³</b><br>'
+    +'Espelho d\'água: <b>'+D.Ae.toLocaleString('pt-BR')+' m²</b><br>'
+    +'Profundidade H: <b>'+D.H.toFixed(2)+' m</b> &nbsp;|&nbsp; BL: <b>'+D.BL+' m</b><br>'
+    +'<small>NA: '+D.zNabs+' m &nbsp; Crista: '+D.zCabs+' m &nbsp; Fundo: '+D.zFabs+' m</small>';
+  window.addEventListener('resize',function _rdr3Resize(){if(!_3d_renderer){window.removeEventListener('resize',_rdr3Resize);return;}cam3.aspect=window.innerWidth/window.innerHeight;cam3.updateProjectionMatrix();_3d_renderer.setSize(window.innerWidth,window.innerHeight);});
+  (function _animate(){_3d_raf=requestAnimationFrame(_animate);ctl3.update();rdr3.render(scene3,cam3);})();
+  }catch(e){console.error('Vista 3D:',e);$('m3d-inf').style.display='block';$('m3d-inf').innerHTML='<span style="color:#ef9a9a;font-size:12px;font-weight:bold;">Erro 3D: '+e.message+'</span>';}});
+}
+
+// ── Planta Técnica ────────────────────────────────────────────────────────────
+function gerarPlantaTecnica(){
+  if(!resultado||!polyPts||polyPts.length<3){alert('Dimensione o reservatório primeiro.');return;}
+  const r=resultado;
+  const win=window.open('','_blank');
+  if(!win){alert('Popup bloqueado.');return;}
+
+  const date=new Date().toLocaleDateString('pt-BR');
+  const consultor=$('rConsultor').value.trim()||'João Paulo de Oliveira';
+  const cliente=$('rCliente').value.trim()||'—';
+  const prop=$('rProp').value.trim()||'—';
+  const key=localStorage.getItem('mapskey_terra')||'';
+
+  // Bounds com padding para o mapa satélite
+  const bbox=turf.bbox(r.peExtBuf||r.cristaBuf||turfPoly);
+  const pad=0.20;
+  const latSp=bbox[3]-bbox[1],lngSp=bbox[2]-bbox[0];
+  const sw={lat:bbox[1]-latSp*pad,lng:bbox[0]-lngSp*pad};
+  const ne={lat:bbox[3]+latSp*pad,lng:bbox[2]+lngSp*pad};
+  const MW=512,MH=307;
+
+  function _zoom2(sw,ne,W,H){const T=256;const latRad=lat=>Math.log((1+Math.sin(lat*Math.PI/180))/(1-Math.sin(lat*Math.PI/180)))/2;const latF=Math.abs(latRad(ne.lat)-latRad(sw.lat))/Math.PI;const lngF=Math.abs(ne.lng-sw.lng)/360;const zL=Math.floor(Math.log(2*H/T/latF)/Math.LN2);const zG=Math.floor(Math.log(W/T/lngF)/Math.LN2);return{zoom:Math.min(zL,zG,20),cLat:(sw.lat+ne.lat)/2,cLng:(sw.lng+ne.lng)/2};}
+  const {zoom:zm,cLat:cLt,cLng:cLg}=_zoom2(sw,ne,MW,MH);
+  const staticUrl=key?`https://maps.googleapis.com/maps/api/staticmap?center=${cLt},${cLg}&zoom=${zm}&size=${MW}x${MH}&scale=2&maptype=satellite&key=${key}`:'';
+
+  function _mkToPx2(cLat,cLng,zoom,W,H){const S=256*Math.pow(2,zoom);const wx=lng=>(lng+180)/360*S;const wy=lat=>{const s=Math.sin(lat*Math.PI/180);return(0.5-Math.log((1+s)/(1-s))/(4*Math.PI))*S;};const cx=wx(cLng),cy=wy(cLat);return(lat,lng)=>({x:wx(lng)-cx+W/2,y:wy(lat)-cy+H/2});}
+  const toPx2=_mkToPx2(cLt,cLg,zm,MW,MH);
+  function polyPath2(pts){return pts.map((p,i)=>{const px=toPx2(p[0],p[1]);return(i?'L':'M')+px.x.toFixed(1)+','+px.y.toFixed(1);}).join(' ')+'Z';}
+
+  const naPath2=polyPath2(polyPts.map(p=>[p.lat,p.lng]));
+  const fdPath2=r.fundoBuf?polyPath2(r.fundoBuf.geometry.coordinates[0].map(c=>[c[1],c[0]])):null;
+  const crPath2=r.cristaBuf?polyPath2(r.cristaBuf.geometry.coordinates[0].map(c=>[c[1],c[0]])):null;
+  const pePath2=r.peExtBuf?polyPath2(r.peExtBuf.geometry.coordinates[0].map(c=>[c[1],c[0]])):null;
+  const ptAPx=toPx2(r.pt_A.lat,r.pt_A.lng),ptBPx=toPx2(r.pt_B.lat,r.pt_B.lng);
+  const ptCPx=toPx2(r.pt_C.lat,r.pt_C.lng),ptDPx=toPx2(r.pt_D.lat,r.pt_D.lng);
+
+  const naCent=turf.centroid(turfPoly).geometry.coordinates;
+  const naPx=toPx2(naCent[1],naCent[0]);
+  let fdPx=naPx;
+  if(r.fundoBuf){const fc=turf.centroid(r.fundoBuf).geometry.coordinates;fdPx=toPx2(fc[1],fc[0]);}
+
+  // Escala gráfica
+  const mPerPx=(2*Math.PI*6378137*Math.cos(cLt*Math.PI/180))/(256*Math.pow(2,zm));
+  let sbM=10;
+  for(const t of [5,10,20,25,50,100,150,200,250,500,1000]){if(t/mPerPx>=50&&t/mPerPx<=115){sbM=t;break;}}
+  const sbPx=sbM/mPerPx,sbX=10,sbY=MH-18;
+
+  // Bounding-box das zonas em pixels (para setas de cota)
+  let naMinX=MW,naMaxX=0,naMinY=MH,naMaxY=0;
+  polyPts.forEach(p=>{const px=toPx2(p.lat,p.lng);if(px.x<naMinX)naMinX=px.x;if(px.x>naMaxX)naMaxX=px.x;if(px.y<naMinY)naMinY=px.y;if(px.y>naMaxY)naMaxY=px.y;});
+  let fdMinX=MW,fdMaxX=0,fdMinY=MH,fdMaxY=0;
+  if(r.fundoBuf){r.fundoBuf.geometry.coordinates[0].forEach(c=>{const px=toPx2(c[1],c[0]);if(px.x<fdMinX)fdMinX=px.x;if(px.x>fdMaxX)fdMaxX=px.x;if(px.y<fdMinY)fdMinY=px.y;if(px.y>fdMaxY)fdMaxY=px.y;});}
+  const naW_m=Math.round((naMaxX-naMinX)*mPerPx),naH_m=Math.round((naMaxY-naMinY)*mPerPx);
+  const fdW_m=Math.round((fdMaxX-fdMinX)*mPerPx),fdH_m=Math.round((fdMaxY-fdMinY)*mPerPx);
+  const arH_y=Math.max(11,naMinY-14);
+  const arV_x=Math.min(MW-11,naMaxX+18);
+  const showHA=(naMaxX-naMinX)>25;
+  const showVA=naMaxX<MW-16&&(naMaxY-naMinY)>25;
+  const naWLbl=naW_m+' m', naHLbl=naH_m+' m';
+  const naWLblW=naWLbl.length*5+8, naHLblW=naHLbl.length*5+8;
+  const svgAB=svgCorte('pt','CORTE A-B — LONGITUDINAL ('+r.h_at_A.toFixed(2)+' m)','A','B',r.z_t_A,r.z_t_B,r);
+  const svgCD=svgCorte('ptcd','CORTE C-D — TRANSVERSAL ('+r.h_at_C.toFixed(2)+' m)','C','D',r.z_t_C,r.z_t_D,r);
+  let crMinX=MW,crMaxX=0,crMinY=MH,crMaxY=0;
+  if(r.cristaBuf){r.cristaBuf.geometry.coordinates[0].forEach(c=>{const px=toPx2(c[1],c[0]);if(px.x<crMinX)crMinX=px.x;if(px.x>crMaxX)crMaxX=px.x;if(px.y<crMinY)crMinY=px.y;if(px.y>crMaxY)crMaxY=px.y;});}
+  const crW_m=Math.round((crMaxX-crMinX)*mPerPx),crH_m=Math.round((crMaxY-crMinY)*mPerPx);
+  const arCrH_y=Math.max(9,crMinY-26);
+  const arCrV_x=Math.max(9,crMinX-22);
+  const showCrHA=(crMaxX-crMinX)>25;
+  const showCrVA=crMinX>24&&(crMaxY-crMinY)>25;
+  const crWLbl='Boca: '+crW_m+' m', crHLbl=crH_m+' m';
+  const crWLblW=crWLbl.length*5+8, crHLblW=crHLbl.length*5+8;
+  const balCls=r.balanco>0?'#2e7d32':'#c62828';
+  const balTxt=(r.balanco>0?'+':'')+fmt(r.balanco)+' m³ '+(r.balanco>0?'(excedente)':'(importar)');
+  function tr2(lbl,val,bold=false,color=''){return`<tr><td>${lbl}</td><td style="text-align:right;font-weight:${bold?700:500};color:${color||'#1a2535'}">${val}</td></tr>`;}
+  function th2(t){return`<tr><td colspan="2" class="th2">${t}</td></tr>`;}
+
+  // Anotações de área sobre o mapa
+  const fdLbl=`Fundo: ${fmt(r.Af)} m²`;
+  const naLbl=`NA: ${fmt(r.Ae)} m² · ${(r.Ae/10000).toFixed(2)} ha`;
+  const fdW=fdLbl.length*4.5+8,naW=naLbl.length*4.5+8;
+
+  win.document.write(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
+<title>Planta Técnica — Reservatório Escavado</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:Arial,Helvetica,sans-serif;font-size:7.5pt;background:#fff;color:#1a2535;}
+@page{size:A4 landscape;margin:8mm 10mm;}
+@media print{.no-print{display:none!important;}}
+.page{width:277mm;margin:0 auto;}
+table{width:100%;border-collapse:collapse;font-size:7pt;}
+td{padding:1.8px 4px;border-bottom:0.4pt solid #e4e9ee;}
+tr:nth-child(even) td:not(.th2){background:#f7f9fb;}
+.th2{background:#003d5c;color:#fff;font-size:6.5pt;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:2.5px 4px;}
+.pg{page-break-before:always;}
+</style></head><body>
+<div class="page">
+<div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2pt solid #003d5c;padding-bottom:1.5mm;margin-bottom:2mm;">
+  <div>
+    <div style="font-size:11.5pt;font-weight:900;color:#003d5c;">Reservatório Escavado — Planta de Movimentação de Terra</div>
+    <div style="font-size:7pt;color:#607080;margin-top:0.5mm;">${prop} &nbsp;·&nbsp; ${cliente} &nbsp;·&nbsp; ${consultor}</div>
+  </div>
+  <div style="text-align:right;font-size:7pt;color:#607080;"><strong style="color:#003d5c;">Bolsa Irriga®</strong><br>${date} &nbsp;·&nbsp; Folha 1/4</div>
+</div>
+<div>
+  <div style="font-size:5.5pt;font-weight:700;letter-spacing:.08em;color:#546e7a;text-transform:uppercase;margin-bottom:1.5mm;">PLANTA BAIXA — MOVIMENTAÇÃO DE TERRA</div>
+  <div style="position:relative;width:100%;aspect-ratio:512/307;overflow:hidden;border:0.8pt solid #888;">
+      ${staticUrl?`<img src="${staticUrl}" style="width:100%;height:100%;object-fit:cover;display:block;" alt="Sat"/>`:'<div style="width:100%;height:100%;background:#c8d4e0;display:flex;align-items:center;justify-content:center;font-size:8.5pt;color:#666;">Chave Google API necessária para imagem satélite</div>'}
+      <svg viewBox="0 0 ${MW} ${MH}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" style="position:absolute;inset:0;width:100%;height:100%;">
+        <defs>
+          <pattern id="hPE2" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(-45)"><line x1="4" y1="0" x2="4" y2="8" stroke="#2e7d32" stroke-width="2"/></pattern>
+          <pattern id="hNA2" patternUnits="userSpaceOnUse" width="7" height="7" patternTransform="rotate(45)"><line x1="3.5" y1="0" x2="3.5" y2="7" stroke="#1976d2" stroke-width="2.2"/></pattern>
+          <marker id="aDimR" markerWidth="7" markerHeight="6" refX="6.5" refY="3" orient="auto"><polygon points="0,0 7,3 0,6" fill="#ffeb3b"/></marker>
+          <marker id="aDimL" markerWidth="7" markerHeight="6" refX="0.5" refY="3" orient="auto"><polygon points="7,0 0,3 7,6" fill="#ffeb3b"/></marker>
+          <marker id="aDimRw" markerWidth="7" markerHeight="6" refX="6.5" refY="3" orient="auto"><polygon points="0,0 7,3 0,6" fill="white"/></marker>
+          <marker id="aDimLw" markerWidth="7" markerHeight="6" refX="0.5" refY="3" orient="auto"><polygon points="7,0 0,3 7,6" fill="white"/></marker>
+        </defs>
+        ${pePath2?`<path d="${pePath2}" fill="url(#hPE2)" fill-opacity="0.5" stroke="#2e7d32" stroke-width="1.8" stroke-dasharray="6,3"/>`:''}
+        ${crPath2?`<path d="${crPath2}" fill="rgba(200,175,115,0.38)" stroke="#8d6e45" stroke-width="2.2"/>`:''}
+        <path d="${naPath2}" fill="url(#hNA2)" fill-opacity="0.32" stroke="#1565c0" stroke-width="2.2"/>
+        ${fdPath2?`<path d="${fdPath2}" fill="#0d47a1" fill-opacity="0.72" stroke="#0d47a1" stroke-width="1.2"/>`:''}
+        <line x1="${ptAPx.x.toFixed(1)}" y1="${ptAPx.y.toFixed(1)}" x2="${ptBPx.x.toFixed(1)}" y2="${ptBPx.y.toFixed(1)}" stroke="#c62828" stroke-width="1.5" stroke-dasharray="8,4"/>
+        <line x1="${ptCPx.x.toFixed(1)}" y1="${ptCPx.y.toFixed(1)}" x2="${ptDPx.x.toFixed(1)}" y2="${ptDPx.y.toFixed(1)}" stroke="#1565c0" stroke-width="1.5" stroke-dasharray="8,4"/>
+        ${[{px:ptAPx,l:'A'},{px:ptBPx,l:'B'},{px:ptCPx,l:'C'},{px:ptDPx,l:'D'}].map(({px,l})=>`<circle cx="${px.x.toFixed(1)}" cy="${px.y.toFixed(1)}" r="6.5" fill="#c62828" stroke="white" stroke-width="1.2"/><text x="${px.x.toFixed(1)}" y="${(px.y+4).toFixed(1)}" font-size="7.5" font-weight="bold" fill="white" text-anchor="middle">${l}</text>`).join('')}
+        <rect x="${(fdPx.x-fdW/2).toFixed(1)}" y="${(fdPx.y-9).toFixed(1)}" width="${fdW.toFixed(1)}" height="13" rx="2.5" fill="rgba(13,71,161,0.78)"/>
+        <text x="${fdPx.x.toFixed(1)}" y="${(fdPx.y+3).toFixed(1)}" font-size="7.5" fill="white" text-anchor="middle" font-weight="bold">${fdLbl}</text>
+        <rect x="${(naPx.x-naW/2).toFixed(1)}" y="${(naPx.y-23).toFixed(1)}" width="${naW.toFixed(1)}" height="13" rx="2.5" fill="rgba(21,101,192,0.75)"/>
+        <text x="${naPx.x.toFixed(1)}" y="${(naPx.y-12).toFixed(1)}" font-size="7.5" fill="white" text-anchor="middle" font-weight="bold">${naLbl}</text>
+        <g transform="translate(${MW-22},20)">
+          <circle r="14" fill="rgba(0,0,0,0.65)" stroke="rgba(255,255,255,0.9)" stroke-width="0.8"/>
+          <polygon points="0,-12 3.5,3 0,-1 -3.5,3" fill="white"/>
+          <polygon points="0,-12 -3.5,3 0,-1 3.5,3" fill="rgba(255,255,255,0.35)"/>
+          <text y="10" font-size="8.5" font-weight="bold" fill="white" text-anchor="middle">N</text>
+        </g>
+        <rect x="${(sbX-2).toFixed(1)}" y="${(sbY-6).toFixed(1)}" width="${(sbPx+4).toFixed(1)}" height="18" rx="2.5" fill="rgba(0,0,0,0.65)"/>
+        <text x="${(sbX+sbPx/2).toFixed(1)}" y="${(sbY-1).toFixed(1)}" font-size="7" fill="white" text-anchor="middle">0  ────  ${sbM} m</text>
+        <line x1="${sbX.toFixed(1)}" y1="${(sbY+6).toFixed(1)}" x2="${(sbX+sbPx).toFixed(1)}" y2="${(sbY+6).toFixed(1)}" stroke="white" stroke-width="2.5"/>
+        <line x1="${sbX.toFixed(1)}" y1="${(sbY+2).toFixed(1)}" x2="${sbX.toFixed(1)}" y2="${(sbY+10).toFixed(1)}" stroke="white" stroke-width="1.5"/>
+        <line x1="${(sbX+sbPx).toFixed(1)}" y1="${(sbY+2).toFixed(1)}" x2="${(sbX+sbPx).toFixed(1)}" y2="${(sbY+10).toFixed(1)}" stroke="white" stroke-width="1.5"/>
+        <line x1="${(sbX+sbPx/2).toFixed(1)}" y1="${(sbY+3).toFixed(1)}" x2="${(sbX+sbPx/2).toFixed(1)}" y2="${(sbY+9).toFixed(1)}" stroke="white" stroke-width="1"/>
+      </svg>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:1.5mm 5mm;margin-top:1.5mm;font-size:6.5pt;color:#333;align-items:center;">
+      <span><span style="display:inline-block;width:11pt;height:6.5pt;background:#64b5f6;border:1px solid #1565c0;opacity:.75;vertical-align:middle;margin-right:1.5mm;"></span>Espelho d'água (NA ${r.z_na.toFixed(2)} m)</span>
+      <span><span style="display:inline-block;width:11pt;height:6.5pt;background:#0d47a1;border:1px solid #0d47a1;vertical-align:middle;margin-right:1.5mm;"></span>Fundo (${r.z_fundo.toFixed(2)} m)</span>
+      <span><span style="display:inline-block;width:11pt;height:6.5pt;background:#c8b47a;border:1px solid #8d6e45;opacity:.8;vertical-align:middle;margin-right:1.5mm;"></span>Crista / Boca (${r.z_crista.toFixed(2)} m)</span>
+      <span><span style="display:inline-block;width:11pt;height:0;border-top:2pt dashed #2e7d32;vertical-align:middle;margin-right:1.5mm;margin-top:3pt;"></span>Talude externo</span>
+      <span style="color:#c62828;">— — A-B longitudinal (aterro ${r.h_at_A.toFixed(2)} m)</span>
+      <span style="color:#1565c0;">— — C-D transversal (aterro ${r.h_at_C.toFixed(2)} m)</span>
+    </div>
+  </div>
+
+</div>
+
+<!-- FOLHA 2: DADOS TÉCNICOS -->
+<div class="page pg">
+<div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2pt solid #003d5c;padding-bottom:2mm;margin-bottom:3mm;">
+  <div>
+    <div style="font-size:11.5pt;font-weight:900;color:#003d5c;">Dados Técnicos — Reservatório Escavado</div>
+    <div style="font-size:7pt;color:#607080;margin-top:0.5mm;">${prop} &nbsp;·&nbsp; ${cliente} &nbsp;·&nbsp; ${consultor}</div>
+  </div>
+  <div style="text-align:right;font-size:7pt;color:#607080;"><strong style="color:#003d5c;">Bolsa Irriga®</strong><br>${date} &nbsp;·&nbsp; Folha 2/4</div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 8mm;">
+  <table>
+    ${th2('Dados do Reservatório')}
+    ${tr2('Volume útil',fmt(r.Vutil_calc)+' m³',true)}
+    ${tr2('Volume morto (h='+r.h_m.toFixed(2)+' m)',fmt(r.Vmort)+' m³')}
+    ${tr2('Volume total',fmt(r.Vtotal_calc)+' m³')}
+    ${tr2('Profundidade total H',r.h_prof.toFixed(2)+' m')}
+    ${tr2('Escavação média',r.h_esc_avg.toFixed(2)+' m')}
+    ${tr2('Aterro médio',r.h_at_avg.toFixed(2)+' m')}
+    ${tr2('Área espelho d\'água (NA)',fmt(r.Ae)+' m²')}
+    ${tr2('Área do fundo',fmt(r.Af)+' m²')}
+    ${tr2('Cota NA',r.z_na.toFixed(2)+' m')}
+    ${tr2('Cota crista / boca',r.z_crista.toFixed(2)+' m')}
+    ${tr2('Cota terreno média',r.z_terreno.toFixed(2)+' m')}
+    ${tr2('Cota fundo escavado',r.z_fundo.toFixed(2)+' m')}
+    ${tr2('Borda livre',r.p.BL.toFixed(1)+' m')}
+    ${tr2('Largura crista (boca)',r.p.Lc.toFixed(1)+' m')}
+    ${tr2('Talude interno 1:Ti','1:'+r.p.Ti)}
+    ${tr2('Talude externo 1:Te','1:'+r.p.Te)}
+    ${th2('Movimentação de Terra')}
+    ${tr2('Corte — TIN',fmt(r.Vcut)+' m³')}
+    ${tr2('Aterro — TIN',fmt(r.Vfill_tin)+' m³')}
+    ${tr2('FC compactação ('+r.comp_pct+'%)',r.p.Fc.toFixed(2))}
+    ${tr2('Aterro necessário',fmt(r.Vfill_nec)+' m³',true)}
+    ${tr2('Saldo de material',balTxt,true,balCls)}
+    ${tr2('Fator empolamento Fe',r.p.Fe.toFixed(2))}
+  </table>
+  <table>
+    ${th2('Limpeza e Transporte')}
+    ${tr2('Área total (c/ taludes)',fmt(r.A_pe_total)+' m²')}
+    ${tr2('Camada vegetal removida',r.p.h_limp.toFixed(2)+' m')}
+    ${tr2('Volume de limpeza',fmt(r.V_limpeza)+' m³')}
+    ${tr2('Volume por caminhão',r.p.V_caminhao+' m³')}
+    ${r.n_bota>0?tr2('Bota-fora excedente',r.n_bota+' viagens',false,'#2e7d32'):''}
+    ${tr2('Transporte de limpeza',r.n_limp+' viagens')}
+    ${th2('Geomembrana PEAD')}
+    ${tr2('Fundo',fmt(r.A_fundo)+' m²')}
+    ${tr2('Talude interno',fmt(r.A_talude)+' m²')}
+    ${tr2('Borda de fixação',fmt(r.A_borda)+' m²')}
+    ${tr2('+ Sobreposição 3,5%','+'+fmt(r.A_sobreposi)+' m²',false,'#1565c0')}
+    ${tr2('+ Sobra 10%','+'+fmt(r.A_sobra)+' m²',false,'#1565c0')}
+    ${tr2('Total geomembrana',fmt(r.A_total)+' m²',true,'#003d5c')}
+    ${th2('Cotas dos Cortes Transversais')}
+    ${tr2('Cota terreno ponto A',r.z_t_A.toFixed(2)+' m')}
+    ${tr2('Cota terreno ponto B',r.z_t_B.toFixed(2)+' m')}
+    ${tr2('Cota terreno ponto C',r.z_t_C.toFixed(2)+' m')}
+    ${tr2('Cota terreno ponto D',r.z_t_D.toFixed(2)+' m')}
+    ${tr2('Aterro A-B (long.)',r.h_at_A.toFixed(2)+' m',true,'#c62828')}
+    ${tr2('Aterro C-D (trans.)',r.h_at_C.toFixed(2)+' m',true,'#1565c0')}
+  </table>
+</div>
+<div style="display:flex;gap:4mm;margin-top:4mm;border-top:0.8pt solid #ccc;padding-top:2mm;">
+  <div style="flex:0 0 58mm;">
+    <div style="font-size:5.5pt;color:#999;text-transform:uppercase;letter-spacing:.06em;margin-bottom:1mm;">Cliente</div>
+    <div style="font-size:8pt;font-weight:700;">${cliente}</div>
+    <div style="margin-top:2mm;font-size:5.5pt;color:#999;text-transform:uppercase;letter-spacing:.06em;margin-bottom:1mm;">Projeto / Propriedade</div>
+    <div style="font-size:8pt;font-weight:700;">${prop}</div>
+  </div>
+  <div style="flex:0 0 52mm;">
+    <div style="font-size:5.5pt;color:#999;text-transform:uppercase;letter-spacing:.06em;margin-bottom:1mm;">Responsável Técnico</div>
+    <div style="font-size:8pt;font-weight:700;">${consultor}</div>
+    <div style="margin-top:2mm;font-size:5.5pt;color:#999;text-transform:uppercase;letter-spacing:.06em;margin-bottom:1mm;">Data de Emissão</div>
+    <div style="font-size:8pt;font-weight:700;">${date}</div>
+  </div>
+  <div style="flex:1;text-align:right;font-size:6pt;color:#999;line-height:1.8;padding-top:2mm;">
+    Planta de Movimentação de Terra &nbsp;|&nbsp; Reservatório Escavado<br>
+    Bolsa Irriga® &nbsp;·&nbsp; Av. Elias Abraão, nº 140 &nbsp;·&nbsp; Franca – SP &nbsp;·&nbsp; (16) 3702-6571 &nbsp;·&nbsp; bolsairriga.com.br
+  </div>
+</div>
+</div>
+
+<!-- FOLHA 3: CORTE A-B -->
+<div class="page pg">
+<div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2pt solid #003d5c;padding-bottom:2mm;margin-bottom:3mm;">
+  <div>
+    <div style="font-size:11pt;font-weight:900;color:#003d5c;">Corte Transversal A-B — Maior Aterro</div>
+    <div style="font-size:7pt;color:#607080;margin-top:0.5mm;">${prop} &nbsp;·&nbsp; ${cliente} &nbsp;·&nbsp; Aterro: ${r.h_at_A.toFixed(2)} m &nbsp;·&nbsp; Crista: ${r.z_crista.toFixed(2)} m</div>
+  </div>
+  <div style="text-align:right;font-size:7pt;color:#607080;"><strong style="color:#003d5c;">Bolsa Irriga®</strong><br>${date} &nbsp;·&nbsp; Folha 3/4</div>
+</div>
+<div style="margin-bottom:3mm;">${svgAB}</div>
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:2mm 5mm;font-size:7pt;border-top:0.8pt solid #ccc;padding-top:2mm;">
+  <div><span style="color:#607080;">Cota crista</span><br><strong>${r.z_crista.toFixed(2)} m</strong></div>
+  <div><span style="color:#607080;">Cota NA</span><br><strong>${r.z_na.toFixed(2)} m</strong></div>
+  <div><span style="color:#607080;">Cota fundo</span><br><strong>${r.z_fundo.toFixed(2)} m</strong></div>
+  <div><span style="color:#607080;">Profundidade H</span><br><strong>${r.H.toFixed(2)} m</strong></div>
+  <div><span style="color:#607080;">Talude interno</span><br><strong>1:${r.p.Ti}</strong></div>
+  <div><span style="color:#607080;">Talude externo</span><br><strong>1:${r.p.Te}</strong></div>
+  <div><span style="color:#607080;">Largura crista</span><br><strong>${r.p.Lc.toFixed(1)} m</strong></div>
+  <div><span style="color:#607080;">Borda livre</span><br><strong>${r.p.BL.toFixed(1)} m</strong></div>
+  <div><span style="color:#607080;">Cota terreno A</span><br><strong>${r.z_t_A.toFixed(2)} m</strong></div>
+  <div><span style="color:#607080;">Cota terreno B</span><br><strong>${r.z_t_B.toFixed(2)} m</strong></div>
+  <div><span style="color:#607080;">Aterro A-B (long.)</span><br><strong style="color:#c62828;">${r.h_at_A.toFixed(2)} m</strong></div>
+  <div><span style="color:#607080;">Volume corte</span><br><strong>${fmt(r.Vcut)} m³</strong></div>
+</div>
+<div style="margin-top:2mm;text-align:right;font-size:6pt;color:#999;">
+  Bolsa Irriga® &nbsp;·&nbsp; Av. Elias Abraão, nº 140 &nbsp;·&nbsp; Franca – SP &nbsp;·&nbsp; (16) 3702-6571 &nbsp;·&nbsp; bolsairriga.com.br
+</div>
+</div>
+
+<!-- FOLHA 4: CORTE C-D -->
+<div class="page pg">
+<div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2pt solid #003d5c;padding-bottom:2mm;margin-bottom:3mm;">
+  <div>
+    <div style="font-size:11pt;font-weight:900;color:#003d5c;">Corte Transversal C-D — Menor Aterro</div>
+    <div style="font-size:7pt;color:#607080;margin-top:0.5mm;">${prop} &nbsp;·&nbsp; ${cliente} &nbsp;·&nbsp; Aterro: ${r.h_at_C.toFixed(2)} m &nbsp;·&nbsp; Crista: ${r.z_crista.toFixed(2)} m</div>
+  </div>
+  <div style="text-align:right;font-size:7pt;color:#607080;"><strong style="color:#003d5c;">Bolsa Irriga®</strong><br>${date} &nbsp;·&nbsp; Folha 4/4</div>
+</div>
+<div style="margin-bottom:3mm;">${svgCD}</div>
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:2mm 5mm;font-size:7pt;border-top:0.8pt solid #ccc;padding-top:2mm;">
+  <div><span style="color:#607080;">Cota crista</span><br><strong>${r.z_crista.toFixed(2)} m</strong></div>
+  <div><span style="color:#607080;">Cota NA</span><br><strong>${r.z_na.toFixed(2)} m</strong></div>
+  <div><span style="color:#607080;">Cota fundo</span><br><strong>${r.z_fundo.toFixed(2)} m</strong></div>
+  <div><span style="color:#607080;">Profundidade H</span><br><strong>${r.H.toFixed(2)} m</strong></div>
+  <div><span style="color:#607080;">Talude interno</span><br><strong>1:${r.p.Ti}</strong></div>
+  <div><span style="color:#607080;">Talude externo</span><br><strong>1:${r.p.Te}</strong></div>
+  <div><span style="color:#607080;">Largura crista</span><br><strong>${r.p.Lc.toFixed(1)} m</strong></div>
+  <div><span style="color:#607080;">Borda livre</span><br><strong>${r.p.BL.toFixed(1)} m</strong></div>
+  <div><span style="color:#607080;">Cota terreno C</span><br><strong>${r.z_t_C.toFixed(2)} m</strong></div>
+  <div><span style="color:#607080;">Cota terreno D</span><br><strong>${r.z_t_D.toFixed(2)} m</strong></div>
+  <div><span style="color:#607080;">Aterro C-D (trans.)</span><br><strong style="color:#1565c0;">${r.h_at_C.toFixed(2)} m</strong></div>
+  <div><span style="color:#607080;">Volume aterro</span><br><strong>${fmt(r.Vfill_nec)} m³</strong></div>
+</div>
+<div style="margin-top:2mm;text-align:right;font-size:6pt;color:#999;">
+  Bolsa Irriga® &nbsp;·&nbsp; Av. Elias Abraão, nº 140 &nbsp;·&nbsp; Franca – SP &nbsp;·&nbsp; (16) 3702-6571 &nbsp;·&nbsp; bolsairriga.com.br
+</div>
+</div>
+
+<div class="no-print" style="text-align:center;margin:8mm auto;max-width:277mm;">
+  <button onclick="window.print()" style="background:#003d5c;color:#fff;border:none;border-radius:6px;padding:9px 26px;font-size:12pt;font-weight:700;cursor:pointer;margin-right:8px;">🖨️ Imprimir / PDF</button>
+  <button onclick="window.close()" style="background:#546e7a;color:#fff;border:none;border-radius:6px;padding:9px 18px;font-size:11pt;cursor:pointer;">✕ Fechar</button>
+</div>
+</body></html>`);
+  win.document.close();
+}
+
+// ── KML ───────────────────────────────────────────────────────────────────────
+function gerarKML(){
+  if(!resultado||!polyPts||polyPts.length<3){alert('Dimensione o reservatório primeiro.');return;}
+  const r=resultado;
+  const prop=$('rProp').value.trim()||'Reservatorio';
+  function ringKml(pts){
+    var cl=pts.map(function(p){return(Array.isArray(p)?p[0]+','+p[1]:p.lng+','+p.lat)+',0';});
+    if(cl[0]!==cl[cl.length-1])cl.push(cl[0]);
+    return cl.join('\n              ');
+  }
+  function folder(name,lnClr,fillClr,ring,desc){
+    return '<Folder><name>'+name+'</name><Placemark><name>'+name+'</name>'+
+      '<description>'+desc+'</description>'+
+      '<Style><LineStyle><color>'+lnClr+'</color><width>2</width></LineStyle>'+
+      '<PolyStyle><color>'+fillClr+'</color></PolyStyle></Style>'+
+      '<Polygon><tessellate>1</tessellate><outerBoundaryIs><LinearRing>'+
+      '<coordinates>\n              '+ring+'\n            </coordinates>'+
+      '</LinearRing></outerBoundaryIs></Polygon></Placemark></Folder>';
+  }
+  var kml='<?xml version="1.0" encoding="UTF-8"?>\n'+
+    '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>\n'+
+    '<name>'+prop+' — Reservatório Escavado</name>\n';
+  kml+=folder("Espelho d’Água (NA — "+r.z_na.toFixed(2)+"m)",'ffc06515','66c06515',ringKml(polyPts),"NA — Cota "+r.z_na.toFixed(2)+" m | Área "+Math.round(r.Ae)+" m²");
+  if(r.fundoBuf)kml+=folder("Fundo Escavado ("+r.z_fundo.toFixed(2)+"m)",'ffa1470d','44a1470d',ringKml(r.fundoBuf.geometry.coordinates[0]),"Fundo — Cota "+r.z_fundo.toFixed(2)+" m | Área "+Math.round(r.Af)+" m²");
+  if(r.cristaBuf)kml+=folder("Crista / Boca ("+r.z_crista.toFixed(2)+"m)",'ff456e8d','55456e8d',ringKml(r.cristaBuf.geometry.coordinates[0]),"Crista — Cota "+r.z_crista.toFixed(2)+" m | Lc "+r.p.Lc.toFixed(1)+" m");
+  if(r.peExtBuf)kml+=folder("Talude Externo",'ff327d2e','44327d2e',ringKml(r.peExtBuf.geometry.coordinates[0]),"Talude externo — 1:"+r.p.Te);
+  kml+='</Document></kml>';
+  var blob=new Blob([kml],{type:'application/vnd.google-earth.kml+xml'});
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=prop.replace(/[^\w]/g,'_')+'_reservatorio.kml';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+}
+
+// ── KML 3D ────────────────────────────────────────────────────────────────────
+function gerarKML3D(){
+  if(!resultado||!polyPts||polyPts.length<3){alert('Dimensione o reservatório primeiro.');return;}
+  const r=resultado;
+  const prop=$('rProp').value.trim()||'Reservatorio';
+
+  function toRing(pts){
+    let ring=pts.map(p=>Array.isArray(p)?[p[0],p[1]]:[p.lng,p.lat]);
+    if(ring[0][0]!==ring[ring.length-1][0]||ring[0][1]!==ring[ring.length-1][1])ring.push([...ring[0]]);
+    return ring;
+  }
+  function geoRing(c){return c.map(p=>[p[0],p[1]]);}
+
+  // Resample ring to N uniformly spaced pts (open ring = no closing duplicate)
+  function resample(ring,N){
+    const pts=(ring[0][0]===ring[ring.length-1][0]&&ring[0][1]===ring[ring.length-1][1])
+      ?ring.slice(0,-1):ring;
+    const n=pts.length;
+    const acc=[0];
+    for(let i=0;i<n;i++){
+      const a=pts[i],b=pts[(i+1)%n];
+      const dx=(b[0]-a[0])*111320*Math.cos(a[1]*Math.PI/180);
+      const dy=(b[1]-a[1])*111320;
+      acc.push(acc[i]+Math.sqrt(dx*dx+dy*dy));
+    }
+    const total=acc[n];
+    const out=[];
+    for(let k=0;k<N;k++){
+      const t=k/N*total;
+      let i=0;while(i<n-1&&acc[i+1]<t)i++;
+      const seg=acc[i+1]-acc[i];
+      const f=seg<1e-10?0:(t-acc[i])/seg;
+      const a=pts[i],b=pts[(i+1)%n];
+      out.push([a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f]);
+    }
+    return out;
+  }
+
+  // Rotate rMov so its [0] aligns angularly with rRef[0]
+  function alignRing(rRef,rMov){
+    let rx=0,ry=0;rRef.forEach(p=>{rx+=p[0];ry+=p[1];});rx/=rRef.length;ry/=rRef.length;
+    let cx=0,cy=0;rMov.forEach(p=>{cx+=p[0];cy+=p[1];});cx/=rMov.length;cy/=rMov.length;
+    const refAng=Math.atan2(rRef[0][1]-ry,rRef[0][0]-rx);
+    let best=0,bestD=Infinity;
+    for(let i=0;i<rMov.length;i++){
+      const a=Math.atan2(rMov[i][1]-cy,rMov[i][0]-cx);
+      let d=Math.abs(a-refAng);if(d>Math.PI)d=2*Math.PI-d;
+      if(d<bestD){bestD=d;best=i;}
+    }
+    return [...rMov.slice(best),...rMov.slice(0,best)];
+  }
+
+  function coordStr(pts){return pts.map(p=>p[0].toFixed(7)+','+p[1].toFixed(7)+','+p[2].toFixed(2)).join(' ');}
+
+  function pm(name,coords,lnClr,fillClr){
+    return '<Placemark><name>'+name+'</name>'+
+      '<Style><LineStyle><color>'+lnClr+'</color><width>1</width></LineStyle>'+
+      '<PolyStyle><color>'+fillClr+'</color><outline>0</outline></PolyStyle></Style>'+
+      '<Polygon><extrude>0</extrude><altitudeMode>absolute</altitudeMode>'+
+      '<outerBoundaryIs><LinearRing><coordinates>'+coordStr(coords)+'</coordinates></LinearRing></outerBoundaryIs>'+
+      '</Polygon></Placemark>';
+  }
+
+  function discFolder(name,ring,z,lnClr,fillClr){
+    const c=ring.map(p=>[p[0],p[1],z]);c.push(c[0]);
+    return '<Folder><name>'+name+'</name>'+pm(name,c,lnClr,fillClr)+'</Folder>';
+  }
+
+  function stripFolder(name,rA,zA,rB,zB,lnClr,fillClr){
+    const n=rA.length;
+    let out='<Folder><name>'+name+'</name>';
+    for(let i=0;i<n;i++){
+      const j=(i+1)%n;
+      const zA0=Array.isArray(zA)?zA[i]:zA, zA1=Array.isArray(zA)?zA[j]:zA;
+      const zB0=Array.isArray(zB)?zB[i]:zB, zB1=Array.isArray(zB)?zB[j]:zB;
+      const q=[[rA[i][0],rA[i][1],zA0],[rA[j][0],rA[j][1],zA1],
+               [rB[j][0],rB[j][1],zB1],[rB[i][0],rB[i][1],zB0],
+               [rA[i][0],rA[i][1],zA0]];
+      out+=pm('p'+i,q,lnClr,fillClr);
+    }
+    return out+'</Folder>';
+  }
+
+  const N=72;
+  const naR=resample(toRing(polyPts),N);
+  const fdR=r.fundoBuf?resample(geoRing(r.fundoBuf.geometry.coordinates[0]),N):null;
+  const crR=r.cristaBuf?resample(geoRing(r.cristaBuf.geometry.coordinates[0]),N):null;
+  const peR=r.peExtBuf?resample(geoRing(r.peExtBuf.geometry.coordinates[0]),N):null;
+
+  const naA=naR;
+  const fdA=fdR?alignRing(naA,fdR):null;
+  const crA=crR?alignRing(naA,crR):null;
+  const peA=peR?alignRing(crA||naA,peR):null;
+
+  const z_pe=r.z_terreno;
+
+  var kml='<?xml version="1.0" encoding="UTF-8"?>\n'+
+    '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>\n'+
+    '<name>'+prop+' — Reservatório 3D</name>\n';
+
+  // Fundo
+  const fdBase=fdA||naA;
+  kml+=discFolder('Fundo ('+r.z_fundo.toFixed(1)+'m)',fdBase,r.z_fundo,'ff5d4037','dd8d6e63');
+
+  // Talude interno (fundo → espelho)
+  if(fdA)kml+=stripFolder('Talude Interno',fdA,r.z_fundo,naA,r.z_na,'ff5d4037','cc8d6e63');
+
+  // Borda livre (espelho → crista)
+  if(crA)kml+=stripFolder('Borda Livre',naA,r.z_na,crA,r.z_crista,'ff37474f','aa607d8b');
+
+  // Espelho d'água
+  {const c=naA.map(p=>[p[0],p[1],r.z_na]);c.push(c[0]);
+  kml+='<Folder><name>Espelho d\'Água ('+r.z_na.toFixed(1)+'m)</name>'+pm("Espelho d'Água",c,'ffc06515','661e88e5')+'</Folder>';}
+
+  // Talude externo (crista → pé)
+  if(crA&&peA)kml+=stripFolder('Talude Externo',crA,r.z_crista,peA,z_pe,'ff2e7d32','994caf50');
+
+  // Tampa do aterro (anel plano entre crista e pé ao nível z_crista, simplificação)
+  // Omitida: o talude externo já representa visualmente o volume de aterro
+
+  kml+='</Document></kml>';
+
+  var blob=new Blob([kml],{type:'application/vnd.google-earth.kml+xml'});
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=prop.replace(/[^\w]/g,'_')+'_3d.kml';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+}
+
+// ── PDF ───────────────────────────────────────────────────────────────────────
+function gerarPDF(){
+  if(!resultado){alert('Dimensione o reservatório primeiro.');return;}
+  const r=resultado;
+  const win=window.open('','_blank');
+  if(!win){alert('Popup bloqueado.');return;}
+  const date=new Date().toLocaleDateString('pt-BR');
+  const consultor=$('rConsultor').value.trim()||'João Paulo de Oliveira';
+  const cliente=$('rCliente').value.trim()||'—';
+  const prop=$('rProp').value.trim()||'—';
+  const key=localStorage.getItem('mapskey_terra')||'';
+  const comp_pct=r.comp_pct;
+
+  // Static map bounding box (expand to include pé externo)
+  const bbox=turf.bbox(r.peExtBuf||r.cristaBuf||turfPoly);
+  const pad=0.10;
+  const latSp=bbox[3]-bbox[1],lngSp=bbox[2]-bbox[0];
+  const sw={lat:bbox[1]-latSp*pad,lng:bbox[0]-lngSp*pad};
+  const ne={lat:bbox[3]+latSp*pad,lng:bbox[2]+lngSp*pad};
+  const MW=512,MH=307;
+
+  function _zoom(sw,ne,W,H){const T=256,LN2=Math.LN2;const latRad=lat=>Math.log((1+Math.sin(lat*Math.PI/180))/(1-Math.sin(lat*Math.PI/180)))/2;const latF=Math.abs(latRad(ne.lat)-latRad(sw.lat))/Math.PI;const lngF=Math.abs(ne.lng-sw.lng)/360;const zL=Math.floor(Math.log(2*H/T/latF)/LN2);const zG=Math.floor(Math.log(W/T/lngF)/LN2);return{zoom:Math.min(zL,zG,20),cLat:(sw.lat+ne.lat)/2,cLng:(sw.lng+ne.lng)/2};}
+  const {zoom,cLat,cLng}=_zoom(sw,ne,MW,MH);
+  const staticUrl=key?`https://maps.googleapis.com/maps/api/staticmap?center=${cLat},${cLng}&zoom=${zoom}&size=${MW}x${MH}&scale=2&maptype=satellite&key=${key}`:'';
+
+  function _mkToPx(cLat,cLng,zoom,W,H){const S=256*Math.pow(2,zoom);const wx=lng=>(lng+180)/360*S;const wy=lat=>{const s=Math.sin(lat*Math.PI/180);return(0.5-Math.log((1+s)/(1-s))/(4*Math.PI))*S;};const cx=wx(cLng),cy=wy(cLat);return(lat,lng)=>({x:wx(lng)-cx+W/2,y:wy(lat)-cy+H/2});}
+  const toPx=_mkToPx(cLat,cLng,zoom,MW,MH);
+
+  function polyToSVGPath(pts){return pts.map((p,i)=>{const px=toPx(p[0],p[1]);return(i?'L':'M')+px.x.toFixed(1)+','+px.y.toFixed(1);}).join(' ')+'Z';}
+
+  // Build polygon paths for SVG overlay
+  const naPath=polyToSVGPath(polyPts.map(p=>[p.lat,p.lng]));
+  const fdPath=r.fundoBuf?polyToSVGPath(r.fundoBuf.geometry.coordinates[0].map(c=>[c[1],c[0]])):null;
+  const crPath=r.cristaBuf?polyToSVGPath(r.cristaBuf.geometry.coordinates[0].map(c=>[c[1],c[0]])):null;
+  const pePath=r.peExtBuf?polyToSVGPath(r.peExtBuf.geometry.coordinates[0].map(c=>[c[1],c[0]])):null;
+  const ptAPx=toPx(r.pt_A.lat,r.pt_A.lng);
+  const ptBPx=toPx(r.pt_B.lat,r.pt_B.lng);
+  const ptCPx=toPx(r.pt_C.lat,r.pt_C.lng);
+  const ptDPx=toPx(r.pt_D.lat,r.pt_D.lng);
+
+  const balancoClass=r.balanco>0?'#2e7d32':'#c62828';
+  const balancoTxt=(r.balanco>0?'+':'')+fmt(r.balanco)+' m³ '+(r.balanco>0?'(excedente)':'(importar)');
+
+  // Cross-section SVGs
+  const svgAB=svgCorte('pab','CORTE A-B — LONGITUDINAL ('+r.h_at_A.toFixed(2)+' m)','A','B',r.z_t_A,r.z_t_B,r);
+  const svgCD=svgCorte('pcd','CORTE C-D — TRANSVERSAL ('+r.h_at_C.toFixed(2)+' m)','C','D',r.z_t_C,r.z_t_D,r);
+
+  function tr(lbl,val,bold=false,color=''){return`<tr><td>${lbl}</td><td style="text-align:right;font-weight:${bold?'700':'500'};color:${color||'#1a2535'}">${val}</td></tr>`;}
+  function th(t){return`<tr><td colspan="2" style="background:#003d5c;color:#fff;font-size:7.5pt;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:3px 6px;">${t}</td></tr>`;}
+
+  win.document.write(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
+<title>Reservatório Escavado — Terraplenagem</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:Arial,sans-serif;font-size:9pt;background:#fff;color:#1a2535;}
+@page{size:A4 landscape;margin:10mm 12mm;}
+@media print{body{margin:0;}}
+.page{width:277mm;margin:0 auto;}
+.main{display:flex;gap:5mm;height:148mm;}
+.plan-col{flex:0 0 172mm;}
+.table-col{flex:1;overflow:hidden;}
+.plan-title{font-size:7.5pt;font-weight:700;color:#1a2535;letter-spacing:.04em;margin-bottom:2mm;}
+.plan-wrap{position:relative;width:172mm;height:103mm;overflow:hidden;border:0.5pt solid #ccc;}
+.plan-wrap img{width:100%;height:100%;object-fit:cover;display:block;}
+.plan-wrap svg{position:absolute;inset:0;width:100%;height:100%;}
+.plan-legend{display:flex;flex-wrap:wrap;gap:3mm 6mm;margin-top:2mm;font-size:7pt;color:#333;align-items:center;}
+.plan-legend span{display:flex;align-items:center;gap:2mm;}
+table{width:100%;border-collapse:collapse;font-size:8pt;}
+td{padding:2.5px 5px;border-bottom:0.5pt solid #e8edf2;}
+tr:nth-child(even) td:not([colspan]){background:#f8fafc;}
+.val{font-weight:700;text-align:right;}
+.cortes{display:flex;gap:4mm;margin-top:3mm;}
+.corte-item{flex:1;}
+.corte-title{font-size:7pt;font-weight:700;color:#1a237e;margin-bottom:1mm;text-transform:uppercase;}
+.footer{display:flex;gap:4mm;margin-top:3mm;align-items:flex-end;}
+.footer-card{border:0.5pt solid #ccc;border-radius:3pt;padding:3mm 4mm;font-size:7.5pt;color:#555;flex:0 0 55mm;}
+.footer-card .fc-label{font-size:6pt;color:#999;margin-bottom:0.5mm;}
+.footer-card .fc-val{font-size:8pt;font-weight:700;color:#1a2535;}
+.footer-meta{flex:1;font-size:6.5pt;color:#999;text-align:right;line-height:1.7;}
+.lsq{display:inline-block;width:10pt;height:7pt;vertical-align:middle;margin-right:2pt;}
+</style></head><body><div class="page">
+
+<div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1.5pt solid #003d5c;padding-bottom:2mm;margin-bottom:3mm;">
+  <div>
+    <div style="font-size:13pt;font-weight:900;color:#003d5c;">Reservatório Escavado — Terraplenagem</div>
+    <div style="font-size:8pt;color:#607080;margin-top:1mm;">${prop} &nbsp;·&nbsp; ${cliente} &nbsp;·&nbsp; ${consultor}</div>
+  </div>
+  <div style="text-align:right;font-size:8pt;color:#607080;"><strong style="color:#003d5c;">Bolsa Irriga®</strong><br>${date}</div>
+</div>
+
+<div class="main">
+  <div class="plan-col">
+    <div class="plan-title">PLANTA BAIXA — ESC. INDICADA</div>
+    <div class="plan-wrap">
+      ${staticUrl?`<img src="${staticUrl}" alt="Mapa satélite"/>`:'<div style="width:100%;height:100%;background:#c8d4e0;display:flex;align-items:center;justify-content:center;font-size:9pt;color:#666;">Chave API necessária para imagem satélite</div>'}
+      <svg viewBox="0 0 ${MW} ${MH}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+        ${pePath?`<path d="${pePath}" fill="none" stroke="#6a1b9a" stroke-width="1.5" stroke-dasharray="5,3" opacity="0.9"/>`:''}
+        ${crPath?`<path d="${crPath}" fill="none" stroke="#9c27b0" stroke-width="2" opacity="0.9"/>`:''}
+        <path d="${naPath}" fill="#64b5f6" fill-opacity="0.25" stroke="#1565c0" stroke-width="2"/>
+        ${fdPath?`<path d="${fdPath}" fill="#0d47a1" fill-opacity="0.65" stroke="#0d47a1" stroke-width="1"/>`:''}
+        <line x1="${ptAPx.x.toFixed(1)}" y1="${ptAPx.y.toFixed(1)}" x2="${ptBPx.x.toFixed(1)}" y2="${ptBPx.y.toFixed(1)}" stroke="#c62828" stroke-width="1.2" stroke-dasharray="6,4" opacity="0.85"/>
+        <line x1="${ptCPx.x.toFixed(1)}" y1="${ptCPx.y.toFixed(1)}" x2="${ptDPx.x.toFixed(1)}" y2="${ptDPx.y.toFixed(1)}" stroke="#1565c0" stroke-width="1.2" stroke-dasharray="6,4" opacity="0.85"/>
+        ${[{px:ptAPx,l:'A'},{px:ptBPx,l:'B'},{px:ptCPx,l:'C'},{px:ptDPx,l:'D'}].map(({px,l})=>`<circle cx="${px.x.toFixed(1)}" cy="${px.y.toFixed(1)}" r="5" fill="#c62828" stroke="#fff" stroke-width="1"/><text x="${px.x.toFixed(1)}" y="${(px.y+3.5).toFixed(1)}" font-size="6" font-weight="bold" fill="#fff" text-anchor="middle">${l}</text>`).join('')}
+        <text x="${MW-8}" y="14" font-size="9" font-weight="bold" fill="white" text-anchor="middle">↑</text>
+        <text x="${MW-8}" y="22" font-size="7" font-weight="bold" fill="white" text-anchor="middle">N</text>
+      </svg>
+    </div>
+    <div class="plan-legend">
+      <span><span class="lsq" style="background:#64b5f6;border:1px solid #1565c0;opacity:.7;"></span>Água (NA)</span>
+      <span><span class="lsq" style="background:#0d47a1;border:1px solid #0d47a1;"></span>Fundo</span>
+      <span><span class="lsq" style="height:2pt;background:#9c27b0;"></span>Crista</span>
+      <span><span class="lsq" style="height:0;border-top:2pt dashed #6a1b9a;"></span>Pé externo</span>
+      <span style="color:#c62828;">— — A-B (longitudinal)</span>
+      <span style="color:#1565c0;">— — C-D (transversal)</span>
+    </div>
+  </div>
+
+  <div class="table-col">
+    <table>
+      ${th('Parâmetros do Projeto')}
+      ${tr('Talude interno','1 : '+r.p.Ti)}
+      ${tr('Talude externo','1 : '+r.p.Te)}
+      ${tr('Largura da crista',r.p.Lc.toFixed(1)+' m')}
+      ${tr('Borda livre',r.p.BL.toFixed(1)+' m')}
+      ${tr('Empolamento',r.p.Fe.toFixed(2))}
+      ${tr('Compactação',r.p.Fc.toFixed(2)+' (FC '+r.p.Fc.toFixed(3)+')')}
+      ${th('Geometria')}
+      ${tr('Profundidade total',r.h_prof.toFixed(2)+' m')}
+      ${tr('Altura de escavação',r.h_esc_avg.toFixed(2)+' m')}
+      ${tr('Altura de aterro',r.h_at_avg.toFixed(2)+' m')}
+      ${tr('Área do fundo',fmt(r.Af)+' m²')}
+      ${tr('Área do espelho máx',fmt(r.Ae)+' m²')}
+      ${th('Cotas de Elevação')}
+      ${tr('Cota do fundo',r.z_fundo.toFixed(2)+' m')}
+      ${tr('Cota do terreno',r.z_terreno.toFixed(2)+' m')}
+      ${tr('Cota da crista',r.z_crista.toFixed(2)+' m')}
+      ${tr('NA normal',r.z_na.toFixed(2)+' m')}
+      ${th('Volumes')}
+      ${tr('Volume total',fmt(r.Vtotal_calc)+' m³',true)}
+      ${tr('Volume morto (h='+r.h_m.toFixed(2)+' m)',fmt(r.Vmort)+' m³')}
+      ${tr('Volume útil',fmt(r.Vutil_calc)+' m³',true)}
+      ${th('Movimentação de Terra')}
+      ${tr('Corte — TIN',fmt(r.Vcut)+' m³')}
+      ${tr('Aterro — TIN',fmt(r.Vfill_tin)+' m³')}
+      ${tr('+ Compactação ('+comp_pct+'%)','+'+fmt(r.Vfill_delta)+' m³',false,'#00695c')}
+      ${tr('= Aterro necessário',fmt(r.Vfill_nec)+' m³',true)}
+      ${tr('Saldo de material',balancoTxt,true,balancoClass)}
+      ${th('Geomembrana')}
+      ${tr('Fundo',fmt(r.A_fundo)+' m²')}
+      ${tr('Talude interno',fmt(r.A_talude)+' m²')}
+      ${tr('Borda de fixação',fmt(r.A_borda)+' m²')}
+      ${tr('+ Subtotal líquido',fmt(r.A_subtotal)+' m²',false,'#00695c')}
+      ${tr('+ Sobreposição (3,5%)','+'+fmt(r.A_sobreposi)+' m²',false,'#1565c0')}
+      ${tr('+ Sobra (10%)','+'+fmt(r.A_sobra)+' m²',false,'#1565c0')}
+      ${tr('Total',fmt(r.A_total)+' m²',true,'#003d5c')}
+    </table>
+  </div>
+</div>
+
+<div class="footer">
+  <div class="footer-card" style="flex:1;">
+    <div class="fc-label">CLIENTE</div><div class="fc-val">${cliente}</div>
+    <div style="margin-top:3px;"><div class="fc-label">PROJETO</div><div class="fc-val">${prop}</div></div>
+  </div>
+  <div class="footer-meta">
+    Desenhado por ${consultor} &nbsp;|&nbsp; Data ${date} &nbsp;|&nbsp; Escala Indicada &nbsp;|&nbsp; Folha 01/03<br>
+    Bolsa Irriga® — Av. Elias Abraão, nº 140 · Franca – SP · (16) 3702-6571
+  </div>
+</div>
+</div>
+
+<!-- PÁGINA 2 — CORTE A-B -->
+<div class="page" style="page-break-before:always;">
+<div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1.5pt solid #003d5c;padding-bottom:2mm;margin-bottom:4mm;">
+  <div>
+    <div style="font-size:12pt;font-weight:900;color:#003d5c;">CORTE A-B — LONGITUDINAL (${r.h_at_A.toFixed(2)} m)</div>
+    <div style="font-size:7.5pt;color:#607080;">${prop} &nbsp;·&nbsp; ${cliente} &nbsp;·&nbsp; ${consultor}</div>
+  </div>
+  <div style="text-align:right;font-size:7.5pt;color:#607080;"><strong style="color:#003d5c;">Bolsa Irriga®</strong> &nbsp;·&nbsp; ${date} &nbsp;·&nbsp; Folha 02/03</div>
+</div>
+${svgAB}
+<div style="margin-top:6mm;font-size:7pt;color:#999;text-align:right;">Reservatório Escavado — Terraplenagem &nbsp;|&nbsp; Bolsa Irriga® · Franca–SP</div>
+</div>
+
+<!-- PÁGINA 3 — CORTE C-D -->
+<div class="page" style="page-break-before:always;">
+<div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1.5pt solid #003d5c;padding-bottom:2mm;margin-bottom:4mm;">
+  <div>
+    <div style="font-size:12pt;font-weight:900;color:#003d5c;">CORTE C-D — TRANSVERSAL (${r.h_at_C.toFixed(2)} m)</div>
+    <div style="font-size:7.5pt;color:#607080;">${prop} &nbsp;·&nbsp; ${cliente} &nbsp;·&nbsp; ${consultor}</div>
+  </div>
+  <div style="text-align:right;font-size:7.5pt;color:#607080;"><strong style="color:#003d5c;">Bolsa Irriga®</strong> &nbsp;·&nbsp; ${date} &nbsp;·&nbsp; Folha 03/03</div>
+</div>
+${svgCD}
+<div style="margin-top:6mm;font-size:7pt;color:#999;text-align:right;">Reservatório Escavado — Terraplenagem &nbsp;|&nbsp; Bolsa Irriga® · Franca–SP</div>
+</div>
+
+<script>setTimeout(()=>window.print(),800);<\/script>
+</body></html>`);
+  win.document.close();
+}
+
+</script>
+</body>
+</html>
