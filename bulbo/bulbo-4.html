@@ -123,7 +123,7 @@ td.pam-bad{color:#b71c1c}
   #printArea{display:block!important}
   .pr-page{padding:14mm 18mm;font-family:Segoe UI,Arial,sans-serif;background:#fff;color:#000;page-break-after:always}
   .pr-page:last-child{page-break-after:auto}
-  .pr-hdr{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2.5px solid #003d5c;padding-bottom:8px;margin-bottom:14px}
+  .pr-hdr{display:flex!important;justify-content:space-between;align-items:center;border-bottom:2.5px solid #003d5c;padding-bottom:8px;margin-bottom:14px}
   .pr-brand{font-size:17px;font-weight:900;color:#003d5c;line-height:1.1}
   .pr-brand small{display:block;font-size:9px;color:#607080;font-weight:400;margin-top:2px}
   .pr-doc{text-align:right;font-size:10px;color:#607080}
@@ -793,15 +793,38 @@ function refreshModalTable(){
 }
 
 // ─── relatório PDF ────────────────────────────────────────────────────────────
+let _logoDataUrl='';
+function _preloadLogo(){
+  const img=new Image();
+  img.onload=()=>{
+    try{
+      const c=document.createElement('canvas');
+      c.width=img.naturalWidth; c.height=img.naturalHeight;
+      c.getContext('2d').drawImage(img,0,0);
+      _logoDataUrl=c.toDataURL();
+    }catch(e){ _logoDataUrl=''; }
+  };
+  img.onerror=()=>{ _logoDataUrl=''; };
+  img.src='../logo perfil branca.png';
+}
+
 function generateReport(){
   const cfg=inputs();
-  const res=result||simulateForSoil(current,cfg);
+  // Força redesenho de todos os canvases antes de capturar
+  if(!result) result=simulateAt(current,cfg,totalTime(cfg));
+  draw(); drawTrend(cfg); drawProfileZ(cfg); drawProfileR(cfg);
+
+  const res=result;
   const pam=calcPAM(res,cfg);
   const imgBulb=$('bulb').toDataURL('image/png');
   const imgTrend=$('trend').toDataURL('image/png');
   const imgPZ=$('profileZ').toDataURL('image/png');
   const imgPR=$('profileR').toDataURL('image/png');
   const now=new Date().toLocaleDateString('pt-BR');
+
+  const logoTag=_logoDataUrl
+    ?`<img src="${_logoDataUrl}" style="height:52px;width:52px;object-fit:contain;border-radius:9px;background:#fff;padding:5px;margin-right:12px;flex-shrink:0">`
+    :'';
 
   const tableRows=SOILS.map(s=>{
     const r=simulateForSoil(s,cfg), p=calcPAM(r,cfg);
@@ -810,7 +833,7 @@ function generateReport(){
     return `<tr${hl}><td>${s.name}</td><td>${r.radius.toFixed(0)}</td><td>${r.depth.toFixed(0)}</td><td>${r.overlap.toFixed(0)}%</td><td class="${pamClass}">${p.pam.toFixed(0)}%</td><td>${r.wettedVolume.toFixed(1)}</td></tr>`;
   }).join('');
 
-  const hdr=`<div class="pr-hdr"><div class="pr-brand">Bolsa Irriga®<small>João Paulo de Oliveira · Engenheiro Agrônomo · Especialista em Irrigação</small></div><div class="pr-doc"><strong>Bulbo de Molhamento — Relatório Técnico</strong>${now} · Van Genuchten-Mualem (Carsel &amp; Parrish, 1988)</div></div>`;
+  const hdr=`<div class="pr-hdr"><div style="display:flex;align-items:center">${logoTag}<div class="pr-brand">Bolsa Irriga®<small>João Paulo de Oliveira · Engenheiro Agrônomo · Especialista em Irrigação</small></div></div><div class="pr-doc"><strong>Bulbo de Molhamento — Relatório Técnico</strong>${now} · Van Genuchten-Mualem (Carsel &amp; Parrish, 1988)</div></div>`;
   const ftr=`<div class="pr-ftr"><span>Modelo analítico aproximado — não substitui simulação numérica (HYDRUS-2D)</span><span>Bolsa Irriga® · bolsairriga.com.br · (16) 3702-6571</span></div>`;
 
   $('printArea').innerHTML=`
@@ -859,7 +882,8 @@ function generateReport(){
     </table>
     ${ftr}
   </div>`;
-  window.print();
+  // Aguarda o browser renderizar o conteúdo injetado antes de imprimir
+  setTimeout(()=>window.print(), 600);
 }
 
 function populate(){
@@ -936,7 +960,7 @@ function exportCsv(){
   URL.revokeObjectURL(a.href);
 }
 
-populate(); bind(); updateMetrics(false);
+populate(); bind(); updateMetrics(false); _preloadLogo();
 </script>
 </body>
 </html>
