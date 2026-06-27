@@ -79,11 +79,15 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
 .cmp th{padding:.45rem .65rem;font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;text-align:center;border:1px solid var(--bdr);background:#f4f7fb}
 .cmp td{padding:.4rem .65rem;border:1px solid var(--bdr);text-align:center;vertical-align:middle}
 /* Map section */
-.map-card-body{display:flex;gap:0;min-height:400px}
-.map-sidebar{width:280px;flex-shrink:0;padding:.8rem;border-right:1px solid var(--bdr);display:flex;flex-direction:column;gap:.65rem;overflow-y:auto}
+.map-card-body{display:flex;gap:0;height:74vh;min-height:520px}
+.map-sidebar{width:290px;flex-shrink:0;padding:.8rem;border-right:1px solid var(--bdr);display:flex;flex-direction:column;gap:.65rem;overflow-y:auto}
 .map-main{flex:1;display:flex;flex-direction:column;min-width:0}
-#map-div{flex:1;min-height:350px;background:#e8edf2}
-#elev-canvas{width:100%;height:150px;display:block;background:#f8fbff;border-top:1px solid var(--bdr)}
+#map-div{flex:1;min-height:0;background:#e8edf2}
+#elev-canvas{width:100%;height:130px;flex-shrink:0;display:block;background:#f8fbff;border-top:1px solid var(--bdr)}
+.city-search-box{display:flex;border:1.5px solid var(--bdr);border-radius:8px;overflow:hidden;background:#fafeff}
+.city-search-box input{flex:1;border:none;background:none;padding:.45rem .65rem;font-size:.88rem;color:var(--tx);outline:none}
+.city-search-box button{background:#0077b6;border:none;color:#fff;padding:.45rem .7rem;cursor:pointer;font-size:1rem;transition:background .15s}
+.city-search-box button:hover{background:#005f94}
 .cap-grid{display:grid;grid-template-columns:1fr 1fr;gap:.45rem;margin-top:.3rem}
 .cap-item{background:#f0f7ff;border:1px solid var(--bdr);border-radius:7px;padding:.3rem .5rem}
 .cap-lbl{font-size:.6rem;font-weight:800;color:var(--mu);text-transform:uppercase;letter-spacing:.04em}
@@ -150,6 +154,15 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
       </div>
 
       <button class="btn btn-blue" style="width:100%" onclick="initMaps()">&#128506; Carregar Mapa</button>
+
+      <!-- Busca de cidade — aparece após o mapa carregar -->
+      <div id="searchDiv" class="fg" style="display:none">
+        <label>&#128205; Buscar cidade / local</label>
+        <div class="city-search-box">
+          <input type="text" id="citySearch" placeholder="Ex: Franca, SP" onkeydown="if(event.key==='Enter')buscarCidade()">
+          <button onclick="buscarCidade()" title="Ir ao local">&#128269;</button>
+        </div>
+      </div>
 
       <div id="mstatus" class="sb-status"></div>
 
@@ -747,6 +760,7 @@ window.initMap=function(){
   map=new google.maps.Map($('map-div'),{center:{lat:-15.8,lng:-47.9},zoom:5,mapTypeId:'hybrid',streetViewControl:false,gestureHandling:'greedy'});
   elevService=new google.maps.ElevationService();
   map.addListener('click',e=>{if(modoDesenho)addTracePoint(e.latLng);});
+  $('searchDiv').style.display='';
   setMStatus('Mapa carregado. Clique em Iniciar Traçado.','ok');
 };
 
@@ -779,15 +793,53 @@ function fmtDistM(d){return d>=1000?(d/1000).toFixed(2)+' km':Math.round(d)+' m'
 
 function addTracePoint(latLng){
   tracePoints.push(latLng);
-  const m=new google.maps.Marker({position:latLng,map,icon:{path:google.maps.SymbolPath.CIRCLE,scale:5,fillColor:'#ff6b00',fillOpacity:1,strokeColor:'#fff',strokeWeight:1.5},zIndex:10});
+  const idx=tracePoints.length-1;
+  const m=new google.maps.Marker({
+    position:latLng,map,
+    icon:{path:google.maps.SymbolPath.CIRCLE,scale:7,fillColor:'#ff6b00',fillOpacity:1,strokeColor:'#fff',strokeWeight:2},
+    zIndex:10,draggable:true,title:'Arraste para mover o ponto'
+  });
+  m.addListener('dragend',()=>{
+    tracePoints[idx]=m.getPosition();
+    if(tracePolyline)tracePolyline.setPath(tracePoints);
+    atualizarTraceInfo();
+  });
   traceMarkers.push(m);
   if(tracePolyline){tracePolyline.getPath().push(latLng);}
   else{tracePolyline=new google.maps.Polyline({path:[latLng],map,strokeColor:'#ff6b00',strokeWeight:3,strokeOpacity:.9,zIndex:5});}
+  atualizarTraceInfo();
+}
+
+function atualizarTraceInfo(){
   const d=calcDist();
   $('traceInfo').style.display='block';
   $('traceInfo').textContent=`${tracePoints.length} ponto${tracePoints.length>1?'s':''} · ${fmtDistM(d)}`;
   $('btnPerfil').disabled=tracePoints.length<2;
   $('btnLimpar').disabled=false;
+}
+
+// ── Busca de cidade ───────────────────────────────────────────────
+function buscarCidade(){
+  const q=($('citySearch').value||'').trim();
+  if(!q||!map){return;}
+  new google.maps.Geocoder().geocode({address:q},(results,status)=>{
+    if(status==='OK'&&results[0]){
+      const geom=results[0].geometry;
+      if(geom.viewport)map.fitBounds(geom.viewport);
+      else{map.setCenter(geom.location);map.setZoom(13);}
+    } else {
+      // Fallback Nominatim
+      fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1&accept-language=pt-BR`)
+        .then(r=>r.json())
+        .then(data=>{
+          if(data&&data[0]){
+            const bb=data[0].boundingbox;
+            if(bb){map.fitBounds(new google.maps.LatLngBounds({lat:+bb[0],lng:+bb[2]},{lat:+bb[1],lng:+bb[3]}));}
+            else{map.setCenter({lat:+data[0].lat,lng:+data[0].lon});map.setZoom(13);}
+          } else {setMStatus('Cidade não encontrada.','err');}
+        }).catch(()=>setMStatus('Erro na busca.','err'));
+    }
+  });
 }
 
 function limparTrace(){
