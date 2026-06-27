@@ -613,130 +613,137 @@ function buildBomba(multi,Q_calc,eff,Pkw,Pcv){
 function drawPressao(multi,Q_calc,Hg,L,lim,cotaS_,cotaR_,pRes){
   $('card-pressao').style.display='';
   const cv=$('c-perfil'),ctx=cv.getContext('2d');
+  cv.width=900;cv.height=300;
   const W=cv.width,H=cv.height;
   ctx.clearRect(0,0,W,H);
-  ctx.fillStyle='#f8fbff';ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);
   if(!multi||!L)return;
-  const mg={t:48,b:58,l:68,r:24};
+  const mg={t:36,b:46,l:62,r:18};
   const cW=W-mg.l-mg.r,cH=H-mg.t-mg.b;
+  const usaPerfil=_profileData&&_profileData.length>=4;
+  const ts=Hg/L;
 
-  if(_profileData&&_profileData.length>=4){
-    // ── PERFIL PIEZOMÉTRICO COM TERRENO ──────────────────────────
-    const profile=_profileData;
-    const pts=pressurePointsProfile(multi,profile);
-    const combined=profile.map((p,i)=>({x:p.dist,z:p.elev,P:pts[i]?.P??0,piezo:p.elev+(pts[i]?.P??0)}));
-    const allZ=combined.map(p=>p.z),allPiezo=combined.map(p=>p.piezo);
-    const zMin=Math.min(...allZ),zMax=Math.max(...allZ),piezoMax=Math.max(...allPiezo);
-    const span=piezoMax-zMin||1;
-    const yMin=zMin-span*0.04,yMax=piezoMax+span*0.06;
-    const px=x=>mg.l+(x/L)*cW;
-    const py=y=>mg.t+cH*(1-(y-yMin)/(yMax-yMin));
-
-    // Grade
-    ctx.strokeStyle='rgba(0,80,160,.07)';ctx.lineWidth=1;
-    const nY=6;
-    for(let i=0;i<=nY;i++){
-      const yv=yMin+(yMax-yMin)*i/nY,y=py(yv);
-      ctx.beginPath();ctx.moveTo(mg.l,y);ctx.lineTo(mg.l+cW,y);ctx.stroke();
-      ctx.fillStyle='#607080';ctx.font='10px Segoe UI';ctx.textAlign='right';
-      ctx.fillText(Math.round(yv)+' m',mg.l-5,y+4);
-    }
-    for(let i=0;i<=6;i++){
-      const x=mg.l+cW*i/6;
-      ctx.beginPath();ctx.moveTo(x,mg.t);ctx.lineTo(x,mg.t+cH);ctx.stroke();
-      ctx.fillStyle='#607080';ctx.font='10px Segoe UI';ctx.textAlign='center';
-      ctx.fillText(fmt(L*i/6,0)+'m',x,mg.t+cH+16);
-    }
-    ctx.fillStyle='#607080';ctx.textAlign='center';
-    ctx.fillText('Distância ao longo da adutora (m)',mg.l+cW/2,H-8);
-    ctx.save();ctx.translate(11,mg.t+cH/2);ctx.rotate(-Math.PI/2);
-    ctx.fillText('Cota (m)',0,0);ctx.restore();
-
-    // Terreno — gradiente verde (baixo) → marrom (alto)
-    const tGrad=ctx.createLinearGradient(0,py(zMax),0,py(yMin));
-    tGrad.addColorStop(0,'#8B4513');
-    tGrad.addColorStop(0.3,'#C8883A');
-    tGrad.addColorStop(0.6,'#6BBF00');
-    tGrad.addColorStop(1,'#228B22');
-    ctx.beginPath();
-    ctx.moveTo(px(combined[0].x),py(yMin));
-    combined.forEach(p=>ctx.lineTo(px(p.x),py(p.z)));
-    ctx.lineTo(px(combined[combined.length-1].x),py(yMin));
-    ctx.closePath();
-    ctx.fillStyle=tGrad;ctx.fill();
-    // Borda sutil do terreno
-    ctx.beginPath();
-    combined.forEach((p,i)=>i===0?ctx.moveTo(px(p.x),py(p.z)):ctx.lineTo(px(p.x),py(p.z)));
-    ctx.strokeStyle='rgba(93,64,55,.3)';ctx.lineWidth=0.8;ctx.stroke();
-
-    // Piezométrico por segmento PN — área e linha
+  // ── Montar pontos unificados [{x, z, P, piezo}] ──────────────────
+  let pts=[];
+  let segBands=[];// [{pn,pts:[]}]
+  if(usaPerfil){
+    const pArr=pressurePointsProfile(multi,_profileData);
+    pts=_profileData.map((p,i)=>({x:p.dist,z:p.elev,P:pArr[i]?.P??0,piezo:p.elev+(pArr[i]?.P??0)}));
     for(const seg of multi.segs){
-      const sp=combined.filter(p=>p.x>=seg.from-0.1&&p.x<=seg.to+0.1);
-      if(sp.length<2)continue;
-      // Área entre terreno e linha piezométrica
-      ctx.beginPath();
-      sp.forEach((p,i)=>i===0?ctx.moveTo(px(p.x),py(p.z)):ctx.lineTo(px(p.x),py(p.z)));
-      for(let i=sp.length-1;i>=0;i--)ctx.lineTo(px(sp[i].x),py(sp[i].piezo));
-      ctx.closePath();
-      ctx.fillStyle=PN_COLOR[seg.pn]+'38';ctx.fill();
-      // Linha piezométrica
-      ctx.beginPath();
-      sp.forEach((p,i)=>i===0?ctx.moveTo(px(p.x),py(p.piezo)):ctx.lineTo(px(p.x),py(p.piezo)));
-      ctx.strokeStyle=PN_COLOR[seg.pn];ctx.lineWidth=2.5;ctx.stroke();
-      // Rótulo PN no meio do segmento
-      const mid=sp[Math.floor(sp.length/2)];
-      if(mid){
-        const lx=px(mid.x),ly=py(mid.piezo)-8;
-        ctx.fillStyle='rgba(255,255,255,.75)';ctx.fillRect(lx-14,ly-10,28,13);
-        ctx.fillStyle=PN_COLOR[seg.pn];ctx.font='bold 9px Segoe UI';ctx.textAlign='center';
-        ctx.fillText('PN '+seg.pn,lx,ly);
-      }
+      const sp=pts.filter(p=>p.x>=seg.from-0.5&&p.x<=seg.to+0.5);
+      if(sp.length>=2)segBands.push({pn:seg.pn,pts:sp,from:seg.from,to:seg.to});
     }
-
-    // Ponto crítico
-    if(multi.criticalDist!=null){
-      const critPt=combined.find(p=>Math.abs(p.x-multi.criticalDist)<=L/combined.length*2)??combined[0];
-      const cpX=px(multi.criticalDist);
-      ctx.setLineDash([4,3]);ctx.strokeStyle='#e07b00';ctx.lineWidth=1.5;
-      ctx.beginPath();ctx.moveTo(cpX,mg.t);ctx.lineTo(cpX,mg.t+cH);ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle='#e07b00';ctx.beginPath();ctx.arc(cpX,py(critPt.piezo),5,0,Math.PI*2);ctx.fill();
-      ctx.fillStyle='#e07b00';ctx.font='bold 9px Segoe UI';ctx.textAlign='center';
-      ctx.fillText('▲ Pto.crítico '+fmt(multi.criticalDist,0)+'m',cpX,mg.t-6);
-    }
-
-    // Pressão início e fim (único texto de pressão no gráfico)
-    const c0=combined[0],cf=combined[combined.length-1];
-    // Início: círculo verde + pressão
-    ctx.fillStyle='#2e7d32';ctx.beginPath();ctx.arc(px(0),py(c0.piezo),5,0,Math.PI*2);ctx.fill();
-    ctx.font='bold 9.5px Segoe UI';ctx.textAlign='left';
-    ctx.fillText('P₀ = '+fmt(c0.P,1)+' mca',px(0)+8,py(c0.piezo)+4);
-    // Final: círculo vermelho + pressão
-    ctx.fillStyle='#c62828';ctx.beginPath();ctx.arc(px(L),py(cf.piezo),5,0,Math.PI*2);ctx.fill();
-    ctx.font='bold 9.5px Segoe UI';ctx.textAlign='right';
-    ctx.fillText('Pf = '+fmt(cf.P,1)+' mca',px(L)-8,py(cf.piezo)+4);
-    // Cotas do terreno
-    ctx.font='9px Segoe UI';
-    ctx.fillStyle='rgba(93,64,55,.8)';ctx.textAlign='left';
-    ctx.fillText('z₀='+fmt(c0.z,1)+'m',px(0)+3,py(c0.z)-4);
-    ctx.fillStyle='rgba(93,64,55,.8)';ctx.textAlign='right';
-    ctx.fillText('zf='+fmt(cf.z,1)+'m',px(L)-3,py(cf.z)-4);
-
   } else {
-    // ── FALLBACK: pressão em mca (sem perfil) ──────────────────────
-    const pts=pressurePoints(multi,L,Hg||0);
-    const yMax=Math.ceil(multi.AMT_design*1.08/10)*10;
-    const px=x=>mg.l+(x/L)*cW;
-    const py=P=>mg.t+cH*(1-P/yMax);
-    const pnBands=[[0,lim[60],60],[lim[60],lim[80],80],[lim[80],lim[125],125],[lim[125],lim[145],145],[lim[145],lim[180],180]];
-    for(const [p0,p1,pn] of pnBands){if(p1<=0||p0>=yMax)continue;ctx.fillStyle=PN_BG[pn];ctx.fillRect(mg.l,Math.max(py(Math.min(p1,yMax)),mg.t),cW,Math.min(py(p0),mg.t+cH)-Math.max(py(Math.min(p1,yMax)),mg.t));}
-    ctx.strokeStyle='rgba(0,80,160,.07)';ctx.lineWidth=1;
-    for(let i=0;i<=8;i++){const P=yMax*i/8,y=py(P);ctx.beginPath();ctx.moveTo(mg.l,y);ctx.lineTo(mg.l+cW,y);ctx.stroke();ctx.fillStyle='#607080';ctx.font='10px Segoe UI';ctx.textAlign='right';ctx.fillText(fmt(P,0)+' mca',mg.l-5,y+4);}
-    for(let i=0;i<=6;i++){const x=mg.l+cW*i/6;ctx.beginPath();ctx.moveTo(x,mg.t);ctx.lineTo(x,mg.t+cH);ctx.stroke();ctx.fillStyle='#607080';ctx.font='10px Segoe UI';ctx.textAlign='center';ctx.fillText(fmt(L*i/6,0)+'m',x,mg.t+cH+16);}
-    ctx.fillStyle='#607080';ctx.textAlign='center';ctx.fillText('Distância ao longo da adutora (m)',mg.l+cW/2,H-8);
-    for(const [,p1,pn] of pnBands){if(p1<=0||p1>=yMax)continue;const y=py(p1);ctx.setLineDash([5,4]);ctx.strokeStyle=PN_COLOR[pn];ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(mg.l,y);ctx.lineTo(mg.l+cW,y);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle=PN_COLOR[pn];ctx.font='bold 9px Segoe UI';ctx.textAlign='left';ctx.fillText('Limite PN '+pn+' ('+fmt(p1,0)+' mca)',mg.l+4,y-3);}
-    for(let i=0;i<multi.segs.length;i++){const s=multi.segs[i];const p0=pts[i],p1=pts[i+1]??{x:L,P:0};ctx.beginPath();ctx.moveTo(px(p0.x),py(p0.P));ctx.lineTo(px(p1.x),py(p1.P));ctx.lineTo(px(p1.x),py(0));ctx.lineTo(px(p0.x),py(0));ctx.closePath();ctx.fillStyle=PN_COLOR[s.pn]+'28';ctx.fill();ctx.beginPath();ctx.moveTo(px(p0.x),py(p0.P));ctx.lineTo(px(p1.x),py(p1.P));ctx.strokeStyle=PN_COLOR[s.pn];ctx.lineWidth=3;ctx.stroke();}
+    // Terreno linear cotaS→cotaR; piezométrico de P_start/P_end por segmento
+    const z0=cotaS_,zf=cotaR_;
+    const zAt=x=>z0+(zf-z0)*(x/L);
+    for(const seg of multi.segs){
+      if(!pts.length||pts[pts.length-1].x<seg.from-0.1){
+        const z=zAt(seg.from);pts.push({x:seg.from,z,P:seg.P_start,piezo:z+seg.P_start});
+      }
+      const z=zAt(seg.to);
+      pts.push({x:seg.to,z,P:Math.max(0,seg.P_end),piezo:z+Math.max(0,seg.P_end)});
+      const sp=pts.slice(-2);
+      segBands.push({pn:seg.pn,pts:sp,from:seg.from,to:seg.to});
+    }
   }
+  if(!pts.length)return;
+
+  // ── Escala Y: cota mín do terreno → piezo máx ─────────────────────
+  const allZ=pts.map(p=>p.z),allPiezo=pts.map(p=>p.piezo);
+  const zMin=Math.min(...allZ),piezoMax=Math.max(...allPiezo),zMax=Math.max(...allZ);
+  const span=Math.max(piezoMax-zMin,1);
+  const yMin=zMin-span*.03,yMax=piezoMax+span*.06;
+  const pxF=x=>mg.l+(x/L)*cW;
+  const pyF=y=>mg.t+cH*(1-(y-yMin)/(yMax-yMin));
+
+  // ── Grade suave ────────────────────────────────────────────────────
+  ctx.lineWidth=1;
+  for(let i=0;i<=5;i++){
+    const yv=yMin+(yMax-yMin)*i/5,y=pyF(yv);
+    ctx.strokeStyle='rgba(0,80,160,.07)';
+    ctx.beginPath();ctx.moveTo(mg.l,y);ctx.lineTo(mg.l+cW,y);ctx.stroke();
+    ctx.fillStyle='#8a9fb5';ctx.font='10px Segoe UI';ctx.textAlign='right';
+    ctx.fillText(Math.round(yv)+' m',mg.l-4,y+4);
+  }
+  for(let i=0;i<=6;i++){
+    const xv=L*i/6,x=pxF(xv);
+    ctx.strokeStyle='rgba(0,80,160,.06)';
+    ctx.beginPath();ctx.moveTo(x,mg.t);ctx.lineTo(x,mg.t+cH);ctx.stroke();
+    ctx.fillStyle='#8a9fb5';ctx.font='10px Segoe UI';ctx.textAlign='center';
+    ctx.fillText(fmt(xv,0)+'m',x,mg.t+cH+14);
+  }
+  ctx.fillStyle='#8a9fb5';ctx.font='9px Segoe UI';ctx.textAlign='center';
+  ctx.fillText('Distância (m)',mg.l+cW/2,H-4);
+  ctx.save();ctx.translate(10,mg.t+cH/2);ctx.rotate(-Math.PI/2);
+  ctx.fillText('Cota (m)',0,0);ctx.restore();
+
+  // ── Terreno preenchido ─────────────────────────────────────────────
+  const tGrad=ctx.createLinearGradient(0,pyF(zMax),0,pyF(yMin));
+  tGrad.addColorStop(0,'rgba(100,70,40,.60)');
+  tGrad.addColorStop(0.35,'rgba(180,130,60,.45)');
+  tGrad.addColorStop(0.7,'rgba(90,160,50,.40)');
+  tGrad.addColorStop(1,'rgba(50,110,35,.18)');
+  ctx.beginPath();
+  ctx.moveTo(pxF(pts[0].x),pyF(yMin));
+  pts.forEach(p=>ctx.lineTo(pxF(p.x),pyF(p.z)));
+  ctx.lineTo(pxF(pts[pts.length-1].x),pyF(yMin));
+  ctx.closePath();ctx.fillStyle=tGrad;ctx.fill();
+  ctx.beginPath();
+  pts.forEach((p,i)=>i===0?ctx.moveTo(pxF(p.x),pyF(p.z)):ctx.lineTo(pxF(p.x),pyF(p.z)));
+  ctx.strokeStyle='rgba(80,55,30,.25)';ctx.lineWidth=1;ctx.stroke();
+
+  // ── HGL por segmento PN ───────────────────────────────────────────
+  for(const sb of segBands){
+    const sp=sb.pts;if(sp.length<2)continue;
+    // Área suave entre terreno e HGL
+    ctx.beginPath();
+    sp.forEach((p,i)=>i===0?ctx.moveTo(pxF(p.x),pyF(p.z)):ctx.lineTo(pxF(p.x),pyF(p.z)));
+    for(let i=sp.length-1;i>=0;i--)ctx.lineTo(pxF(sp[i].x),pyF(sp[i].piezo));
+    ctx.closePath();ctx.fillStyle=PN_COLOR[sb.pn]+'20';ctx.fill();
+    // Linha HGL
+    ctx.beginPath();
+    sp.forEach((p,i)=>i===0?ctx.moveTo(pxF(p.x),pyF(p.piezo)):ctx.lineTo(pxF(p.x),pyF(p.piezo)));
+    ctx.strokeStyle=PN_COLOR[sb.pn];ctx.lineWidth=2.5;ctx.lineJoin='round';ctx.stroke();
+    // Rótulo PN no centro do segmento
+    const mid=sp[Math.floor(sp.length/2)];
+    const lx=pxF((sb.from+sb.to)/2);
+    const frac=sp.length>1?(lx-pxF(sp[0].x))/(pxF(sp[sp.length-1].x)-pxF(sp[0].x)||1):0.5;
+    const lPiezo=sp[0].piezo+(sp[sp.length-1].piezo-sp[0].piezo)*frac;
+    const ly=pyF(lPiezo)-10;
+    ctx.fillStyle='rgba(255,255,255,.88)';ctx.fillRect(lx-15,ly-9,30,12);
+    ctx.fillStyle=PN_COLOR[sb.pn];ctx.font='bold 8.5px Segoe UI';ctx.textAlign='center';
+    ctx.fillText('PN '+sb.pn,lx,ly);
+  }
+
+  // ── Ponto crítico (modo perfil real) ──────────────────────────────
+  if(usaPerfil&&multi.criticalDist!=null){
+    const critPt=pts.reduce((a,b)=>Math.abs(b.x-multi.criticalDist)<Math.abs(a.x-multi.criticalDist)?b:a);
+    const cpX=pxF(multi.criticalDist);
+    ctx.setLineDash([4,3]);ctx.strokeStyle='rgba(224,123,0,.5)';ctx.lineWidth=1.2;
+    ctx.beginPath();ctx.moveTo(cpX,mg.t);ctx.lineTo(cpX,mg.t+cH);ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle='#e07b00';ctx.beginPath();ctx.arc(cpX,pyF(critPt.piezo),4,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#e07b00';ctx.font='bold 8px Segoe UI';ctx.textAlign='center';
+    ctx.fillText('▲ crítico '+fmt(multi.criticalDist,0)+'m',cpX,mg.t-4);
+  }
+
+  // ── Anotações início e fim ─────────────────────────────────────────
+  const c0=pts[0],cf=pts[pts.length-1],dotR=5;
+  // Início — AMH
+  ctx.fillStyle='#2e7d32';ctx.beginPath();ctx.arc(pxF(0),pyF(c0.piezo),dotR,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='rgba(255,255,255,.9)';ctx.beginPath();ctx.arc(pxF(0),pyF(c0.piezo),2,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#1b5e20';ctx.font='bold 9px Segoe UI';ctx.textAlign='left';
+  ctx.fillText('AMH = '+fmt(c0.P,0)+' mca',pxF(0)+8,pyF(c0.piezo)+4);
+  // Fim — pressão residual
+  ctx.fillStyle='#c62828';ctx.beginPath();ctx.arc(pxF(L),pyF(cf.piezo),dotR,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='rgba(255,255,255,.9)';ctx.beginPath();ctx.arc(pxF(L),pyF(cf.piezo),2,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#c62828';ctx.font='bold 9px Segoe UI';ctx.textAlign='right';
+  ctx.fillText('P_res = '+fmt(cf.P,0)+' mca',pxF(L)-8,pyF(cf.piezo)+4);
+
+  // ── Indicador de modo ──────────────────────────────────────────────
+  ctx.fillStyle=usaPerfil?'#2e7d32':'#b45800';ctx.font='8px Segoe UI';ctx.textAlign='left';
+  ctx.fillText(usaPerfil?'✓ Perfil real — cálculo ponto a ponto':'⚠ Inclinação linear — gere o perfil de elevação para cálculo preciso',mg.l+2,mg.t-6);
 }
 
 // ── Google Maps ───────────────────────────────────────────────────
