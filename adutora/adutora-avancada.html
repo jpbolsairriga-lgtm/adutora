@@ -425,7 +425,7 @@ function calcMultiPN(Q_calc,L,Hg,CHW,nom,kLoc,filtro,pRes,slackP,lim){
     totalHf=0;for(const s of segs)totalHf+=(jByPN[s.pn]??jByPN[125]??jByPN[80]??0)*s.len;
     const an=Hg+totalHf+filtro+pRes;if(Math.abs(an-AMT_hid)<0.05){AMT_hid=an;break;}AMT_hid=an;
   }
-  return{AMT_hid,AMT_design:AMT_hid*(1+slackP),totalHf,segs,pipeByPN,jByPN,pnsUsados:new Set(segs.map(s=>s.pn))};
+  return{AMT_hid,AMT_design:AMT_hid*(1+slackP),totalHf,filtro,segs,pipeByPN,jByPN,pnsUsados:new Set(segs.map(s=>s.pn))};
 }
 function pressurePoints(multi,L,Hg){
   const ts=Hg/L,pts=[{x:0,P:multi.AMT_design}];let P=multi.AMT_design;
@@ -470,15 +470,16 @@ function calcMultiPNProfile(Q_calc,profile,CHW,nom,kLoc,filtro,pRes,slackP,lim){
     if(Math.abs(maxReq-AMT_hid)<0.05){AMT_hid=maxReq;break;}
     AMT_hid=maxReq;
   }
-  return{AMT_hid,AMT_design:AMT_hid*(1+slackP),totalHf,segs,pipeByPN,jByPN,
+  return{AMT_hid,AMT_design:AMT_hid*(1+slackP),totalHf,filtro,segs,pipeByPN,jByPN,
     pnsUsados:new Set(segs.map(s=>s.pn)),L,
     criticalDist:profile[criticalIdx].dist,criticalElev:profile[criticalIdx].elev};
 }
 
 // Pressão ao longo do perfil real (ponto a ponto)
-function pressurePointsProfile(multi,profile){
-  const pts=[{x:0,P:multi.AMT_design}];
-  let P=multi.AMT_design,sIdx=0;
+function pressurePointsProfile(multi,profile,startP){
+  const P0=startP??multi.AMT_design;
+  const pts=[{x:0,P:P0}];
+  let P=P0,sIdx=0;
   for(let i=1;i<profile.length;i++){
     const dx=profile[i].dist-profile[i-1].dist;
     const dz=profile[i].elev-profile[i-1].elev;
@@ -623,26 +624,32 @@ function drawPressao(multi,Q_calc,Hg,L,lim,cotaS_,cotaR_,pRes){
   const usaPerfil=_profileData&&_profileData.length>=4;
   const ts=Hg/L;
 
+  // ── Pressão de partida sem slackP e sem filtro → P_final = pRes ──
+  const startP=multi.AMT_hid-(multi.filtro??0);
+
   // ── Montar pontos unificados [{x, z, P, piezo}] ──────────────────
   let pts=[];
   let segBands=[];// [{pn,pts:[]}]
   if(usaPerfil){
-    const pArr=pressurePointsProfile(multi,_profileData);
+    const pArr=pressurePointsProfile(multi,_profileData,startP);
     pts=_profileData.map((p,i)=>({x:p.dist,z:p.elev,P:pArr[i]?.P??0,piezo:p.elev+(pArr[i]?.P??0)}));
     for(const seg of multi.segs){
       const sp=pts.filter(p=>p.x>=seg.from-0.5&&p.x<=seg.to+0.5);
       if(sp.length>=2)segBands.push({pn:seg.pn,pts:sp,from:seg.from,to:seg.to});
     }
   } else {
-    // Terreno linear cotaS→cotaR; piezométrico de P_start/P_end por segmento
+    // Terreno linear cotaS→cotaR; pressão recalculada sem slackP/filtro
     const z0=cotaS_,zf=cotaR_;
     const zAt=x=>z0+(zf-z0)*(x/L);
+    let Pfb=startP;
     for(const seg of multi.segs){
-      if(!pts.length||pts[pts.length-1].x<seg.from-0.1){
-        const z=zAt(seg.from);pts.push({x:seg.from,z,P:seg.P_start,piezo:z+seg.P_start});
+      const Ps=Pfb;
+      Pfb=Math.max(0,Pfb-(multi.jByPN[seg.pn]??0)*seg.len-ts*seg.len);
+      if(!pts.length){
+        const z=zAt(seg.from);pts.push({x:seg.from,z,P:Ps,piezo:z+Ps});
       }
       const z=zAt(seg.to);
-      pts.push({x:seg.to,z,P:Math.max(0,seg.P_end),piezo:z+Math.max(0,seg.P_end)});
+      pts.push({x:seg.to,z,P:Pfb,piezo:z+Pfb});
       const sp=pts.slice(-2);
       segBands.push({pn:seg.pn,pts:sp,from:seg.from,to:seg.to});
     }
