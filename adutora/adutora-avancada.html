@@ -425,6 +425,8 @@ function calcMultiPN(Q_calc,L,Hg,CHW,nom,kLoc,filtro,pRes,slackP,lim){
     totalHf=0;for(const s of segs)totalHf+=(jByPN[s.pn]??jByPN[125]??jByPN[80]??0)*s.len;
     const an=Hg+totalHf+filtro+pRes;if(Math.abs(an-AMT_hid)<0.05){AMT_hid=an;break;}AMT_hid=an;
   }
+  // Recalcular P_start/P_end com pressão real (sem slackP, sem filtro) → P_end final = pRes
+  {let Pa=AMT_hid-filtro;for(const s of segs){s.P_start=Pa;Pa=Math.max(0,Pa-(jByPN[s.pn]??0)*s.len-ts*s.len);s.P_end=Pa;}}
   return{AMT_hid,AMT_design:AMT_hid*(1+slackP),totalHf,filtro,segs,pipeByPN,jByPN,pnsUsados:new Set(segs.map(s=>s.pn))};
 }
 function pressurePoints(multi,L,Hg){
@@ -470,6 +472,15 @@ function calcMultiPNProfile(Q_calc,profile,CHW,nom,kLoc,filtro,pRes,slackP,lim){
     if(Math.abs(maxReq-AMT_hid)<0.05){AMT_hid=maxReq;break;}
     AMT_hid=maxReq;
   }
+  // Recalcular P_start/P_end com pressão real (sem slackP, sem filtro) → P_end crítico = pRes
+  {let Pa=AMT_hid-filtro,si=0;
+  segs[0].P_start=Pa;
+  for(let i=1;i<n;i++){
+    const dx=profile[i].dist-profile[i-1].dist,dz=profile[i].elev-profile[i-1].elev;
+    while(si<segs.length-1&&profile[i].dist>segs[si].to){segs[si].P_end=Pa;si++;segs[si].P_start=Pa;}
+    Pa=Math.max(0,Pa-(jByPN[segs[si]?.pn??125]??0)*dx-dz);
+  }
+  segs[segs.length-1].P_end=Pa;}
   return{AMT_hid,AMT_design:AMT_hid*(1+slackP),totalHf,filtro,segs,pipeByPN,jByPN,
     pnsUsados:new Set(segs.map(s=>s.pn)),L,
     criticalDist:profile[criticalIdx].dist,criticalElev:profile[criticalIdx].elev};
