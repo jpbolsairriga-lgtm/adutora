@@ -6,8 +6,8 @@
 // Copie a URL gerada e cole no campo "URL do Script" dentro da app.
 // ─────────────────────────────────────────────────────────────────────
 
-const DESTINATARIO = 'jp.bolsairriga@yahoo.com.br';
-const DESTINATARIO_CC = 'jp.bolsairriga@gmail.com'; // cópia no Gmail como backup
+const DESTINATARIO = 'jp.bolsairriga@gmail.com';
+const DESTINATARIO_CC = 'jp.bolsairriga@yahoo.com.br';
 
 function doPost(e) {
   try {
