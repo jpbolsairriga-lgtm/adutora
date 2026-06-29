@@ -7,7 +7,6 @@
 // ─────────────────────────────────────────────────────────────────────
 
 const DESTINATARIO = 'jp.bolsairriga@yahoo.com.br';
-const DESTINATARIO_CC = 'jp.bolsairriga@gmail.com';
 
 function doPost(e) {
   try {
@@ -24,7 +23,7 @@ function doPost(e) {
       DESTINATARIO,
       data.subject,
       data.body,
-      { attachments: [pdfBlob], name: 'Bolsa Irriga — Relatório', cc: DESTINATARIO_CC }
+      { attachments: [pdfBlob], name: 'Bolsa Irriga — Relatório' }
     );
 
     return resposta({ status: 'ok', mensagem: 'E-mail enviado com sucesso.' });
