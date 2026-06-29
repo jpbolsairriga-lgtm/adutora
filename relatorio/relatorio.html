@@ -125,8 +125,8 @@ code{background:#f0f4f8;padding:.1rem .35rem;border-radius:4px;font-family:monos
         <input type="text" id="consultor" placeholder="Nome completo do consultor">
       </div>
       <div class="fg">
-        <label>M&#234;s de Refer&#234;ncia</label>
-        <input type="month" id="periodo">
+        <label>Data de Refer&#234;ncia</label>
+        <input type="date" id="periodo">
       </div>
       <div class="fg">
         <label>Fun&#231;&#227;o / Cargo</label>
@@ -212,8 +212,9 @@ function renderRows(){
     list.innerHTML='<div class=”empty-msg”>Nenhum lançamento. Clique em “+ Adicionar” abaixo.</div>';
     document.getElementById('summaryBox').innerHTML='';return;
   }
+  // Estrutura sem value= no HTML (evita problemas de encoding)
   list.innerHTML=rows.map((r,idx)=>`
-    <div class=”item-card”>
+    <div class=”item-card” data-rid=”${r.id}”>
       <div class=”item-hd”>
         <span class=”item-num”>Lançamento ${idx+1}</span>
         <button class=”btn-rm-card” onclick=”removeRow(${r.id})”>✕ Remover</button>
@@ -221,29 +222,42 @@ function renderRows(){
       <div class=”item-row2”>
         <div class=”fg”>
           <label>Data</label>
-          <input type=”date” value=”${r.date}” oninput=”updateRow(${r.id},'date',this.value)”>
+          <input type=”text” class=”f-date” placeholder=”DD-MM-AAAA”
+            oninput=”updateRowDate(${r.id},this.value)”>
         </div>
         <div class=”fg”>
           <label>Tipo</label>
-          <select oninput=”updateRow(${r.id},'tipo',this.value)”>
+          <select class=”f-tipo” oninput=”updateRow(${r.id},'tipo',this.value)”>
             ${TIPOS.map(t=>`<option${t===r.tipo?' selected':''}>${t}</option>`).join('')}
           </select>
         </div>
       </div>
       <div class=”fg”>
         <label>Cliente / Propriedade</label>
-        <input type=”text” value=”${esc(r.cliente)}” oninput=”updateRow(${r.id},'cliente',this.value)” placeholder=”Nome do cliente ou fazenda”>
+        <input type=”text” class=”f-cliente” placeholder=”Nome do cliente ou fazenda”
+          oninput=”updateRow(${r.id},'cliente',this.value)”>
       </div>
       <div class=”fg”>
         <label>Descri&#231;&#227;o do Servi&#231;o</label>
-        <input type=”text” value=”${esc(r.desc)}” oninput=”updateRow(${r.id},'desc',this.value)” placeholder=”Descreva o servi&#231;o realizado”>
+        <input type=”text” class=”f-desc” placeholder=”Descreva o servi&#231;o realizado”
+          oninput=”updateRow(${r.id},'desc',this.value)”>
       </div>
       <div class=”fg”>
         <label>Valor (R$)</label>
-        <input type=”number” value=”${r.valor}” oninput=”updateRow(${r.id},'valor',this.value)”
-          placeholder=”0,00” step=”0.01” min=”0” inputmode=”decimal” style=”text-align:right”>
+        <input type=”number” class=”f-valor” placeholder=”0,00”
+          step=”0.01” min=”0” inputmode=”decimal” style=”text-align:right”
+          oninput=”updateRow(${r.id},'valor',this.value)”>
       </div>
     </div>`).join('');
+  // Setar valores via JS (sem risco de encoding)
+  rows.forEach(r=>{
+    const c=list.querySelector(`[data-rid=”${r.id}”]`);
+    if(!c)return;
+    c.querySelector('.f-date').value=toDispDate(r.date);
+    c.querySelector('.f-cliente').value=r.cliente;
+    c.querySelector('.f-desc').value=r.desc;
+    if(r.valor!=='')c.querySelector('.f-valor').value=r.valor;
+  });
   updateSummary();
 }
 
@@ -263,10 +277,18 @@ function updateSummary(){
 /* ── Helpers ── */
 function fmtBRL(v){return(parseFloat(v)||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});}
 function fmtDate(s){if(!s)return'';const[y,m,d]=s.split('-');return`${d}/${m}/${y}`;}
+// Exibe data como DD-MM-AAAA no campo
+function toDispDate(iso){if(!iso)return'';const[y,m,d]=iso.split('-');return`${d}-${m}-${y}`;}
+// Converte DD-MM-AAAA de volta para ISO YYYY-MM-DD
+function fromDispDate(s){if(!s)return'';const p=s.split('-');if(p.length!==3||p[2].length!==4)return s;return`${p[2]}-${p[1]}-${p[0]}`;}
+function updateRowDate(id,val){const r=rows.find(r=>r.id===id);if(r)r.date=fromDispDate(val);updateSummary();}
+// Período agora é data completa YYYY-MM-DD → formata como DD/MM/AAAA
 function fmtPeriodo(s){
   if(!s)return'';
-  const[y,m]=s.split('-');
-  return['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'][+m-1]+'/'+y;
+  const p=s.split('-');
+  if(p.length===3)return`${p[2]}/${p[1]}/${p[0]}`;
+  // fallback: era type=month (YYYY-MM)
+  return['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'][+p[1]-1]+'/'+p[0];
 }
 function nomeArquivo(){
   const nome=(document.getElementById('consultor').value||'relatorio').trim().replace(/\s+/g,'_');
@@ -455,7 +477,7 @@ function showStatus(msg,type){
 }
 
 /* ── Init ── */
-document.getElementById('periodo').value=new Date().toISOString().slice(0,7);
+document.getElementById('periodo').value=new Date().toISOString().slice(0,10);
 addRow();
 document.addEventListener('keydown',e=>{if(e.key==='Escape')fecharConfig();});
 </script>
