@@ -63,6 +63,16 @@ table.itens td:last-child{width:36px}
 .hint-box{background:#f3f0ff;border:1px solid #ce93d8;border-radius:10px;padding:.75rem 1rem;margin-top:.9rem;font-size:.8rem;color:#4527a0;line-height:1.6}
 .hint-box b{display:block;margin-bottom:.2rem}
 .empty-msg{text-align:center;color:var(--mu);font-size:.85rem;padding:1.5rem;font-style:italic}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:200;display:none;align-items:center;justify-content:center;padding:1rem}
+.modal-overlay.open{display:flex}
+.modal-box{background:#fff;border-radius:14px;width:min(540px,100%);max-height:90vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,.3)}
+.modal-hd{background:linear-gradient(135deg,var(--bl1),var(--bl2));color:#fff;padding:1rem 1.3rem;border-radius:14px 14px 0 0;display:flex;align-items:center;justify-content:space-between;gap:.8rem}
+.modal-hd h2{font-size:.95rem;font-weight:900;flex:1}
+.modal-bd{padding:1.3rem;display:flex;flex-direction:column;gap:.85rem}
+.close-btn{background:none;border:none;color:#fff;font-size:1.3rem;cursor:pointer;line-height:1;padding:0}
+.step{display:flex;gap:.8rem;align-items:flex-start;font-size:.83rem;line-height:1.6}
+.step-n{width:22px;height:22px;border-radius:50%;background:var(--bl2);color:#fff;font-size:.72rem;font-weight:900;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:.1rem}
+code{background:#f0f4f8;padding:.1rem .35rem;border-radius:4px;font-family:monospace;font-size:.82rem;color:var(--bl1)}
 </style>
 </head>
 <body>
@@ -136,18 +146,42 @@ table.itens td:last-child{width:36px}
   <div class="card">
     <div class="ct">&#128228; Enviar / Exportar</div>
     <div class="actions">
-      <button class="btn btn-primary" id="btnShare" onclick="shareReport()">&#128228; Enviar por E-mail</button>
+      <button class="btn btn-primary" id="btnSend" onclick="enviarEmail()">&#9993; Enviar por E-mail</button>
       <button class="btn btn-pdf" onclick="downloadPdf()">&#11015; Baixar PDF</button>
+      <button class="btn btn-sec" onclick="abrirConfig()" title="Configurar URL do script">&#9881;</button>
     </div>
-    <div id="sendStatus" class="alert"></div>
-    <div class="hint-box" id="hintBox">
-      <b>&#128241; No celular:</b>
-      Abre direto o compartilhamento nativo do seu celular — escolha o app de e-mail (Gmail, Yahoo, Outlook) e o PDF j&#225; vem anexado automaticamente.<br><br>
-      <b>&#128187; No computador:</b>
-      O PDF &#233; baixado e o seu programa de e-mail (Outlook, Thunderbird, Gmail) abre com o assunto e o resumo j&#225; preenchidos &#8212; basta anexar o PDF baixado e enviar.
-    </div>
+    <div id="sendStatus" class="alert" style="margin-top:.7rem;display:none"></div>
   </div>
 
+</div>
+
+<!-- Modal configuração -->
+<div class="modal-overlay" id="cfgModal" onclick="if(event.target===this)fecharConfig()">
+<div class="modal-box">
+  <div class="modal-hd">
+    <h2>&#9881; Configurar Envio de E-mail</h2>
+    <button class="close-btn" onclick="fecharConfig()">&#10005;</button>
+  </div>
+  <div class="modal-bd">
+    <div class="alert alert-info" style="font-size:.81rem">
+      Setup feito uma única vez pelo administrador. O consultor não precisa fazer nada além de clicar em "Enviar".
+    </div>
+    <div style="font-size:.82rem;font-weight:700;color:var(--bl1);margin-bottom:.2rem">Passos no Google Apps Script:</div>
+    <div class="step"><div class="step-n">1</div><div>Acesse <b>script.google.com</b> → clique em <b>Novo projeto</b></div></div>
+    <div class="step"><div class="step-n">2</div><div>Apague o código padrão e cole o conteúdo do arquivo <code>gas-emailer.gs</code> (disponível na pasta do projeto)</div></div>
+    <div class="step"><div class="step-n">3</div><div>Clique em <b>Implantar → Nova implantação → App da web</b><br>Executar como: <b>Eu mesmo</b> · Acesso: <b>Qualquer pessoa</b></div></div>
+    <div class="step"><div class="step-n">4</div><div>Autorize o acesso ao Gmail quando solicitado</div></div>
+    <div class="step"><div class="step-n">5</div><div>Copie a <b>URL da implantação</b> e cole abaixo</div></div>
+    <div class="fg">
+      <label>URL do Google Apps Script</label>
+      <input type="url" id="cfgUrl" placeholder="https://script.google.com/macros/s/.../exec">
+    </div>
+    <div style="display:flex;gap:.7rem">
+      <button class="btn btn-primary" onclick="salvarConfig()" style="flex:1">&#10003; Salvar</button>
+      <button class="btn btn-sec" onclick="fecharConfig()">Fechar</button>
+    </div>
+  </div>
+</div>
 </div>
 
 <script>
@@ -325,55 +359,64 @@ function downloadPdf(){
   buildPdf().save(nomeArquivo());
 }
 
-/* ── Compartilhar / Enviar ── */
-async function shareReport(){
+/* ── Enviar via Google Apps Script ── */
+async function enviarEmail(){
   if(!validate())return;
-  const btn=document.getElementById('btnShare');
+  const url=localStorage.getItem('bi_gas_url')||'';
+  if(!url){
+    showStatus('Configure a URL do script antes de enviar. Clique em ⚙.','warn');
+    abrirConfig();return;
+  }
+  const btn=document.getElementById('btnSend');
   btn.disabled=true;
-  showStatus('⧗ Gerando PDF...','info');
-
+  showStatus('⧗ Gerando PDF e enviando...','info');
   try{
     const doc=buildPdf();
-    const blob=doc.output('blob');
-    const file=new File([blob],nomeArquivo(),{type:'application/pdf'});
-
-    // Celular: Web Share API com arquivo
-    if(navigator.canShare&&navigator.canShare({files:[file]})){
-      try{
-        await navigator.share({
-          files:[file],
-          title:'Relatório de Pagamento — '+document.getElementById('consultor').value,
-          text:'Segue relatório de pagamento referente ao período de '+fmtPeriodo(document.getElementById('periodo').value)+'.\n\nTotal: '+fmtBRL(rows.reduce((s,r)=>s+(parseFloat(r.valor)||0),0)),
-        });
-        showStatus('✓ Compartilhado com sucesso!','ok');
-      }catch(e){
-        if(e.name!=='AbortError')showStatus('Erro ao compartilhar: '+e.message,'err');
-        else hideStatus();
-      }
-    } else {
-      // Desktop: baixa PDF + abre mailto com resumo no corpo
-      doc.save(nomeArquivo());
-      const subj=encodeURIComponent('Relatório de Pagamento — '+document.getElementById('consultor').value+' — '+fmtPeriodo(document.getElementById('periodo').value));
-      const body=encodeURIComponent(buildEmailBody());
-      setTimeout(()=>{window.location.href=`mailto:${DEST}?subject=${subj}&body=${body}`;},700);
-      showStatus('ℹ PDF baixado! Seu programa de e-mail foi aberto — annexe o PDF e envie.','info');
-    }
+    const pdf64=doc.output('datauristring').split(',')[1];
+    const consultor=document.getElementById('consultor').value||'—';
+    const periodo=fmtPeriodo(document.getElementById('periodo').value);
+    const total=rows.reduce((s,r)=>s+(parseFloat(r.valor)||0),0);
+    const payload={
+      subject:`Relatório de Pagamento — ${consultor} — ${periodo}`,
+      body:buildEmailBody(),
+      pdf_base64:pdf64,
+      filename:nomeArquivo(),
+    };
+    const resp=await fetch(url,{method:'POST',body:JSON.stringify(payload)});
+    const json=await resp.json().catch(()=>({status:'ok'}));
+    if(json.status==='erro')throw new Error(json.mensagem);
+    showStatus(`✓ E-mail enviado para ${DEST}!`,'ok');
   }catch(e){
-    showStatus('✗ Erro ao gerar PDF: '+(e.message||e),'err');
+    showStatus('✗ Falha ao enviar: '+(e.message||e),'err');
+    console.error(e);
   }finally{
     btn.disabled=false;
   }
+}
+
+/* ── Config modal ── */
+function abrirConfig(){
+  document.getElementById('cfgUrl').value=localStorage.getItem('bi_gas_url')||'';
+  document.getElementById('cfgModal').classList.add('open');
+}
+function fecharConfig(){document.getElementById('cfgModal').classList.remove('open');}
+function salvarConfig(){
+  const url=document.getElementById('cfgUrl').value.trim();
+  if(!url){alert('Cole a URL do Apps Script.');return;}
+  localStorage.setItem('bi_gas_url',url);
+  fecharConfig();
+  showStatus('✓ URL salva! Agora clique em "Enviar por E-mail".','ok');
 }
 
 function showStatus(msg,type){
   const el=document.getElementById('sendStatus');
   el.style.display='block';el.className='alert alert-'+type;el.textContent=msg;
 }
-function hideStatus(){document.getElementById('sendStatus').style.display='none';}
 
 /* ── Init ── */
 document.getElementById('periodo').value=new Date().toISOString().slice(0,7);
 addRow();
+document.addEventListener('keydown',e=>{if(e.key==='Escape')fecharConfig();});
 </script>
 </body>
 </html>
