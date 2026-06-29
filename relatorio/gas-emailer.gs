@@ -10,7 +10,11 @@ const DESTINATARIO = 'jp.bolsairriga@yahoo.com.br';
 
 function doPost(e) {
   try {
-    const data = JSON.parse(e.postData.contents);
+    // Aceita form-urlencoded (via <form> HTML) ou JSON direto (via fetch)
+    const raw = (e.parameter && e.parameter.payload)
+      ? e.parameter.payload
+      : e.postData.contents;
+    const data = JSON.parse(raw);
 
     const pdfBytes = Utilities.base64Decode(data.pdf_base64);
     const pdfBlob  = Utilities.newBlob(pdfBytes, 'application/pdf', data.filename || 'relatorio.pdf');

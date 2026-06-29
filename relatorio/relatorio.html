@@ -184,6 +184,7 @@ code{background:#f0f4f8;padding:.1rem .35rem;border-radius:4px;font-family:monos
 </div>
 </div>
 
+<iframe name="gasFrame" style="display:none"></iframe>
 <script>
 const TIPOS = ['Diária','Viagem','Comissão','Outros'];
 const DEST  = 'jp.bolsairriga@yahoo.com.br';
@@ -359,7 +360,7 @@ function downloadPdf(){
   buildPdf().save(nomeArquivo());
 }
 
-/* ── Enviar via Google Apps Script ── */
+/* ── Enviar via Google Apps Script (form submission — sem CORS) ── */
 async function enviarEmail(){
   if(!validate())return;
   const url=localStorage.getItem('bi_gas_url')||'';
@@ -375,20 +376,31 @@ async function enviarEmail(){
     const pdf64=doc.output('datauristring').split(',')[1];
     const consultor=document.getElementById('consultor').value||'—';
     const periodo=fmtPeriodo(document.getElementById('periodo').value);
-    const total=rows.reduce((s,r)=>s+(parseFloat(r.valor)||0),0);
     const payload={
       subject:`Relatório de Pagamento — ${consultor} — ${periodo}`,
       body:buildEmailBody(),
       pdf_base64:pdf64,
       filename:nomeArquivo(),
     };
-    // no-cors evita bloqueio CORS; Content-Type text/plain evita preflight
-    await fetch(url,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});
-    showStatus(`✓ E-mail enviado para ${DEST}!`,'ok');
+    // Formulário oculto: sem restrição CORS, chega sempre ao Apps Script
+    const form=document.createElement('form');
+    form.method='POST';
+    form.action=url;
+    form.target='gasFrame';
+    const inp=document.createElement('input');
+    inp.type='hidden';inp.name='payload';
+    inp.value=JSON.stringify(payload);
+    form.appendChild(inp);
+    document.body.appendChild(form);
+    form.submit();
+    document.body.removeChild(form);
+    // Aguarda 3s (não conseguimos ler a resposta do iframe por segurança do browser)
+    setTimeout(()=>{
+      showStatus(`✓ E-mail enviado para ${DEST}!`,'ok');
+      btn.disabled=false;
+    },3000);
   }catch(e){
-    showStatus('✗ Falha ao enviar: '+(e.message||e),'err');
-    console.error(e);
-  }finally{
+    showStatus('✗ Erro ao gerar PDF: '+(e.message||e),'err');
     btn.disabled=false;
   }
 }
