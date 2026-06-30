@@ -1,4 +1,4 @@
-import base64, sys
+﻿import base64, sys
 sys.stdout.reconfigure(encoding='utf-8')
 
 with open('logo perfil branca.png','rb') as f:
@@ -233,7 +233,7 @@ input:focus,select:focus{border-color:#0077b6;box-shadow:0 0 0 3px rgba(0,119,18
 <button class="btn-pdf hidden" id="btnPdf" onclick="gerarPDF()">&#128438; Gerar Relat&oacute;rio PDF</button>
 
 <div class="footer">
-  Bolsa Irriga&reg; &mdash; Av. Elias Abr&atilde;o, n&ordm; 140 &middot; Franca &ndash; SP &middot; (16) 3702-6571 &middot; bolsairriga.com.br<br>
+  Bolsa Irriga&reg; &mdash; Av. Elias Abr&atilde;o, n&ordm; 140 &middot; Franca &ndash; SP &middot; (16) 99401-2495 &middot; bolsairriga.com.br<br>
   &copy; 2025 Jo&atilde;o Paulo de Oliveira
 </div>
 
@@ -428,7 +428,7 @@ body{font-size:10pt;color:#1a2535;background:#fff}
 .ft img{height:18px;width:18px;object-fit:contain;border-radius:3px;background:#f0f7ff;padding:2px;border:1px solid #d0e4f0;vertical-align:middle;margin-right:3px}
 @media print{*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}body{margin:0}.pg{padding:5mm 9mm}}`;
 
-  const hdr=`<div class="hd"><div class="hl"><img src="data:image/png;base64,${LOGO_B64}" alt=""><div class="hb"><h2>Bolsa Irriga&#174; &#8212; Sele&#231;&#227;o de Cabos El&#233;tricos</h2><p>Cobre e Alum&#237;nio &#183; ABNT NBR 5410 &#183; Queda de Tens&#227;o e Ampacidade</p></div></div><div class="hr2"><b>Jo&#227;o Paulo de Oliveira</b>Eng. Agr&#244;nomo &#183; Esp. Irriga&#231;&#227;o<br>bolsairriga.com.br &#183; (16) 3702-6571</div></div>`;
+  const hdr=`<div class="hd"><div class="hl"><img src="data:image/png;base64,${LOGO_B64}" alt=""><div class="hb"><h2>Bolsa Irriga&#174; &#8212; Sele&#231;&#227;o de Cabos El&#233;tricos</h2><p>Cobre e Alum&#237;nio &#183; ABNT NBR 5410 &#183; Queda de Tens&#227;o e Ampacidade</p></div></div><div class="hr2"><b>Jo&#227;o Paulo de Oliveira</b>Eng. Agr&#244;nomo &#183; Esp. Irriga&#231;&#227;o<br>bolsairriga.com.br &#183; (16) 99401-2495</div></div>`;
   const cliHtml=`<div class="cli"><div class="cf"><label>Consultor</label><span>${cons||'&#8212;'}</span></div><div class="cf"><label>Cliente</label><span>${cli||'&#8212;'}</span></div><div class="cf"><label>Propriedade</label><span>${prop||'&#8212;'}</span></div><div class="cf"><label>Cidade/UF</label><span>${cid||'&#8212;'}</span></div><div class="cf"><label>Data</label><span>${dt}</span></div></div>`;
   const foot=`<div class="ft"><div><img src="data:image/png;base64,${LOGO_B64}" alt=""> Bolsa Irriga&#174; &#183; Av. Elias Abr&#227;o, 140 &#183; Franca &#8211; SP</div><div>Jo&#227;o Paulo de Oliveira &#183; Eng. Agr&#244;nomo</div></div>`;
 

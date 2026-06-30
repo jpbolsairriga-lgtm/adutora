@@ -1,4 +1,4 @@
-import base64, sys
+﻿import base64, sys
 sys.stdout.reconfigure(encoding='utf-8')
 
 with open('logo perfil branca.png','rb') as f:
@@ -117,7 +117,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:1rem 1.5rem;margi
     <div class="hdr-dev">
       <div class="dn">Jo&#227;o Paulo de Oliveira</div>
       <div style="font-size:.78rem;opacity:.88">Engenheiro Agr&#244;nomo &middot; Especialista em Irriga&#231;&#227;o</div>
-      <div class="hdr-co">Av. Elias Abr&#227;o, n&#186; 140 &middot; Franca &#8211; SP &middot; (16) 3702-6571 &middot; bolsairriga.com.br</div>
+      <div class="hdr-co">Av. Elias Abr&#227;o, n&#186; 140 &middot; Franca &#8211; SP &middot; (16) 99401-2495 &middot; bolsairriga.com.br</div>
     </div>
   </div>
 </header>
@@ -270,7 +270,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:1rem 1.5rem;margi
       </div>
     </div>
     <div class="fc">Bolsa Irriga&#174; &mdash; Clora&#231;&#227;o para Gotejamento v1.0<br>
-      Av. Elias Abr&#227;o, n&#186; 140 &middot; Franca &#8211; SP &middot; (16) 3702-6571<br>
+      Av. Elias Abr&#227;o, n&#186; 140 &middot; Franca &#8211; SP &middot; (16) 99401-2495<br>
       &copy; 2025 Jo&#227;o Paulo de Oliveira</div>
   </div>
 </footer>
@@ -548,7 +548,7 @@ body{font-size:10pt;color:#1a2535;background:#fff}
 .ft img{height:18px;width:18px;object-fit:contain;border-radius:3px;background:#f0f7ff;padding:2px;border:1px solid #d0e4f0;vertical-align:middle;margin-right:3px}
 @media print{*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}body{margin:0}.pg{padding:5mm 8mm}}`;
 
-  const hdr=`<div class="hd"><div class="hl"><img src="data:image/png;base64,${LOGO}" alt=""><div class="hb"><h2>Bolsa Irriga&#174; &mdash; Clora&#231;&#227;o para Irriga&#231;&#227;o por Gotejamento</h2><p>Dimensionamento de Clorador &middot; Bomba Injetora &middot; Controle de Biofilme</p></div></div><div class="hr2"><b>Jo&#227;o Paulo de Oliveira</b>Eng. Agr&#244;nomo &middot; Esp. Irriga&#231;&#227;o<br>bolsairriga.com.br &middot; (16) 3702-6571</div></div>`;
+  const hdr=`<div class="hd"><div class="hl"><img src="data:image/png;base64,${LOGO}" alt=""><div class="hb"><h2>Bolsa Irriga&#174; &mdash; Clora&#231;&#227;o para Irriga&#231;&#227;o por Gotejamento</h2><p>Dimensionamento de Clorador &middot; Bomba Injetora &middot; Controle de Biofilme</p></div></div><div class="hr2"><b>Jo&#227;o Paulo de Oliveira</b>Eng. Agr&#244;nomo &middot; Esp. Irriga&#231;&#227;o<br>bolsairriga.com.br &middot; (16) 99401-2495</div></div>`;
   const cliHtml=`<div class="cli"><div class="cf"><label>Consultor</label><span>${cons}</span></div><div class="cf"><label>Cliente</label><span>${cli}</span></div><div class="cf"><label>Propriedade</label><span>${prop}</span></div><div class="cf"><label>Cidade/UF</label><span>${cid}</span></div><div class="cf"><label>Data</label><span>${dt}</span></div></div>`;
   const foot=`<div class="ft"><div><img src="data:image/png;base64,${LOGO}" alt=""> Bolsa Irriga&#174; &middot; Av. Elias Abr&#227;o, 140 &middot; Franca &ndash; SP</div><div>Jo&#227;o Paulo de Oliveira &middot; Eng. Agr&#244;nomo</div></div>`;
 

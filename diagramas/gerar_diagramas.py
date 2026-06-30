@@ -1,4 +1,4 @@
-import base64, sys
+﻿import base64, sys
 sys.stdout.reconfigure(encoding='utf-8')
 
 with open('logo perfil branca.png','rb') as f:
@@ -183,7 +183,7 @@ header{{background:linear-gradient(135deg,#003d5c,#0077b6,#00b4d8);color:#fff;fl
     <div class="hdr-dev">
       <b>Jo&#227;o Paulo de Oliveira</b><br>
       Engenheiro Agr&#244;nomo &middot; Especialista em Irriga&#231;&#227;o<br>
-      bolsairriga.com.br &middot; (16) 3702-6571
+      bolsairriga.com.br &middot; (16) 99401-2495
     </div>
   </div>
 </header>
