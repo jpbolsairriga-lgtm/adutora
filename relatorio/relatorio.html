@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Relatório de Pagamento v2.0 — Bolsa Irriga</title>
+<title>Relatório de Pagamento v2.1 — Bolsa Irriga</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 <style>
@@ -112,7 +112,7 @@ code{background:#f0f4f8;padding:.1rem .35rem;border-radius:4px;font-family:monos
     </div>
   </div>
   <div class="hdr-nav">
-    <span class="ver-tag">v2.0</span>
+    <span class="ver-tag">v2.1</span>
     <a class="back-link" href="../index.html">&#8592; Menu</a>
   </div>
   <div class="hdr-dev">
@@ -143,6 +143,10 @@ code{background:#f0f4f8;padding:.1rem .35rem;border-radius:4px;font-family:monos
       </div>
     </div>
     <div class="fg" style="margin-top:.8rem">
+      <label>Chave PIX <span style="color:#c62828">*</span></label>
+      <input type="text" id="pix" placeholder="CPF, e-mail, telefone ou chave aleat&#243;ria">
+    </div>
+    <div class="fg" style="margin-top:.5rem">
       <label>Observa&#231;&#245;es Gerais</label>
       <textarea id="obsGeral" placeholder="Informa&#231;&#245;es adicionais para o gerente (opcional)..."></textarea>
     </div>
@@ -316,6 +320,7 @@ function nomeArquivo(){
 function validate(){
   if(!rows.length){showStatus('Adicione pelo menos um lançamento.','err');return false;}
   if(!document.getElementById('consultor').value.trim()){showStatus('Informe o nome do consultor.','err');return false;}
+  if(!document.getElementById('pix').value.trim()){showStatus('Informe a chave PIX para pagamento.','err');return false;}
   return true;
 }
 
@@ -323,6 +328,7 @@ function validate(){
 function buildEmailBody(){
   const consultor=document.getElementById('consultor').value||'—';
   const periodo=fmtPeriodo(document.getElementById('periodo').value);
+  const pix=document.getElementById('pix').value||'—';
   const obs=document.getElementById('obsGeral').value;
   const byTipo={};let total=0;
   for(const r of rows){const v=parseFloat(r.valor)||0;byTipo[r.tipo]=(byTipo[r.tipo]||0)+v;total+=v;}
@@ -334,6 +340,7 @@ function buildEmailBody(){
     `RESUMO POR CATEGORIA:`,
     ...Object.entries(byTipo).map(([t,v])=>`  ${t}: ${fmtBRL(v)}`),``,
     `TOTAL GERAL: ${fmtBRL(total)}`,
+    ``,`CHAVE PIX: ${pix}`,
     ...(obs?[``,`Observações: ${obs}`]:[]),``,
     `—`,`Bolsa Irriga® · bolsairriga.com.br · (16) 99401-2495`,
   ];
@@ -349,6 +356,7 @@ function buildPdf(){
   const consultor=document.getElementById('consultor').value||'—';
   const periodo=fmtPeriodo(document.getElementById('periodo').value);
   const cargo=document.getElementById('cargo').value||'—';
+  const pix=document.getElementById('pix').value||'—';
   const obsGeral=document.getElementById('obsGeral').value||'';
   const total=rows.reduce((s,r)=>s+(parseFloat(r.valor)||0),0);
 
@@ -361,11 +369,13 @@ function buildPdf(){
   doc.text('Emitido em: '+now,14,25.5);
 
   // Faixa consultor
-  doc.setFillColor(240,244,248);doc.rect(10,34,W-20,22,'F');
+  doc.setFillColor(240,244,248);doc.rect(10,34,W-20,26,'F');
   doc.setTextColor(0,61,92);doc.setFontSize(11);doc.setFont(undefined,'bold');doc.text(consultor,14,42);
   doc.setFontSize(8.5);doc.setFont(undefined,'normal');doc.setTextColor(80,96,112);
   doc.text(cargo,14,48);
   doc.text('Período de referência: '+periodo,14,53.5);
+  doc.setFont(undefined,'bold');doc.setTextColor(0,100,60);
+  doc.text('PIX: '+pix,14,58.5);
   doc.setTextColor(0,61,92);doc.setFont(undefined,'bold');doc.setFontSize(10);
   doc.text('SOLICITAÇÃO DE PAGAMENTO',W-14,42,{align:'right'});
   doc.setFont(undefined,'normal');doc.setFontSize(8.5);doc.setTextColor(80,96,112);
@@ -373,7 +383,7 @@ function buildPdf(){
 
   // Tabela
   doc.autoTable({
-    startY:60,
+    startY:65,
     head:[['Data','Cliente / Propriedade','Tipo','Descrição do Serviço','Valor']],
     body:rows.map(r=>[fmtDate(r.date),r.cliente||'—',r.tipo,r.desc||'—',fmtBRL(r.valor)]),
     foot:[['','','','TOTAL GERAL',fmtBRL(total)]],
