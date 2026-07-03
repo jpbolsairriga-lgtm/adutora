@@ -179,7 +179,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
             <th rowspan="2" style="text-align:left;min-width:70px;">Data</th>
             <th rowspan="2">Origem</th>
             <th colspan="3" class="grp-temp" style="text-align:center;border-bottom:1px solid rgba(255,255,255,.3);">Temperatura (°C) &amp; ETP</th>
-            <th colspan="6" class="grp-bal" style="text-align:center;border-bottom:1px solid rgba(255,255,255,.3);">Balan&#231;o H&#237;drico (mm)</th>
+            <th colspan="5" class="grp-bal" style="text-align:center;border-bottom:1px solid rgba(255,255,255,.3);">Balan&#231;o H&#237;drico (mm)</th>
             <th rowspan="2"></th>
           </tr>
           <tr>
@@ -187,15 +187,14 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
             <th>Tmax</th>
             <th>ETP</th>
             <th class="grp-bal">P</th>
-            <th>P&#8722;ETP</th>
-            <th title="Saldo acumulado — negativo = déficit acumulado">Saldo</th>
+            <th title="Chuva + reserva do dia anterior">Dispon&#237;vel</th>
             <th>ETR</th>
             <th class="def">DEF</th>
-            <th class="exc" style="color:#a0d4b0;">EXC</th>
+            <th title="&#193;gua de chuva ainda dispon&#237;vel ao final do dia">Reserva</th>
           </tr>
         </thead>
         <tbody id="tbody">
-          <tr><td colspan="12" class="empty">Nenhum dia adicionado. Preencha os campos acima e clique em "+ Adicionar ao balan&#231;o".</td></tr>
+          <tr><td colspan="11" class="empty">Nenhum dia adicionado. Preencha os campos acima e clique em "+ Adicionar ao balan&#231;o".</td></tr>
         </tbody>
         <tfoot id="tfoot" style="display:none;"></tfoot>
       </table>
@@ -207,8 +206,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
       <div class="kpi"><div class="lab">ETP total</div><div class="val" id="kpiETP">–</div></div>
       <div class="kpi"><div class="lab">ETR total</div><div class="val" id="kpiETR">–</div></div>
       <div class="kpi kpi-def"><div class="lab">D&#233;ficit total</div><div class="val" id="kpiDEF">–</div></div>
-      <div class="kpi kpi-exc"><div class="lab">Excedente total</div><div class="val" id="kpiEXC">–</div></div>
-      <div class="kpi kpi-arm"><div class="lab">Saldo acumulado</div><div class="val" id="kpiSaldo">–</div></div>
+      <div class="kpi kpi-arm"><div class="lab">Reserva final (mm)</div><div class="val" id="kpiReserva">–</div></div>
     </div>
 
     <!-- Gráfico -->
@@ -221,9 +219,10 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
 
     <div class="formula-note">
       <b>ETP:</b> Hargreaves-Samani — 0,0023 &times; (Tmed + 17,8) &times; &radic;(Tmax&minus;Tmin) &times; Ra (FAO-56, sem tabela de corre&#231;&#227;o).<br>
-      <b>Balan&#231;o:</b> ETR = m&#237;n(ETP, P) — a evapotranspira&#231;&#227;o real consome apenas a chuva dispon&#237;vel no dia.
-      DEF = m&#225;x(0, ETP&minus;P). Saldo acumulado = &Sigma;(P&minus;ETP), nunca positivo (excedente &#233; contabilizado separadamente).
-      EXC ocorre quando a chuva abate todo o d&#233;ficit acumulado e ainda sobra.
+      <b>Balan&#231;o:</b> Dispon&#237;vel = Reserva anterior + P.
+      ETR = m&#237;n(ETP, Dispon&#237;vel) — a ETP consome a chuva acumulada dia a dia at&#233; zerar.
+      Reserva = Dispon&#237;vel &minus; ETR (sobra de chuva carregada para o pr&#243;ximo dia).
+      DEF = m&#225;x(0, ETP &minus; Dispon&#237;vel).
     </div>
   </div>
 
@@ -309,21 +308,21 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
 
   function removeDay(date){days=days.filter(d=>d.date!==date);render();}
 
-  /* ── Cálculo do balanço (modelo simplificado: ETR = min(ETP, P)) ── */
+  /* ── Cálculo do balanço — reservatório acumulativo ── */
+  // Chuva acumula na reserva; ETP consome dia a dia até zerar
   function computeBalance(){
     const lat=parseFloat($('lat').value)||(-20.53);
-    let saldo=0; // saldo acumulado, sempre <= 0
+    let reserva=0; // água disponível carregada de dias anteriores (mm)
     return days.map(d=>{
       const J=dayOfYear(d.date);
       const ra=calcRa(lat,J);
       const eto=calcETo(d.tmin,d.tmax,ra);
-      const net=d.precip-eto;         // positivo = superávit; negativo = déficit
-      const tentative=saldo+net;
-      const exc=Math.max(0,tentative); // sobra após zerar o saldo
-      saldo=Math.min(0,tentative);     // saldo nunca passa de zero
-      const etr=Math.min(eto,d.precip); // ETR = chuva disponível até ETP
-      const def=Math.max(0,eto-d.precip);
-      return{...d,ra,eto,net,etr,def,exc,saldo};
+      const disponivel=reserva+d.precip;   // reserva + chuva do dia
+      const etr=Math.min(eto,disponivel);  // ETR consome o disponível até ETP
+      reserva=disponivel-etr;              // sobra para o próximo dia
+      const def=Math.max(0,eto-disponivel);
+      const net=d.precip-eto;
+      return{...d,ra,eto,net,disponivel,etr,def,reserva};
     });
   }
 
@@ -345,29 +344,27 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     }
     const rows=computeBalance();
     tbody.innerHTML=rows.map(r=>{
-      const rowCls=r.def>0.01?'row-def':r.exc>0.01?'row-exc':'';
-      const saldoStyle=r.saldo<-0.005?'color:var(--red);':'color:var(--green);font-weight:700;';
+      const rowCls=r.def>0.01?'row-def':r.reserva>0.01?'row-exc':'';
+      const resStyle=r.reserva>0.005?'color:var(--green);font-weight:700;':'color:#aaa;';
       return`<tr class="${rowCls}">
         <td>${fmtDate(r.date)}</td>
         <td><span class="badge ${r.origin==='auto'?'badge-auto':'badge-manual'}">${r.origin==='auto'?'auto':'manual'}</span></td>
         <td>${fmt(r.tmin,1)}</td><td>${fmt(r.tmax,1)}</td>
         <td><b>${fmt(r.eto)}</b></td>
         <td>${fmt(r.precip)}</td>
-        <td>${fmt(r.net)}</td>
-        <td style="${saldoStyle}">${fmt(r.saldo)}</td>
+        <td>${fmt(r.disponivel)}</td>
         <td>${fmt(r.etr)}</td>
         <td class="def">${r.def>0.005?fmt(r.def):'—'}</td>
-        <td class="exc">${r.exc>0.005?fmt(r.exc):'—'}</td>
+        <td style="${resStyle}">${r.reserva>0.005?fmt(r.reserva):'—'}</td>
         <td><button class="rm" title="Remover" onclick="window.__rmDay('${r.date}')">✕</button></td>
       </tr>`;
     }).join('');
 
     const sum=(key)=>rows.reduce((s,r)=>s+r[key],0);
-    const totP=sum('precip'),totETP=sum('eto'),totETR=sum('etr'),
-          totDEF=sum('def'),totEXC=sum('exc');
+    const totP=sum('precip'),totETP=sum('eto'),totETR=sum('etr'),totDEF=sum('def');
     const avgTmin=rows.reduce((s,r)=>s+r.tmin,0)/rows.length;
     const avgTmax=rows.reduce((s,r)=>s+r.tmax,0)/rows.length;
-    const saldoFinal=rows[rows.length-1].saldo;
+    const reservaFinal=rows[rows.length-1].reserva;
 
     tfoot.style.display='';
     tfoot.innerHTML=`<tr>
@@ -377,11 +374,10 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
       <td>${fmt(avgTmax,1)}<small> méd</small></td>
       <td>${fmt(totETP)}</td>
       <td>${fmt(totP)}</td>
-      <td>${fmt(totP-totETP)}</td>
-      <td>${fmt(saldoFinal)}<small> final</small></td>
+      <td></td>
       <td>${fmt(totETR)}</td>
       <td class="def">${fmt(totDEF)}</td>
-      <td class="exc">${fmt(totEXC)}</td>
+      <td>${fmt(reservaFinal)}<small> rest.</small></td>
       <td></td>
     </tr>`;
 
@@ -390,8 +386,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     $('kpiETP').textContent=fmt(totETP)+' mm';
     $('kpiETR').textContent=fmt(totETR)+' mm';
     $('kpiDEF').textContent=fmt(totDEF)+' mm';
-    $('kpiEXC').textContent=fmt(totEXC)+' mm';
-    $('kpiSaldo').textContent=fmt(saldoFinal)+' mm';
+    $('kpiReserva').textContent=fmt(reservaFinal)+' mm';
 
     drawChart(rows);
   }
@@ -410,7 +405,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
 
     const padL=44,padR=16,padT=20,padB=30;
     const plotW=W-padL-padR,plotH=H-padT-padB;
-    const maxVal=Math.max(1,...rows.map(r=>Math.max(r.precip,r.eto,r.etr)));
+    const maxVal=Math.max(1,...rows.map(r=>Math.max(r.precip,r.eto,r.etr,r.reserva)));
     const n=rows.length;
     const barW=Math.min(26,plotW/n*0.55);
 
@@ -442,12 +437,10 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     rows.forEach((r,i)=>{ctx.lineTo(padL+(i+0.5)*(plotW/n),toY(r.etr));});
     ctx.stroke();ctx.setLineDash([]);
 
-    // Área saldo acumulado (negativo = vermelho claro)
-    const saldoMax=Math.max(0.1,...rows.map(r=>Math.abs(r.saldo)));
-    const saldoY=v=>padT+plotH*(1-Math.abs(v)/saldoMax*0.4); // ocupa 40% inferior
-    ctx.fillStyle='rgba(192,57,43,.15)';
+    // Área reserva (água disponível carregada)
+    ctx.fillStyle='rgba(30,123,69,.12)';
     ctx.beginPath();ctx.moveTo(padL,padT+plotH);
-    rows.forEach((r,i)=>{ctx.lineTo(padL+(i+0.5)*(plotW/n),saldoY(r.saldo));});
+    rows.forEach((r,i)=>{ctx.lineTo(padL+(i+0.5)*(plotW/n),toY(r.reserva));});
     ctx.lineTo(padL+(n-0.5)*(plotW/n),padT+plotH);ctx.closePath();ctx.fill();
 
     // Labels eixo X
@@ -470,18 +463,18 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     ctx.fillStyle='#44546a';ctx.fillText('ETP',lx+93,ly+8);
     ctx.strokeStyle='#1e7b45';ctx.lineWidth=1.5;ctx.setLineDash([4,3]);ctx.beginPath();ctx.moveTo(lx+120,ly+4);ctx.lineTo(lx+130,ly+4);ctx.stroke();ctx.setLineDash([]);
     ctx.fillStyle='#44546a';ctx.fillText('ETR',lx+133,ly+8);
-    ctx.fillStyle='rgba(192,57,43,.3)';ctx.fillRect(lx+163,ly,10,9);
-    ctx.fillStyle='#44546a';ctx.fillText('Saldo',lx+176,ly+8);
+    ctx.fillStyle='rgba(30,123,69,.25)';ctx.fillRect(lx+163,ly,10,9);
+    ctx.fillStyle='#44546a';ctx.fillText('Reserva',lx+176,ly+8);
   }
 
   /* ── CSV ── */
   function exportCSV(){
     if(!days.length){alert('Nada para exportar ainda.');return;}
     const rows=computeBalance();
-    const hdr=['Data','Origem','Tmin_C','Tmax_C','Ra_mm','ETP_mm','P_mm','P_menos_ETP','Saldo_mm','ETR_mm','DEF_mm','EXC_mm'];
+    const hdr=['Data','Origem','Tmin_C','Tmax_C','Ra_mm','ETP_mm','P_mm','Disponivel_mm','ETR_mm','DEF_mm','Reserva_mm'];
     const lines=[hdr.join(';')].concat(rows.map(r=>[
       r.date,r.origin,fmt(r.tmin,1),fmt(r.tmax,1),fmt(r.ra),fmt(r.eto),fmt(r.precip),
-      fmt(r.net),fmt(r.saldo),fmt(r.etr),fmt(r.def),fmt(r.exc)
+      fmt(r.disponivel),fmt(r.etr),fmt(r.def),fmt(r.reserva)
     ].join(';')));
     const blob=new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8;'});
     const a=document.createElement('a');
