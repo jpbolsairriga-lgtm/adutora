@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ETP Diária & Balanço Hídrico v1.2 — Bolsa Irriga</title>
+<title>ETP Diária & Balanço Hídrico v1.3 — Bolsa Irriga</title>
 <style>
 :root{
   --teal-dark:#1f4e4c;--teal:#2f7a78;--teal-light:#dceeee;
@@ -107,7 +107,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     <p>ETP calculada dia a dia pela latitude (FAO-56 sem tabela K), a partir de Tmin/Tmax — busque automaticamente ou informe manualmente.</p>
   </div>
   <div class="hdr-nav">
-    <span class="ver-tag">v1.2</span>
+    <span class="ver-tag">v1.3</span>
     <a class="back-link" href="../index.html">&#8592; Menu</a>
     <div class="hdr-right">
       <b>Jo&#227;o Paulo de Oliveira</b>
@@ -173,7 +173,8 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
   <!-- Card 3: Gotejamento + Cultura -->
   <div class="card" style="margin-bottom:16px;">
     <h2><span class="n">3</span>Sistema de Gotejamento &amp; Cultura</h2>
-    <div style="display:grid;grid-template-columns:repeat(3,1fr) repeat(3,1fr);gap:10px;margin-bottom:10px;">
+    <!-- Linha 1: Gotejador -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:10px;">
       <div class="field">
         <label>Vaz&#227;o do emissor (L/h)</label>
         <input type="number" id="emQ" value="1.6" step="0.1" min="0.1">
@@ -187,23 +188,34 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
         <input type="number" id="emSl" value="1.00" step="0.05" min="0.10">
       </div>
       <div class="field">
-        <label>Kc — Coeficiente de cultura</label>
-        <input type="number" id="kc" value="1.00" step="0.05" min="0.10" max="2.5">
-      </div>
-      <div class="field">
-        <label>fc — Cob. do dossel (%)</label>
-        <input type="number" id="pam" value="100" step="1" min="1" max="100">
-        <div class="hint">&#193;rea sombreada pela copa ÷ &#225;rea total &times; 100. Ex: copa 1 m em fileiras de 3 m → fc ≈ 33%. 100% = cobertura total.</div>
-      </div>
-      <div class="field">
         <label>Efici&#234;ncia do sistema (%)</label>
         <input type="number" id="emEf" value="90" step="1" min="50" max="100">
       </div>
     </div>
+    <!-- Linha 2: Cultura + fc -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:10px;">
+      <div class="field">
+        <label>Kc — Coeficiente de cultura</label>
+        <input type="number" id="kc" value="1.00" step="0.05" min="0.10" max="2.5">
+      </div>
+      <div class="field">
+        <label>Di&#226;m. da copa (m)</label>
+        <input type="number" id="diamCopa" value="1.5" step="0.1" min="0.1">
+      </div>
+      <div class="field">
+        <label>Espa&#231;. entre ruas (m)</label>
+        <input type="number" id="espacRuas" value="3.5" step="0.1" min="0.1">
+      </div>
+      <div class="field">
+        <label>fc — Cobertura calc. (%)</label>
+        <input type="number" id="pam" step="0.1" min="1" max="100" style="background:#e8f5ee;font-weight:700;color:#1f6b3a;" readonly>
+        <div class="hint">Calculado: (&#216;_copa/Esp_ruas) + 0,15&times;(1&minus;&#216;_copa/Esp_ruas). Edite manualmente se preferir.</div>
+      </div>
+    </div>
     <div style="background:var(--teal-light);border-radius:6px;padding:8px 14px;font-size:.8rem;color:var(--teal-dark);display:flex;gap:2rem;flex-wrap:wrap;align-items:center;">
       <span>Taxa: <b id="taxaDisplay">—</b> mm/h</span>
-      <span>fc → Kr: <b id="krDisplay">—</b></span>
-      <span style="opacity:.75;">ETc = ETP &times; Kc &nbsp;|&nbsp; <b>ETc_loc = ETP &times; Kc &times; fc</b> (Fereres &amp; Soriano, 2007)</span>
+      <span>fc = <b id="fcDisplay">—</b>% &nbsp;→&nbsp; Kr = <b id="krDisplay">—</b></span>
+      <span style="opacity:.75;"><b>ETc_loc = ETP &times; Kc &times; fc</b> &nbsp;(Fereres &amp; Soriano, 2007)</span>
       <span style="opacity:.75;">Horas = (ETc_loc &minus; dispon&#237;vel) &divide; taxa &divide; efici&#234;ncia</span>
     </div>
   </div>
@@ -365,10 +377,22 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     const taxa=q/(se*sl); // mm/h
     return{q,se,sl,kc,pam,kr,ef,taxa};
   }
+  function calcFc(){
+    const diam=parseFloat($('diamCopa').value)||1.5;
+    const esp=parseFloat($('espacRuas').value)||3.5;
+    if(esp<=0)return 100;
+    const ratio=Math.min(1,diam/esp);
+    // fc = (Ø/Esp) + 0,15 × (1 − Ø/Esp)
+    const fc=(ratio+0.15*(1-ratio))*100;
+    return Math.min(100,Math.max(1,parseFloat(fc.toFixed(1))));
+  }
   function atualizarTaxa(){
+    const fc=calcFc();
+    $('pam').value=fc;           // auto-fill campo fc
     const{taxa,kr}=getIrrigParams();
     $('taxaDisplay').textContent=taxa.toFixed(2);
-    $('krDisplay').textContent=kr.toFixed(2);
+    $('fcDisplay').textContent=fc.toFixed(1);
+    $('krDisplay').textContent=kr.toFixed(3);
   }
 
   /* ── Cálculo do balanço — reservatório acumulativo ── */
@@ -566,9 +590,12 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
   $('btnCSV').addEventListener('click',exportCSV);
   $('btnClear').addEventListener('click',()=>{if(confirm('Remover todos os dias adicionados?')){days=[];render();}});
   $('lat').addEventListener('change',render);
-  ['emQ','emSe','emSl','kc','pam','emEf'].forEach(id=>{
+  ['emQ','emSe','emSl','kc','pam','emEf','diamCopa','espacRuas'].forEach(id=>{
     $(id).addEventListener('input',()=>{atualizarTaxa();if(days.length)render();});
   });
+  // pam também aceita edição manual (desabilita readonly ao focar)
+  $('pam').addEventListener('focus',()=>$('pam').removeAttribute('readonly'));
+  $('pam').addEventListener('blur',()=>$('pam').setAttribute('readonly',''));
   window.addEventListener('resize',()=>{if(days.length)render();});
   atualizarTaxa();
 
