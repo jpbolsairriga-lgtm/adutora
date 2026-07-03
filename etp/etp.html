@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ETP Diária & Balanço Hídrico v1.0 — Bolsa Irriga</title>
+<title>ETP Diária & Balanço Hídrico v1.1 — Bolsa Irriga</title>
 <style>
 :root{
   --teal-dark:#1f4e4c;--teal:#2f7a78;--teal-light:#dceeee;
@@ -107,7 +107,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     <p>ETP calculada dia a dia pela latitude (FAO-56 sem tabela K), a partir de Tmin/Tmax — busque automaticamente ou informe manualmente.</p>
   </div>
   <div class="hdr-nav">
-    <span class="ver-tag">v1.0</span>
+    <span class="ver-tag">v1.1</span>
     <a class="back-link" href="../index.html">&#8592; Menu</a>
     <div class="hdr-right">
       <b>Jo&#227;o Paulo de Oliveira</b>
@@ -173,7 +173,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
   <!-- Card 3: Gotejamento + Cultura -->
   <div class="card" style="margin-bottom:16px;">
     <h2><span class="n">3</span>Sistema de Gotejamento &amp; Cultura</h2>
-    <div style="display:grid;grid-template-columns:repeat(3,1fr) repeat(2,1fr);gap:10px;margin-bottom:10px;">
+    <div style="display:grid;grid-template-columns:repeat(3,1fr) repeat(3,1fr);gap:10px;margin-bottom:10px;">
       <div class="field">
         <label>Vaz&#227;o do emissor (L/h)</label>
         <input type="number" id="emQ" value="1.6" step="0.1" min="0.1">
@@ -191,14 +191,20 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
         <input type="number" id="kc" value="1.00" step="0.05" min="0.10" max="2.5">
       </div>
       <div class="field">
+        <label>PAM — &#193;rea molhada (%)</label>
+        <input type="number" id="pam" value="100" step="1" min="1" max="100">
+        <div class="hint">Kr = PAM/100. 100% = aspers&#227;o total; ~30–60% para gotejamento.</div>
+      </div>
+      <div class="field">
         <label>Efici&#234;ncia do sistema (%)</label>
         <input type="number" id="emEf" value="90" step="1" min="50" max="100">
       </div>
     </div>
-    <div style="background:var(--teal-light);border-radius:6px;padding:8px 14px;font-size:.8rem;color:var(--teal-dark);display:flex;gap:2rem;flex-wrap:wrap;">
-      <span>Taxa de aplica&#231;&#227;o: <b id="taxaDisplay">—</b> mm/h</span>
-      <span>ETc = ETP &times; Kc (evapotranspira&#231;&#227;o real da cultura)</span>
-      <span>Horas = (ETc &minus; dispon&#237;vel) &divide; taxa &divide; efici&#234;ncia</span>
+    <div style="background:var(--teal-light);border-radius:6px;padding:8px 14px;font-size:.8rem;color:var(--teal-dark);display:flex;gap:2rem;flex-wrap:wrap;align-items:center;">
+      <span>Taxa: <b id="taxaDisplay">—</b> mm/h</span>
+      <span>Kr: <b id="krDisplay">—</b></span>
+      <span style="opacity:.75;">ETc = ETP &times; Kc &nbsp;|&nbsp; <b>ETc_loc = ETP &times; Kc &times; Kr</b> (corrigida pelo PAM)</span>
+      <span style="opacity:.75;">Horas = (ETc_loc &minus; dispon&#237;vel) &divide; taxa &divide; efici&#234;ncia</span>
     </div>
   </div>
 
@@ -212,7 +218,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
           <tr>
             <th rowspan="2" style="text-align:left;min-width:70px;">Data</th>
             <th rowspan="2">Origem</th>
-            <th colspan="4" class="grp-temp" style="text-align:center;border-bottom:1px solid rgba(255,255,255,.3);">Temperatura &amp; Evapotranspira&#231;&#227;o</th>
+            <th colspan="5" class="grp-temp" style="text-align:center;border-bottom:1px solid rgba(255,255,255,.3);">Temperatura &amp; Evapotranspira&#231;&#227;o</th>
             <th colspan="5" class="grp-bal" style="text-align:center;border-bottom:1px solid rgba(255,255,255,.3);">Balan&#231;o H&#237;drico (mm)</th>
             <th rowspan="2" style="background:#1a4a2e;color:#fff;text-align:center;">Irrig.<br>(h)</th>
             <th rowspan="2"></th>
@@ -222,6 +228,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
             <th>Tmax</th>
             <th>ETP</th>
             <th title="ETc = ETP × Kc">ETc</th>
+            <th title="ETc localizada = ETP × Kc × Kr (corrigida pelo PAM)" style="background:#1f6b3a;color:#fff;">ETc_loc</th>
             <th class="grp-bal">P</th>
             <th title="Chuva + reserva do dia anterior">Disp.</th>
             <th>ETR</th>
@@ -230,7 +237,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
           </tr>
         </thead>
         <tbody id="tbody">
-          <tr><td colspan="13" class="empty">Nenhum dia adicionado. Preencha os campos acima e clique em "+ Adicionar ao balan&#231;o".</td></tr>
+          <tr><td colspan="14" class="empty">Nenhum dia adicionado. Preencha os campos acima e clique em "+ Adicionar ao balan&#231;o".</td></tr>
         </tbody>
         <tfoot id="tfoot" style="display:none;"></tfoot>
       </table>
@@ -352,35 +359,38 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     const se=parseFloat($('emSe').value)||0.40;
     const sl=parseFloat($('emSl').value)||1.00;
     const kc=parseFloat($('kc').value)||1.0;
+    const pamVal=parseFloat($('pam').value)||100;
+    const pam=Math.max(1,Math.min(100,pamVal));
+    const kr=pam/100;   // fator de localização
     const ef=(parseFloat($('emEf').value)||90)/100;
     const taxa=q/(se*sl); // mm/h
-    return{q,se,sl,kc,ef,taxa};
+    return{q,se,sl,kc,pam,kr,ef,taxa};
   }
   function atualizarTaxa(){
-    const{taxa}=getIrrigParams();
+    const{taxa,kr}=getIrrigParams();
     $('taxaDisplay').textContent=taxa.toFixed(2);
+    $('krDisplay').textContent=kr.toFixed(2);
   }
 
   /* ── Cálculo do balanço — reservatório acumulativo ── */
   function computeBalance(){
     const lat=parseFloat($('lat').value)||(-20.53);
-    const{kc,ef,taxa}=getIrrigParams();
+    const{kc,kr,ef,taxa}=getIrrigParams();
     let reserva=0;
     return days.map(d=>{
       const J=dayOfYear(d.date);
       const ra=calcRa(lat,J);
       const eto=calcETo(d.tmin,d.tmax,ra);
-      const etc=eto*kc;                    // evapotranspiração da cultura
-      const disponivel=reserva+d.precip;   // reserva anterior + chuva
-      const etr=Math.min(etc,disponivel);  // ETR consome disponível até ETc
-      reserva=disponivel-etr;              // sobra para o próximo dia
-      const def=Math.max(0,etc-disponivel);
-      const net=d.precip-etc;
-      // Irrigação: cobre o déficit bruto (desconta eficiência)
-      const irrigLiq=def;
-      const irrigBruto=ef>0?irrigLiq/ef:0;
+      const etc=eto*kc;          // ETc = ETP × Kc (sem correção de área)
+      const etcLoc=etc*kr;       // ETc_loc = ETc × Kr (corrigida pelo PAM)
+      const disponivel=reserva+d.precip;
+      const etr=Math.min(etcLoc,disponivel); // balanço usa ETc_loc
+      reserva=disponivel-etr;
+      const def=Math.max(0,etcLoc-disponivel);
+      const net=d.precip-etcLoc;
+      const irrigBruto=ef>0?def/ef:0;
       const irrigH=taxa>0?irrigBruto/taxa:0;
-      return{...d,ra,eto,etc,net,disponivel,etr,def,reserva,irrigH,taxa};
+      return{...d,ra,eto,etc,etcLoc,net,disponivel,etr,def,reserva,irrigH,taxa};
     });
   }
 
@@ -410,7 +420,8 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
         <td><span class="badge ${r.origin==='auto'?'badge-auto':'badge-manual'}">${r.origin==='auto'?'auto':'manual'}</span></td>
         <td>${fmt(r.tmin,1)}</td><td>${fmt(r.tmax,1)}</td>
         <td>${fmt(r.eto)}</td>
-        <td><b>${fmt(r.etc)}</b></td>
+        <td>${fmt(r.etc)}</td>
+        <td style="font-weight:700;color:#1f6b3a;">${fmt(r.etcLoc)}</td>
         <td>${fmt(r.precip)}</td>
         <td>${fmt(r.disponivel)}</td>
         <td>${fmt(r.etr)}</td>
@@ -422,7 +433,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     }).join('');
 
     const sum=(key)=>rows.reduce((s,r)=>s+r[key],0);
-    const totP=sum('precip'),totETP=sum('eto'),totETC=sum('etc'),
+    const totP=sum('precip'),totETP=sum('eto'),totETC=sum('etc'),totETCLoc=sum('etcLoc'),
           totETR=sum('etr'),totDEF=sum('def'),totIrrigH=sum('irrigH');
     const avgTmin=rows.reduce((s,r)=>s+r.tmin,0)/rows.length;
     const avgTmax=rows.reduce((s,r)=>s+r.tmax,0)/rows.length;
@@ -436,6 +447,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
       <td>${fmt(avgTmax,1)}<small> méd</small></td>
       <td>${fmt(totETP)}</td>
       <td>${fmt(totETC)}</td>
+      <td style="color:#1f6b3a;">${fmt(totETCLoc)}</td>
       <td>${fmt(totP)}</td>
       <td></td>
       <td>${fmt(totETR)}</td>
@@ -537,9 +549,9 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
   function exportCSV(){
     if(!days.length){alert('Nada para exportar ainda.');return;}
     const rows=computeBalance();
-    const hdr=['Data','Origem','Tmin_C','Tmax_C','Ra_mm','ETP_mm','ETc_mm','P_mm','Disponivel_mm','ETR_mm','DEF_mm','Reserva_mm','Irrigacao_h'];
+    const hdr=['Data','Origem','Tmin_C','Tmax_C','Ra_mm','ETP_mm','ETc_mm','ETc_loc_mm','P_mm','Disponivel_mm','ETR_mm','DEF_mm','Reserva_mm','Irrigacao_h'];
     const lines=[hdr.join(';')].concat(rows.map(r=>[
-      r.date,r.origin,fmt(r.tmin,1),fmt(r.tmax,1),fmt(r.ra),fmt(r.eto),fmt(r.etc),
+      r.date,r.origin,fmt(r.tmin,1),fmt(r.tmax,1),fmt(r.ra),fmt(r.eto),fmt(r.etc),fmt(r.etcLoc),
       fmt(r.precip),fmt(r.disponivel),fmt(r.etr),fmt(r.def),fmt(r.reserva),fmt(r.irrigH,1)
     ].join(';')));
     const blob=new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8;'});
@@ -555,7 +567,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
   $('btnCSV').addEventListener('click',exportCSV);
   $('btnClear').addEventListener('click',()=>{if(confirm('Remover todos os dias adicionados?')){days=[];render();}});
   $('lat').addEventListener('change',render);
-  ['emQ','emSe','emSl','kc','emEf'].forEach(id=>{
+  ['emQ','emSe','emSl','kc','pam','emEf'].forEach(id=>{
     $(id).addEventListener('input',()=>{atualizarTaxa();if(days.length)render();});
   });
   window.addEventListener('resize',()=>{if(days.length)render();});
