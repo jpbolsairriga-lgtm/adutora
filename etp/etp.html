@@ -168,9 +168,41 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     </div>
   </div>
 
-  <!-- Card 3: Tabela -->
+  <!-- Card 3: Gotejamento + Cultura -->
+  <div class="card" style="margin-bottom:16px;">
+    <h2><span class="n">3</span>Sistema de Gotejamento &amp; Cultura</h2>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr) repeat(2,1fr);gap:10px;margin-bottom:10px;">
+      <div class="field">
+        <label>Vaz&#227;o do emissor (L/h)</label>
+        <input type="number" id="emQ" value="1.6" step="0.1" min="0.1">
+      </div>
+      <div class="field">
+        <label>Espa&#231;. emissor — Se (m)</label>
+        <input type="number" id="emSe" value="0.40" step="0.05" min="0.05">
+      </div>
+      <div class="field">
+        <label>Espa&#231;. lateral — Sl (m)</label>
+        <input type="number" id="emSl" value="1.00" step="0.05" min="0.10">
+      </div>
+      <div class="field">
+        <label>Kc — Coeficiente de cultura</label>
+        <input type="number" id="kc" value="1.00" step="0.05" min="0.10" max="2.5">
+      </div>
+      <div class="field">
+        <label>Efici&#234;ncia do sistema (%)</label>
+        <input type="number" id="emEf" value="90" step="1" min="50" max="100">
+      </div>
+    </div>
+    <div style="background:var(--teal-light);border-radius:6px;padding:8px 14px;font-size:.8rem;color:var(--teal-dark);display:flex;gap:2rem;flex-wrap:wrap;">
+      <span>Taxa de aplica&#231;&#227;o: <b id="taxaDisplay">—</b> mm/h</span>
+      <span>ETc = ETP &times; Kc (evapotranspira&#231;&#227;o real da cultura)</span>
+      <span>Horas = (ETc &minus; dispon&#237;vel) &divide; taxa &divide; efici&#234;ncia</span>
+    </div>
+  </div>
+
+  <!-- Card 4: Tabela -->
   <div class="card">
-    <h2><span class="n">3</span>Balan&#231;o H&#237;drico Sequencial Di&#225;rio</h2>
+    <h2><span class="n">4</span>Balan&#231;o H&#237;drico Sequencial Di&#225;rio</h2>
 
     <div class="tbl-wrap">
       <table id="tbl">
@@ -178,23 +210,25 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
           <tr>
             <th rowspan="2" style="text-align:left;min-width:70px;">Data</th>
             <th rowspan="2">Origem</th>
-            <th colspan="3" class="grp-temp" style="text-align:center;border-bottom:1px solid rgba(255,255,255,.3);">Temperatura (°C) &amp; ETP</th>
+            <th colspan="4" class="grp-temp" style="text-align:center;border-bottom:1px solid rgba(255,255,255,.3);">Temperatura &amp; Evapotranspira&#231;&#227;o</th>
             <th colspan="5" class="grp-bal" style="text-align:center;border-bottom:1px solid rgba(255,255,255,.3);">Balan&#231;o H&#237;drico (mm)</th>
+            <th rowspan="2" style="background:#1a4a2e;color:#fff;text-align:center;">Irrig.<br>(h)</th>
             <th rowspan="2"></th>
           </tr>
           <tr>
             <th class="grp-temp">Tmin</th>
             <th>Tmax</th>
             <th>ETP</th>
+            <th title="ETc = ETP × Kc">ETc</th>
             <th class="grp-bal">P</th>
-            <th title="Chuva + reserva do dia anterior">Dispon&#237;vel</th>
+            <th title="Chuva + reserva do dia anterior">Disp.</th>
             <th>ETR</th>
             <th class="def">DEF</th>
-            <th title="&#193;gua de chuva ainda dispon&#237;vel ao final do dia">Reserva</th>
+            <th title="&#193;gua restante para o pr&#243;ximo dia">Reserva</th>
           </tr>
         </thead>
         <tbody id="tbody">
-          <tr><td colspan="11" class="empty">Nenhum dia adicionado. Preencha os campos acima e clique em "+ Adicionar ao balan&#231;o".</td></tr>
+          <tr><td colspan="13" class="empty">Nenhum dia adicionado. Preencha os campos acima e clique em "+ Adicionar ao balan&#231;o".</td></tr>
         </tbody>
         <tfoot id="tfoot" style="display:none;"></tfoot>
       </table>
@@ -207,6 +241,8 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
       <div class="kpi"><div class="lab">ETR total</div><div class="val" id="kpiETR">–</div></div>
       <div class="kpi kpi-def"><div class="lab">D&#233;ficit total</div><div class="val" id="kpiDEF">–</div></div>
       <div class="kpi kpi-arm"><div class="lab">Reserva final (mm)</div><div class="val" id="kpiReserva">–</div></div>
+      <div class="kpi" style="background:#e8f5ee;"><div class="lab">Total irrigado (h)</div><div class="val" id="kpiIrrigH" style="color:#1a4a2e;">–</div></div>
+      <div class="kpi" style="background:#e8f5ee;"><div class="lab">M&#233;dia/dia (h)</div><div class="val" id="kpiIrrigMed" style="color:#1a4a2e;">–</div></div>
     </div>
 
     <!-- Gráfico -->
@@ -308,21 +344,41 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
 
   function removeDay(date){days=days.filter(d=>d.date!==date);render();}
 
+  /* ── Parâmetros de irrigação ── */
+  function getIrrigParams(){
+    const q=parseFloat($('emQ').value)||1.6;
+    const se=parseFloat($('emSe').value)||0.40;
+    const sl=parseFloat($('emSl').value)||1.00;
+    const kc=parseFloat($('kc').value)||1.0;
+    const ef=(parseFloat($('emEf').value)||90)/100;
+    const taxa=q/(se*sl); // mm/h
+    return{q,se,sl,kc,ef,taxa};
+  }
+  function atualizarTaxa(){
+    const{taxa}=getIrrigParams();
+    $('taxaDisplay').textContent=taxa.toFixed(2);
+  }
+
   /* ── Cálculo do balanço — reservatório acumulativo ── */
-  // Chuva acumula na reserva; ETP consome dia a dia até zerar
   function computeBalance(){
     const lat=parseFloat($('lat').value)||(-20.53);
-    let reserva=0; // água disponível carregada de dias anteriores (mm)
+    const{kc,ef,taxa}=getIrrigParams();
+    let reserva=0;
     return days.map(d=>{
       const J=dayOfYear(d.date);
       const ra=calcRa(lat,J);
       const eto=calcETo(d.tmin,d.tmax,ra);
-      const disponivel=reserva+d.precip;   // reserva + chuva do dia
-      const etr=Math.min(eto,disponivel);  // ETR consome o disponível até ETP
+      const etc=eto*kc;                    // evapotranspiração da cultura
+      const disponivel=reserva+d.precip;   // reserva anterior + chuva
+      const etr=Math.min(etc,disponivel);  // ETR consome disponível até ETc
       reserva=disponivel-etr;              // sobra para o próximo dia
-      const def=Math.max(0,eto-disponivel);
-      const net=d.precip-eto;
-      return{...d,ra,eto,net,disponivel,etr,def,reserva};
+      const def=Math.max(0,etc-disponivel);
+      const net=d.precip-etc;
+      // Irrigação: cobre o déficit bruto (desconta eficiência)
+      const irrigLiq=def;
+      const irrigBruto=ef>0?irrigLiq/ef:0;
+      const irrigH=taxa>0?irrigBruto/taxa:0;
+      return{...d,ra,eto,etc,net,disponivel,etr,def,reserva,irrigH,taxa};
     });
   }
 
@@ -346,22 +402,26 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     tbody.innerHTML=rows.map(r=>{
       const rowCls=r.def>0.01?'row-def':r.reserva>0.01?'row-exc':'';
       const resStyle=r.reserva>0.005?'color:var(--green);font-weight:700;':'color:#aaa;';
+      const irrigStyle=r.irrigH>0.005?'font-weight:700;color:#1a4a2e;background:#e8f5ee;':'color:#aaa;';
       return`<tr class="${rowCls}">
         <td>${fmtDate(r.date)}</td>
         <td><span class="badge ${r.origin==='auto'?'badge-auto':'badge-manual'}">${r.origin==='auto'?'auto':'manual'}</span></td>
         <td>${fmt(r.tmin,1)}</td><td>${fmt(r.tmax,1)}</td>
-        <td><b>${fmt(r.eto)}</b></td>
+        <td>${fmt(r.eto)}</td>
+        <td><b>${fmt(r.etc)}</b></td>
         <td>${fmt(r.precip)}</td>
         <td>${fmt(r.disponivel)}</td>
         <td>${fmt(r.etr)}</td>
         <td class="def">${r.def>0.005?fmt(r.def):'—'}</td>
         <td style="${resStyle}">${r.reserva>0.005?fmt(r.reserva):'—'}</td>
+        <td style="${irrigStyle}">${r.irrigH>0.005?fmt(r.irrigH,1)+'h':'—'}</td>
         <td><button class="rm" title="Remover" onclick="window.__rmDay('${r.date}')">✕</button></td>
       </tr>`;
     }).join('');
 
     const sum=(key)=>rows.reduce((s,r)=>s+r[key],0);
-    const totP=sum('precip'),totETP=sum('eto'),totETR=sum('etr'),totDEF=sum('def');
+    const totP=sum('precip'),totETP=sum('eto'),totETC=sum('etc'),
+          totETR=sum('etr'),totDEF=sum('def'),totIrrigH=sum('irrigH');
     const avgTmin=rows.reduce((s,r)=>s+r.tmin,0)/rows.length;
     const avgTmax=rows.reduce((s,r)=>s+r.tmax,0)/rows.length;
     const reservaFinal=rows[rows.length-1].reserva;
@@ -373,11 +433,13 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
       <td>${fmt(avgTmin,1)}<small> méd</small></td>
       <td>${fmt(avgTmax,1)}<small> méd</small></td>
       <td>${fmt(totETP)}</td>
+      <td>${fmt(totETC)}</td>
       <td>${fmt(totP)}</td>
       <td></td>
       <td>${fmt(totETR)}</td>
       <td class="def">${fmt(totDEF)}</td>
       <td>${fmt(reservaFinal)}<small> rest.</small></td>
+      <td style="font-weight:700;color:#1a4a2e;">${fmt(totIrrigH,1)}h</td>
       <td></td>
     </tr>`;
 
@@ -387,6 +449,8 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     $('kpiETR').textContent=fmt(totETR)+' mm';
     $('kpiDEF').textContent=fmt(totDEF)+' mm';
     $('kpiReserva').textContent=fmt(reservaFinal)+' mm';
+    $('kpiIrrigH').textContent=fmt(totIrrigH,1)+' h';
+    $('kpiIrrigMed').textContent=fmt(totIrrigH/rows.length,1)+' h';
 
     drawChart(rows);
   }
@@ -471,10 +535,10 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
   function exportCSV(){
     if(!days.length){alert('Nada para exportar ainda.');return;}
     const rows=computeBalance();
-    const hdr=['Data','Origem','Tmin_C','Tmax_C','Ra_mm','ETP_mm','P_mm','Disponivel_mm','ETR_mm','DEF_mm','Reserva_mm'];
+    const hdr=['Data','Origem','Tmin_C','Tmax_C','Ra_mm','ETP_mm','ETc_mm','P_mm','Disponivel_mm','ETR_mm','DEF_mm','Reserva_mm','Irrigacao_h'];
     const lines=[hdr.join(';')].concat(rows.map(r=>[
-      r.date,r.origin,fmt(r.tmin,1),fmt(r.tmax,1),fmt(r.ra),fmt(r.eto),fmt(r.precip),
-      fmt(r.disponivel),fmt(r.etr),fmt(r.def),fmt(r.reserva)
+      r.date,r.origin,fmt(r.tmin,1),fmt(r.tmax,1),fmt(r.ra),fmt(r.eto),fmt(r.etc),
+      fmt(r.precip),fmt(r.disponivel),fmt(r.etr),fmt(r.def),fmt(r.reserva),fmt(r.irrigH,1)
     ].join(';')));
     const blob=new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8;'});
     const a=document.createElement('a');
@@ -489,7 +553,11 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
   $('btnCSV').addEventListener('click',exportCSV);
   $('btnClear').addEventListener('click',()=>{if(confirm('Remover todos os dias adicionados?')){days=[];render();}});
   $('lat').addEventListener('change',render);
+  ['emQ','emSe','emSl','kc','emEf'].forEach(id=>{
+    $(id).addEventListener('input',()=>{atualizarTaxa();if(days.length)render();});
+  });
   window.addEventListener('resize',()=>{if(days.length)render();});
+  atualizarTaxa();
 
   render();
 })();
