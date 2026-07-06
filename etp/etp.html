@@ -3,7 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ETP Diária & Balanço Hídrico v1.4 — Bolsa Irriga</title>
+<title>ETP Diária & Balanço Hídrico v1.5 — Bolsa Irriga</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 <style>
 :root{
   --teal-dark:#1f4e4c;--teal:#2f7a78;--teal-light:#dceeee;
@@ -101,13 +103,17 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
 <body>
 
 <header>
-  <div class="hdr-left">
-    <div class="brand">Bolsa Irriga · Ferramentas de Engenharia</div>
-    <h1>ETP Di&#225;ria (Hargreaves-Samani) &amp; Balan&#231;o H&#237;drico Sequencial</h1>
-    <p>ETP calculada dia a dia pela latitude (FAO-56 sem tabela K), a partir de Tmin/Tmax — busque automaticamente ou informe manualmente.</p>
+  <div class="hdr-left" style="display:flex;align-items:center;gap:14px;">
+    <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'"
+      style="height:52px;width:52px;object-fit:contain;background:#fff;border-radius:10px;padding:5px;box-shadow:0 2px 10px rgba(0,0,0,.2);flex-shrink:0;">
+    <div>
+      <div class="brand">Bolsa Irriga · Ferramentas de Engenharia</div>
+      <h1>ETP Di&#225;ria (Hargreaves-Samani) &amp; Balan&#231;o H&#237;drico Sequencial</h1>
+      <p>ETP calculada dia a dia pela latitude (FAO-56 sem tabela K), a partir de Tmin/Tmax — busque automaticamente ou informe manualmente.</p>
+    </div>
   </div>
   <div class="hdr-nav">
-    <span class="ver-tag">v1.4</span>
+    <span class="ver-tag">v1.5</span>
     <a class="back-link" href="../index.html">&#8592; Menu</a>
     <div class="hdr-right">
       <b>Jo&#227;o Paulo de Oliveira</b>
@@ -267,6 +273,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     <canvas id="chart"></canvas>
 
     <div class="actions">
+      <button class="btn-primary" id="btnPDF" style="background:#003d5c;">&#128196; Relat&#243;rio PDF</button>
       <button class="btn-secondary" id="btnCSV">&#11015; Exportar CSV</button>
       <button class="btn-danger" id="btnClear">Limpar tudo</button>
     </div>
@@ -418,6 +425,13 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     const v=Math.round(n*Math.pow(10,dec))/Math.pow(10,dec);
     return v.toFixed(dec);
   }
+  function fmtH(h){
+    // Converte horas decimais para H:MM (ex: 1.92 → 1:55)
+    if(h<0.005)return'—';
+    const hrs=Math.floor(h);
+    const mins=Math.round((h-hrs)*60);
+    return hrs+':'+String(mins).padStart(2,'0');
+  }
   function fmtDate(s){
     if(!s)return'';const[y,m,d]=s.split('-');return`${d}/${m}/${y}`;
   }
@@ -447,7 +461,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
         <td>${fmt(r.etr)}</td>
         <td class="def">${r.def>0.005?fmt(r.def):'—'}</td>
         <td style="${resStyle}">${r.reserva>0.005?fmt(r.reserva):'—'}</td>
-        <td style="${irrigStyle}">${r.irrigH>0.005?fmt(r.irrigH,1)+'h':'—'}</td>
+        <td style="${irrigStyle}">${fmtH(r.irrigH)}</td>
         <td><button class="rm" title="Remover" onclick="window.__rmDay('${r.date}')">✕</button></td>
       </tr>`;
     }).join('');
@@ -473,7 +487,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
       <td>${fmt(totETR)}</td>
       <td class="def">${fmt(totDEF)}</td>
       <td>${fmt(reservaFinal)}<small> rest.</small></td>
-      <td style="font-weight:700;color:#1a4a2e;">${fmt(totIrrigH,1)}h</td>
+      <td style="font-weight:700;color:#1a4a2e;">${fmtH(totIrrigH)}</td>
       <td></td>
     </tr>`;
 
@@ -483,8 +497,8 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     $('kpiETR').textContent=fmt(totETR)+' mm';
     $('kpiDEF').textContent=fmt(totDEF)+' mm';
     $('kpiReserva').textContent=fmt(reservaFinal)+' mm';
-    $('kpiIrrigH').textContent=fmt(totIrrigH,1)+' h';
-    $('kpiIrrigMed').textContent=fmt(totIrrigH/rows.length,1)+' h';
+    $('kpiIrrigH').textContent=fmtH(totIrrigH);
+    $('kpiIrrigMed').textContent=fmtH(totIrrigH/rows.length);
 
     drawChart(rows);
   }
@@ -566,6 +580,127 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
   }
 
   /* ── CSV ── */
+  /* ── Relatório PDF para o cliente ── */
+  function gerarRelatorio(){
+    if(!days.length){alert('Adicione dias ao balanço antes de gerar o relatório.');return;}
+    const{jsPDF}=window.jspdf;
+    const doc=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
+    const W=doc.internal.pageSize.getWidth(),H=doc.internal.pageSize.getHeight();
+    const now=new Date().toLocaleDateString('pt-BR');
+    const rows=computeBalance();
+    const{kc,kr,ef,taxa}=getIrrigParams();
+    const lat=parseFloat($('lat').value)||(-20.53);
+    const lon=parseFloat($('lon').value)||(-47.40);
+    const pam=parseFloat($('pam').value)||100;
+    const diam=parseFloat($('diamCopa').value)||1.5;
+
+    const sum=key=>rows.reduce((s,r)=>s+r[key],0);
+    const totP=sum('precip'),totETP=sum('eto'),totETC=sum('etc'),totETCLoc=sum('etcLoc'),
+          totETR=sum('etr'),totDEF=sum('def'),totIrrigH=sum('irrigH');
+    const n=rows.length;
+    const periodo=n>0?fmtDate(rows[0].date)+' a '+fmtDate(rows[n-1].date):'—';
+
+    // ── Cabeçalho ──
+    doc.setFillColor(31,78,76);doc.rect(0,0,W,22,'F');
+    doc.setTextColor(255,255,255);
+    doc.setFontSize(13);doc.setFont(undefined,'bold');
+    doc.text('BOLSA IRRIGA®',12,9);
+    doc.setFontSize(9);doc.setFont(undefined,'normal');
+    doc.text('Relatório de Manejo de Irrigação por Gotejamento',12,15.5);
+    doc.setFontSize(8);doc.setTextColor(200,230,229);
+    doc.text('João Paulo de Oliveira · Eng. Agrônomo · (16) 99401-2495 · bolsairriga.com.br',W-12,9,{align:'right'});
+    doc.text('Emitido em: '+now,W-12,15.5,{align:'right'});
+
+    // ── Parâmetros ──
+    let y=28;
+    doc.setFontSize(7.5);doc.setFont(undefined,'bold');doc.setTextColor(31,78,76);
+    doc.text('PARÂMETROS DO SISTEMA',12,y);
+    y+=4;
+    const params=[
+      ['Período',periodo],['Local',`Lat ${lat.toFixed(2)}°  ·  Lon ${lon.toFixed(2)}°`],
+      ['Dias',String(n)],['Kc',fmt(kc,2)],
+      ['fc (cobertura)',fmt(pam,1)+'%'],['Kr',fmt(kr,3)],
+      ['Diam. copa',fmt(diam,1)+' m'],['Espaç. Sl',fmt(parseFloat($('emSl').value)||1,2)+' m'],
+      ['Emis. Q',fmt(parseFloat($('emQ').value)||1.6,1)+' L/h'],['Taxa ap.',fmt(taxa,2)+' mm/h'],
+      ['Eficiência',fmt(parseFloat($('emEf').value)||90,0)+'%'],
+    ];
+    const colW=42;
+    params.forEach((p,i)=>{
+      const col=i%4,row=Math.floor(i/4);
+      const px=12+col*colW,py=y+row*5;
+      doc.setFont(undefined,'bold');doc.setTextColor(80,96,112);doc.setFontSize(6.5);
+      doc.text(p[0],px,py);
+      doc.setFont(undefined,'normal');doc.setTextColor(28,43,42);doc.setFontSize(7.5);
+      doc.text(p[1],px,py+3.5);
+    });
+
+    // ── KPIs ──
+    y+=20;
+    const kpis=[
+      ['Precip. Total',fmt(totP)+' mm'],
+      ['ETP Total',fmt(totETP)+' mm'],
+      ['ETc_loc Total',fmt(totETCLoc)+' mm'],
+      ['Déficit Total',fmt(totDEF)+' mm'],
+      ['Irrig. Total',fmtH(totIrrigH)],
+      ['Média/dia',fmtH(totIrrigH/n)],
+    ];
+    const kW=(W-24)/kpis.length;
+    kpis.forEach((k,i)=>{
+      const kx=12+i*kW;
+      doc.setFillColor(i===3?255:i>=4?230:240,i===3?240:i>=4?245:247,i===3?240:i>=4?238:246);
+      doc.roundedRect(kx,y,kW-2,14,2,2,'F');
+      doc.setFontSize(6);doc.setFont(undefined,'normal');doc.setTextColor(80,100,112);
+      doc.text(k[0],kx+(kW-2)/2,y+4.5,{align:'center'});
+      doc.setFontSize(10);doc.setFont(undefined,'bold');
+      doc.setTextColor(i===3?192:i>=4?30:31,i===3?57:i>=4?123:78,i===3?43:i>=4?69:76);
+      doc.text(k[1],kx+(kW-2)/2,y+11,{align:'center'});
+    });
+
+    // ── Gráfico ──
+    y+=18;
+    const canvas=$('chart');
+    if(canvas.width>0){
+      const imgData=canvas.toDataURL('image/png');
+      const cH=42,cW=cH*(canvas.width/canvas.height);
+      doc.addImage(imgData,'PNG',12,y,Math.min(cW,W-24),cH);
+      y+=cH+4;
+    }
+
+    // ── Tabela de dados ──
+    doc.autoTable({
+      startY:y,
+      head:[['Data','Orig.','Tmin','Tmax','ETP','ETc','ETc_loc','P','Disp.','ETR','DEF','Reserva','Irrig.']],
+      body:rows.map(r=>[
+        fmtDate(r.date),r.origin,
+        fmt(r.tmin,1),fmt(r.tmax,1),
+        fmt(r.eto),fmt(r.etc),fmt(r.etcLoc),
+        fmt(r.precip),fmt(r.disponivel),fmt(r.etr),
+        r.def>0.005?fmt(r.def):'—',
+        r.reserva>0.005?fmt(r.reserva):'—',
+        fmtH(r.irrigH)
+      ]),
+      foot:[['Total/Méd','',
+        fmt(rows.reduce((s,r)=>s+r.tmin,0)/n,1),
+        fmt(rows.reduce((s,r)=>s+r.tmax,0)/n,1),
+        fmt(totETP),fmt(totETC),fmt(totETCLoc),
+        fmt(totP),'',fmt(totETR),fmt(totDEF),'',fmtH(totIrrigH)]],
+      styles:{fontSize:6.5,cellPadding:2},
+      headStyles:{fillColor:[31,78,76],textColor:255,fontStyle:'bold',fontSize:6},
+      footStyles:{fillColor:[220,238,238],textColor:[31,78,76],fontStyle:'bold'},
+      columnStyles:{12:{fontStyle:'bold',textColor:[30,123,69]}},
+      alternateRowStyles:{fillColor:[247,250,249]},
+      margin:{left:12,right:12},
+    });
+
+    // ── Rodapé ──
+    const pH=doc.internal.pageSize.getHeight();
+    doc.setFillColor(31,78,76);doc.rect(0,pH-8,W,8,'F');
+    doc.setTextColor(255,255,255);doc.setFontSize(6.5);doc.setFont(undefined,'normal');
+    doc.text('Bolsa Irriga® · ETP Diária & Balanço Hídrico · Hargreaves-Samani / FAO-56 · bolsairriga.com.br',W/2,pH-3,{align:'center'});
+
+    doc.save('Balanco_Hidrico_'+rows[0].date+'_a_'+rows[n-1].date+'.pdf');
+  }
+
   function exportCSV(){
     if(!days.length){alert('Nada para exportar ainda.');return;}
     const rows=computeBalance();
@@ -584,6 +719,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
   /* ── Eventos ── */
   $('btnFetch').addEventListener('click',fetchWeather);
   $('btnAdd').addEventListener('click',addDay);
+  $('btnPDF').addEventListener('click',gerarRelatorio);
   $('btnCSV').addEventListener('click',exportCSV);
   $('btnClear').addEventListener('click',()=>{if(confirm('Remover todos os dias adicionados?')){days=[];render();}});
   $('lat').addEventListener('change',render);
