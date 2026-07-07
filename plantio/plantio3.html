@@ -161,7 +161,9 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
     <button class="btn btn-poly" id="btnPoly" onclick="iniciarPoligono()">&#9632; Desenhar Contorno</button>
     <button class="btn btn-finish" id="btnFechar" onclick="fecharPoligono()">&#10003; Fechar Contorno</button>
     <input type="file" id="inputKml" accept=".kml" style="display:none" onchange="if(this.files[0]){const r=new FileReader();r.onload=e=>_processarKMLImportado(e.target.result);r.readAsText(this.files[0]);this.value='';}">
-    <button class="btn" onclick="$('inputKml').click()" style="background:#37474f;color:#e0e0e0;margin-top:4px;">&#8599; Importar KML</button>
+    <button class="btn" onclick="$('inputKml').click()" style="background:#37474f;color:#e0e0e0;margin-top:4px;">&#8599; Importar Projeto</button>
+    <input type="file" id="inputKmlPoly" accept=".kml" style="display:none" onchange="if(this.files[0]){const r=new FileReader();r.onload=e=>_importarPoligonoGoogleEarth(e.target.result);r.readAsText(this.files[0]);this.value='';}">
+    <button class="btn" onclick="$('inputKmlPoly').click()" style="background:#1b5e20;color:#e0e0e0;margin-top:4px;">&#9671; Importar Pol&#237;gono</button>
   </div>
 
   <!-- ── Carreador / Divisão ── -->
@@ -1655,6 +1657,86 @@ function limparCurvas() {
   curvaLabels.forEach(m=>m.remove()); curvaLabels=[];
   $('btnLimparCurvas').style.display='none';
   $('curvaInfo').style.display='none';
+}
+
+// ── Importar Polígono do Google Earth ─────────────────────────────────────────
+function _importarPoligonoGoogleEarth(text) {
+  try {
+    const xml = new DOMParser().parseFromString(text, 'text/xml');
+
+    // Busca coordenadas do primeiro polígono encontrado no KML
+    let coordEl = xml.querySelector('Polygon outerBoundaryIs LinearRing coordinates');
+    if (!coordEl) coordEl = xml.querySelector('LinearRing coordinates');
+    if (!coordEl) coordEl = xml.querySelector('Polygon coordinates');
+    if (!coordEl) coordEl = xml.querySelector('coordinates');
+    if (!coordEl) {
+      alert('Nenhum polígono encontrado no arquivo KML.\nExporte o polígono do Google Earth como arquivo .kml e tente novamente.');
+      return;
+    }
+
+    // KML usa formato "lon,lat,alt" separado por espaços
+    const pts = coordEl.textContent.trim()
+      .split(/\s+/)
+      .filter(c => c.includes(','))
+      .map(c => {
+        const p = c.split(',');
+        return L.latLng(parseFloat(p[1]), parseFloat(p[0]));
+      })
+      .filter(p => !isNaN(p.lat) && !isNaN(p.lng));
+
+    if (pts.length < 3) {
+      alert('Polígono inválido: menos de 3 pontos.');
+      return;
+    }
+
+    // Remove ponto de fechamento se igual ao primeiro
+    const f = pts[0], l = pts[pts.length - 1];
+    if (Math.abs(l.lat - f.lat) < 1e-8 && Math.abs(l.lng - f.lng) < 1e-8) pts.pop();
+
+    // Limpa estado atual (igual a iniciarPoligono)
+    limparLinhas(); limparGuia(); limparPoligono();
+
+    // Popula polyPts e cria marcadores de vértice arrastáveis
+    polyPts = pts;
+    pts.forEach(ll => {
+      const mk = L.marker(ll, { icon: mkIcon('vertex-marker'), draggable: true }).addTo(map);
+      mk.on('drag',    () => updatePolyDisplay());
+      mk.on('dragend', () => rebuildPoly());
+      polyMarkers.push(mk);
+    });
+
+    // Cria camada do polígono (igual a fecharPoligono)
+    polyLayer = L.polygon(polyPts, {
+      color: '#42a5f5', fillColor: '#1565c0', fillOpacity: 0.08, weight: 2
+    }).addTo(map);
+
+    buildTurfPoly();
+
+    // Área e estado
+    const ha = areaHa(polyPts);
+    areaHaAtual = ha;
+    $('iArea').textContent = ha.toFixed(2) + ' ha';
+
+    // Estado: polígono fechado (modo idle)
+    modo = 'idle';
+    map.getContainer().style.cursor = '';
+    $('btnPoly').classList.remove('active');
+    $('btnFechar').style.display = 'none';
+    $('btnCurvas').disabled = false;
+
+    // Desativa arrastar vértices (igual a fecharPoligono)
+    polyMarkers.forEach(m => m.dragging && m.dragging.disable());
+
+    // Mostra "Travar Talhão"
+    $('btnTravarTalhao').style.display = 'flex';
+
+    map.fitBounds(polyLayer.getBounds());
+    setStatus('Polígono importado: ' + ha.toFixed(2) + ' ha. Trave o talhão, desenhe a guia ou use Carreador/Divisão.', 'ok');
+
+  } catch (e) {
+    alert('Erro ao importar polígono: ' + e.message);
+    console.error(e);
+  }
 }
 
 // ── Importar KML ──────────────────────────────────────────────────────────────
