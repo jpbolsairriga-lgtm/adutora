@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Cálculo Avançado de Adutora — Bolsa Irriga</title>
+<title>Cálculo Avançado de Adutora v1.1 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -21,6 +21,7 @@ header{background:linear-gradient(135deg,#003d5c,var(--bl2),var(--bl3));color:#f
 .hdr-logo img{height:60px;width:60px;object-fit:contain;background:#fff;border-radius:10px;padding:6px;box-shadow:0 2px 10px rgba(0,0,0,.18)}
 .hdr-brand h1{font-size:1.3rem;font-weight:800}
 .hdr-brand p{opacity:.82;font-size:.78rem;margin-top:.1rem}
+.ver-badge{font-size:.62rem;font-weight:700;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.32);padding:.14rem .55rem;border-radius:10px;letter-spacing:.03em;vertical-align:middle;margin-left:.5rem;white-space:nowrap}
 .hdr-dev{text-align:right;font-size:.74rem;line-height:1.7;opacity:.92;border-left:2px solid rgba(255,255,255,.25);padding-left:1.1rem}
 .hdr-dev .dn{font-size:.9rem;font-weight:800}
 .back-link{display:inline-flex;align-items:center;gap:.35rem;font-size:.8rem;color:rgba(255,255,255,.88);border:1.5px solid rgba(255,255,255,.35);padding:.35rem .85rem;border-radius:7px;text-decoration:none;transition:background .15s;white-space:nowrap;margin-right:.8rem}
@@ -122,7 +123,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>C&#225;lculo Avan&#231;ado de Adutora</h1>
+      <h1>C&#225;lculo Avan&#231;ado de Adutora <span class="ver-badge" id="ver-badge">v1.1</span></h1>
       <p>Tra&#231;ado do Percurso &middot; Perfil de Eleva&#231;&#227;o &middot; C&#225;lculo Hidr&#225;ulico Multi-PN</p>
     </div>
   </div>
@@ -359,6 +360,15 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
 </div>
 
 <script>
+// ── Controle de versão ───────────────────────────────────────────────
+// v1.1 (2026-07-14): corrige classificação de PN da tubulação, que usava a
+//   pressão de projeto (com margem/slackP) em vez da pressão hidráulica real
+//   para decidir a faixa de PN de cada trecho — causava trechos exibidos como
+//   PN mais alto que a pressão real (P_start/P_end) da tabela indicava.
+// v1.0: versão inicial (traçado, perfil de elevação, cálculo multi-PN).
+const APP_VERSION='v1.1';
+document.addEventListener('DOMContentLoaded',()=>{const vb=$('ver-badge');if(vb)vb.textContent=APP_VERSION;});
+
 // ── Utilidades ────────────────────────────────────────────────────────
 const $=id=>document.getElementById(id);
 const gv=id=>parseFloat($(id).value)||0;
@@ -417,7 +427,8 @@ function calcMultiPN(Q_calc,L,Hg,CHW,nom,kLoc,filtro,pRes,slackP,lim){
   const ts=Hg/L,STEP=Math.max(1,Math.round(L/500));
   let AMT_hid=Hg+pRes+filtro+30,segs=[],totalHf=0;
   for(let iter=0;iter<20;iter++){
-    const AMT_d=AMT_hid*(1+slackP);let x=0,P=AMT_d,s_=[];
+    // Classificação de PN usa a pressão real (hidráulica, sem margem de projeto) — a mesma que é exibida ao usuário
+    let x=0,P=AMT_hid-filtro,s_=[];
     let sPN=pnForPressure(P,lim),sX=0,sP=P;
     while(x<L){
       const dx=Math.min(STEP,L-x),pn=pnForPressure(P,lim);
@@ -430,8 +441,6 @@ function calcMultiPN(Q_calc,L,Hg,CHW,nom,kLoc,filtro,pRes,slackP,lim){
     totalHf=0;for(const s of segs)totalHf+=(jByPN[s.pn]??jByPN[125]??jByPN[80]??0)*s.len;
     const an=Hg+totalHf+filtro+pRes;if(Math.abs(an-AMT_hid)<0.05){AMT_hid=an;break;}AMT_hid=an;
   }
-  // Recalcular P_start/P_end com pressão real (sem slackP, sem filtro) → P_end final = pRes
-  {let Pa=AMT_hid-filtro;for(const s of segs){s.P_start=Pa;Pa=Math.max(0,Pa-(jByPN[s.pn]??0)*s.len-ts*s.len);s.P_end=Pa;}}
   return{AMT_hid,AMT_design:AMT_hid*(1+slackP),totalHf,filtro,segs,pipeByPN,jByPN,pnsUsados:new Set(segs.map(s=>s.pn))};
 }
 function pressurePoints(multi,L,Hg){
@@ -453,8 +462,8 @@ function calcMultiPNProfile(Q_calc,profile,CHW,nom,kLoc,filtro,pRes,slackP,lim){
   let AMT_hid=maxGain+pRes+filtro+30,segs=[],totalHf=0,criticalIdx=n-1;
 
   for(let iter=0;iter<20;iter++){
-    const AMT_d=AMT_hid*(1+slackP);
-    let P=AMT_d,hfAcc=0,maxReq=0;
+    // Classificação de PN usa a pressão real (hidráulica, sem margem de projeto) — a mesma que é exibida ao usuário
+    let P=AMT_hid-filtro,hfAcc=0,maxReq=0;
     const s_=[];
     let sPN=pnForPressure(P,lim),sFrom=0,sPstart=P;
 
@@ -477,15 +486,6 @@ function calcMultiPNProfile(Q_calc,profile,CHW,nom,kLoc,filtro,pRes,slackP,lim){
     if(Math.abs(maxReq-AMT_hid)<0.05){AMT_hid=maxReq;break;}
     AMT_hid=maxReq;
   }
-  // Recalcular P_start/P_end com pressão real (sem slackP, sem filtro) → P_end crítico = pRes
-  {let Pa=AMT_hid-filtro,si=0;
-  segs[0].P_start=Pa;
-  for(let i=1;i<n;i++){
-    const dx=profile[i].dist-profile[i-1].dist,dz=profile[i].elev-profile[i-1].elev;
-    while(si<segs.length-1&&profile[i].dist>segs[si].to){segs[si].P_end=Pa;si++;segs[si].P_start=Pa;}
-    Pa=Math.max(0,Pa-(jByPN[segs[si]?.pn??125]??0)*dx-dz);
-  }
-  segs[segs.length-1].P_end=Pa;}
   return{AMT_hid,AMT_design:AMT_hid*(1+slackP),totalHf,filtro,segs,pipeByPN,jByPN,
     pnsUsados:new Set(segs.map(s=>s.pn)),L,
     criticalDist:profile[criticalIdx].dist,criticalElev:profile[criticalIdx].elev};
@@ -1013,7 +1013,7 @@ img.chart{width:100%;display:block;border:1px solid #d0e4f0;border-radius:3px}
 </style></head><body>
 <div class="hdr">
   <div class="hdr-info">
-    <h1>C&#225;lculo Avan&#231;ado de Adutora</h1>
+    <h1>C&#225;lculo Avan&#231;ado de Adutora <span style="font-size:8px;font-weight:600;color:#607080">${APP_VERSION}</span></h1>
     <div style="font-size:8.5px;color:#607080">Tra&#231;ado do Percurso &middot; Perfil de Eleva&#231;&#227;o &middot; C&#225;lculo Hidr&#225;ulico Multi-PN</div>
     <div style="font-size:8.5px;color:#607080;margin-top:.2rem">Cliente: <b>${$('cliente').value||'—'}</b> &middot; Propriedade: <b>${$('propriedade').value||'—'}</b> &middot; ${$('cidade').value||''}</div>
   </div>
