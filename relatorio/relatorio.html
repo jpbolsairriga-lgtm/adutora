@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Relatório de Pagamento v2.2 — Bolsa Irriga</title>
+<title>Relatório de Pagamento v2.3 — Bolsa Irriga</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 <style>
@@ -112,7 +112,7 @@ code{background:#f0f4f8;padding:.1rem .35rem;border-radius:4px;font-family:monos
     </div>
   </div>
   <div class="hdr-nav">
-    <span class="ver-tag">v2.2</span>
+    <span class="ver-tag">v2.3</span>
     <a class="back-link" href="../index.html">&#8592; Menu</a>
   </div>
   <div class="hdr-dev">
@@ -184,14 +184,14 @@ code{background:#f0f4f8;padding:.1rem .35rem;border-radius:4px;font-family:monos
   </div>
   <div class="modal-bd">
     <div class="alert alert-info" style="font-size:.81rem">
-      Setup feito uma única vez pelo administrador. O consultor não precisa fazer nada além de clicar em "Enviar".
+      Esta URL fica salva apenas <b>neste navegador/dispositivo</b>. Se preenchida diretamente no código-fonte (constante <code>DEFAULT_GAS_URL</code>), vale para todo mundo automaticamente e o consultor não precisa configurar nada. Preenchida só aqui, vale apenas para quem configurar.
     </div>
     <div style="font-size:.82rem;font-weight:700;color:var(--bl1);margin-bottom:.2rem">Passos no Google Apps Script:</div>
     <div class="step"><div class="step-n">1</div><div>Acesse <b>script.google.com</b> → clique em <b>Novo projeto</b></div></div>
     <div class="step"><div class="step-n">2</div><div>Apague o código padrão e cole o conteúdo do arquivo <code>gas-emailer.gs</code> (disponível na pasta do projeto)</div></div>
     <div class="step"><div class="step-n">3</div><div>Clique em <b>Implantar → Nova implantação → App da web</b><br>Executar como: <b>Eu mesmo</b> · Acesso: <b>Qualquer pessoa</b></div></div>
     <div class="step"><div class="step-n">4</div><div>Autorize o acesso ao Gmail quando solicitado</div></div>
-    <div class="step"><div class="step-n">5</div><div>Copie a <b>URL da implantação</b> e cole abaixo</div></div>
+    <div class="step"><div class="step-n">5</div><div>Copie a <b>URL da implantação</b> e cole no campo abaixo (ou, melhor ainda, na constante <code>DEFAULT_GAS_URL</code> no início do <code>&lt;script&gt;</code> do arquivo, pra valer pra todos)</div></div>
     <div class="fg">
       <label>URL do Google Apps Script</label>
       <input type="url" id="cfgUrl" placeholder="https://script.google.com/macros/s/.../exec">
@@ -204,8 +204,27 @@ code{background:#f0f4f8;padding:.1rem .35rem;border-radius:4px;font-family:monos
 </div>
 </div>
 
-<iframe name="gasFrame" style="display:none"></iframe>
 <script>
+// ── Controle de versão ───────────────────────────────────────────────
+// v2.3 (2026-07-17): (1) envio de e-mail trocado de formulário+iframe oculto
+//   para fetch() — antes o app SEMPRE mostrava "✓ E-mail enviado" após 3s,
+//   mesmo quando o envio falhava (cota do Gmail estourada, autorização
+//   expirada, implantação desatualizada), porque a resposta do iframe não
+//   podia ser lida. Agora a resposta real do Apps Script é lida e erros
+//   aparecem para o usuário. (2) adiciona DEFAULT_GAS_URL: antes a URL do
+//   script ficava só no localStorage de quem configurava — cada consultor
+//   que abrisse o app num navegador/dispositivo novo via o app "quebrado"
+//   sem saber por quê. Preenchendo DEFAULT_GAS_URL abaixo, todo mundo que
+//   acessa o link já usa o envio funcionando, sem precisar configurar nada.
+// v2.2 e anteriores: ver histórico do git.
+const APP_VERSION='v2.3';
+
+// ⚙ Preencha aqui a URL de implantação do Google Apps Script (Configurar
+// Envio de E-mail → Passos 1-5) para que TODOS os usuários já saiam com o
+// envio funcionando, sem precisar configurar nada no próprio navegador.
+// Deixe '' em branco se preferir que cada um configure manualmente (⚙).
+const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbzNrJc5dAA9gYdgZSGe9RPJEW7BCf1mv1O1VP3BujYIv6e1PM9QzQvCzyWiICaE-7_2/exec';
+
 const TIPOS = ['Diária','Viagem','Comissão','Adiantamento','Outros'];
 const DEST  = 'jp.bolsairriga@yahoo.com.br';
 let rows = [], rowId = 0;
@@ -458,10 +477,10 @@ async function downloadPdf(){
   setTimeout(()=>URL.revokeObjectURL(url),5000);
 }
 
-/* ── Enviar via Google Apps Script (form submission — sem CORS) ── */
+/* ── Enviar via Google Apps Script (fetch — lê a resposta real do envio) ── */
 async function enviarEmail(){
   if(!validate())return;
-  const url=localStorage.getItem('bi_gas_url')||'';
+  const url=localStorage.getItem('bi_gas_url')||DEFAULT_GAS_URL||'';
   if(!url){
     showStatus('Configure a URL do script antes de enviar. Clique em ⚙.','warn');
     abrirConfig();return;
@@ -480,32 +499,36 @@ async function enviarEmail(){
       pdf_base64:pdf64,
       filename:nomeArquivo(),
     };
-    // Formulário oculto: sem restrição CORS, chega sempre ao Apps Script
-    const form=document.createElement('form');
-    form.method='POST';
-    form.action=url;
-    form.target='gasFrame';
-    const inp=document.createElement('input');
-    inp.type='hidden';inp.name='payload';
-    inp.value=JSON.stringify(payload);
-    form.appendChild(inp);
-    document.body.appendChild(form);
-    form.submit();
-    document.body.removeChild(form);
-    // Aguarda 3s (não conseguimos ler a resposta do iframe por segurança do browser)
-    setTimeout(()=>{
-      showStatus(`✓ E-mail enviado para ${DEST}!`,'ok');
-      btn.disabled=false;
-    },3000);
+    // Corpo como x-www-form-urlencoded evita o preflight CORS (Apps Script não trata OPTIONS)
+    // e ainda deixa ler a resposta real — diferente do form+iframe antigo, que era "atira e reza".
+    const body=new URLSearchParams();
+    body.set('payload', JSON.stringify(payload));
+    let resp;
+    try{
+      resp=await fetch(url,{method:'POST',body});
+    }catch(netErr){
+      throw new Error('Não foi possível contatar o servidor de envio. Verifique sua internet ou se a URL configurada (⚙) ainda é válida.');
+    }
+    let result;
+    try{
+      result=await resp.json();
+    }catch(parseErr){
+      throw new Error('Resposta inesperada do servidor de envio. A implantação do script pode estar desatualizada — avise o administrador.');
+    }
+    if(result.status!=='ok') throw new Error(result.mensagem||'Falha desconhecida ao enviar o e-mail.');
+    showStatus(`✓ E-mail enviado para ${DEST}!`,'ok');
   }catch(e){
-    showStatus('✗ Erro ao gerar PDF: '+(e.message||e),'err');
+    showStatus('✗ Falha ao enviar: '+(e.message||e)+' — o relatório NÃO foi entregue.','err');
+  }finally{
     btn.disabled=false;
   }
 }
 
 /* ── Config modal ── */
 function abrirConfig(){
-  document.getElementById('cfgUrl').value=localStorage.getItem('bi_gas_url')||'';
+  const cfg=document.getElementById('cfgUrl');
+  cfg.value=localStorage.getItem('bi_gas_url')||'';
+  cfg.placeholder=DEFAULT_GAS_URL?`(usando padrão: ${DEFAULT_GAS_URL})`:'https://script.google.com/macros/s/.../exec';
   document.getElementById('cfgModal').classList.add('open');
 }
 function fecharConfig(){document.getElementById('cfgModal').classList.remove('open');}
