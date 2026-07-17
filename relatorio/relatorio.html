@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Relatório de Pagamento v2.3 — Bolsa Irriga</title>
+<title>Relatório de Pagamento v2.4 — Bolsa Irriga</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 <style>
@@ -45,6 +45,20 @@ textarea{resize:vertical;min-height:70px}
 .btn-rm-card:hover{background:#ffcdd2}
 .btn-add{background:none;border:2px dashed var(--bl2);color:var(--bl2);border-radius:10px;padding:.7rem 1rem;cursor:pointer;font-size:.9rem;font-weight:700;width:100%;margin-top:.2rem;transition:background .15s;min-height:48px}
 .btn-add:hover{background:#e3f2fd}
+/* ── Comprovante (foto) ── */
+.foto-btn{display:flex;align-items:center;justify-content:center;gap:.4rem;background:none;border:1.5px dashed var(--bl2);color:var(--bl2);border-radius:8px;padding:.55rem .8rem;cursor:pointer;font-size:.85rem;font-weight:700;min-height:44px;transition:background .15s}
+.foto-btn:hover{background:#e3f2fd}
+.foto-preview{display:flex;align-items:center;gap:.7rem;background:#fff;border:1.5px solid var(--bdr);border-radius:8px;padding:.5rem}
+.foto-preview img{height:56px;width:56px;object-fit:cover;border-radius:6px;border:1px solid var(--bdr);cursor:pointer}
+.foto-preview .foto-info{flex:1;font-size:.78rem;color:var(--mu)}
+.btn-rm-foto{background:#fff0f0;border:1.5px solid #ffcdd2;color:#e53935;border-radius:6px;padding:.35rem .7rem;cursor:pointer;font-size:.76rem;font-weight:700;white-space:nowrap}
+.btn-rm-foto:hover{background:#ffcdd2}
+.foto-loading{font-size:.78rem;color:var(--mu);padding:.5rem}
+/* ── Lightbox foto ── */
+.lb-overlay{position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:300;display:none;align-items:center;justify-content:center;padding:1.2rem}
+.lb-overlay.open{display:flex}
+.lb-overlay img{max-width:100%;max-height:100%;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.5)}
+.lb-close{position:absolute;top:1rem;right:1.2rem;background:rgba(255,255,255,.15);border:none;color:#fff;width:38px;height:38px;border-radius:50%;font-size:1.3rem;cursor:pointer}
 /* ── Resumo ── */
 .summary-box{background:#f0f7ff;border:1px solid #d0e8f8;border-radius:10px;padding:.9rem 1.1rem;margin-top:.8rem}
 .sum-row{display:flex;justify-content:space-between;align-items:center;padding:.25rem 0;font-size:.88rem;border-bottom:1px solid #d8eaf8}
@@ -112,7 +126,7 @@ code{background:#f0f4f8;padding:.1rem .35rem;border-radius:4px;font-family:monos
     </div>
   </div>
   <div class="hdr-nav">
-    <span class="ver-tag">v2.3</span>
+    <span class="ver-tag">v2.4</span>
     <a class="back-link" href="../index.html">&#8592; Menu</a>
   </div>
   <div class="hdr-dev">
@@ -204,8 +218,19 @@ code{background:#f0f4f8;padding:.1rem .35rem;border-radius:4px;font-family:monos
 </div>
 </div>
 
+<!-- Lightbox para ampliar foto do comprovante -->
+<div class="lb-overlay" id="lbOverlay" onclick="fecharLightbox()">
+  <button class="lb-close" onclick="fecharLightbox()">&#10005;</button>
+  <img id="lbImg" src="" alt="Comprovante ampliado">
+</div>
+
 <script>
 // ── Controle de versão ───────────────────────────────────────────────
+// v2.4 (2026-07-17): cada lançamento agora aceita anexar foto do comprovante
+//   (câmera ou galeria). A imagem é comprimida no navegador (redimensionada
+//   e recodificada em JPEG) antes de virar página extra no PDF gerado — não
+//   precisou mudar o gas-emailer.gs, porque o comprovante viaja embutido no
+//   mesmo PDF que já é enviado por e-mail.
 // v2.3 (2026-07-17): (1) envio de e-mail trocado de formulário+iframe oculto
 //   para fetch() — antes o app SEMPRE mostrava "✓ E-mail enviado" após 3s,
 //   mesmo quando o envio falhava (cota do Gmail estourada, autorização
@@ -217,7 +242,7 @@ code{background:#f0f4f8;padding:.1rem .35rem;border-radius:4px;font-family:monos
 //   sem saber por quê. Preenchendo DEFAULT_GAS_URL abaixo, todo mundo que
 //   acessa o link já usa o envio funcionando, sem precisar configurar nada.
 // v2.2 e anteriores: ver histórico do git.
-const APP_VERSION='v2.3';
+const APP_VERSION='v2.4';
 
 // ⚙ Preencha aqui a URL de implantação do Google Apps Script (Configurar
 // Envio de E-mail → Passos 1-5) para que TODOS os usuários já saiam com o
@@ -232,7 +257,7 @@ let rows = [], rowId = 0;
 /* ── Tabela ── */
 function addRow(){
   const id=++rowId;
-  rows.push({id,date:new Date().toISOString().split('T')[0],cliente:'',tipo:'Diária',desc:'',valor:''});
+  rows.push({id,date:new Date().toISOString().split('T')[0],cliente:'',tipo:'Diária',desc:'',valor:'',foto:null,fotoBusy:false});
   renderRows();
 }
 function removeRow(id){rows=rows.filter(r=>r.id!==id);renderRows();}
@@ -268,6 +293,9 @@ function renderRows(){
       +'<input type="text" class="f-desc" data-rid="'+r.id+'" placeholder="Descri&#231;&#227;o (opcional)"></div>'
       +'<div class="fg"><label>Valor (R$)</label>'
       +'<input type="number" class="f-valor" data-rid="'+r.id+'" placeholder="0,00" step="0.01" min="0" inputmode="decimal" style="text-align:right"></div>'
+      +'<div class="fg"><label>Comprovante (opcional)</label>'
+      +fotoHtml(r)
+      +'</div>'
       +'</div>';
   }
   list.innerHTML=html;
@@ -298,11 +326,86 @@ function initListEvents(){
   });
   list.addEventListener('change',e=>{
     const rid=parseInt(e.target.dataset.rid);
-    if(rid&&e.target.classList.contains('f-tipo'))updateRow(rid,'tipo',e.target.value);
+    if(!rid)return;
+    if(e.target.classList.contains('f-tipo'))updateRow(rid,'tipo',e.target.value);
+    if(e.target.classList.contains('f-foto')&&e.target.files&&e.target.files[0]){
+      handleFotoSelect(rid,e.target.files[0]);
+    }
+  });
+  list.addEventListener('click',e=>{
+    const rid=parseInt(e.target.dataset.rid);
+    if(!rid)return;
+    if(e.target.classList.contains('btn-rm-foto'))removeFoto(rid);
+    if(e.target.classList.contains('foto-thumb'))abrirLightbox(e.target.src);
   });
 }
 
 function esc(s){return(s||'').replace(/"/g,'&quot;');}
+
+/* ── Comprovante (foto) ── */
+function fotoHtml(r){
+  if(r.fotoBusy){
+    return '<div class="foto-loading">⧗ Processando foto...</div>'
+      +'<input type="file" accept="image/*" capture="environment" class="f-foto" data-rid="'+r.id+'" id="foto-'+r.id+'" style="display:none">';
+  }
+  if(r.foto){
+    return '<div class="foto-preview">'
+      +'<img src="'+r.foto+'" alt="Comprovante" class="foto-thumb" data-rid="'+r.id+'">'
+      +'<div class="foto-info">Comprovante anexado<br>toque na foto para ampliar</div>'
+      +'<button type="button" class="btn-rm-foto" data-rid="'+r.id+'">&#10005; Remover</button>'
+      +'</div>';
+  }
+  return '<label class="foto-btn" for="foto-'+r.id+'">&#128247; Anexar foto do comprovante</label>'
+    +'<input type="file" accept="image/*" capture="environment" class="f-foto" data-rid="'+r.id+'" id="foto-'+r.id+'" style="display:none">';
+}
+
+// Redimensiona (máx. 1600px) e recomprime em JPEG — mantém o PDF leve o
+// suficiente para caber no limite de anexo do Gmail mesmo com várias fotos.
+// createImageBitmap com imageOrientation:'from-image' corrige fotos de
+// celular que vêm giradas por causa do EXIF.
+async function compressImage(file,maxDim=1600,quality=0.72){
+  let bitmap;
+  try{
+    bitmap=await createImageBitmap(file,{imageOrientation:'from-image'});
+  }catch(e){
+    bitmap=await createImageBitmap(file);
+  }
+  let w=bitmap.width,h=bitmap.height;
+  if(w>maxDim||h>maxDim){
+    const scale=maxDim/Math.max(w,h);
+    w=Math.round(w*scale);h=Math.round(h*scale);
+  }
+  const canvas=document.createElement('canvas');
+  canvas.width=w;canvas.height=h;
+  canvas.getContext('2d').drawImage(bitmap,0,0,w,h);
+  bitmap.close&&bitmap.close();
+  return canvas.toDataURL('image/jpeg',quality);
+}
+
+async function handleFotoSelect(rid,file){
+  const r=rows.find(r=>r.id===rid);
+  if(!r||!file)return;
+  r.fotoBusy=true;renderRows();
+  try{
+    r.foto=await compressImage(file);
+  }catch(e){
+    showStatus('✗ Não foi possível processar a foto: '+(e.message||e),'err');
+  }finally{
+    r.fotoBusy=false;renderRows();
+  }
+}
+function removeFoto(rid){
+  const r=rows.find(r=>r.id===rid);
+  if(r)r.foto=null;
+  renderRows();
+}
+function abrirLightbox(src){
+  document.getElementById('lbImg').src=src;
+  document.getElementById('lbOverlay').classList.add('open');
+}
+function fecharLightbox(){
+  document.getElementById('lbOverlay').classList.remove('open');
+}
 
 function updateSummary(){
   if(!rows.length)return;
@@ -351,15 +454,17 @@ function buildEmailBody(){
   const obs=document.getElementById('obsGeral').value;
   const byTipo={};let total=0;
   for(const r of rows){const v=parseFloat(r.valor)||0;byTipo[r.tipo]=(byTipo[r.tipo]||0)+v;total+=v;}
+  const nComprovantes=rows.filter(r=>r.foto).length;
   const linhas=[
     `Olá,`,``,
     `${consultor} está solicitando pagamento referente ao período de ${periodo}.`,``,
     `LANÇAMENTOS:`,
-    ...rows.map(r=>`  • ${fmtDate(r.date)}  |  ${r.cliente||'—'}  |  ${r.tipo}${r.desc?' — '+r.desc:''}  |  ${fmtBRL(r.valor)}`),``,
+    ...rows.map(r=>`  • ${fmtDate(r.date)}  |  ${r.cliente||'—'}  |  ${r.tipo}${r.desc?' — '+r.desc:''}  |  ${fmtBRL(r.valor)}${r.foto?'  📎':''}`),``,
     `RESUMO POR CATEGORIA:`,
     ...Object.entries(byTipo).map(([t,v])=>`  ${t}: ${fmtBRL(v)}`),``,
     `TOTAL GERAL: ${fmtBRL(total)}`,
     ``,`CHAVE PIX: ${pix}`,
+    ...(nComprovantes?[``,`Comprovantes anexados no PDF: ${nComprovantes}`]:[]),
     ...(obs?[``,`Observações: ${obs}`]:[]),``,
     `—`,`Bolsa Irriga® · bolsairriga.com.br · (16) 99401-2495`,
   ];
@@ -404,7 +509,7 @@ function buildPdf(){
   doc.autoTable({
     startY:65,
     head:[['Data','Cliente / Propriedade','Tipo','Descrição do Serviço','Valor']],
-    body:rows.map(r=>[fmtDate(r.date),r.cliente||'—',r.tipo,r.desc||'—',fmtBRL(r.valor)]),
+    body:rows.map(r=>[fmtDate(r.date),r.cliente||'—',r.tipo,(r.desc||'—')+(r.foto?' [Anexo]':''),fmtBRL(r.valor)]),
     foot:[['','','','TOTAL GERAL',fmtBRL(total)]],
     styles:{fontSize:8.5,cellPadding:2.8},
     headStyles:{fillColor:[0,119,182],textColor:255,fontStyle:'bold',fontSize:8},
@@ -451,6 +556,26 @@ function buildPdf(){
   doc.setFillColor(0,61,92);doc.rect(0,pH-11,W,11,'F');
   doc.setTextColor(255,255,255);doc.setFontSize(7.5);
   doc.text('Bolsa Irriga® · Av. Elias Abrão, nº 140 · Franca – SP · (16) 99401-2495 · bolsairriga.com.br',W/2,pH-5,{align:'center'});
+
+  // Anexos: fotos dos comprovantes — uma página por foto, referenciando o lançamento
+  const comComprovante=rows.filter(r=>r.foto);
+  comComprovante.forEach((r,i)=>{
+    doc.addPage();
+    doc.setFillColor(0,61,92);doc.rect(0,0,W,16,'F');
+    doc.setTextColor(255,255,255);doc.setFontSize(9.5);doc.setFont(undefined,'bold');
+    doc.text('Comprovante '+(i+1)+'/'+comComprovante.length+' — '+fmtDate(r.date)+' · '+(r.cliente||'—')+' · '+r.tipo+' · '+fmtBRL(r.valor),14,10);
+    try{
+      const props=doc.getImageProperties(r.foto);
+      const maxW=W-24,maxH=pH-38;
+      const scale=Math.min(maxW/props.width,maxH/props.height);
+      const iw=props.width*scale,ih=props.height*scale;
+      doc.addImage(r.foto,'JPEG',(W-iw)/2,24,iw,ih);
+    }catch(e){
+      doc.setTextColor(180,40,40);doc.setFontSize(9);doc.setFont(undefined,'normal');
+      doc.text('Não foi possível carregar esta imagem no PDF.',14,30);
+    }
+  });
+
   return doc;
 }
 
