@@ -99,7 +99,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v2.8</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v2.9</span></h1>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
@@ -368,6 +368,10 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <script>
 // v2.8: arrastar a linha guia inteira como objeto (translação de todos os pontos, sem
 // distorcer o formato copiado de uma curva de nível) — clique fora dos vértices e arraste.
+// v2.9: modo Suave — corrige linhas multiplicadas que se auto-cruzavam perto de dobras fechadas
+// da guia (ex: topo de uma curva de nível copiada), onde a distância do offset ultrapassa o
+// raio de curvatura local. Detecta e apara o laço; se a curvatura for extrema demais, descarta
+// só aquela linha em vez de desenhar um emaranhado, e avisa no status quantas foram afetadas.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 function setStatus(msg, tipo = '') {
@@ -495,6 +499,49 @@ function catmullRom(pts, segs=20) {
   }
   return res;
 }
+// Interseção de dois segmentos 2D (lng/lat tratado como plano local — válido na escala de um talhão)
+function _segIntersectLocal(p1, p2, p3, p4) {
+  const d1x = p2[0]-p1[0], d1y = p2[1]-p1[1];
+  const d2x = p4[0]-p3[0], d2y = p4[1]-p3[1];
+  const denom = d1x*d2y - d1y*d2x;
+  if(Math.abs(denom) < 1e-15) return null;
+  const t = ((p3[0]-p1[0])*d2y - (p3[1]-p1[1])*d2x) / denom;
+  const u = ((p3[0]-p1[0])*d1y - (p3[1]-p1[1])*d1x) / denom;
+  if(t > 1e-9 && t < 1-1e-9 && u > 1e-9 && u < 1-1e-9) return [p1[0]+t*d1x, p1[1]+t*d1y];
+  return null;
+}
+// bbox rápida (O(n)) de uma lista de pontos [lng,lat] — usada para descartar cedo linhas de
+// offset que nem chegam perto do talhão, antes de gastar O(n²) checando auto-cruzamento
+function _bboxOfPts(pts) {
+  let minLng=Infinity,minLat=Infinity,maxLng=-Infinity,maxLat=-Infinity;
+  for(const p of pts) { if(p[0]<minLng)minLng=p[0]; if(p[0]>maxLng)maxLng=p[0]; if(p[1]<minLat)minLat=p[1]; if(p[1]>maxLat)maxLat=p[1]; }
+  return [minLng,minLat,maxLng,maxLat];
+}
+function _bboxOverlap(a, b) {
+  return a[0]<=b[2] && a[2]>=b[0] && a[1]<=b[3] && a[3]>=b[1];
+}
+// Remove auto-cruzamentos de uma curva de offset (modo Suave): a linha multiplicada "dobra"
+// sobre si mesma quando a distância do offset ultrapassa o raio de curvatura local da guia
+// (típico perto de dobras fechadas, ex: topo de uma curva de nível copiada). Corta a alça pelo
+// ponto de cruzamento; se precisar de muitos cortes a curvatura é extrema demais e a linha é
+// descartada (ver _offsetStats) em vez de renderizar um emaranhado.
+const _offsetStats = { ajustadas: 0, puladas: 0 };
+function removerAutoCruzamento(pts) {
+  let arr = pts.slice();
+  let cortes = 0, guard = 0;
+  while(guard++ < 40) {
+    let achou = false;
+    for(let i = 0; i < arr.length - 1 && !achou; i++) {
+      for(let j = i + 2; j < arr.length - 1; j++) {
+        const ip = _segIntersectLocal(arr[i], arr[i+1], arr[j], arr[j+1]);
+        if(ip) { arr = arr.slice(0, i+1).concat([ip], arr.slice(j+1)); cortes++; achou = true; break; }
+      }
+    }
+    if(!achou) break;
+  }
+  return { pts: arr, cortes };
+}
+
 // Reamostrar curva com M pontos igualmente espaçados por comprimento de arco
 function resampleCurve(pts, M) {
   if(pts.length < 2 || M < 2) return pts;
@@ -1024,11 +1071,18 @@ function _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingK
 
   function addSplineRow(n, perpSign) {
     const dist = n * spacingKm;
-    const pts = _sg0.map((p,i) => {
+    let pts = _sg0.map((p,i) => {
       if(n === 0) return [p.lng, p.lat];
       const [lng,lat] = turf.destination(turf.point([p.lng,p.lat]), dist, _tan0[i]+perpSign*90, {units:'kilometers'}).geometry.coordinates;
       return [lng,lat];
     });
+    if(n !== 0) {
+      if(!_bboxOverlap(_bboxOfPts(pts), bbox)) return false; // fora do talhão — evita custo O(n²) à toa
+      const { pts: ptsOk, cortes } = removerAutoCruzamento(pts);
+      if(cortes > 3) { _offsetStats.puladas++; return false; }
+      if(cortes > 0) _offsetStats.ajustadas++;
+      pts = ptsOk;
+    }
     const N = 200, extS = [], extE = [];
     for(let i = N; i >= 1; i--) extS.push(turf.destination(turf.point(pts[0]), (i/N)*ext, rowBrgGlobal+180, {units:'kilometers'}).geometry.coordinates);
     for(let i = 1; i <= N; i++) extE.push(turf.destination(turf.point(pts[pts.length-1]), (i/N)*ext, rowBrgGlobal, {units:'kilometers'}).geometry.coordinates);
@@ -1072,6 +1126,7 @@ function _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingK
 // ── Geração de Linhas ─────────────────────────────────────────────────────────
 function gerarLinhas() {
   if(guidePts.length < 2) { setStatus('Desenhe a linha guia primeiro.', 'err'); return; }
+  _offsetStats.ajustadas = 0; _offsetStats.puladas = 0;
 
   // ── Modo multi-seleção ─────────────────────────────────────────────────────
   if(multiSelectMode && talhoesMultiSel.size > 0) {
@@ -1113,7 +1168,7 @@ function gerarLinhas() {
     _updateLabelScale();
     polyMarkers.forEach(m => m.dragging && m.dragging.disable());
     $('btnTravarTodos').style.display = 'flex';
-    setStatus(`${totalCount} linhas geradas em ${talhoesMultiSel.size} talhão(ões). Clique em "Travar Todos" para confirmar.`, 'ok');
+    setStatus(`${totalCount} linhas geradas em ${talhoesMultiSel.size} talhão(ões).${_avisoCurvatura()} Clique em "Travar Todos" para confirmar.`, 'ok');
     return;
   }
 
@@ -1182,11 +1237,18 @@ function gerarLinhas() {
 
   function addSplineRow(n, perpSign) {
     const dist = n * spacingKm;
-    const pts = _sg02.map((p,i) => {
+    let pts = _sg02.map((p,i) => {
       if(n === 0) return [p.lng, p.lat];
       const [lng,lat] = turf.destination(turf.point([p.lng,p.lat]), dist, _tan2[i]+perpSign*90, {units:'kilometers'}).geometry.coordinates;
       return [lng,lat];
     });
+    if(n !== 0) {
+      if(!_bboxOverlap(_bboxOfPts(pts), bbox)) return false; // fora do talhão — evita custo O(n²) à toa
+      const { pts: ptsOk, cortes } = removerAutoCruzamento(pts);
+      if(cortes > 3) { _offsetStats.puladas++; return false; }
+      if(cortes > 0) _offsetStats.ajustadas++;
+      pts = ptsOk;
+    }
     const N = 200, extS = [], extE = [];
     for(let i = N; i >= 1; i--) extS.push(turf.destination(turf.point(pts[0]), (i/N)*ext, rowBrgGlobal+180, {units:'kilometers'}).geometry.coordinates);
     for(let i = 1; i <= N; i++) extE.push(turf.destination(turf.point(pts[pts.length-1]), (i/N)*ext, rowBrgGlobal, {units:'kilometers'}).geometry.coordinates);
@@ -1248,7 +1310,17 @@ function gerarLinhas() {
   $('btnTravarTalhao').style.display = 'flex';
   $('btnRedesenharLinhas').style.display = 'flex';
   $('divDeclivAtivo').style.display = '';
-  setStatus(`${count} linhas geradas. Classifique a declividade, trave ou redesenhe.`, 'ok');
+  setStatus(`${count} linhas geradas.${_avisoCurvatura()} Classifique a declividade, trave ou redesenhe.`, 'ok');
+}
+
+// Mensagem opcional quando o offset da guia precisou cortar/pular trechos por curvatura fechada
+function _avisoCurvatura() {
+  const { ajustadas, puladas } = _offsetStats;
+  if(!ajustadas && !puladas) return '';
+  const partes = [];
+  if(ajustadas) partes.push(`${ajustadas} linha(s) ajustada(s)`);
+  if(puladas) partes.push(`${puladas} linha(s) pulada(s)`);
+  return ` (${partes.join(', ')} por curvatura fechada da guia.)`;
 }
 
 // ── Declividade (global — todos os talhões) ───────────────────────────────────
