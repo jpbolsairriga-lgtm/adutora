@@ -99,7 +99,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v2.9</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.0</span></h1>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
@@ -372,6 +372,10 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // da guia (ex: topo de uma curva de nível copiada), onde a distância do offset ultrapassa o
 // raio de curvatura local. Detecta e apara o laço; se a curvatura for extrema demais, descarta
 // só aquela linha em vez de desenhar um emaranhado, e avisa no status quantas foram afetadas.
+// v3.0: modo Suave — quando linhas ADJACENTES (não só uma linha consigo mesma) vão se cruzar por
+// curvatura fechada da guia, divide o talhão automaticamente no ponto onde a distorção começa:
+// mantém a parte boa com as linhas já geradas (pronta pra travar) e arquiva o restante em branco
+// para redesenhar a guia ali. Validado com testes numéricos isolados (turf real).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 function setStatus(msg, tipo = '') {
@@ -528,18 +532,31 @@ function _bboxOverlap(a, b) {
 const _offsetStats = { ajustadas: 0, puladas: 0 };
 function removerAutoCruzamento(pts) {
   let arr = pts.slice();
-  let cortes = 0, guard = 0;
+  let cortes = 0, guard = 0, primeiroIndice = null;
   while(guard++ < 40) {
     let achou = false;
     for(let i = 0; i < arr.length - 1 && !achou; i++) {
       for(let j = i + 2; j < arr.length - 1; j++) {
         const ip = _segIntersectLocal(arr[i], arr[i+1], arr[j], arr[j+1]);
-        if(ip) { arr = arr.slice(0, i+1).concat([ip], arr.slice(j+1)); cortes++; achou = true; break; }
+        if(ip) {
+          if(primeiroIndice === null) primeiroIndice = i; // índice na array ORIGINAL (1ª passada, antes de qualquer corte)
+          arr = arr.slice(0, i+1).concat([ip], arr.slice(j+1));
+          cortes++; achou = true; break;
+        }
       }
     }
     if(!achou) break;
   }
-  return { pts: arr, cortes };
+  return { pts: arr, cortes, primeiroIndice };
+}
+// Primeiro índice (na curva A) onde A cruza uma curva B DIFERENTE — usado para detectar quando
+// linhas multiplicadas ADJACENTES (n e n+1) se cruzam entre si, o que é distinto de uma linha se
+// cruzar consigo mesma (removerAutoCruzamento acima) e não é corrigível por corte de alça.
+function _primeiraIntersecaoEntre(a, b) {
+  for(let i = 0; i < a.length - 1; i++)
+    for(let j = 0; j < b.length - 1; j++)
+      if(_segIntersectLocal(a[i], a[i+1], b[j], b[j+1])) return i;
+  return null;
 }
 
 // Reamostrar curva com M pontos igualmente espaçados por comprimento de arco
@@ -1123,6 +1140,115 @@ function _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingK
   return count;
 }
 
+// Varre a guia (modo Suave) procurando o primeiro ponto, em ordem de posição ao longo da guia,
+// onde as linhas multiplicadas realmente geradas (dentro do talhão) começam a se corromper —
+// seja por auto-cruzamento (curva dobra sobre si mesma) ou por cruzar a linha vizinha (n-1).
+// Retorna o índice em `sg` (0..sg.length-1) do primeiro problema, ou null se a guia está limpa.
+function _detectarDistorcaoGuia(sg, tan, spacingKm, bboxTalhao, nBoth) {
+  let melhorIdx = null;
+  for(const perpSign of [1, -1]) {
+    let prevRaw = null;
+    for(let n = 1; n <= nBoth; n++) {
+      const dist = n * spacingKm;
+      const raw = sg.map((p, i) => {
+        const [lng, lat] = turf.destination(turf.point([p.lng, p.lat]), dist, tan[i] + perpSign*90, {units:'kilometers'}).geometry.coordinates;
+        return [lng, lat];
+      });
+      if(!_bboxOverlap(_bboxOfPts(raw), bboxTalhao)) break; // essa e as próximas linhas desse lado ficam fora do talhão
+      let idxProblema = removerAutoCruzamento(raw).primeiroIndice;
+      if(prevRaw) {
+        const idxCross = _primeiraIntersecaoEntre(raw, prevRaw);
+        if(idxCross !== null && (idxProblema === null || idxCross < idxProblema)) idxProblema = idxCross;
+      }
+      if(idxProblema !== null && (melhorIdx === null || idxProblema < melhorIdx)) melhorIdx = idxProblema;
+      prevRaw = raw;
+    }
+  }
+  return melhorIdx;
+}
+
+// Divide o talhão ativo em 2 no ponto onde a guia começa a distorcer: mantém a parte "boa"
+// (do início da guia até ali) como talhão ativo com as linhas já geradas, e arquiva a parte
+// restante em branco para o usuário selecionar e redesenhar a guia ali. Corte reto na direção
+// das próprias linhas de plantio (rowBrgGlobal) — assim nenhuma linha atravessa a divisão.
+// Retorna true se a divisão foi aplicada (e já cuidou de toda a UI/estado); false se falhou
+// (nesse caso o chamador deve seguir com a geração normal, sem dividir).
+function _dividirTalhaoPorDistorcao(sg, idx, rowBrgGlobal, perpBrg, spacingKm, cor, esp, spacing, ext) {
+  try {
+    const splitPoint = sg[idx];
+    const p1 = turf.destination(turf.point([splitPoint.lng, splitPoint.lat]), ext, rowBrgGlobal,       {units:'kilometers'}).geometry.coordinates;
+    const p2 = turf.destination(turf.point([splitPoint.lng, splitPoint.lat]), ext, rowBrgGlobal + 180, {units:'kilometers'}).geometry.coordinates;
+    const divLine = turf.lineString([p2, p1]);
+    const buf = turf.buffer(divLine, 0.15, {units:'meters'});
+    const resto = turf.difference(turfPoly, buf);
+    if(!resto) return false;
+
+    let partes = [];
+    if(resto.geometry.type === 'MultiPolygon') resto.geometry.coordinates.forEach(c => partes.push(turf.polygon(c)));
+    else partes.push(resto);
+    partes = partes.filter(p => turf.area(p) > 10).sort((a,b) => turf.area(b) - turf.area(a)).slice(0,2);
+    if(partes.length < 2) return false;
+
+    const startPt = turf.point([sg[0].lng, sg[0].lat]);
+    const boaPiece = partes.find(p => turf.booleanPointInPolygon(startPt, p)) || partes[0];
+    const restoPiece = partes.find(p => p !== boaPiece) || partes[1];
+
+    // ─ Reconstrói o talhão ATIVO como a parte "boa" (com as linhas já geradas) ─
+    polyMarkers.forEach(m => m.remove()); polyMarkers = [];
+    if(polyLayer) { polyLayer.remove(); polyLayer = null; }
+    polyPts = boaPiece.geometry.coordinates[0].slice(0,-1).map(([lng,lat]) => ({lat,lng}));
+    polyLayer = L.polygon(polyPts, {color:'#42a5f5', fillColor:'#1565c0', fillOpacity:.08, weight:2}).addTo(map);
+    polyPts.forEach(p => {
+      const mk = L.marker(p, {icon:mkIcon('vertex-marker'), draggable:true}).addTo(map);
+      mk.dragging.disable();
+      polyMarkers.push(mk);
+    });
+    buildTurfPoly();
+    if(!turfPoly) return false;
+
+    linhas.forEach(l => l.remove()); linhas = [];
+    linhasDecl.forEach(l => l.remove()); linhasDecl = [];
+    const count = _gerarLinhasParaTalhao(turfPoly, turfBound, rowBrgGlobal, perpBrg, spacingKm, cor, esp, linhas);
+    let metrosLin = 0;
+    linhas.forEach(pl => { const pts = pl.getLatLngs().flat(); for(let i=0;i<pts.length-1;i++) metrosLin += haversineM(pts[i],pts[i+1]); });
+    const ha = areaHa(polyPts);
+    areaHaAtual = ha; spacingAtual = spacing; countLinhasAtual = count; metrosLinAtual = metrosLin; corLinhaAtual = cor;
+    $('iArea').textContent = ha.toFixed(2) + ' ha';
+    $('iLinhas').textContent = count;
+    $('iEspac').textContent = spacing + ' m';
+    mostrarLabel(ha, spacing, count, metrosLin);
+    limparGuia();
+    polyMarkers.forEach(m => m.dragging && m.dragging.disable());
+    $('btnTravarTalhao').style.display = 'flex';
+    $('btnRedesenharLinhas').style.display = 'flex';
+    $('divDeclivAtivo').style.display = '';
+
+    // ─ Arquiva a parte restante em branco, pronta para o usuário redesenhar a guia ─
+    const restPolyPts = restoPiece.geometry.coordinates[0].slice(0,-1).map(([lng,lat]) => ({lat,lng}));
+    const newUid = nextTalhaoUid++;
+    const newIdx = talhoesArquivados.length;
+    const newCor = CORES_TALHAO[newIdx % CORES_TALHAO.length];
+    const newLayer = L.polygon(restPolyPts.map(p=>[p.lat,p.lng]), {color:newCor, fillColor:newCor, fillOpacity:.06, weight:2, dashArray:'4,3'}).addTo(map);
+    newLayer.on('click', () => { if(modo === 'idle') selecionarTalhao(newUid); });
+    const novoTalhao = {
+      uid: newUid, idx: newIdx+1, cor: newCor, corLinha: cor, baseLabelZoom: map.getZoom(),
+      areaHa: turf.area(restoPiece)/10000, spacing, count:0, metrosLin:0,
+      polyLayer: newLayer, polyPts: restPolyPts,
+      linhas: [], linhasDecl: [], infoMarker: null, turfPoly: restoPiece
+    };
+    talhoesArquivados.push(novoTalhao);
+    novoTalhao.infoMarker = _criarInfoMarkerParaTalhao(novoTalhao);
+    renumerarTalhoes();
+    $('btnLimparArquivados').style.display = '';
+
+    setStatus(`⚠ A guia ficou fechada demais e foi cortada: ${count} linhas geradas em ${ha.toFixed(2)} ha (parte boa — trave para confirmar).${_avisoCurvatura()} Um talhão em branco de ${novoTalhao.areaHa.toFixed(2)} ha foi criado ao lado — selecione-o e redesenhe a guia lá.`, 'ok');
+    return true;
+  } catch(e) {
+    console.warn('Falha ao dividir talhão por distorção da guia:', e);
+    return false;
+  }
+}
+
 // ── Geração de Linhas ─────────────────────────────────────────────────────────
 function gerarLinhas() {
   if(guidePts.length < 2) { setStatus('Desenhe a linha guia primeiro.', 'err'); return; }
@@ -1279,6 +1405,14 @@ function gerarLinhas() {
   }
 
   if(modoGuia === 'spline') {
+    // Antes de gerar: verifica se a guia vai distorcer em algum ponto (auto-cruzamento ou
+    // cruzamento entre linhas vizinhas). Se sim, divide o talhão ali em vez de renderizar um
+    // emaranhado — mantém a parte boa com as linhas já geradas e arquiva o resto em branco.
+    const _idxDistorcao = _detectarDistorcaoGuia(_sg02, _tan2, spacingKm, bbox, nBoth);
+    const _splitValido = _idxDistorcao !== null && _idxDistorcao > _SM2*0.05 && _idxDistorcao < _SM2*0.95;
+    if(_splitValido && _dividirTalhaoPorDistorcao(_sg02, _idxDistorcao, rowBrgGlobal, perpBrg, spacingKm, cor, esp, spacing, ext)) {
+      return;
+    }
     addSplineRow(0, 1);
     for(let n = 1; n <= nBoth; n++) addSplineRow(n,  1);
     for(let n = 1; n <= nBoth; n++) addSplineRow(n, -1);
