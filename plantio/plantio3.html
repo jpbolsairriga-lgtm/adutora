@@ -53,6 +53,7 @@ input[type=color]{height:32px;padding:2px 4px;cursor:pointer;}
 .leaflet-container{background:#111;}
 .vertex-marker{width:10px;height:10px;background:#fff;border:2px solid #1565c0;border-radius:50%;cursor:grab;margin:-5px 0 0 -5px;}
 .vertex-marker.guide{border-color:#e65100;}
+.guide-line-path{cursor:move;}
 /* Busca */
 .search-item{padding:6px 8px;font-size:11px;color:#cfd8dc;cursor:pointer;border-bottom:1px solid #1e4a7a;line-height:1.4;}
 .search-item:last-child{border-bottom:none;}
@@ -98,7 +99,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v2.7</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v2.8</span></h1>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
@@ -216,6 +217,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
     <div id="rowGuiaLen" style="display:none;margin-top:6px;background:#0f3460;border-radius:5px;padding:5px 10px;font-size:12px;">
       <span style="color:#78909c;">Comprimento:</span>
       <span id="iGuiaLen" style="color:#e2b96e;font-weight:700;float:right;">—</span>
+      <div style="color:#78909c;font-size:10.5px;margin-top:3px;clear:both;">&#9995; Arraste a linha (fora dos v&#233;rtices) para mover a guia inteira</div>
     </div>
     <button class="btn" id="btnPerfilGuia" onclick="mostrarPerfilGuia()" style="display:none;background:#004d40;color:#fff;margin-top:4px;">&#128200; Perfil de Eleva&#231;&#227;o</button>
     <div style="border-top:1px solid #1e4a7a;margin-top:10px;padding-top:8px;">
@@ -364,6 +366,8 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script>
+// v2.8: arrastar a linha guia inteira como objeto (translação de todos os pontos, sem
+// distorcer o formato copiado de uma curva de nível) — clique fora dos vértices e arraste.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 function setStatus(msg, tipo = '') {
@@ -716,12 +720,39 @@ function updateGuiaDisplay() {
   if(guideLayer) { guideLayer.remove(); guideLayer = null; }
   if(pts.length < 2) { $('rowGuiaLen').style.display = 'none'; return; }
   const latlngs = modoGuia==='spline' ? catmullRom(pts.map(p=>({lat:p.lat,lng:p.lng}))).map(p=>[p.lat,p.lng]) : pts;
-  guideLayer = L.polyline(latlngs, {color:'#ff8f00', weight:2.5, opacity:.9}).addTo(map);
+  guideLayer = L.polyline(latlngs, {color:'#ff8f00', weight:2.5, opacity:.9, className:'guide-line-path'}).addTo(map);
+  guideLayer.on('mousedown', iniciarArrastoGuiaInteira);
   const linePts = modoGuia==='spline' ? latlngs.map(p=>({lat:p[0]??p.lat, lng:p[1]??p.lng})) : pts;
   let totalM = 0;
   for(let i = 0; i < linePts.length - 1; i++) totalM += haversineM(linePts[i], linePts[i+1]);
   $('iGuiaLen').textContent = totalM >= 1000 ? (totalM/1000).toFixed(2)+' km' : Math.round(totalM)+' m';
   $('rowGuiaLen').style.display = 'block';
+}
+
+// Move a guia inteira (todos os pontos) preservando o formato, sem editar vértice a vértice.
+// Útil quando o traçado copia uma curva de nível e precisa só ser reposicionado (ex: para o
+// topo da área) antes de multiplicar as linhas de plantio.
+function iniciarArrastoGuiaInteira(e) {
+  if(modo === 'guide') return; // durante o desenho, clique deve continuar adicionando pontos
+  L.DomEvent.stop(e);
+  map.dragging.disable();
+  const startLatLng = e.latlng;
+  const snapshot = guideMarkers.map(m => m.getLatLng());
+  function onMove(ev) {
+    const dLat = ev.latlng.lat - startLatLng.lat;
+    const dLng = ev.latlng.lng - startLatLng.lng;
+    guideMarkers.forEach((m, i) => m.setLatLng(L.latLng(snapshot[i].lat + dLat, snapshot[i].lng + dLng)));
+    updateGuiaDisplay();
+  }
+  function onUp() {
+    map.off('mousemove', onMove);
+    map.off('mouseup', onUp);
+    map.dragging.enable();
+    guidePts = guideMarkers.map(m => m.getLatLng());
+    setStatus('Guia movida. Ajuste a posição ou gere as linhas.', 'ok');
+  }
+  map.on('mousemove', onMove);
+  map.on('mouseup', onUp);
 }
 
 function finalizarGuia() {
