@@ -99,7 +99,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.1</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.2</span></h1>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
@@ -382,6 +382,11 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // gatilho de auto-cruzamento passou a exigir o mesmo limiar de severidade usado para descartar
 // linha (evita dividir por ajustes triviais). Extensão da linha além do talhão passou a seguir a
 // tangente local da própria ponta, não mais o rumo médio da guia inteira.
+// v3.2: a divisão automática agora corta pela FORMA da última linha multiplicada boa (mesma
+// curvatura da guia), não mais por uma reta — e deixa um afastamento configurável (padrão 6m,
+// mesmo campo "Largura do Carreador" da Divisão manual) entre o talhão bom e o novo em branco,
+// desenhado como faixa marrom igual ao carreador manual. Corrigido bug em que o afastamento ficava
+// centrado sobre a última linha boa (cortando ela); agora fica todo do lado de fora.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 function setStatus(msg, tipo = '') {
@@ -1151,12 +1156,13 @@ function _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingK
   return count;
 }
 
-// Varre a guia (modo Suave) procurando o primeiro ponto, em ordem de posição ao longo da guia,
-// onde as linhas multiplicadas realmente geradas (dentro do talhão) começam a se corromper —
-// seja por auto-cruzamento (curva dobra sobre si mesma) ou por cruzar a linha vizinha (n-1).
-// Retorna o índice em `sg` (0..sg.length-1) do primeiro problema, ou null se a guia está limpa.
+// Varre a guia (modo Suave) e acha, em cada lado (perpSign +1/-1), a primeira linha multiplicada
+// (menor n, ou seja, mais perto da guia) que se corrompe — por auto-cruzamento severo ou por
+// cruzar a linha vizinha (n-1). Retorna o lado/linha mais próximo da guia entre os dois (o mais
+// urgente), ou null se nenhum lado tem problema. Isso é o que vira o limite de corte: a última
+// linha ANTES dessa (n-1) já tem o formato certo (mesma curvatura da guia) pra servir de fronteira.
 function _detectarDistorcaoGuia(sg, tan, spacingKm, bboxTalhao, nBoth) {
-  let melhorIdx = null;
+  let resultado = null;
   for(const perpSign of [1, -1]) {
     let prevRaw = null;
     for(let n = 1; n <= nBoth; n++) {
@@ -1170,31 +1176,48 @@ function _detectarDistorcaoGuia(sg, tan, spacingKm, bboxTalhao, nBoth) {
       // Só conta como "distorção" se o auto-corte for tão grande que a linha seria DESCARTADA
       // (mesmo limiar de _offsetStats.puladas) — um corte pequeno e isolado já fica bem resolvido
       // visualmente pelo corte de alça e não justifica dividir o talhão.
-      let idxProblema = rSelf.cortes > 3 ? rSelf.primeiroIndice : null;
-      if(prevRaw) {
-        const idxCross = _primeiraIntersecaoEntre(raw, prevRaw);
-        if(idxCross !== null && (idxProblema === null || idxCross < idxProblema)) idxProblema = idxCross;
+      let problema = rSelf.cortes > 3;
+      if(!problema && prevRaw) problema = _primeiraIntersecaoEntre(raw, prevRaw) !== null;
+      if(problema) {
+        if(!resultado || dist < resultado.distKm) resultado = { n, perpSign, distKm: dist };
+        break; // achou a primeira linha ruim desse lado — não precisa varrer mais longe nele
       }
-      if(idxProblema !== null && (melhorIdx === null || idxProblema < melhorIdx)) melhorIdx = idxProblema;
       prevRaw = raw;
     }
   }
-  return melhorIdx;
+  return resultado;
 }
 
-// Divide o talhão ativo em 2 no ponto onde a guia começa a distorcer: mantém a parte "boa"
-// (do início da guia até ali) como talhão ativo com as linhas já geradas, e arquiva a parte
-// restante em branco para o usuário selecionar e redesenhar a guia ali. Corte reto na direção
-// das próprias linhas de plantio (rowBrgGlobal) — assim nenhuma linha atravessa a divisão.
+// Divide o talhão ativo em 2 usando como fronteira a ÚLTIMA LINHA BOA (mesma curvatura da guia,
+// não uma reta) no lado/distância onde a distorção começa: mantém a parte que fica entre a guia e
+// essa linha como talhão ativo (já com as linhas geradas), com um afastamento de `largura` metros
+// até o restante, que é arquivado em branco para o usuário redesenhar a guia ali.
 // Retorna true se a divisão foi aplicada (e já cuidou de toda a UI/estado); false se falhou
 // (nesse caso o chamador deve seguir com a geração normal, sem dividir).
-function _dividirTalhaoPorDistorcao(sg, idx, rowBrgGlobal, perpBrg, spacingKm, cor, esp, spacing, ext) {
+function _dividirTalhaoPorDistorcao(sg, tan, resultado, rowBrgGlobal, perpBrg, spacingKm, cor, esp, spacing, ext, largura) {
   try {
-    const splitPoint = sg[idx];
-    const p1 = turf.destination(turf.point([splitPoint.lng, splitPoint.lat]), ext, rowBrgGlobal,       {units:'kilometers'}).geometry.coordinates;
-    const p2 = turf.destination(turf.point([splitPoint.lng, splitPoint.lat]), ext, rowBrgGlobal + 180, {units:'kilometers'}).geometry.coordinates;
-    const divLine = turf.lineString([p2, p1]);
-    const buf = turf.buffer(divLine, 0.15, {units:'meters'});
+    const { n, perpSign } = resultado;
+    const nGood = n - 1;
+    // Curva de referência do corte: deslocada MEIA faixa (largura/2) além da última linha boa
+    // (n-1) — não em cima dela. Como o buffer abaixo é simétrico (±largura/2), isso faz a borda
+    // interna do afastamento cair exatamente na última linha boa (preservando ela inteira do lado
+    // bom) e a borda externa ficar a `largura` metros dali. Mesma curvatura da guia, não uma reta.
+    const refDistKm = nGood*spacingKm + (largura/2)/1000;
+    let boundaryPts = sg.map((p, i) => {
+      const [lng, lat] = turf.destination(turf.point([p.lng, p.lat]), refDistKm, tan[i] + perpSign*90, {units:'kilometers'}).geometry.coordinates;
+      return [lng, lat];
+    });
+    boundaryPts = removerAutoCruzamento(boundaryPts).pts;
+
+    // Estende a fronteira além do talhão seguindo a tangente local das próprias pontas (não um
+    // rumo global) — consistente com a extensão usada ao desenhar as linhas multiplicadas.
+    const brgIni = turf.bearing(turf.point(boundaryPts[1]), turf.point(boundaryPts[0]));
+    const brgFim = turf.bearing(turf.point(boundaryPts[boundaryPts.length-2]), turf.point(boundaryPts[boundaryPts.length-1]));
+    const extIni = turf.destination(turf.point(boundaryPts[0]), ext, brgIni, {units:'kilometers'}).geometry.coordinates;
+    const extFim = turf.destination(turf.point(boundaryPts[boundaryPts.length-1]), ext, brgFim, {units:'kilometers'}).geometry.coordinates;
+    const divLine = turf.lineString([extIni, ...boundaryPts, extFim]);
+
+    const buf = turf.buffer(divLine, largura/2, {units:'meters'});
     const resto = turf.difference(turfPoly, buf);
     if(!resto) return false;
 
@@ -1207,6 +1230,18 @@ function _dividirTalhaoPorDistorcao(sg, idx, rowBrgGlobal, perpBrg, spacingKm, c
     const startPt = turf.point([sg[0].lng, sg[0].lat]);
     const boaPiece = partes.find(p => turf.booleanPointInPolygon(startPt, p)) || partes[0];
     const restoPiece = partes.find(p => p !== boaPiece) || partes[1];
+
+    // ─ Desenha a faixa de afastamento (carreador), igual ao da Divisão manual ─
+    try {
+      const carreadorGeom = turf.intersect(buf, turfPoly);
+      if(carreadorGeom) {
+        const geoms = carreadorGeom.geometry.type === 'MultiPolygon' ? carreadorGeom.geometry.coordinates : [carreadorGeom.geometry.coordinates];
+        geoms.forEach(polyCoords => {
+          const layer = L.polygon(polyCoords[0].map(([lng,lat]) => [lat,lng]), {color:'#795548', fillColor:'#795548', fillOpacity:.55, weight:1.5, interactive:false}).addTo(map);
+          carreadorLayers.push(layer);
+        });
+      }
+    } catch(e) {}
 
     // ─ Reconstrói o talhão ATIVO como a parte "boa" (com as linhas já geradas) ─
     polyMarkers.forEach(m => m.remove()); polyMarkers = [];
@@ -1256,7 +1291,7 @@ function _dividirTalhaoPorDistorcao(sg, idx, rowBrgGlobal, perpBrg, spacingKm, c
     renumerarTalhoes();
     $('btnLimparArquivados').style.display = '';
 
-    setStatus(`⚠ A guia ficou fechada demais e foi cortada: ${count} linhas geradas em ${ha.toFixed(2)} ha (parte boa — trave para confirmar).${_avisoCurvatura()} Um talhão em branco de ${novoTalhao.areaHa.toFixed(2)} ha foi criado ao lado — selecione-o e redesenhe a guia lá.`, 'ok');
+    setStatus(`⚠ A guia ficou fechada demais e o talhão foi dividido pela última linha boa (afastamento de ${largura}m): ${count} linhas geradas em ${ha.toFixed(2)} ha (parte boa — trave para confirmar).${_avisoCurvatura()} Um talhão em branco de ${novoTalhao.areaHa.toFixed(2)} ha foi criado ao lado — selecione-o e redesenhe a guia lá.`, 'ok');
     return true;
   } catch(e) {
     console.warn('Falha ao dividir talhão por distorção da guia:', e);
@@ -1428,12 +1463,13 @@ function gerarLinhas() {
     // Antes de gerar: verifica se a guia vai distorcer em algum ponto (auto-cruzamento ou
     // cruzamento entre linhas vizinhas). Se sim, divide o talhão ali em vez de renderizar um
     // emaranhado — mantém a parte boa com as linhas já geradas e arquiva o resto em branco.
-    const _idxDistorcao = _detectarDistorcaoGuia(_sg02, _tan2, spacingKm, bbox, nBoth);
+    const _distorcao = _detectarDistorcaoGuia(_sg02, _tan2, spacingKm, bbox, nBoth);
     // Não filtra por % de posição na guia — perto das pontas também vale dividir (sobra só um
     // pedaço pequeno em branco). _dividirTalhaoPorDistorcao já recusa sozinha se o corte não gerar
     // 2 partes utilizáveis (>10 m²), então essa é a única salvaguarda necessária.
-    if(_idxDistorcao !== null) {
-      if(_dividirTalhaoPorDistorcao(_sg02, _idxDistorcao, rowBrgGlobal, perpBrg, spacingKm, cor, esp, spacing, ext)) {
+    if(_distorcao !== null) {
+      const _larguraGap = parseFloat($('larguraCarreador')?.value) || 6;
+      if(_dividirTalhaoPorDistorcao(_sg02, _tan2, _distorcao, rowBrgGlobal, perpBrg, spacingKm, cor, esp, spacing, ext, _larguraGap)) {
         return;
       }
       _offsetStats.splitFalhou = true; // registra pra mensagem final — divisão foi tentada mas não coube
