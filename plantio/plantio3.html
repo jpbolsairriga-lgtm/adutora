@@ -99,7 +99,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.3</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.4</span></h1>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
@@ -392,6 +392,9 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // turf.centerOfMass (ponderado por área) em toda posição de legenda no mapa. Também adiciona 1m
 // de margem entre a última linha de plantio boa e o limite do talhão pós-divisão (antes a borda
 // caía em cima da própria linha).
+// v3.4: eleva de 10 m² para 500 m² a área mínima pra um pedaço da divisão virar talhão novo —
+// evita criar talhões-lasca (ex: 0,01 ha, 0 linhas) quando o resto é praticamente insignificante;
+// nesse caso a divisão é cancelada e segue a geração normal.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 function setStatus(msg, tipo = '') {
@@ -1232,10 +1235,13 @@ function _dividirTalhaoPorDistorcao(sg, tan, resultado, rowBrgGlobal, perpBrg, s
     const resto = turf.difference(turfPoly, buf);
     if(!resto) return false;
 
+    // Mínimo de 500 m² (0,05 ha) por pedaço — abaixo disso é uma lasca sem uso prático (não dá pra
+    // desenhar guia nem gerar linha de verdade ali), então nem vale criar um talhão novo pra ela.
+    const AREA_MIN_M2 = 500;
     let partes = [];
     if(resto.geometry.type === 'MultiPolygon') resto.geometry.coordinates.forEach(c => partes.push(turf.polygon(c)));
     else partes.push(resto);
-    partes = partes.filter(p => turf.area(p) > 10).sort((a,b) => turf.area(b) - turf.area(a)).slice(0,2);
+    partes = partes.filter(p => turf.area(p) > AREA_MIN_M2).sort((a,b) => turf.area(b) - turf.area(a)).slice(0,2);
     if(partes.length < 2) return false;
 
     const startPt = turf.point([sg[0].lng, sg[0].lat]);
