@@ -99,7 +99,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.2</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.3</span></h1>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
@@ -387,6 +387,11 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // mesmo campo "Largura do Carreador" da Divisão manual) entre o talhão bom e o novo em branco,
 // desenhado como faixa marrom igual ao carreador manual. Corrigido bug em que o afastamento ficava
 // centrado sobre a última linha boa (cortando ela); agora fica todo do lado de fora.
+// v3.3: legendas dos talhões pós-divisão agora recentralizam certo — trocado turf.centroid
+// (média de vértices, que ficava puxada pra cima da fronteira curva de ~400 pontos) por
+// turf.centerOfMass (ponderado por área) em toda posição de legenda no mapa. Também adiciona 1m
+// de margem entre a última linha de plantio boa e o limite do talhão pós-divisão (antes a borda
+// caía em cima da própria linha).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 function setStatus(msg, tipo = '') {
@@ -1014,7 +1019,10 @@ function renumerarTalhoes() {
 function mostrarLabel(ha, spacing, nLinhas, metrosLin) {
   if(infoMarker) { infoMarker.remove(); infoMarker = null; }
   if(!turfPoly) return;
-  const c = turf.centroid(turfPoly).geometry.coordinates;
+  // centerOfMass (ponderado por área) em vez de centroid (média de vértices) — talhões com
+  // fronteira curva (pós-divisão automática) têm centenas de vértices concentrados na curva,
+  // o que puxava o centroid pra longe do centro visual real da área.
+  const c = turf.centerOfMass(turfPoly).geometry.coordinates;
   const fmt = n => Math.round(n).toLocaleString('pt-BR');
   const html = `<div class="poly-label">
     <div class="poly-label-head">&#9632; Talhão</div>
@@ -1198,11 +1206,14 @@ function _dividirTalhaoPorDistorcao(sg, tan, resultado, rowBrgGlobal, perpBrg, s
   try {
     const { n, perpSign } = resultado;
     const nGood = n - 1;
-    // Curva de referência do corte: deslocada MEIA faixa (largura/2) além da última linha boa
-    // (n-1) — não em cima dela. Como o buffer abaixo é simétrico (±largura/2), isso faz a borda
-    // interna do afastamento cair exatamente na última linha boa (preservando ela inteira do lado
-    // bom) e a borda externa ficar a `largura` metros dali. Mesma curvatura da guia, não uma reta.
-    const refDistKm = nGood*spacingKm + (largura/2)/1000;
+    // Curva de referência do corte: deslocada além da última linha boa (n-1) por 1m (margem pra o
+    // limite do talhão não cair em cima da linha de plantio) + meia faixa (largura/2) do
+    // afastamento. Como o buffer abaixo é simétrico (±largura/2), isso faz a borda interna do
+    // afastamento cair exatamente 1m além da última linha boa, e a externa a `largura` metros
+    // dali — ordem: linha boa → 1m → limite do talhão → `largura`m → talhão vizinho.
+    // Mesma curvatura da guia em toda essa construção, não uma reta.
+    const BORDA_TALHAO_M = 1;
+    const refDistKm = nGood*spacingKm + (BORDA_TALHAO_M + largura/2)/1000;
     let boundaryPts = sg.map((p, i) => {
       const [lng, lat] = turf.destination(turf.point([p.lng, p.lat]), refDistKm, tan[i] + perpSign*90, {units:'kilometers'}).geometry.coordinates;
       return [lng, lat];
@@ -1333,7 +1344,7 @@ function gerarLinhas() {
       newLinhas.forEach(pl => { const pts = pl.getLatLngs().flat(); for(let i=0;i<pts.length-1;i++) metrosLin+=haversineM(pts[i],pts[i+1]); });
       t.metrosLin = metrosLin;
       if(t.infoMarker) { t.infoMarker.remove(); t.infoMarker = null; }
-      const c = turf.centroid(tPolyT).geometry.coordinates;
+      const c = turf.centerOfMass(tPolyT).geometry.coordinates;
       const fmt = n => Math.round(n).toLocaleString('pt-BR');
       const html = `<div class="poly-label"><div class="poly-label-head">&#9632; Talh&#227;o ${t.idx}</div><div class="poly-label-body"><div class="poly-label-row"><span class="poly-label-lbl">&#193;rea</span><span class="poly-label-val">${t.areaHa.toFixed(2)} ha</span></div><div class="poly-label-row"><span class="poly-label-lbl">Espa&#231;amento</span><span class="poly-label-val">${spacing} m</span></div><div class="poly-label-row"><span class="poly-label-lbl">Linhas</span><span class="poly-label-val">${count}</span></div><div class="poly-label-row"><span class="poly-label-lbl">Metros lineares</span><span class="poly-label-val">${fmt(metrosLin)} m</span></div></div></div>`;
       t.infoMarker = L.marker([c[1],c[0]], {icon:L.divIcon({html, className:'', iconAnchor:[84,58]}), interactive:false, zIndexOffset:500}).addTo(map);
@@ -2146,7 +2157,7 @@ function _processarKMLImportado(text) {
       // Legenda
       let infoMk = null;
       try {
-        const c = turf.centroid(turf.polygon([ring])).geometry.coordinates;
+        const c = turf.centerOfMass(turf.polygon([ring])).geometry.coordinates;
         const fmt = n => Math.round(n).toLocaleString('pt-BR');
         const html = `<div class="poly-label"><div class="poly-label-head">&#9632; Talh&#227;o</div><div class="poly-label-body"><div class="poly-label-row"><span class="poly-label-lbl">&#193;rea</span><span class="poly-label-val">${haArea.toFixed(2)} ha</span></div>${count>0?`<div class="poly-label-row"><span class="poly-label-lbl">Linhas</span><span class="poly-label-val">${count}</span></div>`:''}${metrosLin>0?`<div class="poly-label-row"><span class="poly-label-lbl">Metros lineares</span><span class="poly-label-val">${fmt(metrosLin)} m</span></div>`:''}</div></div>`;
         infoMk = L.marker([c[1],c[0]], {icon:L.divIcon({html, className:'', iconAnchor:[84,58]}), interactive:false, zIndexOffset:500}).addTo(map);
@@ -3064,7 +3075,7 @@ function _criarInfoMarkerParaTalhao(t) {
   try {
     const poly = turf.polygon([coords]);
     turf.rewind(poly, {mutate:true});
-    c = turf.centroid(poly).geometry.coordinates; // [lng, lat]
+    c = turf.centerOfMass(poly).geometry.coordinates; // [lng, lat]
   } catch(e) { return null; }
   const fmt = n => Math.round(n).toLocaleString('pt-BR');
   const html = `<div class="poly-label">
