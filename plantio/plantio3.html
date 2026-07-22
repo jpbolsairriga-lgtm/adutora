@@ -99,7 +99,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.0</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.1</span></h1>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
@@ -376,6 +376,12 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // curvatura fechada da guia, divide o talhão automaticamente no ponto onde a distorção começa:
 // mantém a parte boa com as linhas já geradas (pronta pra travar) e arquiva o restante em branco
 // para redesenhar a guia ali. Validado com testes numéricos isolados (turf real).
+// v3.1: corrige 3 falhas da v3.0 que deixavam a divisão não disparar perto das pontas da guia —
+// filtro de posição (5–95%) removido (dependia só do critério interno de área da própria função
+// de divisão), varredura de detecção não parava mais cedo demais perto do limite do talhão, e o
+// gatilho de auto-cruzamento passou a exigir o mesmo limiar de severidade usado para descartar
+// linha (evita dividir por ajustes triviais). Extensão da linha além do talhão passou a seguir a
+// tangente local da própria ponta, não mais o rumo médio da guia inteira.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 function setStatus(msg, tipo = '') {
@@ -1100,9 +1106,14 @@ function _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingK
       if(cortes > 0) _offsetStats.ajustadas++;
       pts = ptsOk;
     }
+    // Extensão além do talhão continua na tangente LOCAL da própria ponta da linha (não no bearing
+    // global da guia) — senão, quando a guia curva perto da ponta, o raio de extensão sai reto na
+    // direção errada e pode reentrar no talhão como uma "lâmina" espúria (linha que não existe).
     const N = 200, extS = [], extE = [];
-    for(let i = N; i >= 1; i--) extS.push(turf.destination(turf.point(pts[0]), (i/N)*ext, rowBrgGlobal+180, {units:'kilometers'}).geometry.coordinates);
-    for(let i = 1; i <= N; i++) extE.push(turf.destination(turf.point(pts[pts.length-1]), (i/N)*ext, rowBrgGlobal, {units:'kilometers'}).geometry.coordinates);
+    const brgIni = pts.length >= 2 ? turf.bearing(turf.point(pts[1]), turf.point(pts[0])) : rowBrgGlobal + 180;
+    const brgFim = pts.length >= 2 ? turf.bearing(turf.point(pts[pts.length-2]), turf.point(pts[pts.length-1])) : rowBrgGlobal;
+    for(let i = N; i >= 1; i--) extS.push(turf.destination(turf.point(pts[0]), (i/N)*ext, brgIni, {units:'kilometers'}).geometry.coordinates);
+    for(let i = 1; i <= N; i++) extE.push(turf.destination(turf.point(pts[pts.length-1]), (i/N)*ext, brgFim, {units:'kilometers'}).geometry.coordinates);
     const allPts = [...extS, ...pts, ...extE];
     let seg = null, added = 0;
     const flush = () => {
@@ -1154,8 +1165,12 @@ function _detectarDistorcaoGuia(sg, tan, spacingKm, bboxTalhao, nBoth) {
         const [lng, lat] = turf.destination(turf.point([p.lng, p.lat]), dist, tan[i] + perpSign*90, {units:'kilometers'}).geometry.coordinates;
         return [lng, lat];
       });
-      if(!_bboxOverlap(_bboxOfPts(raw), bboxTalhao)) break; // essa e as próximas linhas desse lado ficam fora do talhão
-      let idxProblema = removerAutoCruzamento(raw).primeiroIndice;
+      if(!_bboxOverlap(_bboxOfPts(raw), bboxTalhao)) { prevRaw = raw; continue; } // linha fora do talhão agora, mas uma guia curva pode fazer uma linha n maior voltar a tocar — não para de vez (loop já é limitado por nBoth)
+      const rSelf = removerAutoCruzamento(raw);
+      // Só conta como "distorção" se o auto-corte for tão grande que a linha seria DESCARTADA
+      // (mesmo limiar de _offsetStats.puladas) — um corte pequeno e isolado já fica bem resolvido
+      // visualmente pelo corte de alça e não justifica dividir o talhão.
+      let idxProblema = rSelf.cortes > 3 ? rSelf.primeiroIndice : null;
       if(prevRaw) {
         const idxCross = _primeiraIntersecaoEntre(raw, prevRaw);
         if(idxCross !== null && (idxProblema === null || idxCross < idxProblema)) idxProblema = idxCross;
@@ -1252,7 +1267,7 @@ function _dividirTalhaoPorDistorcao(sg, idx, rowBrgGlobal, perpBrg, spacingKm, c
 // ── Geração de Linhas ─────────────────────────────────────────────────────────
 function gerarLinhas() {
   if(guidePts.length < 2) { setStatus('Desenhe a linha guia primeiro.', 'err'); return; }
-  _offsetStats.ajustadas = 0; _offsetStats.puladas = 0;
+  _offsetStats.ajustadas = 0; _offsetStats.puladas = 0; _offsetStats.splitFalhou = false;
 
   // ── Modo multi-seleção ─────────────────────────────────────────────────────
   if(multiSelectMode && talhoesMultiSel.size > 0) {
@@ -1375,9 +1390,14 @@ function gerarLinhas() {
       if(cortes > 0) _offsetStats.ajustadas++;
       pts = ptsOk;
     }
+    // Extensão além do talhão continua na tangente LOCAL da própria ponta da linha (não no bearing
+    // global da guia) — senão, quando a guia curva perto da ponta, o raio de extensão sai reto na
+    // direção errada e pode reentrar no talhão como uma "lâmina" espúria (linha que não existe).
     const N = 200, extS = [], extE = [];
-    for(let i = N; i >= 1; i--) extS.push(turf.destination(turf.point(pts[0]), (i/N)*ext, rowBrgGlobal+180, {units:'kilometers'}).geometry.coordinates);
-    for(let i = 1; i <= N; i++) extE.push(turf.destination(turf.point(pts[pts.length-1]), (i/N)*ext, rowBrgGlobal, {units:'kilometers'}).geometry.coordinates);
+    const brgIni = pts.length >= 2 ? turf.bearing(turf.point(pts[1]), turf.point(pts[0])) : rowBrgGlobal + 180;
+    const brgFim = pts.length >= 2 ? turf.bearing(turf.point(pts[pts.length-2]), turf.point(pts[pts.length-1])) : rowBrgGlobal;
+    for(let i = N; i >= 1; i--) extS.push(turf.destination(turf.point(pts[0]), (i/N)*ext, brgIni, {units:'kilometers'}).geometry.coordinates);
+    for(let i = 1; i <= N; i++) extE.push(turf.destination(turf.point(pts[pts.length-1]), (i/N)*ext, brgFim, {units:'kilometers'}).geometry.coordinates);
     const allPts = [...extS, ...pts, ...extE];
     let seg = null, added = 0;
     const flush = () => {
@@ -1409,9 +1429,14 @@ function gerarLinhas() {
     // cruzamento entre linhas vizinhas). Se sim, divide o talhão ali em vez de renderizar um
     // emaranhado — mantém a parte boa com as linhas já geradas e arquiva o resto em branco.
     const _idxDistorcao = _detectarDistorcaoGuia(_sg02, _tan2, spacingKm, bbox, nBoth);
-    const _splitValido = _idxDistorcao !== null && _idxDistorcao > _SM2*0.05 && _idxDistorcao < _SM2*0.95;
-    if(_splitValido && _dividirTalhaoPorDistorcao(_sg02, _idxDistorcao, rowBrgGlobal, perpBrg, spacingKm, cor, esp, spacing, ext)) {
-      return;
+    // Não filtra por % de posição na guia — perto das pontas também vale dividir (sobra só um
+    // pedaço pequeno em branco). _dividirTalhaoPorDistorcao já recusa sozinha se o corte não gerar
+    // 2 partes utilizáveis (>10 m²), então essa é a única salvaguarda necessária.
+    if(_idxDistorcao !== null) {
+      if(_dividirTalhaoPorDistorcao(_sg02, _idxDistorcao, rowBrgGlobal, perpBrg, spacingKm, cor, esp, spacing, ext)) {
+        return;
+      }
+      _offsetStats.splitFalhou = true; // registra pra mensagem final — divisão foi tentada mas não coube
     }
     addSplineRow(0, 1);
     for(let n = 1; n <= nBoth; n++) addSplineRow(n,  1);
@@ -1449,11 +1474,12 @@ function gerarLinhas() {
 
 // Mensagem opcional quando o offset da guia precisou cortar/pular trechos por curvatura fechada
 function _avisoCurvatura() {
-  const { ajustadas, puladas } = _offsetStats;
-  if(!ajustadas && !puladas) return '';
+  const { ajustadas, puladas, splitFalhou } = _offsetStats;
+  if(!ajustadas && !puladas && !splitFalhou) return '';
   const partes = [];
   if(ajustadas) partes.push(`${ajustadas} linha(s) ajustada(s)`);
   if(puladas) partes.push(`${puladas} linha(s) pulada(s)`);
+  if(splitFalhou) partes.push('não foi possível dividir automaticamente um trecho fechado demais — considere redesenhar a guia ou usar a Divisão manual ali');
   return ` (${partes.join(', ')} por curvatura fechada da guia.)`;
 }
 
