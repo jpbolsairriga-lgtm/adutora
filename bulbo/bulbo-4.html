@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Bulbo de Molhamento v4 — Bolsa Irriga</title>
+<title>Bulbo de Molhamento v4.1 — Bolsa Irriga</title>
 <style>
 :root{
   --bg:#eef4f7;--ink:#173142;--muted:#65798a;--line:#d7e1e8;--panel:#ffffff;
@@ -162,7 +162,7 @@ td.pam-bad{color:#b71c1c}
     <div class="brand">
       <div class="mark">BI</div>
       <div class="brand-text">
-        <h1>Bulbo de Molhamento v4</h1>
+        <h1>Bulbo de Molhamento <span style="font-size:11px;color:#65798a;font-weight:400">v4.1</span></h1>
         <div class="sub">Frente de molhamento temporal · Van Genuchten-Mualem</div>
       </div>
       <a class="back-link" href="../index.html">← Menu</a>
@@ -306,6 +306,9 @@ td.pam-bad{color:#b71c1c}
 <div id="printArea" style="display:none"></div>
 
 <script>
+// v4.1: corrige o bulbo aparecer já desenhado (estado final) ao ajustar qualquer parâmetro antes
+// de clicar em "Iniciar" — agora só recalcula no tempo atual (fica vazio até iniciar de fato).
+// Legenda de tempo/fase (canto com t, R, Z, PAM) movida do topo pra base do gráfico.
 const SOILS = [
   {name:'Areia',                code:'sand',            tr:0.045,ts:0.430,alpha:0.145,n:2.68,ks:29.70,lat:0.54,color:'#d9b77f'},
   {name:'Areia franca',         code:'loamySand',       tr:0.057,ts:0.410,alpha:0.124,n:2.28,ks:14.59,lat:0.66,color:'#c9a36d'},
@@ -510,7 +513,7 @@ function draw(){
   drawAxes(ctx,ox,oy,vw,vh,scale,cfg);
   drawEmitters(ctx,cfg,sx,ox,oy,vw);
   drawContours(ctx,cfg,result,sx,sy);
-  drawTimeHud(ctx,ox,oy,result,cfg);
+  drawTimeHud(ctx,ox,oy,vh,result,cfg);
   drawColorbar(ctx,W,H,pad,result);
   drawScaleBar(ctx,ox,oy,vw,vh,scale,cfg);
 }
@@ -575,17 +578,18 @@ function drawContours(ctx,cfg,res,sx,sy){
   });
 }
 
-function drawTimeHud(ctx,ox,oy,res,cfg){
+function drawTimeHud(ctx,ox,oy,vh,res,cfg){
   const pam=calcPAM(res,cfg);
   const phaseCol=res.phase==='Redistribuição'?'#ffd587':'#7de2bd';
-  ctx.fillStyle='rgba(5,15,23,.78)'; ctx.fillRect(ox+10,oy+10,200,62);
+  const boxY=oy+vh-72; // ancorado no canto inferior esquerdo do gráfico, não mais no superior
+  ctx.fillStyle='rgba(5,15,23,.78)'; ctx.fillRect(ox+10,boxY,200,62);
   ctx.fillStyle=phaseCol; ctx.font='800 13px Segoe UI'; ctx.textAlign='left';
-  ctx.fillText(res.phase, ox+20, oy+28);
+  ctx.fillText(res.phase, ox+20, boxY+18);
   ctx.fillStyle='#a9c0ce'; ctx.font='11px Segoe UI';
-  ctx.fillText(`t = ${res.elapsed.toFixed(2)} h   R = ${res.radius.toFixed(1)} cm   Z = ${res.depth.toFixed(1)} cm`, ox+20, oy+44);
+  ctx.fillText(`t = ${res.elapsed.toFixed(2)} h   R = ${res.radius.toFixed(1)} cm   Z = ${res.depth.toFixed(1)} cm`, ox+20, boxY+34);
   const pamCol=pam.pam>=33?'#7de2a0':'#f28b82';
   ctx.fillStyle=pamCol;
-  ctx.fillText(`PAM = ${pam.pam.toFixed(1)}%  (${pam.type})`, ox+20, oy+60);
+  ctx.fillText(`PAM = ${pam.pam.toFixed(1)}%  (${pam.type})`, ox+20, boxY+50);
 }
 
 function drawColorbar(ctx,W,H,pad,res){
@@ -906,7 +910,8 @@ function bind(){
     // viewWidth/viewDepth são só visualização — não re-simulam
     if(el.id==='viewWidth'||el.id==='viewDepth'){ draw(); return; }
     if(el.id==='soil') pickSoil(+el.value);
-    else { playing=false; $('play').textContent='Iniciar'; updateMetrics(); }
+    // false: ajustar um parâmetro não deve pular pro estado final da simulação — só "Iniciar" faz isso
+    else { playing=false; $('play').textContent='Iniciar'; updateMetrics(false); }
   }));
   $('simulate').addEventListener('click',()=>{ setTime(0); if(!playing) togglePlay(); });
   $('play').addEventListener('click',togglePlay);
@@ -950,7 +955,7 @@ function playLoop(ts){
 function pickSoil(i){
   current=SOILS[i]; $('soil').value=i;
   document.querySelectorAll('.soil-btn').forEach((b,k)=>b.classList.toggle('active',k===i));
-  updateMetrics();
+  updateMetrics(false); // trocar de solo não deve pular pro estado final — só "Iniciar" faz isso
 }
 
 function exportCsv(){
