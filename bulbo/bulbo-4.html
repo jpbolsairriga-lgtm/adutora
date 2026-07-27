@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Bulbo de Molhamento v4.1 — Bolsa Irriga</title>
+<title>Bulbo de Molhamento v4.2 — Bolsa Irriga</title>
 <style>
 :root{
   --bg:#eef4f7;--ink:#173142;--muted:#65798a;--line:#d7e1e8;--panel:#ffffff;
@@ -54,8 +54,12 @@ a{color:inherit;text-decoration:none}
 .workspace{display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:12px;min-height:0;overflow:hidden;background:#10202d;border-radius:8px;padding:10px}
 .viz{background:#0b1720;border:1px solid #22384b;border-radius:8px;box-shadow:var(--shadow);position:relative;overflow:hidden;min-height:0}
 .viz-head{height:42px;display:flex;align-items:center;justify-content:space-between;padding:0 12px;border-bottom:1px solid #22384b;background:#0e1b26;color:#d8e8f2}
-.viz-head h2{font-size:13px;margin:0;color:#d8e8f2}
-.legend{display:flex;align-items:center;gap:8px;font-size:11px;color:#8fb0c6}
+.viz-head h2{font-size:13px;margin:0;color:#d8e8f2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.viz-head-left{display:flex;align-items:center;gap:10px;min-width:0;overflow:hidden}
+.viz-tabs{display:flex;gap:4px;flex-shrink:0}
+.viz-tab{background:#132738;border:1px solid #24475e;color:#8fa8b8;font-size:11px;font-weight:700;padding:4px 10px;border-radius:5px;cursor:pointer;white-space:nowrap}
+.viz-tab.active{background:#0877b6;color:#fff;border-color:#0877b6}
+.legend{display:flex;align-items:center;gap:8px;font-size:11px;color:#8fb0c6;flex-shrink:0}
 .grad{width:140px;height:10px;border-radius:2px;background:linear-gradient(90deg,#1e1408,#123772,#2070b4,#58a6d0,#d0deaa,#fcc855,#ea5832,#af122b);border:1px solid #335268}
 canvas{display:block;width:100%;height:calc(100% - 42px)}
 .viz canvas{background:#0b1720;image-rendering:pixelated}
@@ -162,7 +166,7 @@ td.pam-bad{color:#b71c1c}
     <div class="brand">
       <div class="mark">BI</div>
       <div class="brand-text">
-        <h1>Bulbo de Molhamento <span style="font-size:11px;color:#65798a;font-weight:400">v4.1</span></h1>
+        <h1>Bulbo de Molhamento <span style="font-size:11px;color:#65798a;font-weight:400">v4.2</span></h1>
         <div class="sub">Frente de molhamento temporal · Van Genuchten-Mualem</div>
       </div>
       <a class="back-link" href="../index.html">← Menu</a>
@@ -239,7 +243,13 @@ td.pam-bad{color:#b71c1c}
     <div class="workspace">
       <section class="viz">
         <div class="viz-head">
-          <h2 id="chartTitle">Seção vertical do bulbo</h2>
+          <div class="viz-head-left">
+            <div class="viz-tabs">
+              <button class="viz-tab active" id="tabPerfil" onclick="setVizMode('perfil')">Perfil</button>
+              <button class="viz-tab" id="tabTopo" onclick="setVizMode('topo')">Vista superior</button>
+            </div>
+            <h2 id="chartTitle">Seção vertical do bulbo</h2>
+          </div>
           <div class="legend"><span>seco</span><div class="grad"></div><span>saturado</span></div>
         </div>
         <canvas id="bulb"></canvas>
@@ -309,6 +319,10 @@ td.pam-bad{color:#b71c1c}
 // v4.1: corrige o bulbo aparecer já desenhado (estado final) ao ajustar qualquer parâmetro antes
 // de clicar em "Iniciar" — agora só recalcula no tempo atual (fica vazio até iniciar de fato).
 // Legenda de tempo/fase (canto com t, R, Z, PAM) movida do topo pra base do gráfico.
+// v4.2: nova aba "Vista superior" — mostra o bulbo visto de cima (fatia na superfície, z=0), ao
+// longo da linha de gotejo (X) e em direção às linhas vizinhas (Y = Espaç. entre linhas), com
+// contornos circulares por emissor. fieldAt() ganhou o parâmetro opcional `y` (padrão 0, não
+// muda o comportamento da vista lateral) pra dar suporte à distância perpendicular à linha.
 const SOILS = [
   {name:'Areia',                code:'sand',            tr:0.045,ts:0.430,alpha:0.145,n:2.68,ks:29.70,lat:0.54,color:'#d9b77f'},
   {name:'Areia franca',         code:'loamySand',       tr:0.057,ts:0.410,alpha:0.124,n:2.28,ks:14.59,lat:0.66,color:'#c9a36d'},
@@ -331,6 +345,7 @@ let finalResult = null;
 let simTime = 0;
 let playing = false;
 let rafId = null;
+let vizMode = 'perfil'; // 'perfil' (seção vertical) | 'topo' (vista superior, olhando de cima)
 let lastTick = 0;
 
 // ─── física ──────────────────────────────────────────────────────────────────
@@ -411,17 +426,18 @@ function calcPAM(res, cfg){
   return {type:'Isolado', pam:Math.min(Math.PI*res.radius*res.radius/(cfg.spacing*cfg.lineSpacing)*100, 100)};
 }
 
-function fieldAt(x, z, cfg, res){
+function fieldAt(x, z, cfg, res, y=0){
   if(res.radius<=0||res.depth<=0||res.deltaPeak<=0) return res.thetaI;
   const count=cfg.emitters, start=-(count-1)*cfg.spacing/2;
   let theta=res.thetaI;
   for(let i=0;i<count;i++){
     const ex=start+i*cfg.spacing, drift=cfg.slope*z*0.35, dx=x-ex-drift;
+    const d=Math.hypot(dx,y); // y=0 (padrão) preserva o comportamento original (só a fatia lateral)
     const vb=1.55+0.42*res.textureFast+(res.phase==='Redistribuição'?0.08:0);
     const lb=1.62+0.55*(1-res.textureFast)+(res.phase==='Redistribuição'?0.08:0);
-    const rz=Math.pow(Math.abs(dx)/Math.max(1,res.radius),lb)+Math.pow(Math.max(0,z)/Math.max(1,res.depth),vb);
+    const rz=Math.pow(d/Math.max(1,res.radius),lb)+Math.pow(Math.max(0,z)/Math.max(1,res.depth),vb);
     const sh=1.25+0.38*(1-res.textureFast);
-    const cs=Math.exp(-Math.pow(Math.abs(dx)/(res.radius*sh),2.15))*Math.exp(-z/(res.depth*(0.72+0.25*res.textureFast)));
+    const cs=Math.exp(-Math.pow(d/(res.radius*sh),2.15))*Math.exp(-z/(res.depth*(0.72+0.25*res.textureFast)));
     const sd=res.phase==='Redistribuição'?(0.72+0.28*Math.min(1,z/Math.max(10,res.depth*.35))):1;
     theta+=(res.deltaPeak*Math.exp(-1.32*rz)+res.deltaPeak*(0.10+0.10*(1-res.textureFast))*cs)*sd;
   }
@@ -449,6 +465,18 @@ function totalTime(cfg){ return Math.max(0.1, cfg.simUntil||cfg.hours); }
 function draw(){
   const cfg=inputs();
   if(!result) result=simulateForSoil(current,cfg);
+  if(vizMode==='topo') drawTopo(cfg,result); else drawPerfil(cfg,result);
+}
+
+function setVizMode(mode){
+  vizMode=mode;
+  document.getElementById('tabPerfil').classList.toggle('active',mode==='perfil');
+  document.getElementById('tabTopo').classList.toggle('active',mode==='topo');
+  draw();
+}
+
+// Prepara o canvas #bulb (tamanho/DPR/contexto) — compartilhado pelas duas vistas
+function _setupCanvas(){
   const c=$('bulb');
   const rect=c.getBoundingClientRect();
   const dpr=window.devicePixelRatio||1;
@@ -456,7 +484,11 @@ function draw(){
   c.height=Math.max(200,Math.floor(rect.height*dpr));
   const ctx=c.getContext('2d');
   ctx.setTransform(dpr,0,0,dpr,0,0);
-  const W=c.width/dpr, H=c.height/dpr;
+  return {ctx, W:c.width/dpr, H:c.height/dpr};
+}
+
+function drawPerfil(cfg,result){
+  const {ctx,W,H}=_setupCanvas();
   const pad={l:76,r:56,t:64,b:52};
   const plotW=W-pad.l-pad.r, plotH=H-pad.t-pad.b;
 
@@ -516,6 +548,115 @@ function draw(){
   drawTimeHud(ctx,ox,oy,vh,result,cfg);
   drawColorbar(ctx,W,H,pad,result);
   drawScaleBar(ctx,ox,oy,vw,vh,scale,cfg);
+}
+
+// Vista superior: olhando de cima pra baixo, na superfície (z=0) — mostra o formato do bulbo
+// molhado ao longo da linha de gotejo (X) e em direção às linhas vizinhas (Y).
+function drawTopo(cfg,result){
+  const {ctx,W,H}=_setupCanvas();
+  const pad={l:76,r:56,t:64,b:52};
+  const plotW=W-pad.l-pad.r, plotH=H-pad.t-pad.b;
+
+  const viewW=cfg.viewWidth, viewH=cfg.lineSpacing;
+  const scale=Math.min(plotW/viewW, plotH/viewH);
+  const vw=viewW*scale, vh=viewH*scale;
+  const ox=pad.l+(plotW-vw)/2, oy=pad.t+(plotH-vh)/2;
+
+  const half=viewW/2, halfY=viewH/2;
+  const sx=x=>ox+(x+half)*scale;
+  const sy=y=>oy+(y+halfY)*scale; // y=0 (linha de gotejo) fica na metade vertical do gráfico
+
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#0b1720'; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#1e1408'; ctx.fillRect(ox,oy,vw,vh);
+
+  const Z0=0; // fatia na superfície — o que se vê olhando o chão de cima
+  const cols=128, rows=96;
+  for(let j=0;j<rows;j++){
+    for(let i=0;i<cols;i++){
+      const x=-half+(i+.5)/cols*viewW, y=-halfY+(j+.5)/rows*viewH;
+      const th=fieldAt(x,Z0,cfg,result,y);
+      const t=(th-result.thetaI)/Math.max(0.001,result.soil.ts-result.thetaI);
+      ctx.fillStyle=colorRamp(t);
+      ctx.fillRect(ox+i/cols*vw, oy+j/rows*vh, vw/cols+1, vh/rows+1);
+    }
+  }
+
+  drawAxesTopo(ctx,ox,oy,vw,vh,scale,cfg);
+  drawEmittersTopo(ctx,cfg,sx,sy,ox,oy,vw);
+  drawContoursTopo(ctx,cfg,result,sx,sy);
+  drawTimeHud(ctx,ox,oy,vh,result,cfg);
+  drawColorbar(ctx,W,H,pad,result);
+  drawScaleBar(ctx,ox,oy,vw,vh,scale,cfg);
+}
+
+function drawAxesTopo(ctx,ox,oy,vw,vh,scale,cfg){
+  ctx.save();
+  ctx.strokeStyle='rgba(92,142,174,.45)'; ctx.lineWidth=1; ctx.strokeRect(ox,oy,vw,vh);
+  const xStep=niceStep(cfg.viewWidth/6), yStep=niceStep(cfg.lineSpacing/5);
+  ctx.fillStyle='#c9dfec'; ctx.font='600 12px Segoe UI'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  for(let x=Math.ceil((-cfg.viewWidth/2)/xStep)*xStep; x<=cfg.viewWidth/2+.01; x+=xStep){
+    const px=ox+(x+cfg.viewWidth/2)*scale, strong=Math.abs(x)<.001;
+    ctx.strokeStyle=strong?'rgba(185,220,238,.55)':'rgba(92,142,174,.25)'; ctx.lineWidth=strong?1.4:1;
+    ctx.beginPath(); ctx.moveTo(px,oy); ctx.lineTo(px,oy+vh); ctx.stroke();
+    ctx.strokeStyle='#c9dfec'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(px,oy-8); ctx.lineTo(px,oy); ctx.stroke();
+    ctx.fillText(Math.round(x),px,oy-20);
+  }
+  ctx.fillStyle='#8fb0c6'; ctx.font='700 11px Segoe UI'; ctx.fillText('Ao longo da linha (cm)',ox+vw/2,oy-42);
+
+  const halfY=cfg.lineSpacing/2;
+  ctx.fillStyle='#c9dfec'; ctx.font='600 12px Segoe UI'; ctx.textAlign='right';
+  for(let y=Math.ceil(-halfY/yStep)*yStep; y<=halfY+.01; y+=yStep){
+    const py=oy+(y+halfY)*scale, strong=Math.abs(y)<.001;
+    ctx.strokeStyle=strong?'rgba(255,200,60,.55)':'rgba(92,142,174,.25)'; ctx.lineWidth=strong?1.6:1;
+    ctx.beginPath(); ctx.moveTo(ox,py); ctx.lineTo(ox+vw,py); ctx.stroke();
+    ctx.strokeStyle='#c9dfec'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(ox-8,py); ctx.lineTo(ox,py); ctx.stroke();
+    ctx.fillText(Math.round(y),ox-14,py);
+  }
+  ctx.fillStyle='#8fb0c6'; ctx.font='700 11px Segoe UI';
+  ctx.save(); ctx.translate(24,oy+vh/2); ctx.rotate(-Math.PI/2); ctx.textAlign='center'; ctx.fillText('Distância entre linhas (cm)',0,0); ctx.restore();
+
+  // as bordas superior/inferior do gráfico já são a posição da linha vizinha (viewH = lineSpacing)
+  ctx.fillStyle='rgba(255,200,60,.8)'; ctx.font='700 9px Segoe UI'; ctx.textAlign='left'; ctx.textBaseline='top';
+  ctx.fillText('Linha vizinha', ox+4, oy+3);
+  ctx.textBaseline='bottom';
+  ctx.fillText('Linha vizinha', ox+4, oy+vh-3);
+  ctx.restore();
+}
+
+function drawEmittersTopo(ctx,cfg,sx,sy,ox,oy,vw){
+  const count=cfg.emitters, start=-(count-1)*cfg.spacing/2;
+  const py=sy(0);
+  ctx.strokeStyle='#071219'; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.moveTo(ox,py); ctx.lineTo(ox+vw,py); ctx.stroke();
+  for(let i=0;i<count;i++){
+    const px=sx(start+i*cfg.spacing);
+    ctx.fillStyle='#0f9ece'; ctx.beginPath(); ctx.arc(px,py,4.5,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#eaf6fb'; ctx.lineWidth=1; ctx.stroke();
+  }
+}
+
+function drawContoursTopo(ctx,cfg,res,sx,sy){
+  if(res.radius<=0) return;
+  const levels=[0.02,cfg.threshold,0.08,0.14].filter((v,i,a)=>v<res.soil.ts-res.thetaI&&a.indexOf(v)===i);
+  levels.forEach((lev,idx)=>{
+    ctx.strokeStyle=idx===1?'rgba(255,255,255,.9)':['rgba(255,255,255,.4)','rgba(8,119,182,.8)','rgba(10,56,80,.7)'][idx]||'#fff';
+    ctx.lineWidth=idx===1?2.5:1.2;
+    const rScale=Math.pow(Math.max(.04,res.deltaPeak/lev),.34);
+    const R=res.radius*Math.min(1.85,rScale);
+    const count=cfg.emitters, start=-(count-1)*cfg.spacing/2;
+    for(let e=0;e<count;e++){
+      const ex=start+e*cfg.spacing;
+      ctx.beginPath();
+      for(let a=0;a<=Math.PI*2+0.01;a+=Math.PI/80){
+        const x=ex+Math.cos(a)*R, y=Math.sin(a)*R;
+        a===0?ctx.moveTo(sx(x),sy(y)):ctx.lineTo(sx(x),sy(y));
+      }
+      ctx.stroke();
+    }
+  });
 }
 
 function drawAxes(ctx,ox,oy,vw,vh,scale,cfg){
@@ -751,7 +892,8 @@ function updateMetrics(resetToEnd=true){
     badge.textContent=`PAM ${pam.pam.toFixed(1)}% (${pam.type})`;
     badge.className='pam-badge '+(pam.pam>=33?'ok':'bad');
   } else { badge.textContent=''; }
-  $('chartTitle').textContent=`${current.name} — t = ${simTime.toFixed(1)} h  |  R = ${result.radius.toFixed(1)} cm  Z = ${result.depth.toFixed(1)} cm`;
+  const vizLbl=vizMode==='topo'?'  ·  vista superior':'';
+  $('chartTitle').textContent=`${current.name} — t = ${simTime.toFixed(1)} h  |  R = ${result.radius.toFixed(1)} cm  Z = ${result.depth.toFixed(1)} cm${vizLbl}`;
   $('status').textContent=`${result.phase}: raio ${result.radius.toFixed(1)} cm · profundidade ${result.depth.toFixed(1)} cm · PAM ${pam.pam.toFixed(1)}% (${pam.type}) · aplicado ${result.appliedL.toFixed(1)} L de ${result.finalAppliedL.toFixed(1)} L total.`;
   diagnostic(cfg,result,pam);
   draw();
