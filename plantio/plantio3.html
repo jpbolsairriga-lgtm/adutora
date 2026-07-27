@@ -99,7 +99,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.5</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.6</span></h1>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
@@ -400,6 +400,11 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // reais (projeção Transversa de Mercator WGS84, fuso automático) e uma LAYER própria por
 // contorno/linhas de plantio/classe de declividade/curva de nível, cada uma com a cor real
 // (true color RGB) do app. Resolve perda de cor/layer ao importar KML direto no AutoCAD.
+// v3.6: corrige DXF que o AutoCAD recusava ("Error in APPID Table") — trocado do formato
+// AC1015+LWPOLYLINE+true color pro DXF R12 (AC1009) clássico com POLYLINE/VERTEX/SEQEND, o
+// formato mais simples e universalmente aceito. Cor agora vem da paleta padrão AutoCAD (ACI,
+// 256 cores) por aproximação, em vez de RGB exato — ainda preserva layers e cores separadas,
+// só não é mais o hex exato do app.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 function setStatus(msg, tipo = '') {
@@ -2342,8 +2347,13 @@ function _exportarKMLInterno() {
 // ── Exportar DXF (AutoCAD) ──────────────────────────────────────────────────
 // Diferente do KML (lat/lng geográfico), o DXF usa coordenadas UTM planas (metros) — projeção
 // Transversa de Mercator padrão WGS84, fuso escolhido automaticamente pelo primeiro ponto
-// disponível. Cada talhão/linha/classe de declividade/curva vira uma LAYER própria com a cor
-// real (true color RGB), preservando exatamente o que se via no app — nada de layer única cinza.
+// disponível. Cada talhão/linha/classe de declividade/curva vira uma LAYER própria com cor,
+// preservando a separação que se via no app — nada de layer única cinza.
+// Formato DXF R12 (AC1009) — a variante mais simples e universalmente compatível que existe
+// (todo software CAD lê); usa POLYLINE clássico (não LWPOLYLINE) e cor pela paleta padrão do
+// AutoCAD (ACI, 256 cores) em vez de RGB exato — trocado do AC1015+true color depois que um
+// AutoCAD real recusou o arquivo ("Error in APPID Table") por faltar tabelas que o formato
+// R2000+ exige (VPORT/STYLE/APPID/etc.); o R12 não tem essa exigência.
 function latLngToUTM(lat, lng, zone) {
   const a=6378137.0, f=1/298.257223563, k0=0.9996;
   const e2=f*(2-f), ep2=e2/(1-e2);
@@ -2367,8 +2377,37 @@ function utmZoneFor(lng) { return Math.floor((lng+180)/6)+1; }
 function dxfLayerName(s) {
   return s.normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9_-]/g,'_').toUpperCase();
 }
-// #RRGGBB -> inteiro 24-bit (formato do group code 420, true color)
-function hexToTrueColor(hex) { return parseInt(hex.replace('#',''),16) || 0; }
+// Paleta padrão AutoCAD Color Index (ACI) — 256 cores, índice = número ACI (1-255), usada pra
+// achar a cor mais próxima de cada hex do app (R12 não tem RGB exato, só essa paleta fixa).
+const ACI_PALETTE = [
+  0,16711680,16776960,65280,65535,255,16711935,16777215,8421504,12632256,16711680,16744319,13369344,13395558,10027008,10046540,
+  8323072,8339263,4980736,4990502,16727808,16752511,13382400,13401958,10036736,10051404,8331008,8343359,4985600,4992806,16744192,16760703,
+  13395456,13408614,10046464,10056268,8339200,8347455,4990464,4995366,16760576,16768895,13408512,13415014,10056192,10061132,8347392,8351551,
+  4995328,4997670,16776960,16777087,13421568,13421670,10000384,10000460,8355584,8355647,5000192,5000230,12582656,14679935,10079232,11717734,
+  7510016,8755276,6258432,7307071,3755008,4344870,8388352,12582783,6736896,10079334,5019648,7510092,4161280,6258495,2509824,3755046,
+  4194048,10485631,3394560,8375398,2529280,6264908,2064128,5209919,1264640,3099686,65280,8388479,52224,6736998,38912,5019724,
+  32512,4161343,19456,2509862,65343,8388511,52275,6737023,38950,5019743,32543,4161359,19475,2509871,65407,8388543,
+  52326,6737049,38988,5019762,32575,4161375,19494,2509881,65471,8388575,52377,6737074,39026,5019781,32607,4161391,
+  19513,2509890,65535,8388607,52428,6737100,39064,5019800,32639,4161407,19532,2509900,49151,8380415,39372,6730444,
+  29336,5014936,24447,4157311,14668,2507340,32767,8372223,26316,6724044,19608,5010072,16255,4153215,9804,2505036,
+  16383,8364031,13260,6717388,9880,5005208,8063,4149119,4940,2502476,255,8355839,204,6710988,152,5000344,
+  127,4145023,76,2500172,4129023,10452991,3342540,8349388,2490520,6245528,2031743,5193599,1245260,3089996,8323327,12550143,
+  6684876,10053324,4980888,7490712,4128895,6242175,2490444,3745356,12517631,14647295,10027212,11691724,7471256,8735896,6226047,7290751,
+  3735628,4335180,16711935,16744447,13369548,13395660,9961624,9981080,8323199,8339327,4980812,4990540,16711871,16744415,13369497,13395634,
+  9961586,9981061,8323167,8339311,4980793,4990530,16711807,16744383,13369446,13395609,9961548,9981042,8323135,8339295,4980774,4990521,
+  16711743,16744351,13369395,13395583,9961510,9981023,8323103,8339279,4980755,4990511,3355443,5987163,8684676,11382189,14079702,16777215,
+];
+// #RRGGBB -> índice ACI (1-255) mais próximo por distância euclidiana no espaço RGB
+function hexToClosestACI(hex) {
+  const r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16);
+  let best=7, bestDist=Infinity;
+  for(let i=1;i<ACI_PALETTE.length;i++) {
+    const c=ACI_PALETTE[i], cr=(c>>16)&255, cg=(c>>8)&255, cb=c&255;
+    const d=(r-cr)*(r-cr)+(g-cg)*(g-cg)+(b-cb)*(b-cb);
+    if(d<bestDist) { bestDist=d; best=i; }
+  }
+  return best;
+}
 
 function exportarDXF() {
   try { _exportarDXFInterno(); }
@@ -2391,17 +2430,22 @@ function _exportarDXFInterno() {
 
   function addLayer(name, color) {
     const ln = dxfLayerName(name);
-    if(!layers.has(ln)) layers.set(ln, hexToTrueColor(color));
+    if(!layers.has(ln)) layers.set(ln, hexToClosestACI(color));
     return ln;
   }
   function addPolyline(pts, layerName, closed, elevation) {
     if(pts.length < 2) return;
     const uv = pts.map(proj);
-    // Cor gravada tanto na layer quanto em cada entidade (grupo 420) — alguns leitores/
-    // versões só respeitam uma das duas; assim a cor certa aparece de qualquer jeito.
-    let e = `0\nLWPOLYLINE\n8\n${layerName}\n62\n7\n420\n${layers.get(layerName)}\n90\n${uv.length}\n70\n${closed?1:0}\n`;
-    if(elevation!=null) e += `38\n${elevation.toFixed(3)}\n`;
-    uv.forEach(p => { e += `10\n${p.x.toFixed(3)}\n20\n${p.y.toFixed(3)}\n`; });
+    const aci = layers.get(layerName);
+    // POLYLINE clássico (R12): flag 66=1 obrigatória, vértices como entidades VERTEX separadas,
+    // fechado com SEQEND. Cor gravada também na própria entidade (grupo 62), redundante com a
+    // da layer — não faz mal e evita depender só de BYLAYER.
+    let e = `0\nPOLYLINE\n8\n${layerName}\n62\n${aci}\n66\n1\n70\n${closed?1:0}\n`;
+    uv.forEach(p => {
+      e += `0\nVERTEX\n8\n${layerName}\n10\n${p.x.toFixed(3)}\n20\n${p.y.toFixed(3)}\n`;
+      if(elevation!=null) e += `30\n${elevation.toFixed(3)}\n`;
+    });
+    e += `0\nSEQEND\n8\n${layerName}\n`;
     entities.push(e);
   }
 
@@ -2467,7 +2511,7 @@ function _exportarDXFInterno() {
 function buildDxfDocument(layers, entities) {
   let s = '';
   s += '0\nSECTION\n2\nHEADER\n';
-  s += '9\n$ACADVER\n1\nAC1015\n';
+  s += '9\n$ACADVER\n1\nAC1009\n';
   s += '9\n$INSUNITS\n70\n6\n'; // 6 = metros
   s += '0\nENDSEC\n';
 
@@ -2476,8 +2520,8 @@ function buildDxfDocument(layers, entities) {
   s += '0\nLTYPE\n2\nCONTINUOUS\n70\n0\n3\nSolid line\n72\n65\n73\n0\n40\n0.0\n';
   s += '0\nENDTAB\n';
   s += `0\nTABLE\n2\nLAYER\n70\n${layers.size}\n`;
-  layers.forEach((truecolor, name) => {
-    s += `0\nLAYER\n2\n${name}\n70\n0\n62\n7\n6\nCONTINUOUS\n420\n${truecolor}\n`;
+  layers.forEach((aci, name) => {
+    s += `0\nLAYER\n2\n${name}\n70\n0\n62\n${aci}\n6\nCONTINUOUS\n`;
   });
   s += '0\nENDTAB\n';
   s += '0\nENDSEC\n';
