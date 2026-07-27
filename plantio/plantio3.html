@@ -99,7 +99,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.4</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.5</span></h1>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
@@ -255,6 +255,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
       <button class="btn btn-clr" id="btnLimparDeclivAtivo" onclick="limparDeclivAtivo()" style="display:none;margin-top:4px;font-size:11px;">&#10005; Limpar Classifica&#231;&#227;o</button>
     </div>
     <button class="btn btn-kml" id="btnKml" onclick="exportarKML()" style="display:none;margin-top:4px;">&#128462; Exportar KML</button>
+    <button class="btn btn-kml" id="btnDxf" onclick="exportarDXF()" style="display:none;margin-top:4px;background:#8d6e63;">&#128190; Exportar DXF (AutoCAD)</button>
     <button class="btn btn-clr" onclick="limparLinhas()" style="margin-top:4px;">&#10005; Limpar Linhas</button>
     <button class="btn btn-clr" onclick="limparTudo()" style="margin-top:4px;border-color:#37474f;color:#90a4ae;">&#128465; Limpar Tudo</button>
   </div>
@@ -395,6 +396,10 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // v3.4: eleva de 10 m² para 500 m² a área mínima pra um pedaço da divisão virar talhão novo —
 // evita criar talhões-lasca (ex: 0,01 ha, 0 linhas) quando o resto é praticamente insignificante;
 // nesse caso a divisão é cancelada e segue a geração normal.
+// v3.5: novo botão "Exportar DXF (AutoCAD)" — ao lado do KML, gera um .dxf com coordenadas UTM
+// reais (projeção Transversa de Mercator WGS84, fuso automático) e uma LAYER própria por
+// contorno/linhas de plantio/classe de declividade/curva de nível, cada uma com a cor real
+// (true color RGB) do app. Resolve perda de cor/layer ao importar KML direto no AutoCAD.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 function setStatus(msg, tipo = '') {
@@ -960,6 +965,7 @@ function arquivarTalhaoAtual() {
   $('divDeclivAtivo').style.display = 'none';
   $('btnLimparDeclivAtivo').style.display = 'none';
   $('btnKml').style.display = 'flex'; // mantém KML disponível
+  $('btnDxf').style.display = 'flex';
 
   // Atualiza contador e habilita classificação global
   $('btnLimparArquivados').style.display = '';
@@ -1003,7 +1009,7 @@ function limparTalhoesArquivados() {
   $('btnDeclivTodos').disabled = true;
   $('secLegenda').style.display = 'none';
   $('btnLimparDecliv').style.display = 'none';
-  if(!linhas.length) $('btnKml').style.display = 'none';
+  if(!linhas.length) { $('btnKml').style.display = 'none'; $('btnDxf').style.display = 'none'; }
 }
 
 function renumerarTalhoes() {
@@ -2188,6 +2194,7 @@ function _processarKMLImportado(text) {
     $('btnLimparArquivados').style.display = '';
     $('btnDeclivTodos').disabled = false;
     $('btnKml').style.display = 'flex';
+    $('btnDxf').style.display = 'flex';
 
     // Centralizar mapa nos talhões importados
     const allPts = [];
@@ -2331,6 +2338,156 @@ function _exportarKMLInterno() {
   kml += `</Document></kml>`;
   baixarArquivo(kml, 'plantio_bolsairriga.kml', 'application/vnd.google-earth.kml+xml');
 } // fim _exportarKMLInterno
+
+// ── Exportar DXF (AutoCAD) ──────────────────────────────────────────────────
+// Diferente do KML (lat/lng geográfico), o DXF usa coordenadas UTM planas (metros) — projeção
+// Transversa de Mercator padrão WGS84, fuso escolhido automaticamente pelo primeiro ponto
+// disponível. Cada talhão/linha/classe de declividade/curva vira uma LAYER própria com a cor
+// real (true color RGB), preservando exatamente o que se via no app — nada de layer única cinza.
+function latLngToUTM(lat, lng, zone) {
+  const a=6378137.0, f=1/298.257223563, k0=0.9996;
+  const e2=f*(2-f), ep2=e2/(1-e2);
+  const lngOrigin=(zone-1)*6-180+3;
+  const latR=lat*Math.PI/180, lngR=lng*Math.PI/180, lngOrR=lngOrigin*Math.PI/180;
+  const sinLat=Math.sin(latR), cosLat=Math.cos(latR), tanLat=Math.tan(latR);
+  const N=a/Math.sqrt(1-e2*sinLat*sinLat);
+  const T=tanLat*tanLat, C=ep2*cosLat*cosLat, A=cosLat*(lngR-lngOrR);
+  const M=a*((1-e2/4-3*e2*e2/64-5*Math.pow(e2,3)/256)*latR
+    -(3*e2/8+3*e2*e2/32+45*Math.pow(e2,3)/1024)*Math.sin(2*latR)
+    +(15*e2*e2/256+45*Math.pow(e2,3)/1024)*Math.sin(4*latR)
+    -(35*Math.pow(e2,3)/3072)*Math.sin(6*latR));
+  let easting=k0*N*(A+(1-T+C)*Math.pow(A,3)/6+(5-18*T+T*T+72*C-58*ep2)*Math.pow(A,5)/120)+500000;
+  let northing=k0*(M+N*tanLat*(A*A/2+(5-T+9*C+4*C*C)*Math.pow(A,4)/24+(61-58*T+T*T+600*C-330*ep2)*Math.pow(A,6)/720));
+  if(lat<0) northing+=10000000; // falso norte do hemisfério sul
+  return {x:easting, y:northing};
+}
+function utmZoneFor(lng) { return Math.floor((lng+180)/6)+1; }
+
+// Nome de layer seguro pro AutoCAD: sem acento, sem espaço, maiúsculo
+function dxfLayerName(s) {
+  return s.normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9_-]/g,'_').toUpperCase();
+}
+// #RRGGBB -> inteiro 24-bit (formato do group code 420, true color)
+function hexToTrueColor(hex) { return parseInt(hex.replace('#',''),16) || 0; }
+
+function exportarDXF() {
+  try { _exportarDXFInterno(); }
+  catch(e) { alert('Erro ao gerar DXF: ' + e.message); console.error(e); }
+}
+
+function _exportarDXFInterno() {
+  // Ponto de referência pra escolher o fuso UTM (todo o projeto usa o mesmo fuso, mesmo que
+  // algum ponto isolado fique tecnicamente mais perto do fuso vizinho — prática padrão em CAD)
+  let refLL = null;
+  if(polyPts.length) refLL = polyPts[0];
+  else if(talhoesArquivados.length && talhoesArquivados[0].polyPts.length) refLL = talhoesArquivados[0].polyPts[0];
+  else if(curvaPolyPts.length) refLL = curvaPolyPts[0];
+  if(!refLL) { alert('Nada para exportar ainda — desenhe um talhão primeiro.'); return; }
+  const zone = utmZoneFor(refLL.lng);
+  const proj = p => latLngToUTM(p.lat, p.lng, zone);
+
+  const layers = new Map(); // nome sanitizado -> cor true color (int)
+  const entities = [];
+
+  function addLayer(name, color) {
+    const ln = dxfLayerName(name);
+    if(!layers.has(ln)) layers.set(ln, hexToTrueColor(color));
+    return ln;
+  }
+  function addPolyline(pts, layerName, closed, elevation) {
+    if(pts.length < 2) return;
+    const uv = pts.map(proj);
+    // Cor gravada tanto na layer quanto em cada entidade (grupo 420) — alguns leitores/
+    // versões só respeitam uma das duas; assim a cor certa aparece de qualquer jeito.
+    let e = `0\nLWPOLYLINE\n8\n${layerName}\n62\n7\n420\n${layers.get(layerName)}\n90\n${uv.length}\n70\n${closed?1:0}\n`;
+    if(elevation!=null) e += `38\n${elevation.toFixed(3)}\n`;
+    uv.forEach(p => { e += `10\n${p.x.toFixed(3)}\n20\n${p.y.toFixed(3)}\n`; });
+    entities.push(e);
+  }
+
+  function exportarTalhaoDxf(label, cor, pts, lnhs, lnhsDecl, corLinha) {
+    if(pts.length < 3 && !lnhs.length) return;
+    const base = dxfLayerName(label);
+    if(pts.length >= 3) {
+      const ln = addLayer(`${base}_CONTORNO`, cor);
+      addPolyline(pts, ln, true, null);
+    }
+    if(lnhs.length) {
+      const ln = addLayer(`${base}_LINHAS_PLANTIO`, corLinha || '#FFD600');
+      lnhs.forEach(pl => addPolyline(pl.getLatLngs().flat(), ln, false, null));
+    }
+    if(lnhsDecl.length) {
+      const grupos = {};
+      lnhsDecl.forEach(pl => {
+        const c = pl.options.color.toUpperCase();
+        if(!grupos[c]) grupos[c] = [];
+        grupos[c].push(pl);
+      });
+      const nomesDecliv = {'#4CAF50':'0-3','#FFEB3B':'3-8','#FF9800':'8-12','#F44336':'12-20','#9C27B0':'MAIOR_20'};
+      Object.entries(grupos).forEach(([c, pls]) => {
+        const ln = addLayer(`${base}_DECLIV_${nomesDecliv[c]||c.replace('#','')}`, c);
+        pls.forEach(pl => addPolyline(pl.getLatLngs().flat(), ln, false, null));
+      });
+    }
+  }
+
+  // ── 1. Talhões (arquivados + ativo) ──────────────────────────────────────
+  talhoesArquivados.forEach(t => {
+    exportarTalhaoDxf(`Talhao_${t.idx}`, t.cor, t.polyPts, t.linhas, t.linhasDecl, t.corLinha);
+  });
+  if(polyPts.length >= 3 || linhas.length) {
+    const idxAtivo = talhoesArquivados.length + 1;
+    exportarTalhaoDxf(`Talhao_${idxAtivo}`, '#42a5f5', polyPts, linhas, linhasDecl, corLinhaAtual);
+  }
+
+  // ── 2. Área de curvas de nível ────────────────────────────────────────────
+  if(curvaPolyPts.length >= 3) {
+    const ln = addLayer('Area_Curvas_Nivel', '#26a69a');
+    addPolyline(curvaPolyPts, ln, true, null);
+  }
+
+  // ── 3. Curvas de nível (com cota Z real) ──────────────────────────────────
+  if(curvaLayers.length) {
+    const lnM = addLayer('Curvas_Mestras', '#ea5832');
+    const lnI = addLayer('Curvas_Intermediarias', '#7de2bd');
+    curvaLayers.forEach(pl => {
+      const pts = pl.getLatLngs().flat();
+      if(pts.length < 2) return;
+      addPolyline(pts, pl._isMaster ? lnM : lnI, false, pl._level ?? 0);
+    });
+  }
+
+  if(!entities.length) { alert('Nada para exportar ainda.'); return; }
+
+  const dxf = buildDxfDocument(layers, entities);
+  baixarArquivo(dxf, 'plantio_bolsairriga.dxf', 'application/dxf');
+}
+
+// Monta o texto DXF (AutoCAD 2000/AC1015): HEADER + TABLES (LTYPE, LAYER) + ENTITIES
+function buildDxfDocument(layers, entities) {
+  let s = '';
+  s += '0\nSECTION\n2\nHEADER\n';
+  s += '9\n$ACADVER\n1\nAC1015\n';
+  s += '9\n$INSUNITS\n70\n6\n'; // 6 = metros
+  s += '0\nENDSEC\n';
+
+  s += '0\nSECTION\n2\nTABLES\n';
+  s += '0\nTABLE\n2\nLTYPE\n70\n1\n';
+  s += '0\nLTYPE\n2\nCONTINUOUS\n70\n0\n3\nSolid line\n72\n65\n73\n0\n40\n0.0\n';
+  s += '0\nENDTAB\n';
+  s += `0\nTABLE\n2\nLAYER\n70\n${layers.size}\n`;
+  layers.forEach((truecolor, name) => {
+    s += `0\nLAYER\n2\n${name}\n70\n0\n62\n7\n6\nCONTINUOUS\n420\n${truecolor}\n`;
+  });
+  s += '0\nENDTAB\n';
+  s += '0\nENDSEC\n';
+
+  s += '0\nSECTION\n2\nENTITIES\n';
+  entities.forEach(e => { s += e; });
+  s += '0\nENDSEC\n';
+  s += '0\nEOF\n';
+  return s;
+}
 
 // ── Download universal (iOS + desktop) ───────────────────────────────────────
 function baixarArquivo(conteudo, nomeArquivo, tipoMime) {
@@ -2626,6 +2783,7 @@ function redesenharLinhas() {
   $('btnLimparDeclivAtivo').style.display = 'none';
   $('secLegenda').style.display = 'none';
   $('btnKml').style.display = 'none';
+  $('btnDxf').style.display = 'none';
   setStatus('Linhas descartadas. Desenhe a linha guia e gere novamente.', 'info');
 }
 
@@ -2638,6 +2796,7 @@ function limparLinhas() {
   $('divDeclivAtivo').style.display='none';
   $('btnLimparDeclivAtivo').style.display='none';
   $('btnKml').style.display='none';
+  $('btnDxf').style.display='none';
   linhasDecl.forEach(l=>l.remove()); linhasDecl=[];
   linhas.forEach(pl=>pl.setStyle({opacity:.95})); // restaura opacidade caso tenha classificado
   if(infoMarker){infoMarker.remove();infoMarker=null;}
@@ -2857,6 +3016,7 @@ function ativarTalhaoParaEdicao() {
     $('btnRedesenharLinhas').style.display = 'flex';
     $('divDeclivAtivo').style.display    = '';
     $('btnKml').style.display            = 'flex';
+    $('btnDxf').style.display            = 'flex';
   }
 
   // Clear selection
