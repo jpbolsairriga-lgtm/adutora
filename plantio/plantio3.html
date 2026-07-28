@@ -99,7 +99,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.9</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.10</span></h1>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
@@ -429,6 +429,14 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // DE CADA CORTE (maxCutAngle) — a quina que o próprio corte de alça cria — e a checagem só entra
 // em jogo se realmente houve corte (cortes>0). Sem isso, um talhão inteiro perdia a maior parte
 // das linhas de plantio incorretamente.
+// v3.10: a divisão automática por distorção da guia (auto-cruzamento, quina, linha vizinha) só
+// existia no modo de talhão único — no modo multi-seleção, um talhão com guia distorcida gerava
+// o emaranhado normalmente, sem dividir. Extraída a lógica de corte (_calcularDivisaoPorDistorcao)
+// pra ser compartilhada entre os dois modos; nova _dividirTalhaoArquivadoPorDistorcao aplica a
+// mesma divisão a um talhão já arquivado (sem mexer no estado "ativo"), preservando os outros
+// talhões selecionados que não tinham distorção. Validado: talhão com distorção divide igual ao
+// modo único (mesmos números), talhão vizinho sem distorção gera normalmente, e o modo único
+// continua idêntico a antes do refactor (teste de regressão).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 function setStatus(msg, tipo = '') {
@@ -1254,66 +1262,78 @@ function _detectarDistorcaoGuia(sg, tan, spacingKm, bboxTalhao, nBoth, anguloMax
   return resultado;
 }
 
-// Divide o talhão ativo em 2 usando como fronteira a ÚLTIMA LINHA BOA (mesma curvatura da guia,
-// não uma reta) no lado/distância onde a distorção começa: mantém a parte que fica entre a guia e
-// essa linha como talhão ativo (já com as linhas geradas), com um afastamento de `largura` metros
-// até o restante, que é arquivado em branco para o usuário redesenhar a guia ali.
-// Retorna true se a divisão foi aplicada (e já cuidou de toda a UI/estado); false se falhou
-// (nesse caso o chamador deve seguir com a geração normal, sem dividir).
+// Calcula a fronteira de corte (última linha boa + afastamento) e divide um polígono qualquer em
+// "boa" (do lado da guia) e "resto" (sobra, do outro lado da faixa de afastamento). Usado tanto
+// pelo modo de talhão único quanto pela multi-seleção — só a parte de ATUALIZAR ESTADO difere
+// entre os dois, então essa função fica isolada da UI/talhão específico. Também desenha a faixa
+// de afastamento (carreador) no mapa, como efeito colateral, igual à Divisão manual.
+// Retorna {boaPiece, restoPiece} ou null se não deu pra dividir (peça pequena demais, etc).
+function _calcularDivisaoPorDistorcao(turfPolyAlvo, sg, tan, resultado, rowBrgGlobal, spacingKm, ext, largura) {
+  const { n, perpSign } = resultado;
+  const nGood = n - 1;
+  // Curva de referência do corte: deslocada além da última linha boa (n-1) por 1m (margem pra o
+  // limite do talhão não cair em cima da linha de plantio) + meia faixa (largura/2) do
+  // afastamento. Como o buffer abaixo é simétrico (±largura/2), isso faz a borda interna do
+  // afastamento cair exatamente 1m além da última linha boa, e a externa a `largura` metros
+  // dali — ordem: linha boa → 1m → limite do talhão → `largura`m → talhão vizinho.
+  // Mesma curvatura da guia em toda essa construção, não uma reta.
+  const BORDA_TALHAO_M = 1;
+  const refDistKm = nGood*spacingKm + (BORDA_TALHAO_M + largura/2)/1000;
+  let boundaryPts = sg.map((p, i) => {
+    const [lng, lat] = turf.destination(turf.point([p.lng, p.lat]), refDistKm, tan[i] + perpSign*90, {units:'kilometers'}).geometry.coordinates;
+    return [lng, lat];
+  });
+  boundaryPts = removerAutoCruzamento(boundaryPts).pts;
+
+  // Estende a fronteira além do talhão seguindo a tangente local das próprias pontas (não um
+  // rumo global) — consistente com a extensão usada ao desenhar as linhas multiplicadas.
+  const brgIni = turf.bearing(turf.point(boundaryPts[1]), turf.point(boundaryPts[0]));
+  const brgFim = turf.bearing(turf.point(boundaryPts[boundaryPts.length-2]), turf.point(boundaryPts[boundaryPts.length-1]));
+  const extIni = turf.destination(turf.point(boundaryPts[0]), ext, brgIni, {units:'kilometers'}).geometry.coordinates;
+  const extFim = turf.destination(turf.point(boundaryPts[boundaryPts.length-1]), ext, brgFim, {units:'kilometers'}).geometry.coordinates;
+  const divLine = turf.lineString([extIni, ...boundaryPts, extFim]);
+
+  const buf = turf.buffer(divLine, largura/2, {units:'meters'});
+  const resto = turf.difference(turfPolyAlvo, buf);
+  if(!resto) return null;
+
+  // Mínimo de 500 m² (0,05 ha) por pedaço — abaixo disso é uma lasca sem uso prático (não dá pra
+  // desenhar guia nem gerar linha de verdade ali), então nem vale criar um talhão novo pra ela.
+  const AREA_MIN_M2 = 500;
+  let partes = [];
+  if(resto.geometry.type === 'MultiPolygon') resto.geometry.coordinates.forEach(c => partes.push(turf.polygon(c)));
+  else partes.push(resto);
+  partes = partes.filter(p => turf.area(p) > AREA_MIN_M2).sort((a,b) => turf.area(b) - turf.area(a)).slice(0,2);
+  if(partes.length < 2) return null;
+
+  const startPt = turf.point([sg[0].lng, sg[0].lat]);
+  const boaPiece = partes.find(p => turf.booleanPointInPolygon(startPt, p)) || partes[0];
+  const restoPiece = partes.find(p => p !== boaPiece) || partes[1];
+
+  // ─ Desenha a faixa de afastamento (carreador), igual ao da Divisão manual ─
+  try {
+    const carreadorGeom = turf.intersect(buf, turfPolyAlvo);
+    if(carreadorGeom) {
+      const geoms = carreadorGeom.geometry.type === 'MultiPolygon' ? carreadorGeom.geometry.coordinates : [carreadorGeom.geometry.coordinates];
+      geoms.forEach(polyCoords => {
+        const layer = L.polygon(polyCoords[0].map(([lng,lat]) => [lat,lng]), {color:'#795548', fillColor:'#795548', fillOpacity:.55, weight:1.5, interactive:false}).addTo(map);
+        carreadorLayers.push(layer);
+      });
+    }
+  } catch(e) {}
+
+  return { boaPiece, restoPiece };
+}
+
+// Divide o talhão ATIVO em 2 usando _calcularDivisaoPorDistorcao: mantém a parte boa como talhão
+// ativo (já com as linhas geradas), e arquiva o restante em branco para o usuário redesenhar a
+// guia ali. Retorna true se a divisão foi aplicada (e já cuidou de toda a UI/estado); false se
+// falhou (nesse caso o chamador deve seguir com a geração normal, sem dividir).
 function _dividirTalhaoPorDistorcao(sg, tan, resultado, rowBrgGlobal, perpBrg, spacingKm, cor, esp, spacing, ext, largura) {
   try {
-    const { n, perpSign } = resultado;
-    const nGood = n - 1;
-    // Curva de referência do corte: deslocada além da última linha boa (n-1) por 1m (margem pra o
-    // limite do talhão não cair em cima da linha de plantio) + meia faixa (largura/2) do
-    // afastamento. Como o buffer abaixo é simétrico (±largura/2), isso faz a borda interna do
-    // afastamento cair exatamente 1m além da última linha boa, e a externa a `largura` metros
-    // dali — ordem: linha boa → 1m → limite do talhão → `largura`m → talhão vizinho.
-    // Mesma curvatura da guia em toda essa construção, não uma reta.
-    const BORDA_TALHAO_M = 1;
-    const refDistKm = nGood*spacingKm + (BORDA_TALHAO_M + largura/2)/1000;
-    let boundaryPts = sg.map((p, i) => {
-      const [lng, lat] = turf.destination(turf.point([p.lng, p.lat]), refDistKm, tan[i] + perpSign*90, {units:'kilometers'}).geometry.coordinates;
-      return [lng, lat];
-    });
-    boundaryPts = removerAutoCruzamento(boundaryPts).pts;
-
-    // Estende a fronteira além do talhão seguindo a tangente local das próprias pontas (não um
-    // rumo global) — consistente com a extensão usada ao desenhar as linhas multiplicadas.
-    const brgIni = turf.bearing(turf.point(boundaryPts[1]), turf.point(boundaryPts[0]));
-    const brgFim = turf.bearing(turf.point(boundaryPts[boundaryPts.length-2]), turf.point(boundaryPts[boundaryPts.length-1]));
-    const extIni = turf.destination(turf.point(boundaryPts[0]), ext, brgIni, {units:'kilometers'}).geometry.coordinates;
-    const extFim = turf.destination(turf.point(boundaryPts[boundaryPts.length-1]), ext, brgFim, {units:'kilometers'}).geometry.coordinates;
-    const divLine = turf.lineString([extIni, ...boundaryPts, extFim]);
-
-    const buf = turf.buffer(divLine, largura/2, {units:'meters'});
-    const resto = turf.difference(turfPoly, buf);
-    if(!resto) return false;
-
-    // Mínimo de 500 m² (0,05 ha) por pedaço — abaixo disso é uma lasca sem uso prático (não dá pra
-    // desenhar guia nem gerar linha de verdade ali), então nem vale criar um talhão novo pra ela.
-    const AREA_MIN_M2 = 500;
-    let partes = [];
-    if(resto.geometry.type === 'MultiPolygon') resto.geometry.coordinates.forEach(c => partes.push(turf.polygon(c)));
-    else partes.push(resto);
-    partes = partes.filter(p => turf.area(p) > AREA_MIN_M2).sort((a,b) => turf.area(b) - turf.area(a)).slice(0,2);
-    if(partes.length < 2) return false;
-
-    const startPt = turf.point([sg[0].lng, sg[0].lat]);
-    const boaPiece = partes.find(p => turf.booleanPointInPolygon(startPt, p)) || partes[0];
-    const restoPiece = partes.find(p => p !== boaPiece) || partes[1];
-
-    // ─ Desenha a faixa de afastamento (carreador), igual ao da Divisão manual ─
-    try {
-      const carreadorGeom = turf.intersect(buf, turfPoly);
-      if(carreadorGeom) {
-        const geoms = carreadorGeom.geometry.type === 'MultiPolygon' ? carreadorGeom.geometry.coordinates : [carreadorGeom.geometry.coordinates];
-        geoms.forEach(polyCoords => {
-          const layer = L.polygon(polyCoords[0].map(([lng,lat]) => [lat,lng]), {color:'#795548', fillColor:'#795548', fillOpacity:.55, weight:1.5, interactive:false}).addTo(map);
-          carreadorLayers.push(layer);
-        });
-      }
-    } catch(e) {}
+    const divisao = _calcularDivisaoPorDistorcao(turfPoly, sg, tan, resultado, rowBrgGlobal, spacingKm, ext, largura);
+    if(!divisao) return false;
+    const { boaPiece, restoPiece } = divisao;
 
     // ─ Reconstrói o talhão ATIVO como a parte "boa" (com as linhas já geradas) ─
     polyMarkers.forEach(m => m.remove()); polyMarkers = [];
@@ -1371,6 +1391,68 @@ function _dividirTalhaoPorDistorcao(sg, tan, resultado, rowBrgGlobal, perpBrg, s
   }
 }
 
+// Igual a _dividirTalhaoPorDistorcao, mas para um talhão JÁ ARQUIVADO (usado na multi-seleção) —
+// não mexe no estado "ativo" (polyPts/turfPoly/linhas globais), atualiza o objeto `t` direto no
+// array talhoesArquivados. Retorna a contagem de linhas da parte boa (>0) se dividiu com sucesso,
+// ou null se falhou (chamador deve seguir com a geração normal pra esse talhão).
+function _dividirTalhaoArquivadoPorDistorcao(t, sg, tan, resultado, rowBrgGlobal, perpBrg, spacingKm, cor, esp, spacing, ext, largura) {
+  try {
+    const ring = [...t.polyPts.map(p => [p.lng, p.lat]), [t.polyPts[0].lng, t.polyPts[0].lat]];
+    let tPolyOriginal;
+    try { tPolyOriginal = turf.polygon([ring]); turf.rewind(tPolyOriginal, {mutate:true}); } catch(e) { return null; }
+
+    const divisao = _calcularDivisaoPorDistorcao(tPolyOriginal, sg, tan, resultado, rowBrgGlobal, spacingKm, ext, largura);
+    if(!divisao) return null;
+    const { boaPiece, restoPiece } = divisao;
+
+    // ─ Atualiza o talhão `t` (já arquivado) para a parte "boa" — mantém uid/idx/cor originais ─
+    if(t.polyLayer) t.polyLayer.remove();
+    t.linhas.forEach(l => l.remove());
+    t.linhasDecl.forEach(l => l.remove());
+    if(t.infoMarker) t.infoMarker.remove();
+
+    t.polyPts = boaPiece.geometry.coordinates[0].slice(0,-1).map(([lng,lat]) => ({lat,lng}));
+    t.polyLayer = L.polygon(t.polyPts, {color:t.cor, fillColor:t.cor, fillOpacity:.06, weight:2}).addTo(map);
+    t.polyLayer.on('click', () => { if(modo === 'idle') selecionarTalhao(t.uid); });
+
+    let tBoundT;
+    try { tBoundT = turf.polygonToLine(boaPiece); } catch(e) { return null; }
+    const newLinhas = [];
+    const count = _gerarLinhasParaTalhao(boaPiece, tBoundT, rowBrgGlobal, perpBrg, spacingKm, cor, esp, newLinhas);
+    t.linhas = newLinhas;
+    t.linhasDecl = [];
+    t.count = count;
+    t.spacing = spacing;
+    t.corLinha = cor;
+    let metrosLin = 0;
+    newLinhas.forEach(pl => { const pts = pl.getLatLngs().flat(); for(let i=0;i<pts.length-1;i++) metrosLin += haversineM(pts[i],pts[i+1]); });
+    t.metrosLin = metrosLin;
+    t.areaHa = turf.area(boaPiece)/10000;
+    t.infoMarker = _criarInfoMarkerParaTalhao(t);
+
+    // ─ Arquiva a parte restante em branco, pronta para o usuário selecionar e redesenhar a guia ─
+    const restPolyPts = restoPiece.geometry.coordinates[0].slice(0,-1).map(([lng,lat]) => ({lat,lng}));
+    const newUid = nextTalhaoUid++;
+    const newIdx = talhoesArquivados.length;
+    const newCor = CORES_TALHAO[newIdx % CORES_TALHAO.length];
+    const newLayer = L.polygon(restPolyPts.map(p=>[p.lat,p.lng]), {color:newCor, fillColor:newCor, fillOpacity:.06, weight:2, dashArray:'4,3'}).addTo(map);
+    newLayer.on('click', () => { if(modo === 'idle') selecionarTalhao(newUid); });
+    const novoTalhao = {
+      uid: newUid, idx: newIdx+1, cor: newCor, corLinha: cor, baseLabelZoom: map.getZoom(),
+      areaHa: turf.area(restoPiece)/10000, spacing, count:0, metrosLin:0,
+      polyLayer: newLayer, polyPts: restPolyPts,
+      linhas: [], linhasDecl: [], infoMarker: null, turfPoly: restoPiece
+    };
+    talhoesArquivados.push(novoTalhao);
+    novoTalhao.infoMarker = _criarInfoMarkerParaTalhao(novoTalhao);
+    _offsetStats.dividiuMulti = (_offsetStats.dividiuMulti || 0) + 1;
+    return count;
+  } catch(e) {
+    console.warn('Falha ao dividir talhão arquivado por distorção da guia:', e);
+    return null;
+  }
+}
+
 // ── Geração de Linhas ─────────────────────────────────────────────────────────
 function gerarLinhas() {
   if(guidePts.length < 2) { setStatus('Desenhe a linha guia primeiro.', 'err'); return; }
@@ -1382,16 +1464,47 @@ function gerarLinhas() {
     const spacingKm = spacing / 1000;
     const cor = $('corLinha').value;
     const esp = parseFloat($('espess').value) || 1.5;
+    const anguloMax = parseFloat($('anguloMax')?.value) || 25;
+    const larguraGap = parseFloat($('larguraCarreador')?.value) || 6;
     const gp = guidePts;
     const rowBrgGlobal = turf.bearing(turf.point([gp[0].lng,gp[0].lat]), turf.point([gp[gp.length-1].lng,gp[gp.length-1].lat]));
     const perpBrg = rowBrgGlobal + 90;
-    let totalCount = 0;
+    // _sg/_tan dependem só da guia (não do talhão) — calcula uma vez só, fora do laço
+    let _sgMulti = null, _tanMulti = null;
+    if(modoGuia === 'spline') {
+      const _SM = 400;
+      _sgMulti = resampleCurve(catmullRom(gp, 60), _SM);
+      _tanMulti = _sgMulti.map((p,i) => {
+        const a=_sgMulti[Math.max(0,i-1)], b=_sgMulti[Math.min(_SM-1,i+1)];
+        return turf.bearing(turf.point([a.lng,a.lat]), turf.point([b.lng,b.lat]));
+      });
+    }
+    let totalCount = 0, divididos = 0;
     talhoesMultiSel.forEach(uid => {
       const t = talhoesArquivados.find(x => x.uid === uid);
       if(!t) return;
       const ring = [...t.polyPts.map(p => [p.lng,p.lat]), [t.polyPts[0].lng,t.polyPts[0].lat]];
       let tPolyT, tBoundT;
       try { tPolyT = turf.polygon([ring]); turf.rewind(tPolyT,{mutate:true}); tBoundT = turf.polygonToLine(tPolyT); } catch(e) { return; }
+
+      // Mesma checagem de distorção do modo único (auto-cruzamento, quina, linha vizinha) —
+      // antes só o talhão único tinha isso; multi-seleção gerava emaranhado sem dividir.
+      if(modoGuia === 'spline') {
+        const tbbox = turf.bbox(tPolyT);
+        const text = turf.distance(turf.point([tbbox[0],tbbox[1]]), turf.point([tbbox[2],tbbox[3]])) * 2;
+        const tnBoth = Math.ceil(text / 2 / spacingKm) + 2;
+        const distorcao = _detectarDistorcaoGuia(_sgMulti, _tanMulti, spacingKm, tbbox, tnBoth, anguloMax);
+        if(distorcao !== null) {
+          const count = _dividirTalhaoArquivadoPorDistorcao(t, _sgMulti, _tanMulti, distorcao, rowBrgGlobal, perpBrg, spacingKm, cor, esp, spacing, text, larguraGap);
+          if(count !== null) {
+            totalCount += count;
+            divididos++;
+            return; // _dividirTalhaoArquivadoPorDistorcao já atualizou t e arquivou a sobra
+          }
+          _offsetStats.splitFalhou = true; // falhou — segue com a geração normal abaixo
+        }
+      }
+
       t.linhas.forEach(l => l.remove()); t.linhas = [];
       t.linhasDecl.forEach(l => l.remove()); t.linhasDecl = [];
       const newLinhas = [];
@@ -1411,12 +1524,14 @@ function gerarLinhas() {
       t.infoMarker = L.marker([c[1],c[0]], {icon:L.divIcon({html, className:'', iconAnchor:[84,58]}), interactive:false, zIndexOffset:500}).addTo(map);
       totalCount += count;
     });
+    if(divididos > 0) renumerarTalhoes();
     if(totalCount === 0) { setStatus('Nenhuma linha gerada. Verifique se a guia passa pelos talhões selecionados.', 'err'); return; }
     limparGuia();
     _updateLabelScale();
     polyMarkers.forEach(m => m.dragging && m.dragging.disable());
     $('btnTravarTodos').style.display = 'flex';
-    setStatus(`${totalCount} linhas geradas em ${talhoesMultiSel.size} talhão(ões).${_avisoCurvatura()} Clique em "Travar Todos" para confirmar.`, 'ok');
+    const avisoDivisao = divididos > 0 ? ` ${divididos} talhão(ões) foram divididos por distorção da guia — confira os novos talhões em branco.` : '';
+    setStatus(`${totalCount} linhas geradas em ${talhoesMultiSel.size} talhão(ões).${_avisoCurvatura()}${avisoDivisao} Clique em "Travar Todos" para confirmar.`, 'ok');
     return;
   }
 
