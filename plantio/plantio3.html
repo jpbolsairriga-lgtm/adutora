@@ -99,7 +99,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.6</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.7</span></h1>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
@@ -200,7 +200,9 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
       <button class="btn" id="btnConfDivisao" onclick="confirmarDivisao()" style="display:none;background:#2e7d32;color:#fff">&#10003; Confirmar Divis&#227;o</button>
       <button class="btn" id="btnEditarLinhas" onclick="ativarTalhaoParaEdicao()" style="background:#1565c0;color:#fff">&#9998; Editar Linhas</button>
       <button class="btn" id="btnRedesenharSelec" onclick="redesenharLinhasSelecionado()" style="background:#e65100;color:#fff;">&#8635; Redesenhar Linhas</button>
-      <button class="btn btn-clr" id="btnExcluirTalhao" onclick="excluirTalhaoSelecionado()" style="border-color:#b71c1c;color:#ef9a9a;">&#128465; Excluir Talh&#227;o</button>
+      <button class="btn" id="btnDeclivTerreno" onclick="classificarDeclividadeTerreno()" style="background:#4a148c;color:#fff;margin-top:8px;">&#9650; Declividade do Terreno</button>
+      <button class="btn btn-clr" id="btnLimparDeclivTerreno" onclick="limparDeclividadeTerrenoSelecionado()" style="display:none;font-size:11px;">&#10005; Limpar Declividade do Terreno</button>
+      <button class="btn btn-clr" id="btnExcluirTalhao" onclick="excluirTalhaoSelecionado()" style="border-color:#b71c1c;color:#ef9a9a;margin-top:8px;">&#128465; Excluir Talh&#227;o</button>
       <button class="btn btn-clr" id="btnDesselecionar" onclick="desselecionarTalhao()">&#10005; Cancelar Sele&#231;&#227;o</button>
     </div>
   </div>
@@ -405,6 +407,13 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // formato mais simples e universalmente aceito. Cor agora vem da paleta padrão AutoCAD (ACI,
 // 256 cores) por aproximação, em vez de RGB exato — ainda preserva layers e cores separadas,
 // só não é mais o hex exato do app.
+// v3.7: corrige cota Z das curvas de nível no DXF (faltava marcar a POLYLINE como 3D — flag 70
+// bit 3 — então o AutoCAD ignorava a elevação de cada vértice mesmo ela estando no arquivo).
+// Novo: "Declividade do Terreno" — selecione um talhão travado e classifique a declividade da
+// SUPERFÍCIE inteira (não só ao longo das linhas de plantio), como o Surface Analysis do Civil
+// 3D — busca uma grade de elevação real (mesma fonte das curvas de nível), calcula o gradiente
+// e pinta o talhão com as mesmas 5 faixas de cor já usadas no app. Tem botão pra limpar a
+// classificação de cada talhão individualmente.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 function setStatus(msg, tipo = '') {
@@ -993,6 +1002,7 @@ function limparTalhoesArquivados() {
     t.linhas.forEach(l => l.remove());
     t.linhasDecl.forEach(l => l.remove());
     if(t.infoMarker) t.infoMarker.remove();
+    limparDeclividadeTerreno(t);
   });
   talhoesArquivados = [];
   carreadorLayers.forEach(l => l.remove()); carreadorLayers = [];
@@ -1555,6 +1565,102 @@ function slopeColor(pct) {
   if(s < 12) return '#FF9800';
   if(s < 20) return '#F44336';
   return '#9C27B0';
+}
+
+// ── Declividade do TERRENO (superfície do talhão inteiro, tipo Civil 3D) ──────
+// Diferente da declividade "ao longo das linhas de plantio" acima, isto classifica a área toda
+// do talhão selecionado por declive real do relevo (gradiente da grade de elevação), pintando
+// como uma imagem sobreposta ao mapa — não precisa ter linhas de plantio geradas.
+async function classificarDeclividadeTerreno() {
+  if(talhaoSelecionadoUid === null) { setStatus('Selecione um talhão primeiro.', 'err'); return; }
+  if(!window.google || !window.google.maps) { setStatus('Ative o Google Maps (chave API) para classificar a declividade do terreno.', 'err'); return; }
+  const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
+  if(!t) return;
+
+  const ring = [...t.polyPts.map(p => [p.lng, p.lat]), [t.polyPts[0].lng, t.polyPts[0].lat]];
+  let poly;
+  try { poly = turf.polygon([ring]); turf.rewind(poly, {mutate:true}); }
+  catch(e) { setStatus('Erro ao processar o polígono do talhão.', 'err'); return; }
+
+  limparDeclividadeTerreno(t);
+  $('btnDeclivTerreno').disabled = true;
+  setStatus(`Buscando elevações do terreno — Talhão ${t.idx}…`, 'info');
+
+  const n = parseInt($('curvaGrid').value) || 30;
+  const bbox = turf.bbox(poly);
+  const [minLng, minLat, maxLng, maxLat] = bbox;
+  const lats = Array.from({length:n}, (_,i) => minLat + i*(maxLat-minLat)/(n-1));
+  const lngs = Array.from({length:n}, (_,j) => minLng + j*(maxLng-minLng)/(n-1));
+
+  const allPts = [];
+  for(let r=0;r<n;r++) for(let c=0;c<n;c++) allPts.push(new google.maps.LatLng(lats[r], lngs[c]));
+
+  const BATCH=512, elevFlat=new Array(allPts.length);
+  let done=0;
+  const totalBatches=Math.ceil(allPts.length/BATCH);
+  const elevator=new google.maps.ElevationService();
+  await new Promise(resolve => {
+    for(let b=0;b<totalBatches;b++){
+      const off=b*BATCH, slice=allPts.slice(off,off+BATCH);
+      elevator.getElevationForLocations({locations:slice},(res,status)=>{
+        if(status==='OK') res.forEach((r,i)=>{ elevFlat[off+i]=r.elevation; });
+        if(++done===totalBatches) resolve();
+      });
+    }
+  });
+
+  const elevGrid = Array.from({length:n}, (_,r) => Array.from({length:n}, (_,c) => elevFlat[r*n+c] ?? null));
+
+  // Tamanho real (metros) de cada célula da grade — converte diferença de altura em % de declive
+  const dxM = haversineM({lat:minLat,lng:minLng}, {lat:minLat,lng:maxLng}) / Math.max(1,n-1);
+  const dyM = haversineM({lat:minLat,lng:minLng}, {lat:maxLat,lng:minLng}) / Math.max(1,n-1);
+
+  // Canvas: 1 célula da grade = 1 pixel; o Leaflet escala/suaviza a imagem ao exibir no mapa
+  const canvas = document.createElement('canvas');
+  canvas.width = n; canvas.height = n;
+  const ctx = canvas.getContext('2d');
+  let algumaCelula = false;
+
+  for(let r=0;r<n;r++) {
+    for(let c=0;c<n;c++) {
+      if(!turf.booleanPointInPolygon(turf.point([lngs[c], lats[r]]), poly)) continue; // fora do talhão: transparente
+      const e0=elevGrid[r][c], eL=elevGrid[r][Math.max(0,c-1)], eR=elevGrid[r][Math.min(n-1,c+1)];
+      const eD=elevGrid[Math.max(0,r-1)][c], eU=elevGrid[Math.min(n-1,r+1)][c];
+      if(e0==null||eL==null||eR==null||eD==null||eU==null) continue;
+      const stepsX=(c===0||c===n-1)?1:2, stepsY=(r===0||r===n-1)?1:2;
+      const dzdx=(eR-eL)/(stepsX*dxM), dzdy=(eU-eD)/(stepsY*dyM);
+      const slopePct=Math.sqrt(dzdx*dzdx+dzdy*dzdy)*100;
+      ctx.fillStyle=slopeColor(slopePct);
+      // linha r=0 = minLat (parte de baixo geograficamente); canvas cresce pra baixo → inverte
+      ctx.fillRect(c, n-1-r, 1, 1);
+      algumaCelula = true;
+    }
+  }
+
+  $('btnDeclivTerreno').disabled = false;
+  if(!algumaCelula) {
+    setStatus('Não foi possível classificar — sem dados de elevação suficientes para esse talhão.', 'err');
+    return;
+  }
+
+  const dataUrl = canvas.toDataURL();
+  t.declivTerrenoOverlay = L.imageOverlay(dataUrl, [[minLat,minLng],[maxLat,maxLng]], {opacity:.72, interactive:false}).addTo(map);
+  $('btnLimparDeclivTerreno').style.display = 'flex';
+  $('secLegenda').style.display = '';
+  setStatus(`Declividade do terreno classificada — Talhão ${t.idx}.`, 'ok');
+}
+
+function limparDeclividadeTerreno(t) {
+  if(t && t.declivTerrenoOverlay) { t.declivTerrenoOverlay.remove(); t.declivTerrenoOverlay = null; }
+}
+
+function limparDeclividadeTerrenoSelecionado() {
+  if(talhaoSelecionadoUid === null) return;
+  const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
+  if(!t) return;
+  limparDeclividadeTerreno(t);
+  $('btnLimparDeclivTerreno').style.display = 'none';
+  setStatus(`Declividade do terreno removida — Talhão ${t.idx}.`, 'ok');
 }
 
 // Interpola pontos ao longo de uma polilinha com espaçamento fixo
@@ -2437,13 +2543,18 @@ function _exportarDXFInterno() {
     if(pts.length < 2) return;
     const uv = pts.map(proj);
     const aci = layers.get(layerName);
+    const is3d = elevation != null;
     // POLYLINE clássico (R12): flag 66=1 obrigatória, vértices como entidades VERTEX separadas,
     // fechado com SEQEND. Cor gravada também na própria entidade (grupo 62), redundante com a
     // da layer — não faz mal e evita depender só de BYLAYER.
-    let e = `0\nPOLYLINE\n8\n${layerName}\n62\n${aci}\n66\n1\n70\n${closed?1:0}\n`;
+    // Flag 70 bit 3 (valor 8) = "polilinha 3D": sem isso o AutoCAD trata a entidade como 2D e
+    // IGNORA a cota Z de cada vértice (fica tudo em Z=0), mesmo o grupo 30 estando no arquivo —
+    // é isso que fazia a cota das curvas de nível sumir ao importar.
+    const flag70 = (closed?1:0) | (is3d?8:0);
+    let e = `0\nPOLYLINE\n8\n${layerName}\n62\n${aci}\n66\n1\n70\n${flag70}\n`;
     uv.forEach(p => {
       e += `0\nVERTEX\n8\n${layerName}\n10\n${p.x.toFixed(3)}\n20\n${p.y.toFixed(3)}\n`;
-      if(elevation!=null) e += `30\n${elevation.toFixed(3)}\n`;
+      if(is3d) e += `30\n${elevation.toFixed(3)}\n70\n32\n`; // 32 = "vértice de polilinha 3D"
     });
     e += `0\nSEQEND\n8\n${layerName}\n`;
     entities.push(e);
@@ -2977,6 +3088,7 @@ function selecionarTalhao(uid) {
   $('iArea').textContent   = t.areaHa.toFixed(2) + ' ha';
   $('iLinhas').textContent = t.count  || '—';
   $('iEspac').textContent  = t.spacing ? t.spacing + ' m' : '—';
+  $('btnLimparDeclivTerreno').style.display = t.declivTerrenoOverlay ? 'flex' : 'none';
   setStatus(`Talhão ${t.idx} selecionado — use "Traçar Divisão" ou "Editar Linhas".`, 'info');
 }
 
@@ -3196,6 +3308,7 @@ function confirmarDivisao() {
   t.linhas.forEach(l => l.remove());
   t.linhasDecl.forEach(l => l.remove());
   if(t.infoMarker) t.infoMarker.remove();
+  limparDeclividadeTerreno(t); // limites do talhão mudaram — a classificação antiga não vale mais
   talhoesArquivados.splice(idx, 1);
 
   // ─ Desenhar carreador visível ─
@@ -3263,6 +3376,7 @@ function excluirTalhaoSelecionado() {
   t.linhas.forEach(l => l.remove());
   t.linhasDecl.forEach(l => l.remove());
   if(t.infoMarker) t.infoMarker.remove();
+  limparDeclividadeTerreno(t);
   // Remove do array
   talhoesArquivados.splice(idx, 1);
   renumerarTalhoes();
