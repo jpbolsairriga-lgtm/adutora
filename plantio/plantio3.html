@@ -99,7 +99,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.7</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.8</span></h1>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
@@ -240,6 +240,9 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
       <div><label>Cor</label><input type="color" id="corLinha" value="#FFD600"></div>
       <div><label>Espessura</label><input type="number" id="espess" value="1.5" min="0.5" max="8" step="0.5"></div>
     </div>
+    <label style="margin-top:8px;">Ângulo máximo da linha</label>
+    <div class="row2"><div><input type="number" id="anguloMax" value="25" min="5" max="90" step="1"></div><div style="display:flex;align-items:center;padding-left:4px;font-size:12px;color:#78909c;">graus</div></div>
+    <div style="color:#78909c;font-size:10.5px;margin-top:2px;">Quina mais fechada que isso no modo Suave divide o talhão automaticamente (como já acontece por auto-cruzamento).</div>
   </div>
 
   <div class="sec">
@@ -414,6 +417,11 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // 3D — busca uma grade de elevação real (mesma fonte das curvas de nível), calcula o gradiente
 // e pinta o talhão com as mesmas 5 faixas de cor já usadas no app. Tem botão pra limpar a
 // classificação de cada talhão individualmente.
+// v3.8: novo campo "Ângulo máximo da linha" (padrão 25°) — o corte de alça do auto-cruzamento
+// (v2.9) às vezes deixa uma "quina" (corda reta) num ângulo bem fechado onde cortou o laço; isso
+// passava batido quando só 1-2 cortes eram necessários (limiar antigo só olhava cortes>3). Agora
+// _detectarDistorcaoGuia também mede o maior ângulo de desvio da linha resultante e, se passar do
+// limite configurado, divide o talhão ali — mesmo mecanismo já usado pros outros dois critérios.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 function setStatus(msg, tipo = '') {
@@ -595,6 +603,24 @@ function _primeiraIntersecaoEntre(a, b) {
     for(let j = 0; j < b.length - 1; j++)
       if(_segIntersectLocal(a[i], a[i+1], b[j], b[j+1])) return i;
   return null;
+}
+// Maior ângulo de desvio (graus, 0-180) entre segmentos consecutivos de uma linha — uma curva
+// suave tem valores baixos ponto a ponto; uma "quina" (ex: a corda reta que sobra de um corte de
+// alça) aparece como um pico isolado bem maior que a vizinhança.
+function _anguloEntre(p1, p2, p3) {
+  const a1 = Math.atan2(p2[1]-p1[1], p2[0]-p1[0]);
+  const a2 = Math.atan2(p3[1]-p2[1], p3[0]-p2[0]);
+  let d = (a2-a1) * 180/Math.PI;
+  d = ((d + 180) % 360 + 360) % 360 - 180;
+  return Math.abs(d);
+}
+function _maxTurningAngleDeg(pts) {
+  let max = 0;
+  for(let i = 1; i < pts.length - 1; i++) {
+    const a = _anguloEntre(pts[i-1], pts[i], pts[i+1]);
+    if(a > max) max = a;
+  }
+  return max;
 }
 
 // Reamostrar curva com M pontos igualmente espaçados por comprimento de arco
@@ -1193,7 +1219,7 @@ function _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingK
 // cruzar a linha vizinha (n-1). Retorna o lado/linha mais próximo da guia entre os dois (o mais
 // urgente), ou null se nenhum lado tem problema. Isso é o que vira o limite de corte: a última
 // linha ANTES dessa (n-1) já tem o formato certo (mesma curvatura da guia) pra servir de fronteira.
-function _detectarDistorcaoGuia(sg, tan, spacingKm, bboxTalhao, nBoth) {
+function _detectarDistorcaoGuia(sg, tan, spacingKm, bboxTalhao, nBoth, anguloMaxDeg) {
   let resultado = null;
   for(const perpSign of [1, -1]) {
     let prevRaw = null;
@@ -1205,10 +1231,12 @@ function _detectarDistorcaoGuia(sg, tan, spacingKm, bboxTalhao, nBoth) {
       });
       if(!_bboxOverlap(_bboxOfPts(raw), bboxTalhao)) { prevRaw = raw; continue; } // linha fora do talhão agora, mas uma guia curva pode fazer uma linha n maior voltar a tocar — não para de vez (loop já é limitado por nBoth)
       const rSelf = removerAutoCruzamento(raw);
-      // Só conta como "distorção" se o auto-corte for tão grande que a linha seria DESCARTADA
-      // (mesmo limiar de _offsetStats.puladas) — um corte pequeno e isolado já fica bem resolvido
-      // visualmente pelo corte de alça e não justifica dividir o talhão.
+      // Três motivos pra considerar "distorção": (1) auto-corte tão grande que a linha seria
+      // DESCARTADA (mesmo limiar de _offsetStats.puladas — um corte pequeno já fica bem resolvido
+      // visualmente e não justifica dividir); (2) a quina que sobra do corte de alça é mais fechada
+      // que o ângulo máximo aceito pelo usuário; (3) cruza a linha vizinha (n-1).
       let problema = rSelf.cortes > 3;
+      if(!problema) problema = _maxTurningAngleDeg(rSelf.pts) > anguloMaxDeg;
       if(!problema && prevRaw) problema = _primeiraIntersecaoEntre(raw, prevRaw) !== null;
       if(problema) {
         if(!resultado || dist < resultado.distKm) resultado = { n, perpSign, distKm: dist };
@@ -1498,10 +1526,12 @@ function gerarLinhas() {
   }
 
   if(modoGuia === 'spline') {
-    // Antes de gerar: verifica se a guia vai distorcer em algum ponto (auto-cruzamento ou
-    // cruzamento entre linhas vizinhas). Se sim, divide o talhão ali em vez de renderizar um
-    // emaranhado — mantém a parte boa com as linhas já geradas e arquiva o resto em branco.
-    const _distorcao = _detectarDistorcaoGuia(_sg02, _tan2, spacingKm, bbox, nBoth);
+    // Antes de gerar: verifica se a guia vai distorcer em algum ponto (auto-cruzamento, quina
+    // acima do ângulo máximo configurado, ou cruzamento entre linhas vizinhas). Se sim, divide o
+    // talhão ali em vez de renderizar um emaranhado/quinado — mantém a parte boa com as linhas já
+    // geradas e arquiva o resto em branco.
+    const _anguloMax = parseFloat($('anguloMax')?.value) || 25;
+    const _distorcao = _detectarDistorcaoGuia(_sg02, _tan2, spacingKm, bbox, nBoth, _anguloMax);
     // Não filtra por % de posição na guia — perto das pontas também vale dividir (sobra só um
     // pedaço pequeno em branco). _dividirTalhaoPorDistorcao já recusa sozinha se o corte não gerar
     // 2 partes utilizáveis (>10 m²), então essa é a única salvaguarda necessária.
