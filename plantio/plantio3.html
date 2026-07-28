@@ -99,7 +99,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.8</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.9</span></h1>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
@@ -422,6 +422,13 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // passava batido quando só 1-2 cortes eram necessários (limiar antigo só olhava cortes>3). Agora
 // _detectarDistorcaoGuia também mede o maior ângulo de desvio da linha resultante e, se passar do
 // limite configurado, divide o talhão ali — mesmo mecanismo já usado pros outros dois critérios.
+// v3.9: corrige falso positivo grave da v3.8 — a checagem de ângulo varria a linha INTEIRA (400
+// pontos), e em curvatura sustentada e suave (comum em encostas reais) o offset natural pode ter
+// ângulo ponto-a-ponto grande sem nenhuma quina de verdade, disparando divisão bem cedo demais
+// (testado: até 36m antes do necessário). Agora removerAutoCruzamento mede o ângulo só NO PONTO
+// DE CADA CORTE (maxCutAngle) — a quina que o próprio corte de alça cria — e a checagem só entra
+// em jogo se realmente houve corte (cortes>0). Sem isso, um talhão inteiro perdia a maior parte
+// das linhas de plantio incorretamente.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 function setStatus(msg, tipo = '') {
@@ -578,7 +585,7 @@ function _bboxOverlap(a, b) {
 const _offsetStats = { ajustadas: 0, puladas: 0 };
 function removerAutoCruzamento(pts) {
   let arr = pts.slice();
-  let cortes = 0, guard = 0, primeiroIndice = null;
+  let cortes = 0, guard = 0, primeiroIndice = null, maxCutAngle = 0;
   while(guard++ < 40) {
     let achou = false;
     for(let i = 0; i < arr.length - 1 && !achou; i++) {
@@ -586,6 +593,14 @@ function removerAutoCruzamento(pts) {
         const ip = _segIntersectLocal(arr[i], arr[i+1], arr[j], arr[j+1]);
         if(ip) {
           if(primeiroIndice === null) primeiroIndice = i; // índice na array ORIGINAL (1ª passada, antes de qualquer corte)
+          // Ângulo da "quina" que ESSE corte específico cria: entre o segmento que chega no ponto
+          // de corte (vindo de arr[i]) e o que sai dele (indo pro próximo ponto real, arr[j+1]).
+          // Medir só aqui (não na curva toda) evita falso positivo em curvatura sustentada e suave
+          // longe de qualquer corte, onde o ângulo ponto-a-ponto pode parecer grande sem ser quina.
+          if(arr[j+1]) {
+            const ang = _anguloEntre(arr[i], ip, arr[j+1]);
+            if(ang > maxCutAngle) maxCutAngle = ang;
+          }
           arr = arr.slice(0, i+1).concat([ip], arr.slice(j+1));
           cortes++; achou = true; break;
         }
@@ -593,7 +608,15 @@ function removerAutoCruzamento(pts) {
     }
     if(!achou) break;
   }
-  return { pts: arr, cortes, primeiroIndice };
+  return { pts: arr, cortes, primeiroIndice, maxCutAngle };
+}
+// Ângulo de desvio (graus, 0-180) no vértice p2, entre os segmentos p1->p2 e p2->p3.
+function _anguloEntre(p1, p2, p3) {
+  const a1 = Math.atan2(p2[1]-p1[1], p2[0]-p1[0]);
+  const a2 = Math.atan2(p3[1]-p2[1], p3[0]-p2[0]);
+  let d = (a2-a1) * 180/Math.PI;
+  d = ((d + 180) % 360 + 360) % 360 - 180;
+  return Math.abs(d);
 }
 // Primeiro índice (na curva A) onde A cruza uma curva B DIFERENTE — usado para detectar quando
 // linhas multiplicadas ADJACENTES (n e n+1) se cruzam entre si, o que é distinto de uma linha se
@@ -603,24 +626,6 @@ function _primeiraIntersecaoEntre(a, b) {
     for(let j = 0; j < b.length - 1; j++)
       if(_segIntersectLocal(a[i], a[i+1], b[j], b[j+1])) return i;
   return null;
-}
-// Maior ângulo de desvio (graus, 0-180) entre segmentos consecutivos de uma linha — uma curva
-// suave tem valores baixos ponto a ponto; uma "quina" (ex: a corda reta que sobra de um corte de
-// alça) aparece como um pico isolado bem maior que a vizinhança.
-function _anguloEntre(p1, p2, p3) {
-  const a1 = Math.atan2(p2[1]-p1[1], p2[0]-p1[0]);
-  const a2 = Math.atan2(p3[1]-p2[1], p3[0]-p2[0]);
-  let d = (a2-a1) * 180/Math.PI;
-  d = ((d + 180) % 360 + 360) % 360 - 180;
-  return Math.abs(d);
-}
-function _maxTurningAngleDeg(pts) {
-  let max = 0;
-  for(let i = 1; i < pts.length - 1; i++) {
-    const a = _anguloEntre(pts[i-1], pts[i], pts[i+1]);
-    if(a > max) max = a;
-  }
-  return max;
 }
 
 // Reamostrar curva com M pontos igualmente espaçados por comprimento de arco
@@ -1233,10 +1238,11 @@ function _detectarDistorcaoGuia(sg, tan, spacingKm, bboxTalhao, nBoth, anguloMax
       const rSelf = removerAutoCruzamento(raw);
       // Três motivos pra considerar "distorção": (1) auto-corte tão grande que a linha seria
       // DESCARTADA (mesmo limiar de _offsetStats.puladas — um corte pequeno já fica bem resolvido
-      // visualmente e não justifica dividir); (2) a quina que sobra do corte de alça é mais fechada
-      // que o ângulo máximo aceito pelo usuário; (3) cruza a linha vizinha (n-1).
+      // visualmente e não justifica dividir); (2) a quina criada POR UM CORTE (não a curva toda —
+      // isso evita falso positivo em curvatura sustentada e suave longe de qualquer corte) é mais
+      // fechada que o ângulo máximo aceito pelo usuário; (3) cruza a linha vizinha (n-1).
       let problema = rSelf.cortes > 3;
-      if(!problema) problema = _maxTurningAngleDeg(rSelf.pts) > anguloMaxDeg;
+      if(!problema && rSelf.cortes > 0) problema = rSelf.maxCutAngle > anguloMaxDeg;
       if(!problema && prevRaw) problema = _primeiraIntersecaoEntre(raw, prevRaw) !== null;
       if(problema) {
         if(!resultado || dist < resultado.distKm) resultado = { n, perpSign, distKm: dist };
