@@ -1,7 +1,7 @@
 ﻿import base64, sys
 sys.stdout.reconfigure(encoding='utf-8')
 
-with open('logo perfil branca.png','rb') as f:
+with open('../logo perfil branca.png','rb') as f:
     LOGO = base64.b64encode(f.read()).decode()
 
 # ── Dados das tabelas ──────────────────────────────────────────────────────────
@@ -25,11 +25,12 @@ CAVALETES = [
 ]
 
 SAIDA_BOMBAS = [
-    {"min": 10, "max": 28,  "manifold": "75mm",  "valv": "44-2", "hidrometro": '2 1/2"', "alivio": '2"', "filtro": "2x20", "pig": "75mm",  "retencao": '3"', "adutora": "75/100mm (defofo)"},
-    {"min": 28, "max": 40,  "manifold": "90mm",  "valv": "47-3", "hidrometro": '3"',     "alivio": '2"', "filtro": "2x24", "pig": "90mm",  "retencao": '3"', "adutora": "100mm (defofo)"},
-    {"min": 40, "max": 60,  "manifold": "90mm",  "valv": "47-3", "hidrometro": '3"',     "alivio": '2"', "filtro": "3x24", "pig": "90mm",  "retencao": '3"', "adutora": "100/150mm (defofo)"},
-    {"min": 60, "max": 90,  "manifold": "110mm", "valv": "47-4", "hidrometro": '4"',     "alivio": '2"', "filtro": "4x24", "pig": "110mm", "retencao": '4"', "adutora": "150mm (defofo)"},
-    {"min": 90, "max": 140, "manifold": "160mm", "valv": "47-6", "hidrometro": '6"',     "alivio": '3"', "filtro": "3x36", "pig": "160mm", "retencao": '6"', "adutora": "150/200mm (defofo)"},
+    {"min": 10, "max": 28,  "manifold": "75mm",  "valv": "44-2", "hidrometro": '2 1/2"', "alivio": '2"', "filtro": "2x20", "pig": "75mm",  "retencao": '3"', "adutora": "75mm/100 defofo"},
+    {"min": 28, "max": 40,  "manifold": "90mm",  "valv": "47-3", "hidrometro": '3"',     "alivio": '2"', "filtro": "2x24", "pig": "90mm",  "retencao": '3"', "adutora": "100 defofo"},
+    {"min": 40, "max": 45,  "manifold": "90mm",  "valv": "47-3", "hidrometro": '3"',     "alivio": '2"', "filtro": "3x24", "pig": "90mm",  "retencao": '3"', "adutora": "100/150 defofo"},
+    {"min": 45, "max": 60,  "manifold": "110mm", "valv": "47-4", "hidrometro": '4"',     "alivio": '2"', "filtro": "3x24", "pig": "110mm", "retencao": '4"', "adutora": "150 defofo"},
+    {"min": 60, "max": 90,  "manifold": "110mm", "valv": "47-4", "hidrometro": '4"',     "alivio": '2"', "filtro": "4x24", "pig": "110mm", "retencao": '4"', "adutora": "150 defofo"},
+    {"min": 90, "max": 140, "manifold": "160mm", "valv": "47-6", "hidrometro": '6"',     "alivio": '3"', "filtro": "3x36", "pig": "160mm", "retencao": '6"', "adutora": "150/200 defofo"},
 ]
 
 JS_SUCCAO       = json.dumps(SUCCAO,       ensure_ascii=False)
@@ -99,7 +100,7 @@ input:focus{border-color:#0077b6;box-shadow:0 0 0 3px rgba(0,119,182,.12)}
 <body>
 
 <div class="logo-wrap">
-  <img src="logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
+  <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
 </div>
 <h1>Casa de Bomba</h1>
 <p class="sub">Sele&ccedil;&atilde;o de Componentes por Vaz&atilde;o</p>
