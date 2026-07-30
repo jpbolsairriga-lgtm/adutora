@@ -99,7 +99,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.11</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.13</span></h1>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
@@ -198,6 +198,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
         <span id="iDivisaoLen" style="color:#e2b96e;font-weight:700;float:right;">—</span>
       </div>
       <button class="btn" id="btnConfDivisao" onclick="confirmarDivisao()" style="display:none;background:#2e7d32;color:#fff">&#10003; Confirmar Divis&#227;o</button>
+      <button class="btn btn-clr" id="btnCancelarDivisao" onclick="cancelarDivisaoUsuario()" style="display:none;margin-top:4px;">&#10005; Cancelar Divis&#227;o</button>
       <button class="btn" id="btnEditarLinhas" onclick="ativarTalhaoParaEdicao()" style="background:#1565c0;color:#fff">&#9998; Editar Linhas</button>
       <button class="btn" id="btnRedesenharSelec" onclick="redesenharLinhasSelecionado()" style="background:#e65100;color:#fff;">&#8635; Redesenhar Linhas</button>
       <button class="btn" id="btnDeclivTerreno" onclick="classificarDeclividadeTerreno()" style="background:#4a148c;color:#fff;margin-top:8px;">&#9650; Declividade do Terreno</button>
@@ -443,6 +444,18 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // de plantio geradas. Sobras em branco de uma divisão (sem linhas ainda) ficavam sem esse botão —
 // travadas em edição, sem jeito de voltar a ficar selecionável. Agora "Travar Talhão" aparece
 // sempre que o talhão está ativo, com ou sem linhas, igual já acontecia ao fechar um contorno novo.
+// v3.12: a v3.11 corrigiu só metade do problema — logo depois de reativar o talhão pra edição,
+// iniciarGuia() chamava limparLinhas(), que escondia "Travar Talhão" de novo incondicionalmente
+// (não só quando havia linhas). Resultado: o botão sumia assim que a guia começava a ser desenhada,
+// e cancelar a guia não trazia ele de volta — o talhão ficava preso sem seleção nem jeito de travar.
+// Correção definitiva: limparLinhas()/redesenharLinhas() não mexem mais em "Travar Talhão" — só
+// limparPoligono() decide quando escondê-lo (quando não há polígono ativo nenhum). Além disso,
+// cancelarGuia() agora trava o talhão automaticamente de volta (se havia um contorno ativo),
+// deixando ele selecionável de novo sem precisar clicar em nada — cancelar a guia por engano não
+// deixa mais o talhão "solto".
+// v3.13: novo botão "Cancelar Divisão" — depois de clicar "Traçar Divisão" (ou já ter traçado a
+// linha), não tinha como desistir sem selecionar outro talhão de propósito. Agora dá pra cancelar
+// a linha de corte a qualquer momento antes de "Confirmar Divisão", sem perder a seleção do talhão.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 function setStatus(msg, tipo = '') {
@@ -923,7 +936,16 @@ function cancelarGuia() {
   $('btnGuia').classList.remove('active');
   $('btnFinGuia').style.display = 'none';
   $('btnCancelarGuia').style.display = 'none';
-  setStatus('Guia cancelada.', '');
+  // Cancelar a guia não deve deixar o talhão "solto": se há um contorno ativo (com ou sem
+  // linhas — ex: talhão que estava travado e foi puxado pra edição sem querer), trava ele de
+  // volta automaticamente, igual ao estado antes de começar a desenhar a guia. Fica sem seleção
+  // (natural), pronto pra ser clicado/selecionado de novo.
+  if(!multiSelectMode && polyPts.length >= 3) {
+    arquivarTalhaoAtual();
+    setStatus('Guia cancelada. Talhão travado novamente ✓ — clique nele para selecionar.', 'ok');
+  } else {
+    setStatus('Guia cancelada.', '');
+  }
 }
 
 // ── Régua ─────────────────────────────────────────────────────────────────────
@@ -3084,12 +3106,13 @@ window.onload = function(){
 }
 
 // ── Redesenhar linhas (mantém polígono, descarta linhas não travadas) ─────────
+// Nota: NÃO mexe em btnTravarTalhao — o contorno continua ativo e travável mesmo sem
+// linhas (mesma regra de fecharPoligono). Só limparPoligono() decide quando escondê-lo.
 function redesenharLinhas() {
   linhasDecl.forEach(l => l.remove()); linhasDecl = [];
   linhas.forEach(l => l.remove()); linhas = [];
   if(infoMarker){ infoMarker.remove(); infoMarker = null; }
   $('iLinhas').textContent = '—'; $('iEspac').textContent = '—';
-  $('btnTravarTalhao').style.display = 'none';
   $('btnRedesenharLinhas').style.display = 'none';
   $('divDeclivAtivo').style.display = 'none';
   $('btnLimparDeclivAtivo').style.display = 'none';
@@ -3100,10 +3123,10 @@ function redesenharLinhas() {
 }
 
 // ── Limpar ────────────────────────────────────────────────────────────────────
+// Nota: NÃO mexe em btnTravarTalhao (ver comentário de redesenharLinhas acima).
 function limparLinhas() {
   linhas.forEach(l=>l.remove()); linhas=[];
   $('iLinhas').textContent='—'; $('iEspac').textContent='—';
-  $('btnTravarTalhao').style.display='none';
   $('btnRedesenharLinhas').style.display='none';
   $('divDeclivAtivo').style.display='none';
   $('btnLimparDeclivAtivo').style.display='none';
@@ -3128,6 +3151,8 @@ function limparPoligono() {
   if(polyTempLine){polyTempLine.remove();polyTempLine=null;}
   turfPoly=null; turfBound=null;
   $('iArea').textContent='—';
+  // Único lugar que esconde "Travar Talhão": sem polígono ativo, não há o que travar.
+  $('btnTravarTalhao').style.display='none';
   // Só desabilita "Gerar Curvas" se também não houver área de curvas desenhada
   if(!turfCurvaPoly) $('btnCurvas').disabled=true;
 }
@@ -3240,6 +3265,7 @@ function selecionarTalhao(uid) {
   $('divCarreadorOps').style.display = '';
   $('btnConfDivisao').style.display = 'none';
   $('btnFinDivisao').style.display = 'none';
+  $('btnCancelarDivisao').style.display = 'none';
   $('btnIniciarDivisao').style.display = 'flex';
   $('btnEditarLinhas').style.display = 'flex';
   $('iArea').textContent   = t.areaHa.toFixed(2) + ' ha';
@@ -3358,8 +3384,21 @@ function iniciarDivisao() {
   $('btnIniciarDivisao').style.display = 'none';
   $('btnFinDivisao').style.display     = 'flex';
   $('btnConfDivisao').style.display    = 'none';
+  $('btnCancelarDivisao').style.display = 'flex';
   $('btnEditarLinhas').style.display   = 'none';
   setStatus('Clique para adicionar pontos da linha de divisão. Duplo clique ou ⏎ para finalizar.', 'info');
+}
+
+// Desiste da divisão em andamento (traçando ou já com linha finalizada, antes de confirmar) sem
+// mexer no talhão em si — ele continua travado e selecionado, só a linha de corte é descartada.
+function cancelarDivisaoUsuario() {
+  _limparDivisaoLine();
+  $('btnIniciarDivisao').style.display  = 'flex';
+  $('btnFinDivisao').style.display      = 'none';
+  $('btnConfDivisao').style.display     = 'none';
+  $('btnCancelarDivisao').style.display = 'none';
+  $('btnEditarLinhas').style.display    = 'flex';
+  setStatus('Divisão cancelada. Talhão continua selecionado.', '');
 }
 
 function addDivisaoPt(ll) {
