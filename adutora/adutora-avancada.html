@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Cálculo Avançado de Adutora v1.1 — Bolsa Irriga</title>
+<title>Cálculo Avançado de Adutora v1.2 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -171,6 +171,12 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
       </div>
 
       <div id="mstatus" class="sb-status"></div>
+
+      <div style="border-top:1px solid var(--bdr);padding-top:.6rem">
+        <label style="margin-bottom:.35rem;display:block">Importar tra&#231;ado KML</label>
+        <input type="file" id="kmlInput" accept=".kml" style="width:100%;font-size:.78rem" onchange="importarKML()">
+        <div style="font-size:.62rem;color:var(--mu);margin-top:.3rem">Substitui o tra&#231;ado atual pelos pontos do caminho do KML.</div>
+      </div>
 
       <div style="border-top:1px solid var(--bdr);padding-top:.6rem">
         <label style="margin-bottom:.35rem;display:block">Tra&#231;ar percurso</label>
@@ -361,12 +367,15 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
 
 <script>
 // ── Controle de versão ───────────────────────────────────────────────
+// v1.2 (2026-07-31): adiciona importação de traçado via arquivo KML
+//   (importarKML) — substitui o traçado manual por pontos lidos do KML,
+//   reaproveitando os marcadores/perfil já existentes.
 // v1.1 (2026-07-14): corrige classificação de PN da tubulação, que usava a
 //   pressão de projeto (com margem/slackP) em vez da pressão hidráulica real
 //   para decidir a faixa de PN de cada trecho — causava trechos exibidos como
 //   PN mais alto que a pressão real (P_start/P_end) da tabela indicava.
 // v1.0: versão inicial (traçado, perfil de elevação, cálculo multi-PN).
-const APP_VERSION='v1.1';
+const APP_VERSION='v1.2';
 document.addEventListener('DOMContentLoaded',()=>{const vb=$('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 // ── Utilidades ────────────────────────────────────────────────────────
@@ -879,6 +888,36 @@ function limparTrace(){
   $('capDiv').style.display='none';$('elev-canvas').style.display='none';
   _perfilSamples=null;_cotaMax=null;_profileData=null;
   if(modoDesenho)toggleDesenho();setMStatus('Traçado limpo.','info');
+}
+
+// ── Importar traçado via KML ─────────────────────────────────────
+function importarKML(){
+  if(!map){setMStatus('Carregue o mapa primeiro.','err');$('kmlInput').value='';return;}
+  const f=$('kmlInput').files[0];if(!f)return;
+  const fr=new FileReader();
+  fr.onload=ev=>{
+    const doc=new DOMParser().parseFromString(ev.target.result,'application/xml');
+    if(doc.querySelector('parsererror')){setMStatus('KML inválido.','err');return;}
+    const els=doc.querySelectorAll('coordinates');
+    if(!els.length){setMStatus('Nenhum traçado (LineString) encontrado no KML.','err');return;}
+    let best=null;
+    els.forEach(el=>{
+      const pts=el.textContent.trim().split(/\s+/).map(s=>{
+        const p=s.split(',');return{lat:+p[1],lng:+p[0]};
+      }).filter(p=>!isNaN(p.lat)&&!isNaN(p.lng));
+      if(!best||pts.length>best.length)best=pts;
+    });
+    if(!best||best.length<2){setMStatus('KML sem pontos suficientes.','err');return;}
+    limparTrace();
+    best.forEach(p=>addTracePoint(new google.maps.LatLng(p.lat,p.lng)));
+    const bounds=new google.maps.LatLngBounds();
+    tracePoints.forEach(p=>bounds.extend(p));
+    map.fitBounds(bounds);
+    setMStatus(`${best.length} pontos importados do KML · ${fmtDistM(calcDist())}. Gere o perfil de elevação.`,'ok');
+  };
+  fr.onerror=()=>setMStatus('Erro ao ler o arquivo KML.','err');
+  fr.readAsText(f,'UTF-8');
+  $('kmlInput').value='';
 }
 
 async function gerarPerfil(){
