@@ -99,7 +99,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.17</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.18</span></h1>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
@@ -491,6 +491,12 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // Limitação conhecida: só usa o 1º vértice interno da guia; guias com mais de uma quina
 // precisam repetir "Traçar Divisão" manual pras quinas seguintes (poliGuidePts não é herdado
 // pelos pedaços criados pela divisão).
+// v3.18: corrige confirmarDivisao apagando TODAS as linhas de plantio ao dividir — os dois
+// talhões novos nasciam em branco, obrigando redesenhar a guia do zero em cada um. Agora
+// _clipLinhaForaDoCarreador (turf.lineSplit na linha + booleanPointInPolygon no meio de cada
+// pedaço) recorta cada linha existente tirando só o trecho que cai dentro da faixa do
+// carreador, e o resto é redistribuído pro talhão (parte) correspondente — linhas preservadas,
+// só cortadas onde o carreador passa.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 function lerAnguloMax() {
@@ -3551,6 +3557,26 @@ function cortarNoAnguloDaGuia() {
   setStatus('Linha de corte alinhada ao ângulo da guia — confira e clique em "Confirmar Divisão" (arraste os pontos se quiser ajustar).', 'ok');
 }
 
+// Recorta uma linha (array de [lng,lat]) tirando o(s) pedaço(s) que caem dentro do polígono do
+// carreador — usado por confirmarDivisao pra preservar as linhas de plantio já geradas em vez de
+// apagá-las e deixar os dois talhões novos em branco. turf.lineSplit corta a linha em cada ponto
+// onde ela cruza a borda do carreador; o pedaço cujo meio cai DENTRO do buffer é descartado, o
+// resto (um ou mais pedaços, dependendo de quantas vezes a linha cruza a faixa) é mantido.
+function _clipLinhaForaDoCarreador(coordsLngLat, carreadorBuf) {
+  let line;
+  try { line = turf.lineString(coordsLngLat); } catch(e) { return []; }
+  let pedacos = [coordsLngLat];
+  try {
+    const split = turf.lineSplit(line, carreadorBuf);
+    if(split.features.length) pedacos = split.features.map(f => f.geometry.coordinates);
+  } catch(e) {}
+  return pedacos.filter(pc => {
+    if(!pc || pc.length < 2) return false;
+    const mid = pc[Math.floor(pc.length / 2)];
+    try { return !turf.booleanPointInPolygon(turf.point(mid), carreadorBuf); } catch(e) { return true; }
+  });
+}
+
 // ── Confirmar e Executar Divisão ─────────────────────────────────────────────
 function confirmarDivisao() {
   const uid = talhaoSelecionadoUid;
@@ -3611,6 +3637,21 @@ function confirmarDivisao() {
     return;
   }
 
+  // ─ Recorta as linhas de plantio já existentes em vez de apagá-las: tira só o pedaço que cai
+  // dentro da faixa do carreador e distribui o restante para o novo talhão (parte) correspondente.
+  const linhasPorParte = partes.map(() => []);
+  t.linhas.forEach(pl => {
+    const coords = pl.getLatLngs().flat().map(ll => [ll.lng, ll.lat]);
+    if(coords.length < 2) return;
+    const pedacos = _clipLinhaForaDoCarreador(coords, carreadorBuf);
+    pedacos.forEach(pc => {
+      if(pc.length < 2) return;
+      const mid = turf.point(pc[Math.floor(pc.length/2)]);
+      const destino = partes.findIndex(parte => { try { return turf.booleanPointInPolygon(mid, parte); } catch(e) { return false; } });
+      if(destino >= 0) linhasPorParte[destino].push({coords: pc, color: pl.options.color, weight: pl.options.weight});
+    });
+  });
+
   // ─ Remove talhão original do mapa e do array ─
   if(t.polyLayer) t.polyLayer.remove();
   t.linhas.forEach(l => l.remove());
@@ -3632,8 +3673,8 @@ function confirmarDivisao() {
     });
   }
 
-  // ─ Criar 2 novos talhões arquivados ─
-  partes.forEach((parte) => {
+  // ─ Criar 2 novos talhões arquivados, com as linhas de plantio recortadas já dentro ─
+  partes.forEach((parte, pIdx) => {
     const polyCoords = parte.geometry.coordinates[0];
     const newPolyPts = polyCoords.slice(0,-1).map(([lng,lat]) => ({lat, lng}));
     const newIdx     = talhoesArquivados.length;
@@ -3646,13 +3687,19 @@ function confirmarDivisao() {
 
     newLayer.on('click', () => { if(modo==='idle') selecionarTalhao(capturedNewUid); });
 
+    const newLinhas = linhasPorParte[pIdx].map(l =>
+      L.polyline(l.coords.map(([lng,lat]) => [lat,lng]), {color:l.color, weight:l.weight, opacity:.95}).addTo(map)
+    );
+    let metrosLin = 0;
+    newLinhas.forEach(pl => { const pts = pl.getLatLngs().flat(); for(let i=0;i<pts.length-1;i++) metrosLin += haversineM(pts[i],pts[i+1]); });
+
     const novoTalhao = {
       uid: newUid, idx: newIdx+1, cor: newCor,
       corLinha: t.corLinha, baseLabelZoom: map.getZoom(),
       areaHa: turf.area(parte)/10000,
-      spacing: t.spacing, count:0, metrosLin:0,
+      spacing: t.spacing, count: newLinhas.length, metrosLin,
       polyLayer: newLayer, polyPts: newPolyPts,
-      linhas:[], linhasDecl:[], infoMarker:null,
+      linhas: newLinhas, linhasDecl:[], infoMarker:null,
       turfPoly: parte
     };
     talhoesArquivados.push(novoTalhao);
