@@ -99,7 +99,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.14</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.15</span></h1>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
@@ -243,7 +243,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
     </div>
     <label style="margin-top:8px;">Ângulo máximo da linha</label>
     <div class="row2"><div><input type="number" id="anguloMax" value="25" min="5" max="90" step="1"></div><div style="display:flex;align-items:center;padding-left:4px;font-size:12px;color:#78909c;">graus</div></div>
-    <div style="color:#78909c;font-size:10.5px;margin-top:2px;">Quina mais fechada que isso no modo Suave divide o talhão automaticamente (como já acontece por auto-cruzamento). 0 desativa esse critério.</div>
+    <div style="color:#78909c;font-size:10.5px;margin-top:2px;">Quina mais fechada que isso no modo Suave divide o talhão automaticamente (como já acontece por auto-cruzamento). 0 desativa toda a divisão automática — linhas muito distorcidas são só puladas, sem dividir o talhão.</div>
   </div>
 
   <div class="sec">
@@ -461,6 +461,13 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // (0) virava 25 silenciosamente; (2) mesmo lendo 0 corretamente, a comparação `maxCutAngle > 0`
 // dispararia divisão a qualquer corte (o oposto do desejado). Agora lerAnguloMax() preserva 0, e
 // _detectarDistorcaoGuia só aplica o critério de ângulo quando anguloMaxDeg > 0.
+// v3.15: v3.14 não bastava — _detectarDistorcaoGuia tem MAIS dois critérios de divisão que não
+// dependiam do ângulo (mais de 3 cortes de auto-cruzamento numa linha multiplicada, e cruzamento
+// com a linha vizinha), então com ângulo=0 o talhão ainda podia ser dividido por esses outros
+// motivos. Agora anguloMax=0 pula a chamada de _detectarDistorcaoGuia inteira — desativa toda a
+// divisão automática do talhão nesse modo. Linhas individuais muito distorcidas continuam sendo
+// puladas (não desenhadas) pelo limite interno de cortes>3 do removerAutoCruzamento, só que sem
+// fragmentar o talhão em pedaços.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 function lerAnguloMax() {
@@ -1531,7 +1538,7 @@ function gerarLinhas() {
         const tbbox = turf.bbox(tPolyT);
         const text = turf.distance(turf.point([tbbox[0],tbbox[1]]), turf.point([tbbox[2],tbbox[3]])) * 2;
         const tnBoth = Math.ceil(text / 2 / spacingKm) + 2;
-        const distorcao = _detectarDistorcaoGuia(_sgMulti, _tanMulti, spacingKm, tbbox, tnBoth, anguloMax);
+        const distorcao = anguloMax > 0 ? _detectarDistorcaoGuia(_sgMulti, _tanMulti, spacingKm, tbbox, tnBoth, anguloMax) : null;
         if(distorcao !== null) {
           const count = _dividirTalhaoArquivadoPorDistorcao(t, _sgMulti, _tanMulti, distorcao, rowBrgGlobal, perpBrg, spacingKm, cor, esp, spacing, text, larguraGap);
           if(count !== null) {
@@ -1690,7 +1697,7 @@ function gerarLinhas() {
     // talhão ali em vez de renderizar um emaranhado/quinado — mantém a parte boa com as linhas já
     // geradas e arquiva o resto em branco.
     const _anguloMax = lerAnguloMax();
-    const _distorcao = _detectarDistorcaoGuia(_sg02, _tan2, spacingKm, bbox, nBoth, _anguloMax);
+    const _distorcao = _anguloMax > 0 ? _detectarDistorcaoGuia(_sg02, _tan2, spacingKm, bbox, nBoth, _anguloMax) : null;
     // Não filtra por % de posição na guia — perto das pontas também vale dividir (sobra só um
     // pedaço pequeno em branco). _dividirTalhaoPorDistorcao já recusa sozinha se o corte não gerar
     // 2 partes utilizáveis (>10 m²), então essa é a única salvaguarda necessária.
