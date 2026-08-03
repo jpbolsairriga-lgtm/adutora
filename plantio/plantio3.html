@@ -99,7 +99,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.15</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.16</span></h1>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
@@ -213,6 +213,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
     <div class="row2" style="margin-bottom:6px;">
       <button class="btn" id="btnModoReta" onclick="setModoGuia('reta')" style="background:#37474f;font-size:12px;">&#9135; Reta</button>
       <button class="btn" id="btnModoSpline" onclick="setModoGuia('spline')" style="background:#37474f;font-size:12px;">&#12316; Suave</button>
+      <button class="btn" id="btnModoPoli" onclick="setModoGuia('poli')" style="background:#37474f;font-size:12px;">&#8961; Polilinha</button>
     </div>
     <button class="btn btn-guide" id="btnGuia" onclick="iniciarGuia()">&#9998; Desenhar Guia</button>
     <button class="btn btn-finish" id="btnFinGuia" onclick="finalizarGuia()">&#10003; Finalizar Guia</button>
@@ -468,6 +469,16 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // divisão automática do talhão nesse modo. Linhas individuais muito distorcidas continuam sendo
 // puladas (não desenhadas) pelo limite interno de cortes>3 do removerAutoCruzamento, só que sem
 // fragmentar o talhão em pedaços.
+// v3.16: novo modo de guia "Polilinha" — terceiro botão ao lado de Reta/Suave. Desenha vários
+// pontos como o modo Suave, mas SEM aplicar o catmullRom (suavização) — os segmentos ficam retos
+// entre os vértices, cantos vivos, como uma polilinha do AutoCAD. Reaproveita toda a engine de
+// offset por tangente local (addSplineRow/_gerarLinhasParaTalhao) que o modo Suave já tinha,
+// trocando só a reamostragem: resampleCurve(guidePts) em vez de resampleCurve(catmullRom(...)).
+// Por pedido do usuário, o Polilinha NÃO aciona a auto-divisão por distorção (essa continua
+// exclusiva do modo Suave, controlada por "Ângulo máximo da linha") — perto de um canto fechado
+// a linha só pode ficar com uma leve quebra visual ou ser pulada (cortes>3), sem dividir o
+// talhão sozinha; divisão continua manual via "Traçar Divisão" (que já existia e já faz
+// exatamente "pegar a largura do carreador e jogar metade pra cada lado").
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 function lerAnguloMax() {
@@ -540,7 +551,7 @@ if(savedKey) {
 
 // ── Estado ───────────────────────────────────────────────────────────────────
 let modo = 'idle'; // 'poly' | 'guide' | 'idle' | 'curvapoly'
-let modoGuia = 'reta'; // 'reta' | 'spline'
+let modoGuia = 'reta'; // 'reta' | 'spline' | 'poli'
 let polyPts = [], polyMarkers = [], polyLayer = null, polyTempLine = null;
 let guidePts = [], guideMarkers = [], guideLayer = null;
 let reguaPts = [], reguaMarkers = [], reguaLayer = null;
@@ -858,6 +869,7 @@ function setModoGuia(m) {
   modoGuia = m;
   $('btnModoReta').style.background = m==='reta' ? '#1565c0' : '#37474f';
   $('btnModoSpline').style.background = m==='spline' ? '#e65100' : '#37474f';
+  $('btnModoPoli').style.background = m==='poli' ? '#6a1b9a' : '#37474f';
 }
 
 function iniciarGuia() {
@@ -1205,9 +1217,11 @@ function _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingK
       return added > 0;
     } catch(e) { return false; }
   }
-  // MODO SUAVE — offset perpendicular local à tangente de cada ponto da guia
+  // MODO SUAVE/POLILINHA — offset perpendicular local à tangente de cada ponto da guia.
+  // Suave reamostra a curva já suavizada (catmullRom); Polilinha reamostra os pontos CRUS da
+  // guia direto — segmentos retos entre vértices, sem suavizar (cantos vivos preservados).
   const _SM = 400;
-  const _sg0 = resampleCurve(catmullRom(guidePts, 60), _SM);
+  const _sg0 = modoGuia === 'poli' ? resampleCurve(guidePts, _SM) : resampleCurve(catmullRom(guidePts, 60), _SM);
   const _tan0 = _sg0.map((p,i) => {
     const a = _sg0[Math.max(0,i-1)], b = _sg0[Math.min(_SM-1,i+1)];
     return turf.bearing(turf.point([a.lng,a.lat]), turf.point([b.lng,b.lat]));
@@ -1260,7 +1274,7 @@ function _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingK
     flush();
     return added > 0;
   }
-  if(modoGuia === 'spline') {
+  if(modoGuia === 'spline' || modoGuia === 'poli') {
     addSplineRow(0, 1);
     for(let n = 1; n <= nBoth; n++) addSplineRow(n,  1);
     for(let n = 1; n <= nBoth; n++) addSplineRow(n, -1);
@@ -1635,9 +1649,10 @@ function gerarLinhas() {
     } catch(e) { return false; }
   }
 
-  // MODO SUAVE — offset perpendicular local à tangente de cada ponto da guia
+  // MODO SUAVE/POLILINHA — offset perpendicular local à tangente de cada ponto da guia.
+  // Polilinha reamostra os pontos crus (sem catmullRom) — segmentos retos, cantos vivos.
   const _SM2 = 400;
-  const _sg02 = resampleCurve(catmullRom(gp, 60), _SM2);
+  const _sg02 = modoGuia === 'poli' ? resampleCurve(gp, _SM2) : resampleCurve(catmullRom(gp, 60), _SM2);
   const _tan2 = _sg02.map((p,i) => {
     const a = _sg02[Math.max(0,i-1)], b = _sg02[Math.min(_SM2-1,i+1)];
     return turf.bearing(turf.point([a.lng,a.lat]), turf.point([b.lng,b.lat]));
@@ -1691,22 +1706,26 @@ function gerarLinhas() {
     return added > 0;
   }
 
-  if(modoGuia === 'spline') {
-    // Antes de gerar: verifica se a guia vai distorcer em algum ponto (auto-cruzamento, quina
-    // acima do ângulo máximo configurado, ou cruzamento entre linhas vizinhas). Se sim, divide o
-    // talhão ali em vez de renderizar um emaranhado/quinado — mantém a parte boa com as linhas já
-    // geradas e arquiva o resto em branco.
-    const _anguloMax = lerAnguloMax();
-    const _distorcao = _anguloMax > 0 ? _detectarDistorcaoGuia(_sg02, _tan2, spacingKm, bbox, nBoth, _anguloMax) : null;
-    // Não filtra por % de posição na guia — perto das pontas também vale dividir (sobra só um
-    // pedaço pequeno em branco). _dividirTalhaoPorDistorcao já recusa sozinha se o corte não gerar
-    // 2 partes utilizáveis (>10 m²), então essa é a única salvaguarda necessária.
-    if(_distorcao !== null) {
-      const _larguraGap = parseFloat($('larguraCarreador')?.value) || 6;
-      if(_dividirTalhaoPorDistorcao(_sg02, _tan2, _distorcao, rowBrgGlobal, perpBrg, spacingKm, cor, esp, spacing, ext, _larguraGap)) {
-        return;
+  if(modoGuia === 'spline' || modoGuia === 'poli') {
+    // Auto-divisão por distorção é exclusiva do modo Suave — no Polilinha os cantos são
+    // desenhados como estão (segmentos retos de verdade), sem cortar o talhão sozinho ali.
+    if(modoGuia === 'spline') {
+      // Antes de gerar: verifica se a guia vai distorcer em algum ponto (auto-cruzamento, quina
+      // acima do ângulo máximo configurado, ou cruzamento entre linhas vizinhas). Se sim, divide o
+      // talhão ali em vez de renderizar um emaranhado/quinado — mantém a parte boa com as linhas já
+      // geradas e arquiva o resto em branco.
+      const _anguloMax = lerAnguloMax();
+      const _distorcao = _anguloMax > 0 ? _detectarDistorcaoGuia(_sg02, _tan2, spacingKm, bbox, nBoth, _anguloMax) : null;
+      // Não filtra por % de posição na guia — perto das pontas também vale dividir (sobra só um
+      // pedaço pequeno em branco). _dividirTalhaoPorDistorcao já recusa sozinha se o corte não gerar
+      // 2 partes utilizáveis (>10 m²), então essa é a única salvaguarda necessária.
+      if(_distorcao !== null) {
+        const _larguraGap = parseFloat($('larguraCarreador')?.value) || 6;
+        if(_dividirTalhaoPorDistorcao(_sg02, _tan2, _distorcao, rowBrgGlobal, perpBrg, spacingKm, cor, esp, spacing, ext, _larguraGap)) {
+          return;
+        }
+        _offsetStats.splitFalhou = true; // registra pra mensagem final — divisão foi tentada mas não coube
       }
-      _offsetStats.splitFalhou = true; // registra pra mensagem final — divisão foi tentada mas não coube
     }
     addSplineRow(0, 1);
     for(let n = 1; n <= nBoth; n++) addSplineRow(n,  1);
