@@ -99,7 +99,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.16</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.17</span></h1>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
@@ -192,6 +192,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
         <div style="display:flex;align-items:center;padding-left:4px;font-size:12px;color:#78909c">metros</div>
       </div>
       <button class="btn btn-carreador" id="btnIniciarDivisao" onclick="iniciarDivisao()">&#9986; Tra&#231;ar Divis&#227;o</button>
+      <button class="btn" id="btnCortarAngulo" onclick="cortarNoAnguloDaGuia()" style="display:none;background:#6a1b9a;color:#fff;font-size:11.5px;margin-top:4px;">&#8961; Cortar no &#194;ngulo da Guia</button>
       <button class="btn btn-finish" id="btnFinDivisao" onclick="finalizarDivisaoLinha()" style="display:none">&#10003; Finalizar Linha</button>
       <div id="rowDivisaoLen" style="display:none;margin-top:6px;background:#0f3460;border-radius:5px;padding:5px 10px;font-size:12px;">
         <span style="color:#78909c;">Comprimento:</span>
@@ -479,6 +480,17 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // a linha só pode ficar com uma leve quebra visual ou ser pulada (cortes>3), sem dividir o
 // talhão sozinha; divisão continua manual via "Traçar Divisão" (que já existia e já faz
 // exatamente "pegar a largura do carreador e jogar metade pra cada lado").
+// v3.17: novo botão "Cortar no Ângulo da Guia" — depois de gerar linhas em modo Polilinha com
+// pelo menos 1 vértice, os pontos crus da guia ficam salvos no talhão (poliGuidePts, já que
+// guidePts é limpo antes de "Travar Talhão"). Ao selecionar esse talhão, o botão aparece na
+// seção de Divisão e, com 1 clique, posiciona a linha de corte EXATAMENTE no vértice, alinhada
+// perpendicular à bissetriz das direções dos dois trechos da guia (_bearingBissetriz, média
+// circular em módulo 180° pra tratar reta como reta, não vetor). Resolve o problema de tentar
+// acertar esse corte à mão (imprecisão perto do ângulo). Só posiciona — a confirmação
+// ("Confirmar Divisão", turf.buffer largura/2) continua manual, sem mudar esse mecanismo.
+// Limitação conhecida: só usa o 1º vértice interno da guia; guias com mais de uma quina
+// precisam repetir "Traçar Divisão" manual pras quinas seguintes (poliGuidePts não é herdado
+// pelos pedaços criados pela divisão).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 function lerAnguloMax() {
@@ -561,6 +573,10 @@ let infoMarker = null;
 let baseLabelZoom = 14;
 let corLinhaAtual = '#FFD600'; // cor das linhas do talhão ativo (salva para KML)
 let spacingAtual = 12, countLinhasAtual = 0, metrosLinAtual = 0, areaHaAtual = 0;
+// Pontos crus da guia Polilinha usada na última geração (modo simples) — guidePts já é limpo
+// (limparGuia) antes de "Travar Talhão" rodar, então precisa ficar salvo à parte pra poder
+// oferecer o corte automático no ângulo depois que o talhão já estiver travado/arquivado.
+let poliGuidePtsAtual = null;
 
 // Talhões bloqueados (múltiplos)
 let talhoesArquivados = [];
@@ -1049,6 +1065,7 @@ function arquivarTalhaoAtual() {
     polyPts: [...polyPts],
     linhas: [...linhas],
     linhasDecl: [...linhasDecl],
+    poliGuidePts: poliGuidePtsAtual,
     infoMarker,
     turfPoly
   });
@@ -1526,6 +1543,7 @@ function gerarLinhas() {
     const anguloMax = lerAnguloMax();
     const larguraGap = parseFloat($('larguraCarreador')?.value) || 6;
     const gp = guidePts;
+    const poliPts = modoGuia === 'poli' && gp.length >= 3 ? gp.map(p => ({lat:p.lat, lng:p.lng})) : null;
     const rowBrgGlobal = turf.bearing(turf.point([gp[0].lng,gp[0].lat]), turf.point([gp[gp.length-1].lng,gp[gp.length-1].lat]));
     const perpBrg = rowBrgGlobal + 90;
     // _sg/_tan dependem só da guia (não do talhão) — calcula uma vez só, fora do laço
@@ -1573,6 +1591,7 @@ function gerarLinhas() {
       t.count = count;
       t.spacing = spacing;
       t.corLinha = cor;
+      t.poliGuidePts = poliPts;
       let metrosLin = 0;
       newLinhas.forEach(pl => { const pts = pl.getLatLngs().flat(); for(let i=0;i<pts.length-1;i++) metrosLin+=haversineM(pts[i],pts[i+1]); });
       t.metrosLin = metrosLin;
@@ -1604,6 +1623,7 @@ function gerarLinhas() {
   const esp = parseFloat($('espess').value) || 1.5;
 
   const gp = guidePts;
+  poliGuidePtsAtual = modoGuia === 'poli' && gp.length >= 3 ? gp.map(p => ({lat:p.lat, lng:p.lng})) : null;
 
   // Bearing geral da guia (primeiro → último ponto) — define o eixo perpendicular
   const rowBrgGlobal = turf.bearing(
@@ -3303,6 +3323,7 @@ function selecionarTalhao(uid) {
   $('btnFinDivisao').style.display = 'none';
   $('btnCancelarDivisao').style.display = 'none';
   $('btnIniciarDivisao').style.display = 'flex';
+  $('btnCortarAngulo').style.display = (t.poliGuidePts && t.poliGuidePts.length >= 3) ? 'flex' : 'none';
   $('btnEditarLinhas').style.display = 'flex';
   $('iArea').textContent   = t.areaHa.toFixed(2) + ' ha';
   $('iLinhas').textContent = t.count  || '—';
@@ -3418,6 +3439,7 @@ function iniciarDivisao() {
   modo = 'divisao';
   map.getContainer().style.cursor = 'crosshair';
   $('btnIniciarDivisao').style.display = 'none';
+  $('btnCortarAngulo').style.display   = 'none';
   $('btnFinDivisao').style.display     = 'flex';
   $('btnConfDivisao').style.display    = 'none';
   $('btnCancelarDivisao').style.display = 'flex';
@@ -3434,6 +3456,8 @@ function cancelarDivisaoUsuario() {
   $('btnConfDivisao').style.display     = 'none';
   $('btnCancelarDivisao').style.display = 'none';
   $('btnEditarLinhas').style.display    = 'flex';
+  const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
+  $('btnCortarAngulo').style.display = (t && t.poliGuidePts && t.poliGuidePts.length >= 3) ? 'flex' : 'none';
   setStatus('Divisão cancelada. Talhão continua selecionado.', '');
 }
 
@@ -3476,6 +3500,55 @@ function finalizarDivisaoLinha() {
   $('btnFinDivisao').style.display  = 'none';
   $('btnConfDivisao').style.display = 'flex';
   setStatus('Linha finalizada. Clique em "Confirmar Divisão" para criar o carreador.', 'info');
+}
+
+// ── Corte automático no ângulo da guia Polilinha ──────────────────────────────
+// Bissetriz de duas direções de RETA (não vetores — 10° e 190° são a mesma reta, então
+// trabalha em módulo 180°). Usa o truque do ângulo dobrado (circular mean) pra tirar a média
+// certa mesmo perto do wraparound 0°/180° (ex.: retas em 10° e 170° têm bissetriz em 0°, não
+// em 90° — 20° de diferença real, não 160°).
+function _bearingBissetriz(b1, b2) {
+  const r = Math.PI / 180;
+  const n1 = (((b1 % 180) + 180) % 180) * 2 * r;
+  const n2 = (((b2 % 180) + 180) % 180) * 2 * r;
+  const sy = Math.sin(n1) + Math.sin(n2), sx = Math.cos(n1) + Math.cos(n2);
+  if(Math.abs(sy) < 1e-9 && Math.abs(sx) < 1e-9) return ((b1 + b2) / 2 % 180 + 180) % 180; // caso degenerado (~90° entre as retas)
+  const mean = Math.atan2(sy, sx) / r / 2;
+  return ((mean % 180) + 180) % 180;
+}
+
+// Usa o vértice da guia Polilinha salva no talhão selecionado como linha de corte automática,
+// alinhada com o ângulo real da guia (perpendicular à direção média das linhas dos dois lados)
+// em vez de depender do usuário acertar o traço à mão. Só posiciona a linha — a confirmação
+// (turf.buffer largura/2, igual à Divisão manual) continua sendo um passo separado do usuário.
+function cortarNoAnguloDaGuia() {
+  const uid = talhaoSelecionadoUid;
+  if(uid === null) { setStatus('Selecione um talhão primeiro.', 'err'); return; }
+  const t = talhoesArquivados.find(x => x.uid === uid);
+  if(!t || !t.poliGuidePts || t.poliGuidePts.length < 3) {
+    setStatus('Esse talhão não tem uma guia Polilinha com vértice salva.', 'err');
+    return;
+  }
+  const gp = t.poliGuidePts, V = gp[1], P0 = gp[0], P1 = gp[2];
+  const b1 = turf.bearing(turf.point([P0.lng,P0.lat]), turf.point([V.lng,V.lat]));
+  const b2 = turf.bearing(turf.point([V.lng,V.lat]), turf.point([P1.lng,P1.lat]));
+  const corteBrg = _bearingBissetriz(b1, b2) + 90; // perpendicular à direção média das linhas
+
+  const ring = [...t.polyPts.map(p => [p.lng,p.lat]), [t.polyPts[0].lng, t.polyPts[0].lat]];
+  let poly;
+  try { poly = turf.polygon([ring]); } catch(e) { setStatus('Erro ao processar o polígono.','err'); return; }
+  const bbox = turf.bbox(poly);
+  const diag = turf.distance(turf.point([bbox[0],bbox[1]]), turf.point([bbox[2],bbox[3]])) * 1.5;
+  const a = turf.destination(turf.point([V.lng,V.lat]), diag, corteBrg,       {units:'kilometers'}).geometry.coordinates;
+  const b = turf.destination(turf.point([V.lng,V.lat]), diag, corteBrg + 180, {units:'kilometers'}).geometry.coordinates;
+
+  iniciarDivisao();
+  setModoDivisaoGuia('reta');
+  addDivisaoPt({lat:a[1], lng:a[0]});
+  addDivisaoPt({lat:V.lat, lng:V.lng});
+  addDivisaoPt({lat:b[1], lng:b[0]});
+  finalizarDivisaoLinha();
+  setStatus('Linha de corte alinhada ao ângulo da guia — confira e clique em "Confirmar Divisão" (arraste os pontos se quiser ajustar).', 'ok');
 }
 
 // ── Confirmar e Executar Divisão ─────────────────────────────────────────────
