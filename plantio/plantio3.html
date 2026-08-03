@@ -99,7 +99,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.13</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.14</span></h1>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
@@ -243,7 +243,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
     </div>
     <label style="margin-top:8px;">Ângulo máximo da linha</label>
     <div class="row2"><div><input type="number" id="anguloMax" value="25" min="5" max="90" step="1"></div><div style="display:flex;align-items:center;padding-left:4px;font-size:12px;color:#78909c;">graus</div></div>
-    <div style="color:#78909c;font-size:10.5px;margin-top:2px;">Quina mais fechada que isso no modo Suave divide o talhão automaticamente (como já acontece por auto-cruzamento).</div>
+    <div style="color:#78909c;font-size:10.5px;margin-top:2px;">Quina mais fechada que isso no modo Suave divide o talhão automaticamente (como já acontece por auto-cruzamento). 0 desativa esse critério.</div>
   </div>
 
   <div class="sec">
@@ -456,8 +456,18 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // v3.13: novo botão "Cancelar Divisão" — depois de clicar "Traçar Divisão" (ou já ter traçado a
 // linha), não tinha como desistir sem selecionar outro talhão de propósito. Agora dá pra cancelar
 // a linha de corte a qualquer momento antes de "Confirmar Divisão", sem perder a seleção do talhão.
+// v3.14: corrige "Ângulo máximo da linha" = 0 não desativava a divisão por ângulo. Duas causas:
+// (1) a leitura do campo usava `parseFloat(...) || 25`, e como 0 é falsy em JS, o valor digitado
+// (0) virava 25 silenciosamente; (2) mesmo lendo 0 corretamente, a comparação `maxCutAngle > 0`
+// dispararia divisão a qualquer corte (o oposto do desejado). Agora lerAnguloMax() preserva 0, e
+// _detectarDistorcaoGuia só aplica o critério de ângulo quando anguloMaxDeg > 0.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
+function lerAnguloMax() {
+  const raw = $('anguloMax')?.value;
+  const v = parseFloat(raw);
+  return (raw === '' || raw == null || isNaN(v)) ? 25 : v;
+}
 function setStatus(msg, tipo = '') {
   const el = $('status');
   if(el) { el.textContent = msg; el.className = tipo; }
@@ -1278,7 +1288,7 @@ function _detectarDistorcaoGuia(sg, tan, spacingKm, bboxTalhao, nBoth, anguloMax
       // isso evita falso positivo em curvatura sustentada e suave longe de qualquer corte) é mais
       // fechada que o ângulo máximo aceito pelo usuário; (3) cruza a linha vizinha (n-1).
       let problema = rSelf.cortes > 3;
-      if(!problema && rSelf.cortes > 0) problema = rSelf.maxCutAngle > anguloMaxDeg;
+      if(!problema && rSelf.cortes > 0) problema = anguloMaxDeg > 0 && rSelf.maxCutAngle > anguloMaxDeg;
       if(!problema && prevRaw) problema = _primeiraIntersecaoEntre(raw, prevRaw) !== null;
       if(problema) {
         if(!resultado || dist < resultado.distKm) resultado = { n, perpSign, distKm: dist };
@@ -1492,7 +1502,7 @@ function gerarLinhas() {
     const spacingKm = spacing / 1000;
     const cor = $('corLinha').value;
     const esp = parseFloat($('espess').value) || 1.5;
-    const anguloMax = parseFloat($('anguloMax')?.value) || 25;
+    const anguloMax = lerAnguloMax();
     const larguraGap = parseFloat($('larguraCarreador')?.value) || 6;
     const gp = guidePts;
     const rowBrgGlobal = turf.bearing(turf.point([gp[0].lng,gp[0].lat]), turf.point([gp[gp.length-1].lng,gp[gp.length-1].lat]));
@@ -1679,7 +1689,7 @@ function gerarLinhas() {
     // acima do ângulo máximo configurado, ou cruzamento entre linhas vizinhas). Se sim, divide o
     // talhão ali em vez de renderizar um emaranhado/quinado — mantém a parte boa com as linhas já
     // geradas e arquiva o resto em branco.
-    const _anguloMax = parseFloat($('anguloMax')?.value) || 25;
+    const _anguloMax = lerAnguloMax();
     const _distorcao = _detectarDistorcaoGuia(_sg02, _tan2, spacingKm, bbox, nBoth, _anguloMax);
     // Não filtra por % de posição na guia — perto das pontas também vale dividir (sobra só um
     // pedaço pequeno em branco). _dividirTalhaoPorDistorcao já recusa sozinha se o corte não gerar
