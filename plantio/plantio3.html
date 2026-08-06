@@ -99,7 +99,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.19</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.20</span></h1>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
@@ -504,6 +504,15 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // talhão, podendo até piorar a distorção que a técnica tentava evitar. Agora esticar a guia só
 // adiciona mais pontos no trecho extra, sem tirar resolução de onde importa (teto de 1200 pontos
 // por guia, pra não pesar demais em guias absurdamente compridas).
+// v3.20: corrige vão sem NENHUMA linha bem no meio do talhão, perto de uma curva fechada da guia
+// (comum em modo Polilinha, sem auto-divisão, e em Suave com "Ângulo máximo"=0). Causa: cortes>3
+// descartava a linha INTEIRA — mas removerAutoCruzamento já resolve todos os auto-cruzamentos que
+// encontra (só pararia sem terminar se batesse no guard=40), então cortes>3 não significa linha
+// quebrada, só que precisou de mais cirurgia perto da curva. Bem no ponto mais fechado da guia,
+// TODAS as linhas offset (de todos os afastamentos) precisam de vários cortes ali — descartar
+// todas elas deixava a faixa inteira em branco. Limiar subiu de 3 para 30 cortes (bem perto do
+// teto real do guard) — agora desenha o resultado corrigido em quase todos os casos, só desiste
+// mesmo perto do limite estrutural.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 function lerAnguloMax() {
@@ -1283,8 +1292,14 @@ function _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingK
     });
     if(n !== 0) {
       if(!_bboxOverlap(_bboxOfPts(pts), bbox)) return false; // fora do talhão — evita custo O(n²) à toa
+      // removerAutoCruzamento já corta e resolve TODOS os auto-cruzamentos que encontra (o loop só
+      // para antes disso se bater no guard=40) — cortes>3 não é sinal de linha ainda quebrada, só
+      // de que precisou de bastante cirurgia perto de uma curva fechada da guia. Descartar a linha
+      // inteira nesse caso deixava um vão sem nenhuma linha bem no meio do talhão (perto da curva
+      // mais fechada, onde TODAS as linhas offset precisam de vários cortes). Só desiste perto do
+      // teto real do guard — abaixo disso, desenha o resultado corrigido em vez de pular.
       const { pts: ptsOk, cortes } = removerAutoCruzamento(pts);
-      if(cortes > 3) { _offsetStats.puladas++; return false; }
+      if(cortes > 30) { _offsetStats.puladas++; return false; }
       if(cortes > 0) _offsetStats.ajustadas++;
       pts = ptsOk;
     }
@@ -1718,8 +1733,14 @@ function gerarLinhas() {
     });
     if(n !== 0) {
       if(!_bboxOverlap(_bboxOfPts(pts), bbox)) return false; // fora do talhão — evita custo O(n²) à toa
+      // removerAutoCruzamento já corta e resolve TODOS os auto-cruzamentos que encontra (o loop só
+      // para antes disso se bater no guard=40) — cortes>3 não é sinal de linha ainda quebrada, só
+      // de que precisou de bastante cirurgia perto de uma curva fechada da guia. Descartar a linha
+      // inteira nesse caso deixava um vão sem nenhuma linha bem no meio do talhão (perto da curva
+      // mais fechada, onde TODAS as linhas offset precisam de vários cortes). Só desiste perto do
+      // teto real do guard — abaixo disso, desenha o resultado corrigido em vez de pular.
       const { pts: ptsOk, cortes } = removerAutoCruzamento(pts);
-      if(cortes > 3) { _offsetStats.puladas++; return false; }
+      if(cortes > 30) { _offsetStats.puladas++; return false; }
       if(cortes > 0) _offsetStats.ajustadas++;
       pts = ptsOk;
     }
