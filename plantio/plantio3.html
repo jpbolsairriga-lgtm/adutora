@@ -99,7 +99,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.18</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.19</span></h1>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
@@ -497,6 +497,13 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // pedaço) recorta cada linha existente tirando só o trecho que cai dentro da faixa do
 // carreador, e o resto é redistribuído pro talhão (parte) correspondente — linhas preservadas,
 // só cortadas onde o carreador passa.
+// v3.19: resampleCurveByStep substitui os M=400 pontos fixos da reamostragem da guia (Suave e
+// Polilinha) por uma densidade fixa (~0,75 m/ponto). Antes, esticar a guia pra fora do talhão
+// (técnica comum vinda do AutoCAD, evita imprecisão de tangente na ponta) tinha o efeito colateral
+// de diluir os mesmos 400 pontos num comprimento maior — sobrava menos resolução bem dentro do
+// talhão, podendo até piorar a distorção que a técnica tentava evitar. Agora esticar a guia só
+// adiciona mais pontos no trecho extra, sem tirar resolução de onde importa (teto de 1200 pontos
+// por guia, pra não pesar demais em guias absurdamente compridas).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 function lerAnguloMax() {
@@ -723,6 +730,21 @@ function resampleCurve(pts, M) {
     result.push({ lat: pts[j].lat + t*(pts[j+1].lat - pts[j].lat), lng: pts[j].lng + t*(pts[j+1].lng - pts[j].lng) });
   }
   return result;
+}
+
+// Como resampleCurve, mas a densidade de pontos é fixa POR METRO (não um total fixo de pontos).
+// Antes usávamos sempre M=400 pontos pra curva inteira — se o usuário desenha a guia bem mais
+// comprida (ex: estica pra fora do talhão dos dois lados, técnica comum vinda do AutoCAD pra
+// evitar imprecisão na ponta), os mesmos 400 pontos ficavam espalhados num comprimento maior,
+// sobrando MENOS pontos (pior resolução de tangente) bem na parte que passa dentro do talhão —
+// exatamente o oposto do que se queria. Com passo fixo, esticar a guia só adiciona mais pontos
+// no trecho extra, sem diluir a resolução onde já importava.
+function resampleCurveByStep(pts, stepM, min = 100, max = 1200) {
+  if(pts.length < 2) return pts;
+  let len = 0;
+  for(let i = 1; i < pts.length; i++) len += haversineM(pts[i-1], pts[i]);
+  const M = Math.min(max, Math.max(min, Math.round(len / stepM) + 1));
+  return resampleCurve(pts, M);
 }
 
 // ── Eventos do mapa ───────────────────────────────────────────────────────────
@@ -1243,8 +1265,10 @@ function _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingK
   // MODO SUAVE/POLILINHA — offset perpendicular local à tangente de cada ponto da guia.
   // Suave reamostra a curva já suavizada (catmullRom); Polilinha reamostra os pontos CRUS da
   // guia direto — segmentos retos entre vértices, sem suavizar (cantos vivos preservados).
-  const _SM = 400;
-  const _sg0 = modoGuia === 'poli' ? resampleCurve(guidePts, _SM) : resampleCurve(catmullRom(guidePts, 60), _SM);
+  // Passo fixo (não total fixo de pontos): esticar a guia pra fora do talhão não dilui a
+  // resolução dentro dele — ver resampleCurveByStep.
+  const _sg0 = modoGuia === 'poli' ? resampleCurveByStep(guidePts, .75) : resampleCurveByStep(catmullRom(guidePts, 60), .75);
+  const _SM = _sg0.length;
   const _tan0 = _sg0.map((p,i) => {
     const a = _sg0[Math.max(0,i-1)], b = _sg0[Math.min(_SM-1,i+1)];
     return turf.bearing(turf.point([a.lng,a.lat]), turf.point([b.lng,b.lat]));
@@ -1555,8 +1579,8 @@ function gerarLinhas() {
     // _sg/_tan dependem só da guia (não do talhão) — calcula uma vez só, fora do laço
     let _sgMulti = null, _tanMulti = null;
     if(modoGuia === 'spline') {
-      const _SM = 400;
-      _sgMulti = resampleCurve(catmullRom(gp, 60), _SM);
+      _sgMulti = resampleCurveByStep(catmullRom(gp, 60), .75);
+      const _SM = _sgMulti.length;
       _tanMulti = _sgMulti.map((p,i) => {
         const a=_sgMulti[Math.max(0,i-1)], b=_sgMulti[Math.min(_SM-1,i+1)];
         return turf.bearing(turf.point([a.lng,a.lat]), turf.point([b.lng,b.lat]));
@@ -1677,8 +1701,9 @@ function gerarLinhas() {
 
   // MODO SUAVE/POLILINHA — offset perpendicular local à tangente de cada ponto da guia.
   // Polilinha reamostra os pontos crus (sem catmullRom) — segmentos retos, cantos vivos.
-  const _SM2 = 400;
-  const _sg02 = modoGuia === 'poli' ? resampleCurve(gp, _SM2) : resampleCurve(catmullRom(gp, 60), _SM2);
+  // Passo fixo (não total fixo de pontos) — ver resampleCurveByStep.
+  const _sg02 = modoGuia === 'poli' ? resampleCurveByStep(gp, .75) : resampleCurveByStep(catmullRom(gp, 60), .75);
+  const _SM2 = _sg02.length;
   const _tan2 = _sg02.map((p,i) => {
     const a = _sg02[Math.max(0,i-1)], b = _sg02[Math.min(_SM2-1,i+1)];
     return turf.bearing(turf.point([a.lng,a.lat]), turf.point([b.lng,b.lat]));
