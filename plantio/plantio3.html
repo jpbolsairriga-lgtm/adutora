@@ -99,7 +99,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.20</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.21</span></h1>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
@@ -513,6 +513,13 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // todas elas deixava a faixa inteira em branco. Limiar subiu de 3 para 30 cortes (bem perto do
 // teto real do guard) — agora desenha o resultado corrigido em quase todos os casos, só desiste
 // mesmo perto do limite estrutural.
+// v3.21: corrige pedacinhos de linha de plantio que sobravam sem cortar, atravessando a faixa do
+// carreador depois de "Confirmar Divisão". _clipLinhaForaDoCarreador usava turf.lineSplit pra
+// achar o ponto exato de cruzamento com o buffer do carreador — impreciso perto das pontas
+// arredondadas do buffer (formato cápsula) e em cruzamentos bem rasantes (linha quase paralela à
+// faixa), casos onde o cálculo exato de interseção é sensível demais. Trocado por reamostragem
+// densa (~0,5m entre pontos) + classificação dentro/fora ponto a ponto — corte pode variar uns
+// 0,5m do ponto exato (imperceptível na escala do mapa), mas não deixa mais sobra.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 function lerAnguloMax() {
@@ -3605,22 +3612,33 @@ function cortarNoAnguloDaGuia() {
 
 // Recorta uma linha (array de [lng,lat]) tirando o(s) pedaço(s) que caem dentro do polígono do
 // carreador — usado por confirmarDivisao pra preservar as linhas de plantio já geradas em vez de
-// apagá-las e deixar os dois talhões novos em branco. turf.lineSplit corta a linha em cada ponto
-// onde ela cruza a borda do carreador; o pedaço cujo meio cai DENTRO do buffer é descartado, o
-// resto (um ou mais pedaços, dependendo de quantas vezes a linha cruza a faixa) é mantido.
+// apagá-las e deixar os dois talhões novos em branco.
+// Reamostra a linha em passos curtos (~0,5m) e classifica cada amostra como dentro/fora do
+// carreador, em vez de confiar em turf.lineSplit pra achar o ponto exato de cruzamento — o
+// lineSplit deixava pedacinhos sem cortar perto das pontas arredondadas do buffer (capsule) ou em
+// cruzamentos bem rasantes (linha quase paralela à faixa), onde o cálculo exato de interseção é
+// sensível demais. Reamostragem densa é mais grosseira (corte pode variar ~0,5m do ponto exato,
+// imperceptível na escala do mapa) mas muito mais robusta nesses casos de borda.
 function _clipLinhaForaDoCarreador(coordsLngLat, carreadorBuf) {
-  let line;
-  try { line = turf.lineString(coordsLngLat); } catch(e) { return []; }
-  let pedacos = [coordsLngLat];
-  try {
-    const split = turf.lineSplit(line, carreadorBuf);
-    if(split.features.length) pedacos = split.features.map(f => f.geometry.coordinates);
-  } catch(e) {}
-  return pedacos.filter(pc => {
-    if(!pc || pc.length < 2) return false;
-    const mid = pc[Math.floor(pc.length / 2)];
-    try { return !turf.booleanPointInPolygon(turf.point(mid), carreadorBuf); } catch(e) { return true; }
+  if(coordsLngLat.length < 2) return [];
+  const ptsLL = coordsLngLat.map(([lng,lat]) => ({lat,lng}));
+  let len = 0;
+  for(let i = 1; i < ptsLL.length; i++) len += haversineM(ptsLL[i-1], ptsLL[i]);
+  if(len < 1e-6) return [];
+  const M = Math.max(2, Math.round(len / 0.5) + 1);
+  const sample = resampleCurve(ptsLL, M);
+  const fora = sample.map(p => {
+    try { return !turf.booleanPointInPolygon(turf.point([p.lng, p.lat]), carreadorBuf); }
+    catch(e) { return true; }
   });
+  const pedacos = [];
+  let atual = [];
+  for(let i = 0; i < sample.length; i++) {
+    if(fora[i]) atual.push([sample[i].lng, sample[i].lat]);
+    else { if(atual.length >= 2) pedacos.push(atual); atual = []; }
+  }
+  if(atual.length >= 2) pedacos.push(atual);
+  return pedacos;
 }
 
 // ── Confirmar e Executar Divisão ─────────────────────────────────────────────
