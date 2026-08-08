@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sistematização de Plantio — v2.2</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#16213e">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-512.png">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;}
@@ -91,6 +95,14 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 .poly-label-row:last-child{border-bottom:none;}
 .poly-label-lbl{font-size:10px;color:#78909c;}
 .poly-label-val{font-size:12px;font-weight:700;color:#e2b96e;}
+/* ── Ativação de licença ── */
+.lic-code{background:#0f3460;border:1px solid #1e4a7a;border-radius:6px;padding:10px;font-family:Consolas,monospace;font-size:12px;color:#81d4fa;word-break:break-all;line-height:1.5;user-select:all;margin:8px 0;}
+.lic-input{width:100%;background:#0f3460;color:#e0e0e0;border:1px solid #1e4a7a;border-radius:5px;padding:8px;font-size:12px;font-family:Consolas,monospace;resize:vertical;min-height:60px;}
+.lic-btn-copy{background:#1565c0;color:#fff;border:none;border-radius:5px;padding:5px 10px;font-size:11px;cursor:pointer;font-weight:700;}
+.lic-btn-copy:hover{background:#1976d2;}
+.lic-status{font-size:12px;margin-top:8px;min-height:16px;}
+.lic-status.err{color:#ef9a9a;}
+.lic-status.ok{color:#a5d6a7;}
 </style>
 </head>
 <body>
@@ -99,10 +111,11 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.21</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.23</span></h1>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
+    <button id="btnInstalarApp" onclick="instalarApp()" style="display:none;margin-top:8px;width:100%;background:#0f3460;color:#e2b96e;border:1px solid #1e4a7a;border-radius:6px;padding:6px 8px;font-size:11px;font-weight:700;cursor:pointer;">&#11015; Instalar App</button>
   </div>
 
   <div class="sec">
@@ -368,6 +381,27 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   </div>
 </div>
 
+<!-- ── Modal: Ativação de Licença (bloqueante — sem X, sem fechar clicando fora) ── -->
+<div class="modal-bg" id="modalLicenca" style="z-index:10050;">
+  <div class="modal" style="max-width:440px;">
+    <h2>&#128274; Ativação — Sistematização de Plantio</h2>
+    <p style="color:#90a4ae;font-size:12px;margin-bottom:10px;">Este aplicativo requer ativação vinculada a este computador/navegador. A licença é permanente e funciona offline depois de ativada.</p>
+    <ol style="padding-left:18px;font-size:12px;color:#cfd8dc;line-height:1.7;margin-bottom:4px;">
+      <li>Copie o <strong>código deste dispositivo</strong> abaixo.</li>
+      <li>Envie para <strong>João Paulo — (16) 99401-2495</strong> (WhatsApp).</li>
+      <li>Cole a <strong>chave de ativação</strong> recebida no campo abaixo.</li>
+      <li>Clique em <strong>Ativar permanentemente</strong>.</li>
+    </ol>
+    <label style="display:block;font-size:11px;color:#78909c;margin:10px 0 3px;">Código deste dispositivo</label>
+    <div class="lic-code" id="licDeviceCode">gerando…</div>
+    <button class="lic-btn-copy" onclick="copiarCodigoLicenca()">&#128203; Copiar código</button>
+    <label style="display:block;font-size:11px;color:#78909c;margin:14px 0 3px;">Chave de ativação recebida</label>
+    <textarea class="lic-input" id="licChaveInput" placeholder="Cole aqui a chave recebida…"></textarea>
+    <button onclick="ativarLicenca()" style="margin-top:10px;width:100%;background:#1b5e20;color:#fff;border:none;border-radius:6px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;">&#10003; Ativar permanentemente</button>
+    <div class="lic-status" id="licStatus"></div>
+  </div>
+</div>
+
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -520,8 +554,128 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // faixa), casos onde o cálculo exato de interseção é sensível demais. Trocado por reamostragem
 // densa (~0,5m entre pontos) + classificação dentro/fora ponto a ponto — corte pode variar uns
 // 0,5m do ponto exato (imperceptível na escala do mapa), mas não deixa mais sobra.
+// v3.22: ativação por dispositivo (licenciamento offline, permanente). Ao abrir, o app calcula um
+// código único deste navegador/computador (hash de características estáveis — não é um HWID real
+// de SO, é o equivalente possível em navegador) e, se não houver uma chave de ativação válida
+// salva localmente, bloqueia o uso com um modal não-fechável até o usuário colar a chave recebida.
+// A chave é uma assinatura ECDSA P-256 do código do dispositivo: só quem tem a chave PRIVADA
+// (guardada fora deste arquivo, na ferramenta separada "ativador-plantio-admin.html") consegue
+// gerar uma chave válida — o app só tem a chave PÚBLICA, então mesmo lendo o código-fonte (é um
+// GitHub Pages público) não dá pra fabricar uma ativação nova. A licença fica em localStorage,
+// atrelada ao deviceCode calculado — copiar esse localStorage para outro navegador não funciona,
+// porque o deviceCode recalculado lá não bate com o que foi assinado.
+// v3.23: app agora é um PWA instalável — manifest.json (ícone gerado a partir da logo, nome,
+// display:standalone) + sw.js (service worker mínimo, só cacheia o esqueleto do próprio app pra
+// abrir mais rápido, não tenta deixar mapa/satélite offline) + botão "Instalar App" na barra
+// lateral (aparece só quando o navegador permite instalar — evento beforeinstallprompt). Depois
+// de instalado, abre como janela própria, sem barra de endereço, com ícone customizado na área de
+// trabalho/menu iniciar — sem precisar de instalador .exe nem Node/Electron.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
+
+// ── Licenciamento (ativação por dispositivo, offline, ECDSA P-256) ──────────────
+const LIC_PUBLIC_JWK = {kty:"EC",crv:"P-256",x:"F30RnKL9rxyFVxp-5LRRkebdZi3RgW7me5HNmSpb6Yw",y:"l1n1yBHT8vqMz1Sb4zx5ZYjRz3vFud60334jzcnL4IU",ext:true,key_ops:["verify"]};
+const LIC_STORAGE_KEY = 'bi_plantio_licenca_v1';
+let _licDeviceCode = null;
+
+function _licCanvasFP() {
+  try {
+    const c = document.createElement('canvas'); c.width = 220; c.height = 30;
+    const ctx = c.getContext('2d');
+    ctx.textBaseline = 'top'; ctx.font = '14px Arial';
+    ctx.fillStyle = '#f60'; ctx.fillRect(0, 0, 90, 18);
+    ctx.fillStyle = '#069'; ctx.fillText('BolsaIrriga-Plantio-Lic', 2, 2);
+    return c.toDataURL();
+  } catch (e) { return 'sem-canvas'; }
+}
+
+async function _licFingerprint() {
+  const partes = [
+    navigator.userAgent, navigator.platform || '', navigator.language,
+    navigator.hardwareConcurrency || '', screen.width + 'x' + screen.height + 'x' + screen.colorDepth,
+    Intl.DateTimeFormat().resolvedOptions().timeZone || '', _licCanvasFP()
+  ];
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(partes.join('|')));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function _licB64urlToBytes(s) {
+  s = s.trim().replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  const bin = atob(s);
+  return Uint8Array.from(bin, c => c.charCodeAt(0));
+}
+
+async function _licVerificar(deviceCode, chaveB64) {
+  try {
+    const pub = await crypto.subtle.importKey('jwk', LIC_PUBLIC_JWK, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+    const sig = _licB64urlToBytes(chaveB64);
+    const data = new TextEncoder().encode(deviceCode);
+    return await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, pub, sig, data);
+  } catch (e) { return false; }
+}
+
+async function checarLicenca() {
+  _licDeviceCode = await _licFingerprint();
+  const codeEl = $('licDeviceCode');
+  if (codeEl) codeEl.textContent = _licDeviceCode.match(/.{1,8}/g).join(' ');
+  let salvo = null;
+  try { salvo = JSON.parse(localStorage.getItem(LIC_STORAGE_KEY) || 'null'); } catch (e) {}
+  if (salvo && salvo.deviceCode === _licDeviceCode && await _licVerificar(_licDeviceCode, salvo.chave)) {
+    $('modalLicenca')?.classList.remove('open');
+    return true;
+  }
+  $('modalLicenca')?.classList.add('open');
+  return false;
+}
+
+async function ativarLicenca() {
+  const chave = ($('licChaveInput').value || '').trim();
+  const statusEl = $('licStatus');
+  if (!chave) { statusEl.textContent = 'Cole a chave recebida.'; statusEl.className = 'lic-status err'; return; }
+  statusEl.textContent = 'Verificando…'; statusEl.className = 'lic-status';
+  const ok = await _licVerificar(_licDeviceCode, chave);
+  if (ok) {
+    localStorage.setItem(LIC_STORAGE_KEY, JSON.stringify({ deviceCode: _licDeviceCode, chave, ativadoEm: Date.now() }));
+    statusEl.textContent = 'Ativado com sucesso!'; statusEl.className = 'lic-status ok';
+    setTimeout(() => $('modalLicenca')?.classList.remove('open'), 500);
+  } else {
+    statusEl.textContent = 'Chave inválida para este dispositivo.'; statusEl.className = 'lic-status err';
+  }
+}
+
+function copiarCodigoLicenca() {
+  if (!_licDeviceCode) return;
+  navigator.clipboard?.writeText(_licDeviceCode).then(() => {
+    const statusEl = $('licStatus');
+    if (statusEl) { statusEl.textContent = 'Código copiado!'; statusEl.className = 'lic-status ok'; }
+  });
+}
+
+checarLicenca();
+
+// ── PWA instalável (ícone próprio, abre em janela sem barra de navegador) ───────
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
+let _deferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  _deferredInstallPrompt = e;
+  const btn = $('btnInstalarApp');
+  if (btn) btn.style.display = 'block';
+});
+async function instalarApp() {
+  if (!_deferredInstallPrompt) return;
+  _deferredInstallPrompt.prompt();
+  await _deferredInstallPrompt.userChoice;
+  _deferredInstallPrompt = null;
+  $('btnInstalarApp').style.display = 'none';
+}
+window.addEventListener('appinstalled', () => {
+  const btn = $('btnInstalarApp'); if (btn) btn.style.display = 'none';
+});
+
 function lerAnguloMax() {
   const raw = $('anguloMax')?.value;
   const v = parseFloat(raw);
