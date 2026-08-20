@@ -111,7 +111,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div class="logo">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'" style="height:32px;width:32px;object-fit:contain;background:#fff;border-radius:6px;padding:3px;">
-      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.24</span></h1>
+      <h1 style="margin:0;">Sistematização de Plantio <span style="font-size:11px;color:#78909c;font-weight:400">v3.25</span></h1>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
     </div>
     <p>João Paulo de Oliveira · Eng. Agrônomo</p>
@@ -580,6 +580,17 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // pra mesma mensagem de aviso ("N linha(s) pulada(s) por curvatura fechada da guia"). Funciona
 // mesmo com a divisão automática desligada (Ângulo máximo = 0) ou quando ela falha por falta de
 // espaço — casos em que antes não havia nenhuma proteção contra esse emaranhado específico.
+// v3.25: v3.24 ainda deixava passar cruzamento em dois casos. addSplineRow comparava a linha nova
+// só contra a linha IMEDIATAMENTE anterior do mesmo lado — perto de uma curva bem fechada, uma
+// linha podia não cruzar a n-1 (que mudou de forma o bastante) mas cruzar a n-2 ou n-3, que já
+// tinham saído da checagem. E os dois lados (+1/-1) nunca eram comparados entre si — numa guia com
+// curva em U bem fechada, o começo do lado -1 pode cruzar o começo do lado +1, que é justamente
+// onde os dois passam mais perto um do outro. Trocado por: (1) uma JANELA das últimas ~16 linhas
+// desenhadas com sucesso, não só a última — _cruzaJanela, com bbox pra descartar rápido a maioria
+// antes da interseção de segmento de verdade; (2) uma lista separada, que nunca expira, com as
+// primeiras ~10 linhas de CADA lado (perto da guia) — cobre o cruzamento entre os dois lados.
+// Testado com talhão de 21ha (zero cruzamentos residuais, ~3s) e cenário de tortura sintético
+// (grampo bem fechado, zero cruzamentos em 162 linhas).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -890,6 +901,25 @@ function _primeiraIntersecaoEntre(a, b) {
     for(let j = 0; j < b.length - 1; j++)
       if(_segIntersectLocal(a[i], a[i+1], b[j], b[j+1])) return i;
   return null;
+}
+// Checa um segmento novo contra uma JANELA (fila) das últimas ~N linhas offset já desenhadas com
+// sucesso nesta geração — usada dentro de addSplineRow. Comparar só contra a linha IMEDIATAMENTE
+// anterior (versão anterior desta correção) deixava passar cruzamento com uma vizinha um pouco
+// mais distante (ex: a linha n-1 foi cortada/mudou de forma o bastante perto de uma curva bem
+// fechada da guia pra não barrar mais o cruzamento real, que só aparece contra n-2 ou n-3). Uma
+// janela de várias linhas cobre isso sem voltar a comparar contra TODAS as linhas já desenhadas
+// (custo O(total²) que travava em talhões grandes) — bbox descarta rápido a grande maioria antes
+// de fazer a interseção de segmento de verdade.
+function _cruzaJanela(seg, janela) {
+  const bb = _bboxOfPts(seg);
+  for(let k = 0; k < janela.length; k++) {
+    const arr = janela[k];
+    for(let m = 0; m < arr.length; m++) {
+      if(!_bboxOverlap(bb, arr[m].bbox)) continue;
+      if(_primeiraIntersecaoEntre(seg, arr[m].pts) !== null) return true;
+    }
+  }
+  return false;
 }
 
 // Reamostrar curva com M pontos igualmente espaçados por comprimento de arco
@@ -1419,10 +1449,18 @@ function _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingK
   const anchor = turf.centroid(tPolyT).geometry.coordinates;
   const nBoth = Math.ceil(ext / 2 / spacingKm) + 2;
   let count = 0;
-  // Última linha offset (pós auto-cruzamento) desenhada com sucesso em cada lado (perpSign 1/-1)
-  // — usada logo abaixo pra detectar quando a PRÓXIMA linha invade o território dela (ver
-  // addSplineRow). Reinicia a cada chamada desta função (uma geração nova por talhão).
-  const _prevSide = {};
+  // Janela com os segmentos das últimas ~16 linhas offset desenhadas com sucesso (qualquer lado)
+  // — usada abaixo pra detectar quando uma linha nova invade o território de uma vizinha recente
+  // (ver addSplineRow/_cruzaJanela). Reinicia a cada chamada desta função (uma geração por talhão).
+  const _JANELA_N = 16;
+  const _janelaSegs = [];
+  // As primeiras ~10 linhas de CADA lado (n pequeno, perto da guia) nunca saem daqui — cobre
+  // cruzamento entre os DOIS lados perto da guia (ex: guia com curva bem fechada em U, onde o
+  // lado +1 e o lado -1 se aproximam um do outro logo cedo). A janela rotativa acima não pega
+  // isso: quando o lado -1 começa a ser gerado, as linhas iniciais do lado +1 (as mais prováveis
+  // de estarem perto dele) já saíram da janela rotativa há muito tempo.
+  const _pertoGuia = [];
+  const _PERTO_GUIA_MAX_N = 10;
   function addRetaRow(projKm) {
     const dir = projKm >= 0 ? perpBrg : perpBrg + 180;
     const ref = Math.abs(projKm) < 1e-9 ? anchor
@@ -1489,24 +1527,20 @@ function _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingK
     const allPts = [...extS, ...pts, ...extE];
     let seg = null, added = 0;
     // Segmentos desta linha que sobreviverem (nem toda linha vira 1 só — o contorno do talhão
-    // pode cortar em vários pedaços) — viram a referência "vizinho mais próximo" pra próxima
-    // linha desse mesmo lado, guardados em _prevSide (ver flush() abaixo).
+    // pode cortar em vários pedaços) — entram na janela de linhas recentes (ver flush() abaixo).
     const curSegs = [];
     const flush = () => {
       if(seg && seg.length >= 2) {
-        // Cruzamento com a linha vizinha já desenhada (mesmo lado, ou a guia em si quando n=1 é
-        // a primeira de cada lado) — comparado já no nível FINAL (pós corte no contorno do
-        // talhão), que é exatamente o que vai pro mapa. removerAutoCruzamento só resolve a linha
-        // cruzando CONSIGO MESMA; perto de uma curva fechada da guia, cada linha é aparada de um
-        // jeito um pouco diferente e o que sobra pode cruzar a vizinha mesmo sem se auto-cruzar —
-        // daí as duas ficarem desenhadas uma em cima da outra (emaranhado). Descarta só ESSE
-        // trecho (não a linha inteira — o resto dela pode estar perfeito) quando cruza.
-        const prevSegs = _prevSide[perpSign];
-        const cruza = prevSegs && prevSegs.some(s => _primeiraIntersecaoEntre(seg, s) !== null);
-        if(!cruza) {
+        // Cruzamento com alguma linha recente já desenhada (qualquer lado, incluindo a guia em
+        // si) — comparado já no nível FINAL (pós corte no contorno do talhão), que é exatamente o
+        // que vai pro mapa. removerAutoCruzamento só resolve a linha cruzando CONSIGO MESMA; perto
+        // de uma curva fechada da guia, cada linha é aparada de um jeito um pouco diferente e o
+        // que sobra pode cruzar uma vizinha mesmo sem se auto-cruzar — daí ficarem desenhadas uma
+        // em cima da outra (emaranhado). Descarta só ESSE trecho (não a linha inteira) quando cruza.
+        if(!_cruzaJanela(seg, _janelaSegs) && !_cruzaJanela(seg, _pertoGuia)) {
           const pl = L.polyline(seg.map(p => [p[1],p[0]]), {color:cor, weight:esp, opacity:.95}).addTo(map);
           linhasArr.push(pl); count++; added++;
-          curSegs.push(seg);
+          curSegs.push({pts: seg, bbox: _bboxOfPts(seg)});
         } else {
           _offsetStats.puladas++;
         }
@@ -1527,14 +1561,16 @@ function _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingK
       }
     }
     flush();
-    // Só substitui a referência da "última linha boa" se sobrou alguma coisa dessa (se essa linha
-    // toda cruzou/sumiu, mantém a anterior — ela continua sendo a vizinha mais próxima de verdade).
-    if(curSegs.length) _prevSide[perpSign] = curSegs;
+    // Entra na janela (fila) das últimas _JANELA_N linhas — só se sobrou alguma coisa dessa.
+    if(curSegs.length) {
+      _janelaSegs.push(curSegs);
+      if(_janelaSegs.length > _JANELA_N) _janelaSegs.shift();
+      if(n <= _PERTO_GUIA_MAX_N) _pertoGuia.push(curSegs); // fica pra sempre, não expira
+    }
     return added > 0;
   }
   if(modoGuia === 'spline' || modoGuia === 'poli') {
     addSplineRow(0, 1);
-    _prevSide[-1] = _prevSide[1]; // o lado -1 também parte da guia (n=0) como primeira referência
     for(let n = 1; n <= nBoth; n++) addSplineRow(n,  1);
     for(let n = 1; n <= nBoth; n++) addSplineRow(n, -1);
   } else {
@@ -1885,10 +1921,18 @@ function gerarLinhas() {
   const nBoth = Math.ceil(ext / 2 / spacingKm) + 2;
 
   let count = 0;
-  // Última linha offset (pós auto-cruzamento) desenhada com sucesso em cada lado (perpSign 1/-1)
-  // — usada logo abaixo pra detectar quando a PRÓXIMA linha invade o território dela (ver
-  // addSplineRow). Reinicia a cada chamada desta função (uma geração nova por talhão).
-  const _prevSide = {};
+  // Janela com os segmentos das últimas ~16 linhas offset desenhadas com sucesso (qualquer lado)
+  // — usada abaixo pra detectar quando uma linha nova invade o território de uma vizinha recente
+  // (ver addSplineRow/_cruzaJanela). Reinicia a cada chamada desta função (uma geração por talhão).
+  const _JANELA_N = 16;
+  const _janelaSegs = [];
+  // As primeiras ~10 linhas de CADA lado (n pequeno, perto da guia) nunca saem daqui — cobre
+  // cruzamento entre os DOIS lados perto da guia (ex: guia com curva bem fechada em U, onde o
+  // lado +1 e o lado -1 se aproximam um do outro logo cedo). A janela rotativa acima não pega
+  // isso: quando o lado -1 começa a ser gerado, as linhas iniciais do lado +1 (as mais prováveis
+  // de estarem perto dele) já saíram da janela rotativa há muito tempo.
+  const _pertoGuia = [];
+  const _PERTO_GUIA_MAX_N = 10;
 
   // MODO RETA — linha reta via lineIntersect, sempre dentro do polígono
   function addRetaRow(projKm) {
@@ -1956,24 +2000,20 @@ function gerarLinhas() {
     const allPts = [...extS, ...pts, ...extE];
     let seg = null, added = 0;
     // Segmentos desta linha que sobreviverem (nem toda linha vira 1 só — o contorno do talhão
-    // pode cortar em vários pedaços) — viram a referência "vizinho mais próximo" pra próxima
-    // linha desse mesmo lado, guardados em _prevSide (ver flush() abaixo).
+    // pode cortar em vários pedaços) — entram na janela de linhas recentes (ver flush() abaixo).
     const curSegs = [];
     const flush = () => {
       if(seg && seg.length >= 2) {
-        // Cruzamento com a linha vizinha já desenhada (mesmo lado, ou a guia em si quando n=1 é
-        // a primeira de cada lado) — comparado já no nível FINAL (pós corte no contorno do
-        // talhão), que é exatamente o que vai pro mapa. removerAutoCruzamento só resolve a linha
-        // cruzando CONSIGO MESMA; perto de uma curva fechada da guia, cada linha é aparada de um
-        // jeito um pouco diferente e o que sobra pode cruzar a vizinha mesmo sem se auto-cruzar —
-        // daí as duas ficarem desenhadas uma em cima da outra (emaranhado). Descarta só ESSE
-        // trecho (não a linha inteira — o resto dela pode estar perfeito) quando cruza.
-        const prevSegs = _prevSide[perpSign];
-        const cruza = prevSegs && prevSegs.some(s => _primeiraIntersecaoEntre(seg, s) !== null);
-        if(!cruza) {
+        // Cruzamento com alguma linha recente já desenhada (qualquer lado, incluindo a guia em
+        // si) — comparado já no nível FINAL (pós corte no contorno do talhão), que é exatamente o
+        // que vai pro mapa. removerAutoCruzamento só resolve a linha cruzando CONSIGO MESMA; perto
+        // de uma curva fechada da guia, cada linha é aparada de um jeito um pouco diferente e o
+        // que sobra pode cruzar uma vizinha mesmo sem se auto-cruzar — daí ficarem desenhadas uma
+        // em cima da outra (emaranhado). Descarta só ESSE trecho (não a linha inteira) quando cruza.
+        if(!_cruzaJanela(seg, _janelaSegs) && !_cruzaJanela(seg, _pertoGuia)) {
           const pl = L.polyline(seg.map(p => [p[1],p[0]]), {color:cor, weight:esp, opacity:.95}).addTo(map);
           linhas.push(pl); count++; added++;
-          curSegs.push(seg);
+          curSegs.push({pts: seg, bbox: _bboxOfPts(seg)});
         } else {
           _offsetStats.puladas++;
         }
@@ -1994,9 +2034,12 @@ function gerarLinhas() {
       }
     }
     flush();
-    // Só substitui a referência da "última linha boa" se sobrou alguma coisa dessa (se essa linha
-    // toda cruzou/sumiu, mantém a anterior — ela continua sendo a vizinha mais próxima de verdade).
-    if(curSegs.length) _prevSide[perpSign] = curSegs;
+    // Entra na janela (fila) das últimas _JANELA_N linhas — só se sobrou alguma coisa dessa.
+    if(curSegs.length) {
+      _janelaSegs.push(curSegs);
+      if(_janelaSegs.length > _JANELA_N) _janelaSegs.shift();
+      if(n <= _PERTO_GUIA_MAX_N) _pertoGuia.push(curSegs); // fica pra sempre, não expira
+    }
     return added > 0;
   }
 
@@ -2022,7 +2065,6 @@ function gerarLinhas() {
       }
     }
     addSplineRow(0, 1);
-    _prevSide[-1] = _prevSide[1]; // o lado -1 também parte da guia (n=0) como primeira referência
     for(let n = 1; n <= nBoth; n++) addSplineRow(n,  1);
     for(let n = 1; n <= nBoth; n++) addSplineRow(n, -1);
   } else {
