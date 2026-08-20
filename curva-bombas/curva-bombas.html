@@ -220,7 +220,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
     <div class="hdr-logo">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
       <div class="hdr-brand">
-        <h1>Curva de Bombas <span class="ver-badge">v1.19</span></h1>
+        <h1>Curva de Bombas <span class="ver-badge">v1.20</span></h1>
         <p>Digitalizador de curvas — importe imagem/PDF e extraia os pontos</p>
       </div>
     </div>
@@ -276,6 +276,12 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
         <div class="field-row"><label>k (forma)</label><input type="number" step="any" id="bepKInput" placeholder="ex: 1.3"></div>
         <p class="combine-hint">Preenchendo isso, a Potência é calculada automaticamente (P=&rho;gQH/&eta;) e acompanha a rotação sozinha, mesmo sem digitalizar uma curva de Potência — usada só quando não existe uma curva de Potência digitalizada pra esta bomba.</p>
         <p class="combine-hint" id="bepStatus" style="font-weight:700"></p>
+      </div>
+
+      <div class="bep-box">
+        <div class="combine-title">&#9881; Rendimento motor + inversor desta bomba — opcional</div>
+        <div class="field-row"><label>&eta; motor+inv.</label><input type="number" step="any" id="motorEtaInput" placeholder="ex: 90 (%)"></div>
+        <p class="combine-hint">"P antes/depois" e a curva de Potência (digitalizada ou por BEP) são potência MECÂNICA no eixo da bomba — o motor e o inversor de frequência puxam mais que isso da rede, por causa das perdas deles. Preenchendo o rendimento combinado aqui (normalmente 85–95%), a economia em kWh/ano e R$/ano passa a refletir consumo ELÉTRICO real em vez de só mecânico. Deixe vazio pra manter só a potência mecânica (mais conservador).</p>
       </div>
 
       <div class="axis-block">
@@ -551,7 +557,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
 // ============================================================================
-// Curva de Bombas — Digitalizador  v1.19 (2026-08-20)
+// Curva de Bombas — Digitalizador  v1.20 (2026-08-20)
 // Build inicial (v1.0): importação de imagem/PDF (pdf.js), calibração de eixos
 // (linear/log, 4 pontos estilo WebPlotDigitizer), múltiplas séries,
 // ajuste de curva (polinomial grau 1-3 / potência) por mínimos quadrados,
@@ -909,6 +915,21 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
 // mesma operação, e a lista de séries na tela agora atualiza sozinha depois
 // de reabrir um projeto salvo (antes só refletia depois de mexer em algo).
 // ============================================================================
+// v1.20: usuário mandou uma segunda opinião (ChatGPT) sobre o relatório de
+// economia — confirmou que a leitura de "139,327" (vírgula decimal, não
+// milhar) já estava certa desde a v1.18, mas levantou um ponto novo e
+// legítimo: "P antes"/"P depois" são potência MECÂNICA no eixo da bomba (da
+// curva do fabricante ou do BEP) — o app convertia isso direto pra kWh como
+// se motor+inversor tivessem 100% de rendimento, o que não existe de
+// verdade. Adicionado campo opcional "Rendimento motor+inversor (%)" por
+// fonte/bomba (`src.motorEta`, independente do BEP hidráulico) — quando
+// preenchido, kWh/ano e R$/ano passam a ser a economia ELÉTRICA real
+// (P_elétrica = P_mecânica / η, via `electricalKw`); "P antes/depois" em cv
+// continuam sempre mecânicos (não mudam). Sem preencher, mantém o cálculo
+// mecânico de antes (mais conservador — o elétrico real é sempre ≥ o
+// mecânico). O relatório PDF ganhou uma coluna "Base do kWh" avisando qual
+// dos dois cada operação está usando.
+// ============================================================================
 (function(){
 'use strict';
 
@@ -964,6 +985,7 @@ const dropzone=$('dropzone'), fileInput=$('fileInput'), sourceTabsEl=$('sourceTa
 const pdfControls=$('pdfControls'), pdfPrev=$('pdfPrev'), pdfNext=$('pdfNext'), pdfPageLabel=$('pdfPageLabel'), pdfScaleSel=$('pdfScaleSel');
 const xUnitInput=$('xUnitInput'), yUnitInput=$('yUnitInput');
 const bepQInput=$('bepQInput'), bepEtaInput=$('bepEtaInput'), bepKInput=$('bepKInput'), bepStatus=$('bepStatus');
+const motorEtaInput=$('motorEtaInput');
 const energySavingsBox=$('energySavingsBox'), energySavingsSummary=$('energySavingsSummary'), energyHoursInput=$('energyHoursInput'), energyTariffInput=$('energyTariffInput'), energyAnnualResult=$('energyAnnualResult'), energySavingsHint=$('energySavingsHint');
 const operationsListEl=$('operationsList'), calcAllOpsBtn=$('calcAllOpsBtn'), reportTariffInput=$('reportTariffInput'), openReportBtn=$('openReportBtn');
 const opModalOverlay=$('opModalOverlay'), opModalTitle=$('opModalTitle'), opModalCloseBtn=$('opModalCloseBtn'), opModalName=$('opModalName'), opModalPump=$('opModalPump'), opModalQ=$('opModalQ'), opModalH=$('opModalH'), opModalHours=$('opModalHours'), opModalDays=$('opModalDays'), opModalCalcBtn=$('opModalCalcBtn'), opModalClearBtn=$('opModalClearBtn'), opModalResult=$('opModalResult');
@@ -1030,6 +1052,7 @@ function newSource(name){
     calib:{scaleX:'linear', scaleY:'linear', x1:null, x2:null, y1:null, y2:null},
     xUnit:'', yUnit:'',
     bep:null, // {qBep,etaBep,k} — parâmetros de rendimento pra calcular potência sem digitalizar (ver quantityInfoFor/computePowerCalcPoints)
+    motorEta:null, // rendimento combinado motor+inversor (%, 0-100) — converte a economia de potência MECÂNICA (eixo) em economia ELÉTRICA (ver applyMotorEta)
     pdfDoc:null, pdfPage:1, pdfPages:0, pdfScale:2,
     view:{scale:1, tx:0, ty:0}
   };
@@ -1054,13 +1077,14 @@ function applySource(id){
     bepQInput.value=src.bep? fmtNumRaw(src.bep.qBep) : '';
     bepEtaInput.value=src.bep? fmtNumRaw(src.bep.etaBep) : '';
     bepKInput.value=src.bep? fmtNumRaw(src.bep.k) : '';
+    motorEtaInput.value=src.motorEta!=null? fmtNumRaw(src.motorEta) : '';
     pdfControls.style.display=src.pdfDoc? 'flex':'none';
     if(src.pdfDoc) pdfPageLabel.textContent='Página '+src.pdfPage+' de '+src.pdfPages;
     pdfScaleSel.value=String(src.pdfScale||2);
     fitScaleToView();
   } else {
     xUnitInput.value='';
-    bepQInput.value=bepEtaInput.value=bepKInput.value='';
+    bepQInput.value=bepEtaInput.value=bepKInput.value=motorEtaInput.value='';
     xVal1.value=xVal2.value=yVal1.value=yVal2.value='';
     scaleXSel.value='linear'; scaleYSel.value='linear';
     pdfControls.style.display='none';
@@ -1225,6 +1249,29 @@ function bepEdited(){
 bepQInput.addEventListener('input', bepEdited);
 bepEtaInput.addEventListener('input', bepEdited);
 bepKInput.addEventListener('input', bepEdited);
+// Rendimento motor+inversor — também por FONTE, mas INDEPENDENTE do BEP (uma
+// bomba pode ter só a Potência mecânica digitalizada/calculada e ainda assim
+// o usuário informar esse rendimento, ou vice-versa). Só afeta a conversão
+// final pra kWh/R$ (ver electricalKw) — nunca a potência em cv exibida, que
+// continua sendo sempre a mecânica no eixo (a mesma que está na curva do
+// fabricante). Igual ao BEP, resultados JÁ calculados só atualizam quando o
+// usuário clicar em "Calcular" de novo — editar aqui não recalcula sozinho.
+function motorEtaEdited(){
+  const src=getActiveSource(); if(!src) return;
+  const eta=parseFloat(motorEtaInput.value);
+  src.motorEta = (eta>0 && eta<=100)? eta : null;
+  refreshEnergySavingsDisplay();
+}
+motorEtaInput.addEventListener('input', motorEtaEdited);
+// Converte uma economia de potência MECÂNICA (kW, no eixo da bomba) pra
+// ELÉTRICA (kW puxados da rede) usando o rendimento combinado motor+inversor
+// da fonte, quando informado — P_elétrica = P_mecânica / η. Sem isso
+// informado, mantém a mecânica (mais conservador: a elétrica real é sempre
+// MAIOR que a mecânica, nunca menor, porque motor e inversor têm perdas).
+function electricalKw(kwMech, srcObj){
+  const eta=srcObj&&srcObj.motorEta;
+  return (eta>0 && eta<=100)? kwMech/(eta/100) : kwMech;
+}
 // Unidade de Y efetiva de uma série: a própria (se digitalizada), herdada da
 // origem (vfd/combinada), com fallback pra unidade da FONTE (compatibilidade
 // com projetos salvos antes desta versão, que só tinham unidade por fonte).
@@ -1552,10 +1599,12 @@ function refreshEnergySavingsDisplay(){
   energySavingsSummary.textContent='Potência ('+es.source+'): '+fmtNum(es.Pref)+' cv (3500 RPM) → '+fmtNum(es.Padj)+' cv (ajustada) — economia de '+fmtNum(savingsCv)+' cv ('+fmtNum(pct)+'%) em Q='+fmtNum(es.Qt)+'.';
   const hours=parseFloat(energyHoursInput.value), tariff=parseFloat(energyTariffInput.value);
   if(hours>0 && tariff>=0 && savingsCv>0){
-    const kwSaved=savingsCv*0.7355; // 1 cv ≈ 0.7355 kW
+    const hSrcForEta=S.series.find(s=>s.id===es.hSrcId), srcObjForEta=hSrcForEta&&getSourceOf(hSrcForEta);
+    const kwSaved=electricalKw(savingsCv*0.7355, srcObjForEta); // 1 cv ≈ 0.7355 kW, depois convertido pra elétrico se o rendimento motor+inversor estiver preenchido
     const kwhYear=kwSaved*hours;
     const costYear=kwhYear*tariff;
-    energyAnnualResult.textContent='≈ '+fmtNum(kwhYear)+' kWh/ano economizados — R$ '+fmtNum(costYear)+'/ano';
+    const etaNote=(srcObjForEta&&srcObjForEta.motorEta>0)? ' (elétrico, motor+inv. '+fmtNum(srcObjForEta.motorEta)+'%)' : ' (mecânico — informe o rendimento motor+inversor pra ver o elétrico)';
+    energyAnnualResult.textContent='≈ '+fmtNum(kwhYear)+' kWh/ano economizados — R$ '+fmtNum(costYear)+'/ano'+etaNote;
   } else {
     energyAnnualResult.textContent = savingsCv<=0? '(sem economia neste ponto — a rotação ajustada não ficou abaixo da referência)' : '';
   }
@@ -1683,10 +1732,11 @@ function computeOperation(op){
   const savingsCv = (Pref!=null && Padj!=null)? (Pref-Padj) : null;
   const pct = (savingsCv!=null && Pref>0)? (savingsCv/Pref*100) : null;
   const hoursYear = (op.hoursPerDay>0 && op.daysPerYear>0)? op.hoursPerDay*op.daysPerYear : null;
-  const kwhYear = (savingsCv!=null && hoursYear!=null)? savingsCv*0.7355*hoursYear : null;
+  const motorEta=(getSourceOf(hSrc)||{}).motorEta;
+  const kwhYear = (savingsCv!=null && hoursYear!=null)? electricalKw(savingsCv*0.7355, getSourceOf(hSrc))*hoursYear : null;
 
   op.error=null;
-  op.result={targetRpm,targetHz,r,Qt,Ht,HtForSrc,partnerName:partner?partner.name:null,partnerH,Pref,Padj,savingsCv,pct,powerSource,hoursYear,kwhYear,pressVfdId:pressVfd.id,powerVfdId:powerSeriesId,pumpName:hSrc.name};
+  op.result={targetRpm,targetHz,r,Qt,Ht,HtForSrc,partnerName:partner?partner.name:null,partnerH,Pref,Padj,savingsCv,pct,powerSource,hoursYear,kwhYear,motorEta,pressVfdId:pressVfd.id,powerVfdId:powerSeriesId,pumpName:hSrc.name};
 }
 function opStatusClassAndText(op){
   if(op.error) return {cls:'err', icon:'⚠', text:op.error};
@@ -1696,7 +1746,7 @@ function opStatusClassAndText(op){
   if(r.partnerName) text+=' · desconta "'+r.partnerName+'" ('+fmtNum(r.partnerH)+')';
   if(r.Pref!=null && r.Padj!=null){
     text+=' · potência ('+r.powerSource+'): '+fmtNum(r.Pref)+' → '+fmtNum(r.Padj)+' cv (economia '+fmtNum(r.savingsCv)+' cv, '+fmtNum(r.pct)+'%)';
-    if(r.kwhYear!=null) text+=' · ≈'+fmtNum(r.kwhYear)+' kWh/ano';
+    if(r.kwhYear!=null) text+=' · ≈'+fmtNum(r.kwhYear)+' kWh/ano'+(r.motorEta>0? ' (elétrico, motor+inv. '+fmtNum(r.motorEta)+'%)' : ' (mecânico)');
   } else {
     text+=' · sem fonte de potência configurada pra esta bomba (digitalize uma Potência ou preencha o BEP dela).';
   }
@@ -1856,9 +1906,10 @@ function buildReportHTML(){
 
   let html='<h1>Relatório de Economia de Energia — Inversor de Frequência</h1>';
   html+='<p class="meta">Gerado por Curva de Bombas — Bolsa Irriga · '+new Date().toLocaleDateString('pt-BR')+'</p>';
-  html+='<table class="report-table"><thead><tr><th>Operação</th><th>Bomba</th><th>Q alvo</th><th>H alvo</th><th>Rotação</th><th>P antes</th><th>P depois</th><th>Economia</th><th>h/dia</th><th>dias/ano</th><th>kWh/ano</th>'+(tariff>0?'<th>R$/ano</th>':'')+'</tr></thead><tbody>';
+  html+='<table class="report-table"><thead><tr><th>Operação</th><th>Bomba</th><th>Q alvo</th><th>H alvo</th><th>Rotação</th><th>P antes</th><th>P depois</th><th>Economia</th><th>h/dia</th><th>dias/ano</th><th>kWh/ano</th>'+(tariff>0?'<th>R$/ano</th>':'')+'<th>Base do kWh</th></tr></thead><tbody>';
   rows.forEach(({op})=>{
     const r=op.result, costYear=r.kwhYear!=null? r.kwhYear*tariff : null;
+    const base=r.motorEta>0? 'Elétrico (η motor+inv. '+fmtNum(r.motorEta)+'%)' : 'Mecânico (eixo)';
     html+='<tr><td>'+escapeHtml(op.name)+'</td><td>'+escapeHtml(r.pumpName)+'</td>'
       +'<td>'+fmtNum(op.Qt)+'</td><td>'+fmtNum(op.Ht)+'</td>'
       +'<td>'+fmtNum(r.targetRpm)+' RPM</td>'
@@ -1867,10 +1918,12 @@ function buildReportHTML(){
       +'<td>'+(op.hoursPerDay!=null?fmtNum(op.hoursPerDay):'—')+'</td><td>'+(op.daysPerYear!=null?fmtNum(op.daysPerYear):'—')+'</td>'
       +'<td>'+(r.kwhYear!=null?fmtNum(r.kwhYear):'—')+'</td>'
       +(tariff>0?'<td>'+(costYear!=null?'R$ '+fmtNum(costYear):'—')+'</td>':'')
+      +'<td>'+base+'</td>'
       +'</tr>';
   });
   html+='</tbody></table>';
   html+='<p class="totals"><b>Total estimado (todas as operações):</b> '+fmtNum(totalKwh)+' kWh/ano'+(tariff>0?' — R$ '+fmtNum(totalCost)+'/ano':'')+'</p>';
+  html+='<p class="meta">"P antes"/"P depois" são sempre potência MECÂNICA no eixo da bomba (a mesma da curva do fabricante). A coluna "Base do kWh" mostra se a economia em kWh/ano dessa operação já foi convertida pra consumo ELÉTRICO (informando o rendimento motor+inversor da bomba) ou se ainda é a mecânica — mais conservadora, já que o consumo elétrico real é sempre igual ou maior que o mecânico.</p>';
   rows.forEach(({op})=>{
     const r=op.result;
     html+='<div class="op-section"><h2>'+escapeHtml(op.name)+' — '+escapeHtml(r.pumpName)+'</h2>';
@@ -2385,7 +2438,7 @@ vfdSolveBtn.addEventListener('click',()=>{
   // por rendimento (BEP); se nenhuma das duas estiver configurada, fica null
   // e a caixa correspondente simplesmente não aparece.
   const savings=computeEnergySavings(src, Qt, targetRpm);
-  S._lastEnergySavings = savings? {Pref:savings.Pref, Padj:savings.Padj, source:savings.source, Qt} : null;
+  S._lastEnergySavings = savings? {Pref:savings.Pref, Padj:savings.Padj, source:savings.source, Qt, hSrcId:src.id} : null;
   refreshEnergySavingsDisplay();
 
   let msg;
@@ -3451,7 +3504,7 @@ saveProjectBtn.addEventListener('click',()=>{
     sources:S.sources.map(src=>({
       id:src.id, name:src.name, imgW:src.imgW, imgH:src.imgH,
       imageDataUrl: src.img? (src.img.tagName==='CANVAS'? src.img.toDataURL('image/png') : src.img.src) : null,
-      calib:src.calib, xUnit:src.xUnit, yUnit:src.yUnit, bep:src.bep||null
+      calib:src.calib, xUnit:src.xUnit, yUnit:src.yUnit, bep:src.bep||null, motorEta:src.motorEta||null
     })),
     activeSourceId:S.activeSourceId,
     series:S.series.map(s=>({id:s.id,name:s.name,color:s.color,fitType:s.fitType,type:s.type||'digitized',sourceId:s.sourceId,srcA:s.srcA,srcB:s.srcB,srcId:s.srcId,targetRpm:s.targetRpm,quantityExp:s.quantityExp,refRpm:s.refRpm,refHz:s.refHz,targetPoint:s.targetPoint||null,autoFrom:s.autoFrom||null,opId:s.opId||null,opKind:s.opKind||null,yUnit:s.yUnit||'',points: (s.type==='combined'||s.type==='vfd'||s.type==='power_calc')? [] : s.points.map(p=>({px:p.px,py:p.py,x:p.x,y:p.y}))})),
@@ -3517,7 +3570,7 @@ loadProjectInput.addEventListener('change',e=>{
     projSources.forEach((ps,idx)=>{
       const src=newSource(ps.name||'Fonte'); src.id=ps.id||src.id;
       src.imgW=ps.imgW||0; src.imgH=ps.imgH||0;
-      src.calib=ps.calib||src.calib; src.xUnit=ps.xUnit||''; src.yUnit=ps.yUnit||''; src.bep=ps.bep||null;
+      src.calib=ps.calib||src.calib; src.xUnit=ps.xUnit||''; src.yUnit=ps.yUnit||''; src.bep=ps.bep||null; src.motorEta=ps.motorEta||null;
       if(!ps.imageDataUrl){ loadedSources[idx]=src; pending--; if(pending===0) finish(loadedSources.filter(Boolean)); return; }
       const img=new Image();
       img.onload=()=>{ src.img=img; src.imgW=ps.imgW||img.naturalWidth; src.imgH=ps.imgH||img.naturalHeight; loadedSources[idx]=src; pending--; if(pending===0) finish(loadedSources.filter(Boolean)); };
