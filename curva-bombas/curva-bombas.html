@@ -223,7 +223,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
     <div class="hdr-logo">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
       <div class="hdr-brand">
-        <h1>Curva de Bombas <span class="ver-badge">v1.23</span></h1>
+        <h1>Curva de Bombas <span class="ver-badge">v1.24</span></h1>
         <p>Digitalizador de curvas — importe imagem/PDF e extraia os pontos</p>
       </div>
     </div>
@@ -239,6 +239,14 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
 
 <main class="layout">
   <aside class="sidebar">
+
+    <div class="panel">
+      <h2><span class="n">&#128193;</span> Identificação do projeto</h2>
+      <div class="field-row"><label>Propriedade</label><input type="text" id="projPropertyInput" placeholder="ex: Fazenda Santa Fé"></div>
+      <div class="field-row"><label>Cliente</label><input type="text" id="projClientInput" placeholder="ex: João Paulo"></div>
+      <div class="field-row"><label>Data</label><input type="date" id="projDateInput"></div>
+      <p class="combine-hint" style="margin-top:.3rem">Usado pra sugerir o nome dos arquivos quando você exporta (projeto .json, CSV, relatório) — dá pra editar o nome final na hora de salvar mesmo assim.</p>
+    </div>
 
     <div class="panel">
       <h2><span class="n">1</span> Importar imagem ou PDF</h2>
@@ -560,7 +568,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
 // ============================================================================
-// Curva de Bombas — Digitalizador  v1.23 (2026-08-21)
+// Curva de Bombas — Digitalizador  v1.24 (2026-08-21)
 // Build inicial (v1.0): importação de imagem/PDF (pdf.js), calibração de eixos
 // (linear/log, 4 pontos estilo WebPlotDigitizer), múltiplas séries,
 // ajuste de curva (polinomial grau 1-3 / potência) por mínimos quadrados,
@@ -1002,6 +1010,24 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
 //   fonte e altura de linha agora encolhem sozinhas quando o gráfico tem
 //   mais de 5 séries.
 // ============================================================================
+// v1.24: usuário pediu pra nomear os arquivos exportados (principalmente o
+// projeto .json) em vez do nome genérico sempre igual — que é exatamente o
+// que gerou toda a confusão de "curva-bombas-projeto (1).json",
+// "(2).json", "(3).json" que apareceu ao longo dessa conversa inteira.
+// - Novo painel "Identificação do projeto" (Propriedade/Cliente/Data) no
+//   topo da barra lateral — data já vem preenchida com hoje.
+// - `suggestedFileBase()` monta o nome sugerido (ex:
+//   "curva-bombas_Fazenda_Santa_Fe_Joao_Paulo_2026-08-21") a partir dos
+//   campos preenchidos, na ordem Propriedade → Cliente → Data — usado no
+//   projeto .json, no CSV e no PNG. Sem nada preenchido, cai exatamente no
+//   nome genérico de sempre (`curva-bombas-projeto.json` etc.) — projetos
+//   salvos sem usar esse painel continuam idênticos a antes.
+// - O <title> do relatório (o que o navegador sugere no diálogo "Salvar
+//   como PDF") também usa esses campos.
+// - `projectInfo` persistido no .json — reabrir um projeto salvo já
+//   preenche os 3 campos de volta sozinho. Projeto salvo ANTES dessa
+//   versão (sem `projectInfo`) não quebra nem limpa os campos.
+// ============================================================================
 (function(){
 'use strict';
 
@@ -1024,6 +1050,11 @@ const S = {
   // gráfico aberto marca esse Q usando a SUA PRÓPRIA curva pra achar o Y —
   // ver findTargetPointFor().
   workingPointQ:null,
+  // identificação do projeto (propriedade/cliente/data) — não afeta nenhum
+  // cálculo, só sugere um nome de arquivo melhor na hora de exportar (ver
+  // suggestedFileBase) em vez do genérico "curva-bombas-projeto.json" que
+  // o navegador só sabe desambiguar empilhando "(1)", "(2)", "(3)"...
+  projectInfo:{property:'', client:'', date:''},
   // 8 operações fixas (pontos de trabalho independentes, cada uma podendo
   // usar uma bomba diferente) — pra montar um estudo de economia de energia
   // com várias operações/setores de uma vez, exportável em relatório.
@@ -1058,6 +1089,15 @@ const pdfControls=$('pdfControls'), pdfPrev=$('pdfPrev'), pdfNext=$('pdfNext'), 
 const xUnitInput=$('xUnitInput'), yUnitInput=$('yUnitInput');
 const bepQInput=$('bepQInput'), bepEtaInput=$('bepEtaInput'), bepKInput=$('bepKInput'), bepStatus=$('bepStatus');
 const motorEtaInput=$('motorEtaInput');
+const projPropertyInput=$('projPropertyInput'), projClientInput=$('projClientInput'), projDateInput=$('projDateInput');
+// data começa preenchida com hoje (só um ponto de partida cômodo — o campo
+// é `type=date`, então já vem num `<input>` nativo, sem precisar de
+// fmtNum/fmtNumRaw pra isso).
+projDateInput.value=new Date().toISOString().slice(0,10);
+S.projectInfo.date=projDateInput.value;
+projPropertyInput.addEventListener('input', ()=>{ S.projectInfo.property=projPropertyInput.value; });
+projClientInput.addEventListener('input', ()=>{ S.projectInfo.client=projClientInput.value; });
+projDateInput.addEventListener('input', ()=>{ S.projectInfo.date=projDateInput.value; });
 const energySavingsBox=$('energySavingsBox'), energySavingsSummary=$('energySavingsSummary'), energyHoursInput=$('energyHoursInput'), energyTariffInput=$('energyTariffInput'), energyAnnualResult=$('energyAnnualResult'), energySavingsHint=$('energySavingsHint');
 const operationsListEl=$('operationsList'), calcAllOpsBtn=$('calcAllOpsBtn'), reportTariffInput=$('reportTariffInput'), openReportBtn=$('openReportBtn');
 const opModalOverlay=$('opModalOverlay'), opModalTitle=$('opModalTitle'), opModalCloseBtn=$('opModalCloseBtn'), opModalName=$('opModalName'), opModalPump=$('opModalPump'), opModalQ=$('opModalQ'), opModalH=$('opModalH'), opModalHours=$('opModalHours'), opModalDays=$('opModalDays'), opModalCalcBtn=$('opModalCalcBtn'), opModalClearBtn=$('opModalClearBtn'), opModalResult=$('opModalResult');
@@ -1114,6 +1154,32 @@ function downloadBlob(filename, content, mime){
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click();
   setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); },200);
+}
+// Remove acento/espaço/caractere especial de UM pedaço do nome (propriedade,
+// cliente ou data) — cada pedaço isolado, nunca a string final inteira, pra
+// não precisar reimplementar a junção em todo lugar que usa isso.
+function sanitizeFilenamePart(s){
+  return (s||'').trim().normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .replace(/[^\w\-]+/g,'_').replace(/_+/g,'_').replace(/^_|_$/g,'');
+}
+// Monta o nome-base sugerido pros arquivos exportados (projeto .json, CSV,
+// PNG, relatório) a partir da Propriedade/Cliente/Data preenchidos no topo
+// da barra lateral — nessa ordem, só os campos preenchidos. Sem nenhum
+// preenchido, cai no nome genérico de sempre (mesmo comportamento de antes
+// dessa função existir, então projetos salvos sem preencher nada continuam
+// exatamente iguais). O nome sugerido é só isso — sugestão: o diálogo
+// "Salvar como" do navegador (quando ativado) ainda deixa editar antes de
+// gravar de verdade.
+function suggestedFileBase(){
+  const parts=[S.projectInfo.property, S.projectInfo.client, S.projectInfo.date].map(sanitizeFilenamePart).filter(Boolean);
+  return parts.length? 'curva-bombas_'+parts.join('_') : 'curva-bombas-projeto';
+}
+// Mesma ideia que suggestedFileBase, mas sem sanitizar — pra TEXTO (ex: o
+// <title> do relatório, que os navegadores usam como nome sugerido no
+// diálogo "Salvar como PDF").
+function projectLabelText(){
+  const parts=[S.projectInfo.property, S.projectInfo.client, S.projectInfo.date].map(s=>(s||'').trim()).filter(Boolean);
+  return parts.join(' — ');
 }
 
 // ------------------------------------------------------------- sources -----
@@ -2015,7 +2081,10 @@ function buildReportHTML(){
     html+='</div></div>';
   });
   return '<!doctype html><html lang="pt-BR"><head><meta charset="UTF-8">'
-    +'<title>Relatório — Curva de Bombas</title>'
+    // o <title> da aba é o que o navegador sugere como nome de arquivo no
+    // diálogo "Salvar como PDF" (Ctrl+P) — sem isso, sempre sugeria algo
+    // genérico tipo "Relatório — Curva de Bombas.pdf" pra todo projeto.
+    +'<title>'+escapeHtml(projectLabelText()? 'Relatório — '+projectLabelText() : 'Relatório — Curva de Bombas')+'</title>'
     +'<style>'
     +'body{font-family:"Segoe UI",Arial,sans-serif;color:#1a2535;max-width:1100px;margin:0 auto;padding:2rem 1.5rem 4rem}'
     +'h1{color:#003d5c;font-size:1.4rem} h2{color:#003d5c;font-size:1.05rem}'
@@ -3667,7 +3736,7 @@ exportCsvBtn.addEventListener('click',()=>{
   const xu=xUnitInput.value.trim(), yu=yUnitInput.value.trim();
   let csv='﻿'+'Serie,X'+(xu?' ('+xu+')':'')+',Y'+(yu?' ('+yu+')':'')+'\n';
   S.series.forEach(ser=>{ ser.points.forEach(p=>{ csv += '"'+ser.name.replace(/"/g,'""')+'",'+p.x+','+p.y+'\n'; }); });
-  downloadBlob('curva-bombas-dados.csv', csv, 'text/csv;charset=utf-8');
+  downloadBlob(suggestedFileBase()+'-dados.csv', csv, 'text/csv;charset=utf-8');
 });
 exportPngBtn.addEventListener('click',()=>{
   const src=getActiveSource();
@@ -3679,7 +3748,7 @@ exportPngBtn.addEventListener('click',()=>{
   drawGrid(tctx, Math.max(1,src.imgW*0.0008));
   drawCalibMarkers(tctx, r*1.1, lw*0.9);
   drawSeriesOverlay(tctx, r, lw);
-  const fname='curva-bombas-'+(src.name||'digitalizada').replace(/[^\w\-]+/g,'_')+'.png';
+  const fname=suggestedFileBase()+'-'+(src.name||'digitalizada').replace(/[^\w\-]+/g,'_')+'.png';
   tmp.toBlob(blob=>{ const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=fname; a.click(); setTimeout(()=>URL.revokeObjectURL(url),200); }, 'image/png');
 });
 saveProjectBtn.addEventListener('click',()=>{
@@ -3696,9 +3765,10 @@ saveProjectBtn.addEventListener('click',()=>{
     operations:S.operations.map(op=>({id:op.id,name:op.name,pumpId:op.pumpId,Qt:op.Qt,Ht:op.Ht,hoursPerDay:op.hoursPerDay,daysPerYear:op.daysPerYear})),
     activeSeriesId:S.activeSeriesId,
     showGrid:S.showGrid, showFit:S.showFit, autoSort:S.autoSort,
-    workingPointQ:S.workingPointQ!=null? S.workingPointQ : null
+    workingPointQ:S.workingPointQ!=null? S.workingPointQ : null,
+    projectInfo:S.projectInfo
   };
-  downloadBlob('curva-bombas-projeto.json', JSON.stringify(project), 'application/json');
+  downloadBlob(suggestedFileBase()+'.json', JSON.stringify(project), 'application/json');
 });
 loadProjectBtn.addEventListener('click',()=>loadProjectInput.click());
 loadProjectInput.addEventListener('change',e=>{
@@ -3728,6 +3798,13 @@ loadProjectInput.addEventListener('change',e=>{
       S.activeSeriesId = project.activeSeriesId || (S.series[0]&&S.series[0].id) || null;
       S.showGrid=!!project.showGrid; S.showFit=project.showFit!==false; S.autoSort=project.autoSort!==false;
       S.workingPointQ = project.workingPointQ!=null? project.workingPointQ : null;
+      // projetos salvos antes dessa versão não têm projectInfo — mantém os
+      // campos como estão (ex: a data de hoje, já preenchida por padrão) em
+      // vez de limpar tudo.
+      if(project.projectInfo){
+        S.projectInfo = {property:project.projectInfo.property||'', client:project.projectInfo.client||'', date:project.projectInfo.date||S.projectInfo.date};
+        projPropertyInput.value=S.projectInfo.property; projClientInput.value=S.projectInfo.client; projDateInput.value=S.projectInfo.date;
+      }
       showGridChk.checked=S.showGrid; showFitChk.checked=S.showFit; autoSortChk.checked=S.autoSort;
       S.series.forEach(computeFit);
       recomputeVfdSeries();
