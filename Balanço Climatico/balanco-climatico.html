@@ -25,6 +25,7 @@
     --div-red-wash:   rgba(227,73,72,0.10);
     --status-good:    #0ca30c;
     --status-critical:#d03b3b;
+    --series-compare: #1baf7a;
   }
   @media (prefers-color-scheme: dark){
     :root:not([data-theme="light"]){
@@ -46,6 +47,7 @@
       --div-red-wash:   rgba(230,103,103,0.14);
       --status-good:    #0ca30c;
       --status-critical:#e66767;
+      --series-compare: #199e70;
     }
   }
 
@@ -165,6 +167,8 @@
   .tt-key{ display:inline-block; width:10px; height:3px; border-radius:2px; }
   .chart-summary{ font-size:0.85rem; color:var(--text-secondary); margin: 10px 0 0; }
   .chart-summary b{ color:var(--text-primary); }
+  .chart-title{ font-size:0.8rem; font-weight:700; color:var(--text-secondary); margin:14px 0 4px; }
+  .chart-title:first-of-type{ margin-top:2px; }
 
   table.data-table{ width:100%; border-collapse:collapse; margin-top:12px; font-size:0.8rem; }
   table.data-table th, table.data-table td{ text-align:right; padding:5px 8px; border-bottom:1px solid var(--grid); font-variant-numeric: tabular-nums; }
@@ -190,7 +194,7 @@
 <body>
 
 <header class="app-header no-print">
-  <h1>🌦️ Balanço Climático <a class="version-badge" id="versionBadge" href="CHANGELOG.md" target="_blank" rel="noopener" title="Ver histórico de versões (CHANGELOG.md)">v2.0.0</a></h1>
+  <h1>🌦️ Balanço Climático <a class="version-badge" id="versionBadge" href="CHANGELOG.md" target="_blank" rel="noopener" title="Ver histórico de versões (CHANGELOG.md)">v2.1.0</a></h1>
   <p>Área da fazenda via KML + imagem de satélite + clima mensal (NASA POWER) + balanço hídrico do solo e necessidade de irrigação da cultura.</p>
 </header>
 
@@ -238,6 +242,35 @@
   <p class="sub" id="mesesSub">Selecione um ano e importe o polígono para ver os dados de cada mês.</p>
   <div class="month-grid" id="monthGrid"><div class="empty-state">Sem dados ainda.</div></div>
   <div class="note" id="monthNote"></div>
+</section>
+
+<section class="quadro" id="quadroConferencia">
+  <h2>🔍 Conferência entre Fontes Climáticas</h2>
+  <p class="sub">NASA POWER (usada em todos os cálculos abaixo) × Open-Meteo/ERA5-Land — uma segunda fonte independente, pra você conferir se os números batem.</p>
+  <div class="legend" id="compareLegend"></div>
+
+  <p class="chart-title">Temperatura máxima (°C)</p>
+  <div class="chart-wrap" id="tempCompareWrap">
+    <svg id="tempCompareSvg" viewBox="0 0 780 170" preserveAspectRatio="xMidYMid meet"></svg>
+    <div class="chart-tooltip" id="tempCompareTooltip" hidden></div>
+  </div>
+
+  <p class="chart-title">Precipitação total mensal (mm)</p>
+  <div class="chart-wrap" id="precipCompareWrap">
+    <svg id="precipCompareSvg" viewBox="0 0 780 170" preserveAspectRatio="xMidYMid meet"></svg>
+    <div class="chart-tooltip" id="precipCompareTooltip" hidden></div>
+  </div>
+
+  <p class="chart-title">ETo mensal (mm)</p>
+  <div class="chart-wrap" id="etoCompareWrap">
+    <svg id="etoCompareSvg" viewBox="0 0 780 170" preserveAspectRatio="xMidYMid meet"></svg>
+    <div class="chart-tooltip" id="etoCompareTooltip" hidden></div>
+  </div>
+
+  <p class="chart-summary" id="compareSummary"></p>
+  <div style="overflow-x:auto;">
+    <table class="data-table" id="compareTable"></table>
+  </div>
 </section>
 
 <section class="quadro" id="quadroBalanco">
@@ -333,6 +366,7 @@
   let farmGeo = null; // {areaHa, perimKm, centroid:{lat,lon}}
   let imageryMeta = null;
   let climateMonths = null; // [{month,days,tmax,precip,eto}]
+  let openMeteoMonths = null; // segunda fonte (conferência), mesma forma sem "days"
   let irrigationCfg = { rowSpacing: 3.4, plantSpacing: 0.7, canopyDiam: 2.0, bareSoilFactor: 0.15, kc: [1.0,1.0,1.0,1.0,0.8,0.8,0.8,0.8,0.9,1.1,1.1,1.1] };
   let cadValue = 100; // capacidade de água disponível no solo (mm)
 
@@ -630,6 +664,57 @@
         tmax,
         precip: precDay==null ? null : precDay*dim,
         eto: etoDay==null ? null : etoDay*dim
+      });
+    }
+    return months;
+  }
+
+  // ================= Open-Meteo (ERA5-Land) — segunda fonte, pra conferência =================
+  // Fonte independente da NASA POWER: reanálise ERA5-Land, gratuita, sem chave. Já traz
+  // et0_fao_evapotranspiration calculado pelo próprio Open-Meteo (FAO-56 Penman-Monteith),
+  // o que serve de conferência tanto dos dados de entrada quanto da fórmula usada aqui.
+  const OPEN_METEO_ARCHIVE_URL = 'https://archive-api.open-meteo.com/v1/archive';
+
+  function aggregateDailyByMonth(dates, values){
+    const monthly = Array.from({length:12}, () => []);
+    dates.forEach((d,i) => {
+      const m = parseInt(d.slice(5,7),10);
+      const v = values ? values[i] : null;
+      if (v!=null && Number.isFinite(v)) monthly[m-1].push(v);
+    });
+    return monthly;
+  }
+
+  async function fetchOpenMeteoClimate(lat, lon, year){
+    const params = new URLSearchParams({
+      latitude: lat.toFixed(4),
+      longitude: lon.toFixed(4),
+      start_date: `${year}-01-01`,
+      end_date: `${year}-12-31`,
+      daily: 'temperature_2m_max,precipitation_sum,et0_fao_evapotranspiration',
+      timezone: 'UTC'
+    });
+    const res = await fetch(`${OPEN_METEO_ARCHIVE_URL}?${params.toString()}`);
+    if (!res.ok) throw new Error('Falha na resposta do Open-Meteo (HTTP '+res.status+').');
+    const data = await res.json();
+    const d = data.daily;
+    if (!d || !d.time) throw new Error('Resposta inesperada do Open-Meteo.');
+    const tmaxByMonth = aggregateDailyByMonth(d.time, d.temperature_2m_max);
+    const precipByMonth = aggregateDailyByMonth(d.time, d.precipitation_sum);
+    const etoByMonth = aggregateDailyByMonth(d.time, d.et0_fao_evapotranspiration);
+    const avg = arr => arr.reduce((s,v)=>s+v,0)/arr.length;
+    const sum = arr => arr.reduce((s,v)=>s+v,0);
+    const months = [];
+    for (let m=1;m<=12;m++){
+      const i = m-1;
+      const dim = daysInMonth(year, m);
+      const enough = arr => arr.length >= Math.ceil(dim*0.5); // exige pelo menos metade dos dias do mês
+      const tVals=tmaxByMonth[i], pVals=precipByMonth[i], eVals=etoByMonth[i];
+      months.push({
+        month: m,
+        tmax: enough(tVals) ? avg(tVals) : null,
+        precip: enough(pVals) ? sum(pVals) : null,
+        eto: enough(eVals) ? sum(eVals) : null
       });
     }
     return months;
@@ -1157,21 +1242,183 @@
     });
   }
 
+  // ---- Gráfico genérico de 2 séries (usado na Conferência entre Fontes) ----
+  function cssVar(name){ return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+  function renderDualLineChart(cfg){
+    const { svgEl, tooltipEl, wrapEl, seriesA, seriesB, colorA, colorB, labelA, labelB, decimals, unit, forceZeroMin } = cfg;
+    svgEl.innerHTML = '';
+    const W=780, plotX0=48, plotX1=764, plotW=plotX1-plotX0;
+    const y0=14, y1=136, labelY=154;
+    const colW = plotW/12;
+
+    const cGrid = cssVar('--grid'), cMuted = cssVar('--text-muted'), cBaseline = cssVar('--baseline'), cSurface = cssVar('--surface-1');
+    const fmtN = v => decimals ? fmt1(v) : fmt0(v);
+
+    const allVals = seriesA.concat(seriesB).filter(v => v!=null);
+    if (!allVals.length){
+      const t = sv('text',{x:W/2,y:80,'text-anchor':'middle','font-size':13,fill:cMuted});
+      t.textContent = 'Sem dados suficientes.'; svgEl.appendChild(t);
+      return;
+    }
+    const lo = forceZeroMin ? 0 : Math.min(...allVals);
+    const scale = niceScaleRange(lo, Math.max(...allVals, lo+1), 4);
+    const y = v => y1 - ((v-scale.min)/(scale.max-scale.min))*(y1-y0);
+
+    scale.ticks.forEach(val => {
+      const yy = y(val);
+      svgEl.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:yy,y2:yy,stroke:cGrid,'stroke-width':1}));
+      const t = sv('text',{x:plotX0-8,y:yy+3,'text-anchor':'end','font-size':10,fill:cMuted});
+      t.textContent = fmtN(val); svgEl.appendChild(t);
+    });
+    svgEl.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:y1,y2:y1,stroke:cBaseline,'stroke-width':1}));
+
+    function drawSeries(vals, color){
+      const pts = [];
+      vals.forEach((v,i) => { if (v!=null) pts.push([plotX0+colW*(i+0.5), y(v)]); });
+      if (pts.length > 1){
+        const d = pts.map((p,i)=>(i===0?'M':'L')+p[0]+','+p[1]).join(' ');
+        svgEl.appendChild(sv('path',{d, fill:'none', stroke:color,'stroke-width':2,'stroke-linecap':'round','stroke-linejoin':'round'}));
+      }
+      pts.forEach(([x,yy]) => {
+        svgEl.appendChild(sv('circle',{cx:x,cy:yy,r:5,fill:cSurface}));
+        svgEl.appendChild(sv('circle',{cx:x,cy:yy,r:3,fill:color}));
+      });
+    }
+    drawSeries(seriesA, colorA);
+    drawSeries(seriesB, colorB);
+
+    for (let i=0;i<12;i++){
+      const cx = plotX0+colW*(i+0.5);
+      const lbl = sv('text',{x:cx,y:labelY,'text-anchor':'middle','font-size':11,fill:cMuted});
+      lbl.textContent = MONTH_NAMES[i]; svgEl.appendChild(lbl);
+    }
+
+    const crosshair = sv('line',{x1:0,x2:0,y1:y0,y2:y1,stroke:cMuted,'stroke-width':1,'stroke-dasharray':'3,3',opacity:0});
+    svgEl.appendChild(crosshair);
+    const hitLayer = sv('g',{});
+    for (let i=0;i<12;i++){
+      const hit = sv('rect',{x:plotX0+colW*i,y:y0,width:colW,height:y1-y0,fill:'transparent',tabindex:'0'});
+      hit.dataset.idx = i; hitLayer.appendChild(hit);
+    }
+    svgEl.appendChild(hitLayer);
+
+    function showTip(i){
+      const cx = plotX0+colW*(i+0.5);
+      crosshair.setAttribute('x1',cx); crosshair.setAttribute('x2',cx); crosshair.setAttribute('opacity','1');
+      tooltipEl.innerHTML = '';
+      const title = document.createElement('div'); title.className='tt-title';
+      title.textContent = MONTH_NAMES_FULL[i]; tooltipEl.appendChild(title);
+      [[labelA,seriesA[i],colorA],[labelB,seriesB[i],colorB]].forEach(([k,v,c]) => {
+        const row = document.createElement('div'); row.className='tt-row';
+        const kEl = document.createElement('span'); kEl.className='k';
+        const key = document.createElement('span'); key.className='tt-key'; key.style.background=c;
+        kEl.appendChild(key); kEl.appendChild(document.createTextNode(k));
+        const vEl = document.createElement('span'); vEl.className='v'; vEl.textContent = v==null?'—':fmtN(v)+unit;
+        row.appendChild(kEl); row.appendChild(vEl); tooltipEl.appendChild(row);
+      });
+      tooltipEl.hidden = false;
+      const wrapRect = wrapEl.getBoundingClientRect();
+      const svgRect = svgEl.getBoundingClientRect();
+      const scaleX = svgRect.width/W;
+      const px = cx*scaleX;
+      let left = px+14;
+      if (left+160 > wrapRect.width) left = px-160-14;
+      tooltipEl.style.left = Math.max(4,left)+'px';
+      tooltipEl.style.top = '8px';
+    }
+    function hideTip(){ tooltipEl.hidden = true; crosshair.setAttribute('opacity','0'); }
+    hitLayer.querySelectorAll('rect').forEach(r => {
+      const i = +r.dataset.idx;
+      r.addEventListener('pointerenter', ()=>showTip(i));
+      r.addEventListener('pointermove', ()=>showTip(i));
+      r.addEventListener('focus', ()=>showTip(i));
+      r.addEventListener('pointerleave', hideTip);
+      r.addEventListener('blur', hideTip);
+    });
+  }
+
+  function renderComparison(){
+    const cA = cssVar('--series-precip'), cB = cssVar('--series-compare');
+
+    const legend = el('compareLegend');
+    legend.innerHTML = '';
+    [['NASA POWER',cA],['Open-Meteo (ERA5-Land)',cB]].forEach(([label,c]) => {
+      const li = document.createElement('div'); li.className='legend-item';
+      li.innerHTML = `<span class="legend-swatch" style="background:${c}"></span> ${label}`;
+      legend.appendChild(li);
+    });
+
+    const omM = openMeteoMonths || Array.from({length:12}, (_,i) => ({month:i+1, tmax:null, precip:null, eto:null}));
+
+    renderDualLineChart({ svgEl: el('tempCompareSvg'), tooltipEl: el('tempCompareTooltip'), wrapEl: el('tempCompareWrap'),
+      seriesA: climateMonths.map(m=>m.tmax), seriesB: omM.map(m=>m.tmax), colorA:cA, colorB:cB,
+      labelA:'NASA POWER', labelB:'Open-Meteo', decimals:true, unit:'°C', forceZeroMin:false });
+    renderDualLineChart({ svgEl: el('precipCompareSvg'), tooltipEl: el('precipCompareTooltip'), wrapEl: el('precipCompareWrap'),
+      seriesA: climateMonths.map(m=>m.precip), seriesB: omM.map(m=>m.precip), colorA:cA, colorB:cB,
+      labelA:'NASA POWER', labelB:'Open-Meteo', decimals:false, unit:' mm', forceZeroMin:true });
+    renderDualLineChart({ svgEl: el('etoCompareSvg'), tooltipEl: el('etoCompareTooltip'), wrapEl: el('etoCompareWrap'),
+      seriesA: climateMonths.map(m=>m.eto), seriesB: omM.map(m=>m.eto), colorA:cA, colorB:cB,
+      labelA:'NASA POWER', labelB:'Open-Meteo', decimals:false, unit:' mm', forceZeroMin:true });
+
+    if (!openMeteoMonths){
+      el('compareSummary').textContent = 'Open-Meteo indisponível no momento — mostrando só NASA POWER. Clique em "Atualizar dados" pra tentar de novo.';
+      el('compareTable').innerHTML = '';
+      return;
+    }
+
+    const diffs = climateMonths.map((m,i) => {
+      const o = openMeteoMonths[i];
+      return {
+        dTmax: (m.tmax!=null && o.tmax!=null) ? o.tmax-m.tmax : null,
+        dPrecip: (m.precip!=null && o.precip!=null) ? o.precip-m.precip : null,
+        dEto: (m.eto!=null && o.eto!=null) ? o.eto-m.eto : null
+      };
+    });
+    const avgAbs = key => {
+      const vals = diffs.map(d=>d[key]).filter(v=>v!=null).map(Math.abs);
+      return vals.length ? vals.reduce((s,v)=>s+v,0)/vals.length : null;
+    };
+    const aT = avgAbs('dTmax'), aP = avgAbs('dPrecip'), aE = avgAbs('dEto');
+    el('compareSummary').innerHTML = `Diferença média absoluta entre as fontes: <b>${aT==null?'—':fmt1(aT)+'°C'}</b> em Tmáx • <b>${aP==null?'—':fmt0(aP)+' mm'}</b> em precipitação • <b>${aE==null?'—':fmt0(aE)+' mm'}</b> em ETo.`;
+
+    const table = el('compareTable');
+    table.innerHTML = '<thead><tr><th>Mês</th><th>Tmáx NASA</th><th>Tmáx Open-Meteo</th><th>ΔT</th><th>Precip. NASA</th><th>Precip. Open-Meteo</th><th>ΔP</th><th>ETo NASA</th><th>ETo Open-Meteo</th><th>ΔETo</th></tr></thead>';
+    const tbody = document.createElement('tbody');
+    climateMonths.forEach((m,i) => {
+      const o = openMeteoMonths[i];
+      const d = diffs[i];
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${MONTH_NAMES[m.month-1]}</td><td>${m.tmax==null?'—':fmt1(m.tmax)}</td><td>${o.tmax==null?'—':fmt1(o.tmax)}</td><td>${d.dTmax==null?'—':(d.dTmax>=0?'+':'')+fmt1(d.dTmax)}</td><td>${m.precip==null?'—':fmt0(m.precip)}</td><td>${o.precip==null?'—':fmt0(o.precip)}</td><td>${d.dPrecip==null?'—':(d.dPrecip>=0?'+':'')+fmt0(d.dPrecip)}</td><td>${m.eto==null?'—':fmt0(m.eto)}</td><td>${o.eto==null?'—':fmt0(o.eto)}</td><td>${d.dEto==null?'—':(d.dEto>=0?'+':'')+fmt0(d.dEto)}</td>`;
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+  }
+
   // ================= Main flow =================
   async function loadClimateAndRender(){
     if (!farmGeo){ return; }
     const year = +el('yearSelect').value;
-    setStatus('Buscando dados climáticos (NASA POWER)…');
+    setStatus('Buscando dados climáticos (NASA POWER + Open-Meteo)…');
     el('refreshBtn').disabled = true;
     try{
-      climateMonths = await fetchClimate(farmGeo.centroid.lat, farmGeo.centroid.lon, year, farmGeo.elevation);
+      const [nasaResult, omResult] = await Promise.allSettled([
+        fetchClimate(farmGeo.centroid.lat, farmGeo.centroid.lon, year, farmGeo.elevation),
+        fetchOpenMeteoClimate(farmGeo.centroid.lat, farmGeo.centroid.lon, year)
+      ]);
+      if (nasaResult.status !== 'fulfilled') throw nasaResult.reason;
+      climateMonths = nasaResult.value;
+      openMeteoMonths = omResult.status === 'fulfilled' ? omResult.value : null;
+      if (omResult.status === 'rejected') console.warn(omResult.reason);
+
       renderMonthCards(year);
       recalcBalance();
       renderTempChart(climateMonths);
       recalcIrrigation();
+      renderComparison();
       updatePrintHeader();
       updateSourcesNote();
-      setStatus('Dados atualizados.', false);
+      setStatus(openMeteoMonths ? 'Dados atualizados (2 fontes).' : 'Dados atualizados (NASA POWER; Open-Meteo indisponível).', false);
     } catch(err){
       console.error(err);
       setStatus('Erro ao buscar clima: '+err.message, true);
@@ -1387,6 +1634,7 @@
     el('sourcesNote').innerHTML =
       '<b>Fontes de dados —</b> Imagem de satélite: Esri World Imagery (mosaico de múltiplos provedores; resolução e data variam por local). ' +
       'Clima: <a href="https://power.larc.nasa.gov/" target="_blank" rel="noopener">NASA POWER</a> (comunidade Agroclimatologia, base de reanálise MERRA-2/POWER), consultado em '+new Date().toLocaleDateString('pt-BR')+'. ' +
+      'Conferência cruzada: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (reanálise ERA5-Land, ETo já calculada por FAO-56 Penman-Monteith pelo próprio provedor) — ver quadro "Conferência entre Fontes Climáticas". ' +
       'Precipitação total mensal = média diária × dias do mês. ETo = evapotranspiração de referência calculada pelo método padrão <b>FAO-56 Penman-Monteith</b> (grama de referência), a partir de Tmáx/Tmín, umidade relativa, vento a 2 m e radiação solar mensal do NASA POWER, com fluxo de calor no solo G≈0 (aproximação mensal). Elevação usada no cálculo: '+elevTxt+'.<br>'+
       'Balanço hídrico do solo: método sequencial de <b>Thornthwaite &amp; Mather (1955)</b>, na formulação de ROLIM, G.S.; SENTELHAS, P.C.; BARBIERI, V. <i>Planilhas no ambiente EXCEL™ para os cálculos de balanços hídricos</i>, Rev. Bras. Agrometeorologia, v.6, n.1, p.133-137, 1998 (ESALQ/USP) — aqui usando ETo FAO-56 como ETP de entrada em vez de Thornthwaite (1948), método mais adequado para climas não-úmidos. ' +
       'Necessidade de irrigação: Etc = ETo × Kc; coeficiente de localização Kl = Gc + f·(1−Gc) (Keller &amp; Bliesner) reduz a ETc pela fração de solo não coberto pela copa, prática usual em projetos de irrigação localizada.';
@@ -1477,7 +1725,7 @@
     updateSourcesNote();
     updatePrintHeader();
     window.addEventListener('resize', () => {
-      if (climateMonths){ recalcBalance(); renderTempChart(climateMonths); recalcIrrigation(); }
+      if (climateMonths){ recalcBalance(); renderTempChart(climateMonths); recalcIrrigation(); renderComparison(); }
     });
   }
 

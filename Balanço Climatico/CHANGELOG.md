@@ -3,6 +3,19 @@
 Todas as mudanças notáveis deste app ficam registradas aqui. O número de versão aparece
 no canto do título, dentro do próprio app (`v2.0.0` etc.) — clique nele pra abrir este arquivo.
 
+## v2.1.0 — 2026-08-21
+
+### Adicionado
+- **Conferência entre Fontes Climáticas**: novo quadro que busca uma segunda fonte
+  independente, **Open-Meteo (reanálise ERA5-Land)**, em paralelo com a NASA POWER.
+  Mostra 3 mini-gráficos comparando Tmáx, Precipitação e ETo mês a mês entre as duas
+  fontes (a ETo do Open-Meteo já vem calculada por FAO-56 Penman-Monteith pelo próprio
+  provedor — serve de conferência tanto dos dados quanto da fórmula usada aqui), mais
+  tabela de diferenças e resumo da divergência média. NASA POWER continua sendo a
+  única fonte usada nos cálculos de balanço hídrico e irrigação; a segunda fonte é
+  só pra auditoria/confiança. Se o Open-Meteo falhar, o resto do app funciona normal
+  só com NASA POWER.
+
 ## v2.0.0 — 2026-08-21
 
 ### Adicionado
