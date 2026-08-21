@@ -194,7 +194,7 @@
 <body>
 
 <header class="app-header no-print">
-  <h1>🌦️ Balanço Climático <a class="version-badge" id="versionBadge" href="CHANGELOG.md" target="_blank" rel="noopener" title="Ver histórico de versões (CHANGELOG.md)">v2.3.0</a></h1>
+  <h1>🌦️ Balanço Climático <a class="version-badge" id="versionBadge" href="CHANGELOG.md" target="_blank" rel="noopener" title="Ver histórico de versões (CHANGELOG.md)">v2.3.1</a></h1>
   <p>Área da fazenda via KML + imagem de satélite + clima mensal (NASA POWER ou Open-Meteo, ano único ou média histórica) + balanço hídrico do solo e necessidade de irrigação da cultura.</p>
 </header>
 
@@ -243,7 +243,7 @@
   <span class="status-msg" id="statusMsg"></span>
 </div>
 <div class="note no-print" id="brdwgdNote" style="margin-top:-10px; margin-bottom:14px; display:none;">
-  ℹ️ BR-DWGD exige login com sua conta Google (Earth Engine) e só tem dados históricos (até ~2020-2022, sem anos recentes). Ao clicar em "Atualizar dados" com essa fonte, uma janela de login do Google vai abrir.
+  ℹ️ BR-DWGD exige login com sua conta Google (Earth Engine) e só cobre até <b>2020</b> (a precipitação vai até 2022, mas Tmáx/Tmín/umidade/vento/radiação param em 2020 — o "Ano final" ajusta sozinho). Ao clicar em "Atualizar dados" com essa fonte, uma janela de login do Google vai abrir.
 </div>
 
 <section class="quadro" id="quadroMapa">
@@ -824,6 +824,18 @@
 
   // Monta UMA consulta que devolve a climatologia dos 12 meses de uma vez (evita 1 round-trip
   // por mês/variável — o servidor do Earth Engine faz toda a agregação).
+  // Reduz uma ImageCollection já filtrada (mean ou sum/divisor) devolvendo sempre 1 banda —
+  // se a coleção vier vazia (ano/mês fora da cobertura do dataset), devolve uma banda
+  // totalmente mascarada em vez de travar (ee.Image.divide exige que as duas imagens tenham
+  // o mesmo nº de bandas; uma coleção vazia reduz pra 0 bandas, daí o erro "Got 0 and 1").
+  function eeSafeReduce(col, mode, divisor){
+    const hasData = col.size().gt(0);
+    const reduced = mode === 'sum' ? col.sum() : col.mean();
+    const value = (mode === 'sum' && divisor) ? reduced.divide(divisor) : reduced;
+    const empty = ee.Image(0).selfMask().rename('x');
+    return ee.Image(ee.Algorithms.If(hasData, value.rename('x'), empty));
+  }
+
   function eeMonthlyClimatology(lat, lon, startYear, endYear){
     const point = ee.Geometry.Point([lon, lat]);
     const nYears = endYear - startYear + 1;
@@ -835,12 +847,13 @@
       const monthFilter = ee.Filter.calendarRange(m, m, 'month');
       const monthly = (assetId) => ee.ImageCollection(assetId).filter(yearFilter).filter(monthFilter);
 
-      const tmaxImg = monthly(EE_ASSETS.TMAX).mean().rename('tmax');
-      const tminImg = monthly(EE_ASSETS.TMIN).mean().rename('tmin');
-      const rhImg   = monthly(EE_ASSETS.RH).mean().rename('rh');
-      const u2Img   = monthly(EE_ASSETS.U2).mean().rename('u2');
-      const rsImg   = monthly(EE_ASSETS.RS).mean().rename('rs');
-      const prImg   = monthly(EE_ASSETS.PR).sum().divide(nYears).rename('precip'); // soma dos dias / nº de anos = média do total mensal
+      const tmaxImg = eeSafeReduce(monthly(EE_ASSETS.TMAX), 'mean').rename('tmax');
+      const tminImg = eeSafeReduce(monthly(EE_ASSETS.TMIN), 'mean').rename('tmin');
+      const rhImg   = eeSafeReduce(monthly(EE_ASSETS.RH), 'mean').rename('rh');
+      const u2Img   = eeSafeReduce(monthly(EE_ASSETS.U2), 'mean').rename('u2');
+      const rsImg   = eeSafeReduce(monthly(EE_ASSETS.RS), 'mean').rename('rs');
+      // soma dos dias / nº de anos = média do total mensal
+      const prImg   = eeSafeReduce(monthly(EE_ASSETS.PR), 'sum', nYears).rename('precip');
 
       const combined = ee.Image.cat([tmaxImg, tminImg, rhImg, u2Img, rsImg, prImg]);
       const vals = combined.reduceRegion({ reducer: ee.Reducer.mean(), geometry: point, scale: EE_SCALE_M, maxPixels: 1e9 });
@@ -1922,11 +1935,18 @@
     el('refreshBtn').addEventListener('click', loadClimateAndRender);
     el('yearSelect').addEventListener('change', () => { if (farmGeo) loadClimateAndRender(); });
     el('periodSelect').addEventListener('change', () => { if (farmGeo) loadClimateAndRender(); });
+    const BRDWGD_LAST_YEAR = 2020; // Tmáx/Tmín/RH/vento/radiação só cobrem até aqui (chuva vai até 2022)
     const updateBrdwgdNote = () => {
       const usesEE = el('sourceSelect').value === 'brdwgd' || el('compareSelect').value === 'brdwgd';
       el('brdwgdNote').style.display = usesEE ? '' : 'none';
     };
-    el('sourceSelect').addEventListener('change', () => { updateBrdwgdNote(); if (farmGeo) loadClimateAndRender(); });
+    el('sourceSelect').addEventListener('change', () => {
+      updateBrdwgdNote();
+      if (el('sourceSelect').value === 'brdwgd' && +el('yearSelect').value > BRDWGD_LAST_YEAR){
+        el('yearSelect').value = String(BRDWGD_LAST_YEAR);
+      }
+      if (farmGeo) loadClimateAndRender();
+    });
     el('compareSelect').addEventListener('change', () => {
       updateBrdwgdNote();
       if (farmGeo && climateMonths) loadClimateAndRender(); else renderComparison();

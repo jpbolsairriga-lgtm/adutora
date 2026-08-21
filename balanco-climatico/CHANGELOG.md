@@ -3,6 +3,14 @@
 Todas as mudanças notáveis deste app ficam registradas aqui. O número de versão aparece
 no canto do título, dentro do próprio app (`v2.0.0` etc.) — clique nele pra abrir este arquivo.
 
+## v2.3.1 — 2026-08-21
+
+### Corrigido
+- BR-DWGD travava com `Image.divide: If one image has no bands...` quando o ano
+  selecionado ficava fora da cobertura do dataset (Tmáx/Tmín/RH/vento/radiação só
+  até 2020; chuva até 2022). Agora consultas fora da cobertura devolvem "sem dado"
+  por mês, sem travar; e o "Ano final" ajusta sozinho pra 2020 ao escolher essa fonte.
+
 ## v2.3.0 — 2026-08-21
 
 ### Adicionado
