@@ -1,0 +1,1488 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Balanço Climático</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root{
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --surface-2:      #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --series-precip:  #2a78d6;
+    --series-eto:     #eb6834;
+    --series-temp:    #2a78d6;
+    --div-blue:       #2a78d6;
+    --div-red:        #e34948;
+    --div-blue-wash:  rgba(42,120,214,0.10);
+    --div-red-wash:   rgba(227,73,72,0.10);
+    --status-good:    #0ca30c;
+    --status-critical:#d03b3b;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --surface-2:      #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --grid:           #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --series-precip:  #3987e5;
+      --series-eto:     #d95926;
+      --series-temp:    #3987e5;
+      --div-blue:       #3987e5;
+      --div-red:        #e66767;
+      --div-blue-wash:  rgba(57,135,229,0.14);
+      --div-red-wash:   rgba(230,103,103,0.14);
+      --status-good:    #0ca30c;
+      --status-critical:#e66767;
+    }
+  }
+
+  *{ box-sizing: border-box; }
+  html,body{
+    margin:0; padding:0; background: var(--surface-2); color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  body{ padding: 20px; max-width: 1180px; margin: 0 auto 60px; }
+
+  header.app-header{ margin-bottom: 18px; }
+  header.app-header h1{ font-size: 1.5rem; margin: 0 0 4px; display:flex; align-items:center; gap:8px;}
+  header.app-header p{ margin:0; color: var(--text-secondary); font-size: 0.92rem; }
+  .version-badge{
+    font-size:0.68rem; font-weight:700; color: var(--text-secondary); background: var(--surface-1);
+    border:1px solid var(--border); border-radius:99px; padding:2px 9px; text-decoration:none;
+    margin-left:4px; letter-spacing:.02em;
+  }
+  .version-badge:hover{ color: var(--text-primary); border-color: var(--text-secondary); }
+  .method-tag{
+    font-size:0.66rem; font-weight:700; color: var(--text-muted); background: var(--surface-2);
+    border:1px solid var(--border); border-radius:6px; padding:2px 7px; text-transform:none;
+  }
+
+  .print-header{ display:none; }
+
+  .toolbar{
+    display:flex; flex-wrap:wrap; align-items:flex-end; gap:14px;
+    background: var(--surface-1); border:1px solid var(--border); border-radius:12px;
+    padding: 14px 16px; margin-bottom: 18px;
+  }
+  .field{ display:flex; flex-direction:column; gap:4px; }
+  .field label{ font-size:0.74rem; color: var(--text-muted); text-transform:uppercase; letter-spacing:.03em; }
+  .field input[type=text], .field select{
+    font: inherit; font-size:0.88rem; padding:7px 9px; border-radius:8px;
+    border:1px solid var(--border); background: var(--surface-2); color: var(--text-primary);
+    min-width: 170px;
+  }
+  .btn{
+    font: inherit; font-size:0.86rem; font-weight:600; padding:8px 14px; border-radius:8px;
+    border:1px solid var(--border); background: var(--surface-2); color: var(--text-primary);
+    cursor:pointer; display:inline-flex; align-items:center; gap:6px;
+  }
+  .btn:hover{ filter:brightness(1.06); }
+  .btn.primary{ background: var(--series-precip); border-color: var(--series-precip); color:#fff; }
+  .btn:disabled{ opacity:.5; cursor:not-allowed; }
+  input[type=file]{ display:none; }
+  .status-msg{ font-size:0.82rem; color: var(--text-muted); margin-left:auto; }
+  .status-msg.error{ color: var(--status-critical); font-weight:600; }
+
+  .quadro{
+    background: var(--surface-1); border:1px solid var(--border); border-radius:14px;
+    padding: 18px 20px 16px; margin-bottom: 20px;
+  }
+  .quadro h2{ font-size:1.08rem; margin:0 0 2px; display:flex; align-items:center; gap:7px; }
+  .quadro .sub{ font-size:0.82rem; color:var(--text-secondary); margin:0 0 14px; }
+  .empty-state{ color: var(--text-muted); font-size:0.88rem; padding: 24px 8px; text-align:center; }
+
+  /* Quadro 1: mapa */
+  .farm-grid{ display:grid; grid-template-columns: 1.5fr 1fr; gap:18px; align-items:start; }
+  #farmMap{ height: 380px; border-radius:10px; border:1px solid var(--border); background:#eee; }
+  .stat-list{ display:flex; flex-direction:column; gap:10px; }
+  .stat-tile{ background: var(--surface-2); border:1px solid var(--border); border-radius:10px; padding:10px 12px; }
+  .stat-tile .label{ font-size:0.72rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:.03em; }
+  .stat-tile .value{ font-size:1.35rem; font-weight:600; margin-top:2px; }
+  .img-caption{
+    margin-top:10px; font-size:0.76rem; color: var(--text-muted); line-height:1.5;
+    border-top: 1px solid var(--border); padding-top: 8px;
+  }
+  .img-caption b{ color: var(--text-secondary); font-weight:600;}
+
+  @media (max-width: 800px){ .farm-grid{ grid-template-columns: 1fr; } }
+
+  /* Quadros de irrigação */
+  .field-inline{ flex-direction:row; align-items:center; gap:8px; }
+  .field-inline label{ text-transform:none; font-size:0.82rem; color:var(--text-secondary); }
+  .field-inline input{ font: inherit; font-size:0.88rem; padding:5px 8px; border-radius:8px; border:1px solid var(--border); background: var(--surface-2); color: var(--text-primary); }
+  .crop-params-grid{ display:grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap:12px; align-items:end; }
+  .crop-params-grid .field label{ white-space:nowrap; }
+  .crop-params-grid input[type=number]{ font: inherit; font-size:0.88rem; padding:7px 9px; border-radius:8px; border:1px solid var(--border); background: var(--surface-2); color: var(--text-primary); width:100%; }
+  .kc-grid{ display:grid; grid-template-columns: repeat(auto-fill, minmax(84px,1fr)); gap:8px; }
+  .kc-cell{ background: var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:8px 8px 7px; text-align:center; }
+  .kc-cell .kc-month{ font-weight:700; font-size:0.82rem; }
+  .kc-cell .kc-phase{ font-size:0.62rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:.02em; margin-bottom:4px; height:14px; overflow:hidden; }
+  .kc-cell input{ width:100%; text-align:center; font: inherit; font-size:0.85rem; padding:4px 2px; border-radius:6px; border:1px solid var(--border); background: var(--surface-1); color: var(--text-primary); font-variant-numeric: tabular-nums; }
+
+  /* Quadro 2: meses */
+  .month-grid{ display:grid; grid-template-columns: repeat(auto-fill, minmax(148px,1fr)); gap:10px; }
+  .month-card{
+    background: var(--surface-2); border:1px solid var(--border); border-radius:10px; padding:10px 11px;
+  }
+  .month-card .mname{ font-weight:700; font-size:0.9rem; margin-bottom:6px; }
+  .month-card .row{ display:flex; align-items:center; gap:6px; font-size:0.82rem; color:var(--text-secondary); margin:3px 0; }
+  .month-card .row b{ color:var(--text-primary); font-weight:600; margin-left:auto; font-variant-numeric: tabular-nums; }
+  .pill{ display:inline-flex; align-items:center; gap:4px; font-size:0.76rem; font-weight:700; padding:2px 7px; border-radius:99px; margin-top:6px; }
+  .pill.surplus{ background: var(--div-blue-wash); color: var(--status-good); }
+  .pill.deficit{ background: var(--div-red-wash); color: var(--status-critical); }
+  .pill.nodata{ background: var(--surface-1); color: var(--text-muted); }
+
+  /* charts */
+  .chart-head{ display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:6px; }
+  .legend{ display:flex; gap:14px; flex-wrap:wrap; }
+  .legend-item{ display:flex; align-items:center; gap:6px; font-size:0.8rem; color:var(--text-secondary); }
+  .legend-swatch{ width:14px; height:3px; border-radius:2px; }
+  .legend-swatch.bar{ height:10px; border-radius:2px; }
+  .chart-wrap{ position:relative; width:100%; }
+  .chart-wrap svg{ width:100%; height:auto; display:block; overflow: visible; }
+  .chart-tooltip{
+    position:absolute; pointer-events:none; background: var(--surface-1); border:1px solid var(--border);
+    border-radius:8px; padding:8px 10px; font-size:0.78rem; box-shadow: 0 4px 14px rgba(0,0,0,0.15);
+    min-width:150px; z-index:5;
+  }
+  .chart-tooltip .tt-title{ font-weight:700; margin-bottom:4px; }
+  .chart-tooltip .tt-row{ display:flex; justify-content:space-between; gap:10px; }
+  .chart-tooltip .tt-row .k{ display:flex; align-items:center; gap:5px; color:var(--text-secondary); }
+  .chart-tooltip .tt-row .v{ font-weight:700; font-variant-numeric: tabular-nums; }
+  .tt-key{ display:inline-block; width:10px; height:3px; border-radius:2px; }
+  .chart-summary{ font-size:0.85rem; color:var(--text-secondary); margin: 10px 0 0; }
+  .chart-summary b{ color:var(--text-primary); }
+
+  table.data-table{ width:100%; border-collapse:collapse; margin-top:12px; font-size:0.8rem; }
+  table.data-table th, table.data-table td{ text-align:right; padding:5px 8px; border-bottom:1px solid var(--grid); font-variant-numeric: tabular-nums; }
+  table.data-table th:first-child, table.data-table td:first-child{ text-align:left; font-variant-numeric: initial; }
+  table.data-table thead th{ color:var(--text-muted); font-weight:600; font-size:0.72rem; text-transform:uppercase; letter-spacing:.02em; }
+
+  .note{ font-size:0.76rem; color:var(--text-muted); margin-top:10px; line-height:1.5; }
+
+  footer.app-footer{ text-align:center; font-size:0.76rem; color:var(--text-muted); margin-top: 28px; }
+
+  @media print{
+    body{ padding:0; max-width:none; background:#fff; }
+    .no-print, .toolbar{ display:none !important; }
+    .print-header{ display:block; margin-bottom:14px; }
+    .print-header h1{ font-size:1.3rem; margin:0 0 2px; }
+    .print-header p{ margin:0; font-size:0.85rem; color:#444; }
+    .quadro{ border:1px solid #ccc; break-inside: avoid; }
+    footer.app-footer{ display:none; }
+    .chart-tooltip{ display:none !important; }
+  }
+</style>
+</head>
+<body>
+
+<header class="app-header no-print">
+  <h1>🌦️ Balanço Climático <a class="version-badge" id="versionBadge" href="CHANGELOG.md" target="_blank" rel="noopener" title="Ver histórico de versões (CHANGELOG.md)">v2.0.0</a></h1>
+  <p>Área da fazenda via KML + imagem de satélite + clima mensal (NASA POWER) + balanço hídrico do solo e necessidade de irrigação da cultura.</p>
+</header>
+
+<div class="print-header">
+  <h1 id="printTitle">Balanço Climático</h1>
+  <p id="printSub"></p>
+</div>
+
+<div class="toolbar no-print">
+  <div class="field">
+    <label for="farmName">Fazenda / Talhão</label>
+    <input type="text" id="farmName" placeholder="Ex: Fazenda São José" />
+  </div>
+  <div class="field">
+    <label for="kmlInput">Polígono</label>
+    <button class="btn" id="kmlBtn" type="button">📂 Importar KML</button>
+    <input type="file" id="kmlInput" accept=".kml" />
+  </div>
+  <div class="field">
+    <label for="yearSelect">Ano climático</label>
+    <select id="yearSelect"></select>
+  </div>
+  <button class="btn primary" id="refreshBtn" type="button" disabled>🔄 Atualizar dados</button>
+  <button class="btn" id="printBtn" type="button">🖨️ Imprimir relatório</button>
+  <span class="status-msg" id="statusMsg"></span>
+</div>
+
+<section class="quadro" id="quadroMapa">
+  <h2>🗺️ Área da Fazenda</h2>
+  <p class="sub">Imagem de satélite de maior resolução disponível para o polígono importado.</p>
+  <div class="farm-grid">
+    <div id="farmMap"></div>
+    <div class="stat-list">
+      <div class="stat-tile"><div class="label">Área</div><div class="value" id="statArea">—</div></div>
+      <div class="stat-tile"><div class="label">Perímetro</div><div class="value" id="statPerim">—</div></div>
+      <div class="stat-tile"><div class="label">Centróide</div><div class="value" id="statCentroid" style="font-size:0.95rem;">—</div></div>
+      <div class="stat-tile"><div class="label">Elevação</div><div class="value" id="statElev" style="font-size:1.1rem;">—</div></div>
+    </div>
+  </div>
+  <div class="img-caption" id="imgCaption">Importe um arquivo .kml com o polígono da área para carregar o mapa.</div>
+</section>
+
+<section class="quadro" id="quadroMeses">
+  <h2>📅 Clima Mensal</h2>
+  <p class="sub" id="mesesSub">Selecione um ano e importe o polígono para ver os dados de cada mês.</p>
+  <div class="month-grid" id="monthGrid"><div class="empty-state">Sem dados ainda.</div></div>
+  <div class="note" id="monthNote"></div>
+</section>
+
+<section class="quadro" id="quadroBalanco">
+  <h2>⚖️ Balanço Hídrico Climático <span class="method-tag">Thornthwaite &amp; Mather (1955)</span></h2>
+  <p class="sub">Balanço sequencial do solo: chuva × ETo, armazenamento de água disponível, déficit (vermelho) e excedente (azul).</p>
+  <div class="chart-head">
+    <div class="field field-inline">
+      <label for="cadInput">CAD do solo (mm)</label>
+      <input type="number" id="cadInput" min="1" step="1" value="100" style="width:90px;">
+    </div>
+    <div class="legend" id="balanceLegend"></div>
+  </div>
+  <div class="chart-wrap" id="balanceChartWrap">
+    <svg id="balanceSvg" viewBox="0 0 780 400" preserveAspectRatio="xMidYMid meet"></svg>
+    <div class="chart-tooltip" id="balanceTooltip" hidden></div>
+  </div>
+  <p class="chart-summary" id="balanceSummary"></p>
+  <div style="overflow-x:auto;">
+    <table class="data-table" id="balanceTable"></table>
+  </div>
+  <p class="note">CAD = capacidade de água disponível no solo (mm de água que as raízes conseguem extrair antes de murchar). Referência: solos arenosos ~40-60mm, médios ~80-120mm, argilosos ~120-180mm por metro de profundidade efetiva de raiz — ajuste conforme seu solo e a profundidade radicular da cultura.</p>
+</section>
+
+<section class="quadro" id="quadroTemp">
+  <h2>🌡️ Temperatura Máxima</h2>
+  <p class="sub">Temperatura máxima do ar mês a mês (média das máximas diárias).</p>
+  <div class="chart-wrap" id="tempChartWrap">
+    <svg id="tempSvg" viewBox="0 0 780 220" preserveAspectRatio="xMidYMid meet"></svg>
+    <div class="chart-tooltip" id="tempTooltip" hidden></div>
+  </div>
+</section>
+
+<section class="quadro" id="quadroCultura">
+  <h2>🌱 Parâmetros de Irrigação</h2>
+  <p class="sub">Espaçamento, cobertura de copa e coeficiente de cultura (Kc) mensal — usados para dimensionar a necessidade de irrigação abaixo.</p>
+  <div class="crop-params-grid">
+    <div class="field">
+      <label for="rowSpacingInput">Espaç. entre linhas (m)</label>
+      <input type="number" id="rowSpacingInput" min="0.1" step="0.1" value="3.4">
+    </div>
+    <div class="field">
+      <label for="plantSpacingInput">Espaç. entre plantas (m)</label>
+      <input type="number" id="plantSpacingInput" min="0.1" step="0.1" value="0.7">
+    </div>
+    <div class="field">
+      <label for="canopyDiamInput">Projeção de copa (m)</label>
+      <input type="number" id="canopyDiamInput" min="0.1" step="0.1" value="2.0">
+    </div>
+    <div class="stat-tile" id="tileGc"><div class="label">Cobertura de copa (Gc)</div><div class="value" style="font-size:1.1rem;" id="valGc">—</div></div>
+    <div class="stat-tile" id="tileKl"><div class="label">Kl (localização)</div><div class="value" style="font-size:1.1rem;" id="valKl">—</div></div>
+    <div class="stat-tile" id="tilePlantsHa"><div class="label">Plantas / ha</div><div class="value" style="font-size:1.1rem;" id="valPlantsHa">—</div></div>
+  </div>
+  <p class="sub" style="margin-top:16px;">Coeficiente de cultura (Kc) por mês — padrão para café, editável por fase fenológica:</p>
+  <div class="kc-grid" id="kcGrid"></div>
+  <button class="btn no-print" id="resetKcBtn" type="button" style="margin-top:10px;">↺ Restaurar Kc padrão (café)</button>
+</section>
+
+<section class="quadro" id="quadroIrrigacao">
+  <h2>💧 Necessidade de Irrigação</h2>
+  <p class="sub" id="irrigSub">Evapotranspiração da cultura (Etc) ajustada por Kc e pela cobertura de copa, em lâmina e em litros por planta/dia.</p>
+  <div class="month-grid" id="irrigGrid"><div class="empty-state">Importe o polígono e informe os parâmetros da cultura acima.</div></div>
+  <div class="chart-wrap" id="irrigChartWrap" style="margin-top:16px;">
+    <svg id="irrigSvg" viewBox="0 0 780 220" preserveAspectRatio="xMidYMid meet"></svg>
+    <div class="chart-tooltip" id="irrigTooltip" hidden></div>
+  </div>
+  <p class="chart-summary" id="irrigSummary"></p>
+  <div style="overflow-x:auto;">
+    <table class="data-table" id="irrigTable"></table>
+  </div>
+</section>
+
+<div class="note" id="sourcesNote"></div>
+
+<footer class="app-footer no-print">Balanço Climático — ferramenta local, sem envio de dados a servidores próprios.</footer>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function(){
+  'use strict';
+
+  // ---------------- Config ----------------
+  const ESRI_TILE_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+  const ESRI_IDENTIFY_URL = 'https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/identify';
+  const NASA_POWER_URL = 'https://power.larc.nasa.gov/api/temporal/monthly/point';
+  const MONTH_NAMES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  const MONTH_NAMES_FULL = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+
+  const el = id => document.getElementById(id);
+
+  // ---------------- State ----------------
+  let map = null, polygonLayer = null;
+  let farmPolygons = null;
+  let farmGeo = null; // {areaHa, perimKm, centroid:{lat,lon}}
+  let imageryMeta = null;
+  let climateMonths = null; // [{month,days,tmax,precip,eto}]
+  let irrigationCfg = { rowSpacing: 3.4, plantSpacing: 0.7, canopyDiam: 2.0, bareSoilFactor: 0.15, kc: [1.0,1.0,1.0,1.0,0.8,0.8,0.8,0.8,0.9,1.1,1.1,1.1] };
+  let cadValue = 100; // capacidade de água disponível no solo (mm)
+
+  // ================= Geometry helpers =================
+  const R_EARTH = 6378137;
+
+  function toXY(lat, lon, lat0){
+    const x = (lon*Math.PI/180) * R_EARTH * Math.cos(lat0*Math.PI/180);
+    const y = (lat*Math.PI/180) * R_EARTH;
+    return [x,y];
+  }
+
+  function ringAreaAndCentroid(ring, lat0){
+    const pts = ring.map(([la,lo]) => toXY(la,lo,lat0));
+    let area=0, cx=0, cy=0;
+    const n = pts.length;
+    for (let i=0;i<n;i++){
+      const [x0,y0] = pts[i];
+      const [x1,y1] = pts[(i+1)%n];
+      const cross = x0*y1 - x1*y0;
+      area += cross;
+      cx += (x0+x1)*cross;
+      cy += (y0+y1)*cross;
+    }
+    area = area/2;
+    if (Math.abs(area) > 1e-6){ cx = cx/(6*area); cy = cy/(6*area); }
+    return { area: Math.abs(area), cx, cy };
+  }
+
+  function haversine(lat1,lon1,lat2,lon2){
+    const R=6371000, toRad=Math.PI/180;
+    const dLat=(lat2-lat1)*toRad, dLon=(lon2-lon1)*toRad;
+    const a = Math.sin(dLat/2)**2 + Math.cos(lat1*toRad)*Math.cos(lat2*toRad)*Math.sin(dLon/2)**2;
+    return 2*R*Math.asin(Math.sqrt(a));
+  }
+
+  function ringPerimeterMeters(ring){
+    let d=0;
+    for (let i=0;i<ring.length;i++){
+      const [la1,lo1] = ring[i];
+      const [la2,lo2] = ring[(i+1)%ring.length];
+      d += haversine(la1,lo1,la2,lo2);
+    }
+    return d;
+  }
+
+  function computeFarmGeometry(polygons){
+    const allPts = polygons.flatMap(p => p.outer);
+    const lat0 = allPts.reduce((s,[la])=>s+la,0)/allPts.length;
+
+    let totalArea = 0, weightedCx = 0, weightedCy = 0, weightSum = 0, totalPerimM = 0;
+
+    for (const poly of polygons){
+      const outer = ringAreaAndCentroid(poly.outer, lat0);
+      let netArea = outer.area;
+      for (const hole of poly.holes){ netArea -= ringAreaAndCentroid(hole, lat0).area; }
+      totalArea += netArea;
+      weightedCx += outer.cx * outer.area;
+      weightedCy += outer.cy * outer.area;
+      weightSum += outer.area;
+      totalPerimM += ringPerimeterMeters(poly.outer);
+    }
+
+    const cx = weightSum > 0 ? weightedCx/weightSum : allPts.reduce((s,[,lo])=>s+lo,0)/allPts.length;
+    const cy = weightSum > 0 ? weightedCy/weightSum : 0;
+    let centroidLat, centroidLon;
+    if (weightSum > 0){
+      centroidLat = (cy / R_EARTH) * 180/Math.PI;
+      centroidLon = (cx / (R_EARTH*Math.cos(lat0*Math.PI/180))) * 180/Math.PI;
+    } else {
+      centroidLat = lat0;
+      centroidLon = cx;
+    }
+
+    const kmlElev = estimateElevationFromKML(polygons);
+    return {
+      areaHa: totalArea/10000,
+      perimKm: totalPerimM/1000,
+      centroid: { lat: centroidLat, lon: centroidLon },
+      elevation: kmlElev != null ? kmlElev : 0,
+      elevationSource: kmlElev != null ? 'kml' : 'pendente'
+    };
+  }
+
+  // ================= FAO-56 Penman-Monteith (ETo mensal) =================
+  const toRad = deg => deg*Math.PI/180;
+
+  function dayOfYearMid(year, month){
+    const d = Date.UTC(year, month-1, 15);
+    const start = Date.UTC(year, 0, 1);
+    return Math.round((d-start)/86400000)+1;
+  }
+
+  function extraterrestrialRadiation(latDeg, J){
+    const Gsc = 0.0820;
+    const phi = toRad(latDeg);
+    const dr = 1 + 0.033*Math.cos(2*Math.PI/365*J);
+    const delta = 0.409*Math.sin(2*Math.PI/365*J - 1.39);
+    const tanProd = Math.tan(phi)*Math.tan(delta);
+    let ws;
+    if (tanProd <= -1) ws = 0; else if (tanProd >= 1) ws = Math.PI; else ws = Math.acos(-tanProd);
+    return (24*60/Math.PI)*Gsc*dr*(ws*Math.sin(phi)*Math.sin(delta) + Math.cos(phi)*Math.cos(delta)*Math.sin(ws));
+  }
+
+  // ETo de referência (grama), método padrão FAO Irrigation & Drainage Paper 56,
+  // adaptado para médias mensais (G=0). Retorna mm/dia, ou null se faltar algum dado.
+  function eto_FAO56_monthly({tmax,tmin,rh,ws2,rs,latDeg,elevM,year,month}){
+    if ([tmax,tmin,rh,ws2,rs].some(v => v==null || !Number.isFinite(v))) return null;
+    const tmean = (tmax+tmin)/2;
+    const delta = 4098*(0.6108*Math.exp(17.27*tmean/(tmean+237.3)))/Math.pow(tmean+237.3,2);
+    const z = elevM || 0;
+    const P = 101.3*Math.pow((293-0.0065*z)/293, 5.26);
+    const gamma = 0.000665*P;
+    const eTmax = 0.6108*Math.exp(17.27*tmax/(tmax+237.3));
+    const eTmin = 0.6108*Math.exp(17.27*tmin/(tmin+237.3));
+    const es = (eTmax+eTmin)/2;
+    const ea = es*Math.min(1, Math.max(0, rh/100));
+    const J = dayOfYearMid(year, month);
+    const Ra = extraterrestrialRadiation(latDeg, J);
+    const Rso = (0.75 + 2e-5*z)*Ra;
+    const Rns = (1-0.23)*rs;
+    const sigma = 4.903e-9;
+    const tmaxK = tmax+273.16, tminK = tmin+273.16;
+    const ratio = Math.min(1, Math.max(0.3, rs/Math.max(Rso,0.01)));
+    const Rnl = sigma*((Math.pow(tmaxK,4)+Math.pow(tminK,4))/2)*(0.34-0.14*Math.sqrt(Math.max(ea,0)))*(1.35*ratio-0.35);
+    const Rn = Rns - Rnl;
+    const numerator = 0.408*delta*Rn + gamma*(900/(tmean+273))*ws2*(es-ea);
+    const denominator = delta + gamma*(1+0.34*ws2);
+    const eto = numerator/denominator;
+    return Number.isFinite(eto) ? Math.max(0, eto) : null;
+  }
+
+  // ================= KML parsing =================
+  function firstChildTag(node, tag){
+    const f = node.getElementsByTagName(tag);
+    return f.length ? f[0] : null;
+  }
+
+  function parseCoordText(text){
+    return text.trim().split(/\s+/).filter(Boolean).map(tuple => {
+      const parts = tuple.split(',');
+      const lon = parseFloat(parts[0]);
+      const lat = parseFloat(parts[1]);
+      const alt = parts.length > 2 ? parseFloat(parts[2]) : NaN;
+      return [lat, lon, alt];
+    }).filter(([la,lo]) => Number.isFinite(la) && Number.isFinite(lo));
+  }
+
+  // Altitude embutida no próprio KML (raro ter valor real — a maioria dos exports
+  // do Google Earth/Maps grava 0 ou omite a cota). Serve só de fallback.
+  function estimateElevationFromKML(polygons){
+    const alts = [];
+    polygons.forEach(p => p.outer.forEach(pt => { if (Number.isFinite(pt[2]) && pt[2] !== 0) alts.push(pt[2]); }));
+    if (!alts.length) return null;
+    return alts.reduce((s,v)=>s+v,0)/alts.length;
+  }
+
+  // Elevação real do terreno a partir das coordenadas (modelo de elevação
+  // Copernicus DEM / SRTM via Open-Meteo, gratuito, sem chave).
+  async function fetchElevation(lat, lon){
+    const params = new URLSearchParams({ latitude: lat.toFixed(5), longitude: lon.toFixed(5) });
+    const res = await fetch(`https://api.open-meteo.com/v1/elevation?${params.toString()}`);
+    if (!res.ok) throw new Error('Falha ao consultar elevação (HTTP '+res.status+').');
+    const data = await res.json();
+    const v = data.elevation && data.elevation[0];
+    if (!Number.isFinite(v)) throw new Error('Resposta de elevação inválida.');
+    return v;
+  }
+
+  function parseKMLText(text){
+    const xml = new DOMParser().parseFromString(text, 'text/xml');
+    if (xml.getElementsByTagName('parsererror').length){
+      throw new Error('Arquivo KML inválido (erro ao interpretar o XML).');
+    }
+    const polygonEls = Array.from(xml.getElementsByTagName('Polygon'));
+    if (!polygonEls.length) throw new Error('Nenhum polígono (<Polygon>) encontrado no KML.');
+
+    const polygons = [];
+    for (const pEl of polygonEls){
+      const outerB = firstChildTag(pEl, 'outerBoundaryIs');
+      if (!outerB) continue;
+      const outerCoordsEl = firstChildTag(outerB, 'coordinates');
+      if (!outerCoordsEl) continue;
+      const outer = parseCoordText(outerCoordsEl.textContent);
+      if (outer.length < 3) continue;
+
+      const holes = [];
+      const innerBs = pEl.getElementsByTagName('innerBoundaryIs');
+      for (let i=0;i<innerBs.length;i++){
+        const ic = firstChildTag(innerBs[i], 'coordinates');
+        if (ic){ const ring = parseCoordText(ic.textContent); if (ring.length>=3) holes.push(ring); }
+      }
+      polygons.push({ outer, holes });
+    }
+    if (!polygons.length) throw new Error('Não foi possível extrair coordenadas válidas do KML.');
+    return polygons;
+  }
+
+  // ================= Map + Esri imagery metadata =================
+  function renderMap(polygons){
+    if (!map){
+      map = L.map('farmMap', { attributionControl: true });
+      L.tileLayer(ESRI_TILE_URL, {
+        maxZoom: 19,
+        attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics'
+      }).addTo(map);
+    } else {
+      map.setView([0,0], 2);
+    }
+    if (polygonLayer){ map.removeLayer(polygonLayer); }
+    const layers = polygons.map(poly => {
+      const latlngs = poly.holes.length ? [poly.outer, ...poly.holes] : poly.outer;
+      return L.polygon(latlngs, { color:'#2a78d6', weight:2, fillColor:'#2a78d6', fillOpacity:0.12 });
+    });
+    polygonLayer = L.featureGroup(layers).addTo(map);
+    const bounds = polygonLayer.getBounds();
+    map.fitBounds(bounds, { padding:[24,24], animate:false });
+    setTimeout(()=> map.invalidateSize(), 50);
+    return bounds;
+  }
+
+  async function fetchImageryMeta(lat, lon, bounds, size){
+    const mapExtent = `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`;
+    const params = new URLSearchParams({
+      geometry: `${lon},${lat}`,
+      geometryType: 'esriGeometryPoint',
+      sr: '4326',
+      layers: 'all:4',
+      tolerance: '6',
+      mapExtent,
+      imageDisplay: `${Math.max(size.x,50)},${Math.max(size.y,50)},96`,
+      returnGeometry: 'false',
+      f: 'json'
+    });
+    const res = await fetch(`${ESRI_IDENTIFY_URL}?${params.toString()}`);
+    if (!res.ok) throw new Error('Falha ao consultar metadados da imagem (HTTP '+res.status+').');
+    const data = await res.json();
+    const results = data.results || [];
+    if (!results.length) return null;
+    for (let i=results.length-1;i>=0;i--){
+      const a = results[i].attributes || {};
+      const dateStr = a['DATE'];
+      if (dateStr && dateStr !== 'Null'){
+        return {
+          dateStr,
+          source: a['SOURCE'] || a['SOURCE_INFO'] || 'Esri World Imagery',
+          description: a['DESCRIPTION'] || '',
+          resolution: a['RESOLUTION (M)'] || null
+        };
+      }
+    }
+    const last = results[results.length-1].attributes || {};
+    return {
+      dateStr: null,
+      source: last['SOURCE'] || last['SOURCE_INFO'] || 'Esri World Imagery',
+      description: last['DESCRIPTION'] || '',
+      resolution: last['RESOLUTION (M)'] || null
+    };
+  }
+
+  // ================= NASA POWER climate =================
+  function daysInMonth(year, month1to12){ return new Date(year, month1to12, 0).getDate(); }
+
+  async function fetchClimate(lat, lon, year, elevM){
+    const params = new URLSearchParams({
+      parameters: 'T2M_MAX,T2M_MIN,RH2M,WS2M,ALLSKY_SFC_SW_DWN,PRECTOTCORR',
+      community: 'AG',
+      longitude: lon.toFixed(4),
+      latitude: lat.toFixed(4),
+      format: 'JSON',
+      start: String(year),
+      end: String(year)
+    });
+    const res = await fetch(`${NASA_POWER_URL}?${params.toString()}`);
+    if (!res.ok) throw new Error('Falha na resposta da API NASA POWER (HTTP '+res.status+').');
+    const data = await res.json();
+    const p = data.properties && data.properties.parameter;
+    if (!p) throw new Error('Resposta inesperada da API NASA POWER.');
+    const isMissing = v => v === undefined || v === null || v <= -900;
+    const get = (param, key) => { const v = p[param] ? p[param][key] : undefined; return isMissing(v) ? null : v; };
+    const months = [];
+    for (let m=1;m<=12;m++){
+      const key = String(year)+String(m).padStart(2,'0');
+      const tmax = get('T2M_MAX', key);
+      const tmin = get('T2M_MIN', key);
+      const rh = get('RH2M', key);
+      const ws2 = get('WS2M', key);
+      const rs = get('ALLSKY_SFC_SW_DWN', key);
+      const precDay = get('PRECTOTCORR', key);
+      const dim = daysInMonth(year, m);
+      const etoDay = eto_FAO56_monthly({ tmax, tmin, rh, ws2, rs, latDeg: lat, elevM, year, month: m });
+      months.push({
+        month: m,
+        days: dim,
+        tmax,
+        precip: precDay==null ? null : precDay*dim,
+        eto: etoDay==null ? null : etoDay*dim
+      });
+    }
+    return months;
+  }
+
+  // ================= Balanço hídrico sequencial (Thornthwaite & Mather, 1955) =================
+  // Método clássico do "extrato do balanço hídrico climatológico", o mesmo usado nas
+  // planilhas de Rolim, Sentelhas & Barbieri (ESALQ/USP, Rev.Bras.Agrometeorologia 6(1),1998).
+  // Aqui a entrada de ETP é a ETo FAO-56 Penman-Monteith já calculada (mais robusta que
+  // Thornthwaite 1948, que o próprio método recomenda só para regiões úmidas).
+  // CAD = capacidade de água disponível no solo (mm). Roda o ciclo de 12 meses duas vezes
+  // (início assumindo solo cheio) e mantém a segunda passagem, pra reduzir a sensibilidade
+  // ao "chute" de armazenamento inicial — atalho padrão quando não se tem uma série longa.
+  function computeWaterBalance(months, cad){
+    if (!cad || cad <= 0) return null;
+    if (months.some(m => m.precip==null || m.eto==null)) return null;
+    const P = months.map(m=>m.precip);
+    const ETP = months.map(m=>m.eto);
+    const seqP = P.concat(P), seqETP = ETP.concat(ETP);
+
+    let ARM = cad, NEG_AC = 0;
+    const out = [];
+    for (let i=0;i<24;i++){
+      const p = seqP[i], etp = seqETP[i];
+      const M = p - etp;
+      let newARM, newNEG;
+      if (M < 0){
+        newNEG = NEG_AC + M;
+        newARM = cad*Math.exp(newNEG/cad);
+      } else {
+        newARM = Math.min(cad, ARM + M);
+        newNEG = cad*Math.log(Math.max(newARM,1e-6)/cad);
+      }
+      const ALT = newARM - ARM;
+      let ETR;
+      if (M >= 0) ETR = etp;
+      else if (ALT < 0) ETR = p + Math.abs(ALT);
+      else ETR = etp;
+      const DEF = Math.max(0, etp - ETR);
+      let EXC = 0;
+      if (newARM >= cad - 1e-6) EXC = Math.max(0, M - ALT);
+      out.push({ P:p, ETP:etp, M, ARM:newARM, ALT, ETR, DEF, EXC });
+      ARM = newARM; NEG_AC = newNEG;
+    }
+    return out.slice(12,24).map((r,i) => ({ month: months[i].month, tmax: months[i].tmax, ...r }));
+  }
+
+  // ================= Necessidade de irrigação da cultura =================
+  // Fases fenológicas do café e Kc padrão (Planilha "Estudo de Lâmina", ESALQ/EMBRAPA):
+  // Florada(Ago) 0.8 · Chumbinho(Set) 0.9 · Granação(Out-Dez) 1.1 · Maturação(Jan-Abr) 1.0 · Colheita(Mai-Jul) 0.8
+  const CROP_PHASE = ['Maturação','Maturação','Maturação','Maturação','Colheita','Colheita','Colheita','Florada','Chumbinho','Granação','Granação','Granação'];
+  const DEFAULT_KC  = [1.0, 1.0, 1.0, 1.0, 0.8, 0.8, 0.8, 0.8, 0.9, 1.1, 1.1, 1.1];
+
+  function computeIrrigationNeed(months, cfg){
+    const plantAreaM2 = cfg.rowSpacing * cfg.plantSpacing;
+    const plantsPerHa = plantAreaM2 > 0 ? 10000/plantAreaM2 : 0;
+    // Gc: fração da área coberta pela projeção de copa (proxy simplificado copa/entrelinha).
+    const gc = cfg.rowSpacing > 0 ? Math.min(1, Math.max(0, cfg.canopyDiam/cfg.rowSpacing)) : 0;
+    // Kl: coeficiente de localização (Keller) — reduz a ETc pela cobertura parcial do solo,
+    // típico de irrigação localizada em cultivos com espaçamento entre linhas.
+    const kl = gc + cfg.bareSoilFactor*(1-gc);
+    return months.map((m,i) => {
+      const kc = cfg.kc[i];
+      if (m.eto==null){
+        return { month:m.month, phase:CROP_PHASE[i], kc, gc, kl, etoDiaMM:null, etcBrutoDiaMM:null, etcLocDiaMM:null, litrosPlantaDia:null, m3HaDia:null };
+      }
+      const etoDiaMM = m.eto / m.days;
+      const etcBrutoDiaMM = etoDiaMM * kc;
+      const etcLocDiaMM = etcBrutoDiaMM * kl;
+      const litrosPlantaDia = plantAreaM2 * etcLocDiaMM; // 1 mm sobre 1 m² = 1 litro
+      const m3HaDia = (plantsPerHa * litrosPlantaDia) / 1000;
+      return { month:m.month, phase:CROP_PHASE[i], kc, gc, kl, etoDiaMM, etcBrutoDiaMM, etcLocDiaMM, litrosPlantaDia, m3HaDia, plantsPerHa };
+    });
+  }
+
+  // ================= Formatting =================
+  const fmt1 = v => v.toLocaleString('pt-BR', { maximumFractionDigits:1, minimumFractionDigits:0 });
+  const fmt0 = v => v.toLocaleString('pt-BR', { maximumFractionDigits:0 });
+
+  function setStatus(msg, isError){
+    const s = el('statusMsg');
+    s.textContent = msg || '';
+    s.classList.toggle('error', !!isError);
+  }
+
+  // ================= Rendering: Quadro 1 =================
+  const ELEV_SOURCE_LABEL = { api: 'Open-Meteo (SRTM/Copernicus DEM)', kml: 'altitude do KML', fallback: 'sem dado — assumido 0 m', pendente: 'consultando…' };
+
+  function renderFarmStats(){
+    el('statArea').textContent = farmGeo.areaHa < 1
+      ? fmt0(farmGeo.areaHa*10000) + ' m²'
+      : fmt1(farmGeo.areaHa) + ' ha';
+    el('statPerim').textContent = fmt1(farmGeo.perimKm) + ' km';
+    el('statCentroid').textContent = farmGeo.centroid.lat.toFixed(5) + ', ' + farmGeo.centroid.lon.toFixed(5);
+    el('statElev').textContent = fmt0(farmGeo.elevation) + ' m';
+    el('statElev').title = 'Fonte: ' + (ELEV_SOURCE_LABEL[farmGeo.elevationSource] || farmGeo.elevationSource);
+  }
+
+  function renderImageryCaption(){
+    const cap = el('imgCaption');
+    cap.innerHTML = '';
+    const today = new Date().toLocaleDateString('pt-BR');
+    const line1 = document.createElement('div');
+    const bSrc = document.createElement('b'); bSrc.textContent = 'Fonte: ';
+    line1.appendChild(bSrc);
+    line1.appendChild(document.createTextNode(
+      imageryMeta ? (imageryMeta.source + (imageryMeta.description ? ' — '+imageryMeta.description : '')) : 'Esri World Imagery'
+    ));
+    cap.appendChild(line1);
+
+    const line2 = document.createElement('div');
+    const bDate = document.createElement('b'); bDate.textContent = 'Data da imagem: ';
+    line2.appendChild(bDate);
+    line2.appendChild(document.createTextNode(
+      imageryMeta && imageryMeta.dateStr ? imageryMeta.dateStr : 'não informada pelo provedor para este ponto'
+    ));
+    if (imageryMeta && imageryMeta.resolution){
+      line2.appendChild(document.createTextNode('  •  Resolução: '+imageryMeta.resolution+' m/pixel'));
+    }
+    cap.appendChild(line2);
+
+    const line3 = document.createElement('div');
+    const bCons = document.createElement('b'); bCons.textContent = 'Consultado em: ';
+    line3.appendChild(bCons);
+    line3.appendChild(document.createTextNode(today+' • ponto de referência: centróide da área'));
+    cap.appendChild(line3);
+  }
+
+  // ================= Rendering: Quadro 2 (meses) =================
+  function renderMonthCards(year){
+    const grid = el('monthGrid');
+    grid.innerHTML = '';
+    el('mesesSub').textContent = 'Ano de '+year+' — temperatura máxima, precipitação total e evapotranspiração estimada, mês a mês.';
+    climateMonths.forEach(m => {
+      const card = document.createElement('div');
+      card.className = 'month-card';
+
+      const title = document.createElement('div');
+      title.className = 'mname';
+      title.textContent = MONTH_NAMES[m.month-1];
+      card.appendChild(title);
+
+      const rowT = document.createElement('div'); rowT.className='row';
+      rowT.innerHTML = '<span>🌡️ Máx.</span>';
+      const bT = document.createElement('b'); bT.textContent = m.tmax==null ? '—' : fmt1(m.tmax)+' °C';
+      rowT.appendChild(bT); card.appendChild(rowT);
+
+      const rowP = document.createElement('div'); rowP.className='row';
+      rowP.innerHTML = '<span>💧 Precip.</span>';
+      const bP = document.createElement('b'); bP.textContent = m.precip==null ? '—' : fmt0(m.precip)+' mm';
+      rowP.appendChild(bP); card.appendChild(rowP);
+
+      const rowE = document.createElement('div'); rowE.className='row';
+      rowE.innerHTML = '<span>☀️ ETo</span>';
+      const bE = document.createElement('b'); bE.textContent = m.eto==null ? '—' : fmt0(m.eto)+' mm';
+      rowE.appendChild(bE); card.appendChild(rowE);
+
+      const pill = document.createElement('div');
+      if (m.precip==null || m.eto==null){
+        pill.className='pill nodata'; pill.textContent='sem dado';
+      } else {
+        const bal = m.precip - m.eto;
+        pill.className = 'pill ' + (bal>=0 ? 'surplus' : 'deficit');
+        pill.textContent = (bal>=0 ? '▲ +' : '▼ ') + fmt0(bal) + ' mm';
+      }
+      card.appendChild(pill);
+      grid.appendChild(card);
+    });
+    el('monthNote').textContent = 'Fonte: NASA POWER (comunidade AG, base MERRA-2). Meses muito recentes podem ainda não estar disponíveis.';
+  }
+
+  // ================= Chart helpers (SVG) =================
+  // Retorna {max, step, ticks[]} com um passo "redondo" (1/2/2.5/5 x 10^n) para eixos começando em 0.
+  function niceScale(value, targetTicks){
+    targetTicks = targetTicks || 5;
+    if (value <= 0) value = 1;
+    const rawStep = value/targetTicks;
+    const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    const norm = rawStep/mag;
+    let niceNorm;
+    if (norm <= 1) niceNorm = 1; else if (norm <= 2) niceNorm = 2;
+    else if (norm <= 2.5) niceNorm = 2.5; else if (norm <= 5) niceNorm = 5; else niceNorm = 10;
+    const step = niceNorm*mag;
+    const max = Math.ceil(value/step)*step;
+    const ticks = [];
+    for (let v=0; v<=max+step*1e-6; v+=step) ticks.push(Math.round(v*1000)/1000);
+    return { max, step, ticks };
+  }
+
+  // Variante para escalas que não começam em zero (ex: temperatura).
+  function niceScaleRange(minValue, maxValue, targetTicks){
+    targetTicks = targetTicks || 5;
+    const span = Math.max(1e-6, maxValue-minValue);
+    const rawStep = span/targetTicks;
+    const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    const norm = rawStep/mag;
+    let niceNorm;
+    if (norm <= 1) niceNorm = 1; else if (norm <= 2) niceNorm = 2;
+    else if (norm <= 2.5) niceNorm = 2.5; else if (norm <= 5) niceNorm = 5; else niceNorm = 10;
+    const step = niceNorm*mag;
+    const min = Math.floor(minValue/step)*step;
+    const max = Math.ceil(maxValue/step)*step;
+    const ticks = [];
+    for (let v=min; v<=max+step*1e-6; v+=step) ticks.push(Math.round(v*1000)/1000);
+    return { min, max, step, ticks };
+  }
+
+  function roundedTopRect(x,y,w,h,r){
+    if (h<=0) return '';
+    r = Math.min(r, w/2, h);
+    return `M${x},${y+h} L${x},${y+r} Q${x},${y} ${x+r},${y} L${x+w-r},${y} Q${x+w},${y} ${x+w},${y+r} L${x+w},${y+h} Z`;
+  }
+
+  function divergingBarPath(x,w,baselineY,endY,r){
+    const up = endY < baselineY;
+    const top = up ? endY : baselineY;
+    const bottom = up ? baselineY : endY;
+    const h = bottom - top;
+    if (h <= 0.6) return '';
+    r = Math.min(r, w/2, h);
+    if (up){
+      return `M${x},${bottom} L${x},${top+r} Q${x},${top} ${x+r},${top} L${x+w-r},${top} Q${x+w},${top} ${x+w},${top+r} L${x+w},${bottom} Z`;
+    }
+    return `M${x},${top} L${x+w},${top} L${x+w},${bottom-r} Q${x+w},${bottom} ${x+w-r},${bottom} L${x+r},${bottom} Q${x},${bottom} ${x},${bottom-r} Z`;
+  }
+
+  const svgns = 'http://www.w3.org/2000/svg';
+  function sv(tag, attrs){
+    const n = document.createElementNS(svgns, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    return n;
+  }
+
+  // ---- Balance chart (precip bars + ETo line + diverging ribbon) ----
+  function renderBalanceChart(wb, cad){
+    const svg = el('balanceSvg');
+    svg.innerHTML = '';
+    const wrap = el('balanceChartWrap');
+    const tooltip = el('balanceTooltip');
+
+    if (!wb){
+      el('balanceLegend').innerHTML = '';
+      el('balanceSummary').textContent = 'Balanço indisponível: há meses sem dado climático completo, ou o CAD informado é inválido.';
+      el('balanceTable').innerHTML = '';
+      tooltip.hidden = true;
+      return;
+    }
+
+    const W=780, plotX0=52, plotX1=764, plotW=plotX1-plotX0;
+    const mainY0=14, mainY1=168;                 // P (barras) x ETP (linha)
+    const ribbonY0=192, ribbonY1=244; const ribbonMid=(ribbonY0+ribbonY1)/2;   // déficit/excedente
+    const armY0=268, armY1=326;                   // armazenamento no solo (ARM)
+    const labelY = 344;
+    const colW = plotW/12;
+
+    const styles = getComputedStyle(document.documentElement);
+    const cGrid = styles.getPropertyValue('--grid').trim();
+    const cMuted = styles.getPropertyValue('--text-muted').trim();
+    const cBaseline = styles.getPropertyValue('--baseline').trim();
+    const cPrimary = styles.getPropertyValue('--text-primary').trim();
+    const cPrecip = styles.getPropertyValue('--series-precip').trim();
+    const cEto = styles.getPropertyValue('--series-eto').trim();
+    const cSurface = styles.getPropertyValue('--surface-1').trim();
+    const cBlue = styles.getPropertyValue('--div-blue').trim();
+    const cRed = styles.getPropertyValue('--div-red').trim();
+
+    const scaleMain = niceScale(Math.max(1, ...wb.map(m => Math.max(m.P||0, m.ETP||0))), 5);
+    const maxMain = scaleMain.max;
+    const maxBal = niceScale(Math.max(1, ...wb.map(m => Math.max(m.DEF||0, m.EXC||0))), 3).max;
+
+    const yMain = v => mainY1 - (v/maxMain)*(mainY1-mainY0);
+    const yRibbon = v => ribbonMid - (v/maxBal)*((ribbonY1-ribbonY0)/2);
+    const yArm = v => armY1 - (Math.min(v,cad)/cad)*(armY1-armY0);
+
+    // -- painel 1: P x ETP --
+    scaleMain.ticks.forEach(val => {
+      const y = yMain(val);
+      svg.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:y,y2:y,stroke:cGrid,'stroke-width':1}));
+      const t = sv('text',{x:plotX0-8,y:y+3,'text-anchor':'end','font-size':10,fill:cMuted});
+      t.textContent = fmt0(val); svg.appendChild(t);
+    });
+    svg.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:mainY1,y2:mainY1,stroke:cBaseline,'stroke-width':1}));
+
+    // -- painel 2: déficit/excedente --
+    svg.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:ribbonMid,y2:ribbonMid,stroke:cBaseline,'stroke-width':1}));
+    const rLabel = sv('text',{x:plotX0-8,y:ribbonMid+3,'text-anchor':'end','font-size':9,fill:cMuted});
+    rLabel.textContent = '0'; svg.appendChild(rLabel);
+    const ribbonTitle = sv('text',{x:plotX0,y:ribbonY0-6,'font-size':10,'font-weight':700,fill:cMuted});
+    ribbonTitle.textContent = 'DÉFICIT / EXCEDENTE'; svg.appendChild(ribbonTitle);
+
+    // -- painel 3: armazenamento no solo (ARM) --
+    [0, cad].forEach(val => {
+      const y = yArm(val);
+      svg.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:y,y2:y,stroke:cGrid,'stroke-width':1}));
+      const t = sv('text',{x:plotX0-8,y:y+3,'text-anchor':'end','font-size':10,fill:cMuted});
+      t.textContent = fmt0(val); svg.appendChild(t);
+    });
+    const armTitle = sv('text',{x:plotX0,y:armY0-6,'font-size':10,'font-weight':700,fill:cMuted});
+    armTitle.textContent = 'ARMAZENAMENTO NO SOLO (ARM)'; svg.appendChild(armTitle);
+
+    const linePts = [], armPts = [];
+    const hitLayer = sv('g',{});
+    wb.forEach((m,i) => {
+      const cx = plotX0 + colW*(i+0.5);
+      const bw = Math.min(22, colW*0.42);
+      const path = roundedTopRect(cx-bw/2, yMain(m.P), bw, mainY1-yMain(m.P), 4);
+      svg.appendChild(sv('path',{d:path, fill:cPrecip}));
+      linePts.push([cx, yMain(m.ETP)]);
+      armPts.push([cx, yArm(m.ARM)]);
+
+      const lbl = sv('text',{x:cx,y:labelY,'text-anchor':'middle','font-size':11,fill:cMuted});
+      lbl.textContent = MONTH_NAMES[m.month-1]; svg.appendChild(lbl);
+
+      const bw2 = Math.min(20, colW*0.4);
+      if (m.DEF > 0.05){
+        // déficit cresce para baixo a partir do zero: espelha yRibbon em torno de ribbonMid
+        const endY = 2*ribbonMid - yRibbon(m.DEF);
+        const p = divergingBarPath(cx-bw2/2, bw2, ribbonMid, endY, 3);
+        svg.appendChild(sv('path',{d:p, fill:cRed}));
+      } else if (m.EXC > 0.05){
+        const p = divergingBarPath(cx-bw2/2, bw2, ribbonMid, yRibbon(m.EXC), 3);
+        svg.appendChild(sv('path',{d:p, fill:cBlue}));
+      }
+
+      const hit = sv('rect',{x:plotX0+colW*i, y:mainY0, width:colW, height:armY1-mainY0, fill:'transparent', tabindex:'0'});
+      hit.dataset.idx = i;
+      hitLayer.appendChild(hit);
+    });
+
+    // ETP linha
+    if (linePts.length > 1){
+      const d = linePts.map((p,i)=> (i===0?'M':'L')+p[0]+','+p[1]).join(' ');
+      svg.appendChild(sv('path',{d, fill:'none', stroke:cEto,'stroke-width':2,'stroke-linecap':'round','stroke-linejoin':'round'}));
+    }
+    linePts.forEach(([x,y]) => {
+      svg.appendChild(sv('circle',{cx:x,cy:y,r:6,fill:cSurface}));
+      svg.appendChild(sv('circle',{cx:x,cy:y,r:4,fill:cEto}));
+    });
+
+    // ARM área + linha
+    if (armPts.length > 1){
+      const areaD = 'M'+armPts[0][0]+','+armY1+' '+armPts.map(p=>'L'+p[0]+','+p[1]).join(' ')+' L'+armPts[armPts.length-1][0]+','+armY1+' Z';
+      svg.appendChild(sv('path',{d:areaD, fill:cPrecip, opacity:0.12}));
+      const lineD = armPts.map((p,i)=>(i===0?'M':'L')+p[0]+','+p[1]).join(' ');
+      svg.appendChild(sv('path',{d:lineD, fill:'none', stroke:cPrecip,'stroke-width':2,'stroke-linecap':'round','stroke-linejoin':'round'}));
+    }
+    armPts.forEach(([x,y]) => {
+      svg.appendChild(sv('circle',{cx:x,cy:y,r:5,fill:cSurface}));
+      svg.appendChild(sv('circle',{cx:x,cy:y,r:3,fill:cPrecip}));
+    });
+
+    const crosshair = sv('line',{x1:0,x2:0,y1:mainY0,y2:armY1,stroke:cMuted,'stroke-width':1,'stroke-dasharray':'3,3',opacity:0});
+    svg.appendChild(crosshair);
+    svg.appendChild(hitLayer);
+
+    function showTooltip(i){
+      const m = wb[i];
+      const cx = plotX0+colW*(i+0.5);
+      crosshair.setAttribute('x1', cx); crosshair.setAttribute('x2', cx); crosshair.setAttribute('opacity','1');
+      tooltip.innerHTML = '';
+      const title = document.createElement('div'); title.className='tt-title';
+      title.textContent = MONTH_NAMES_FULL[m.month-1]; tooltip.appendChild(title);
+      const rows = [
+        ['Precipitação', fmt0(m.P)+' mm', cPrecip],
+        ['ETP (ETo)', fmt0(m.ETP)+' mm', cEto],
+        ['Armazenamento', fmt0(m.ARM)+' mm', cPrecip],
+        ['Déficit', m.DEF>0.05 ? fmt0(m.DEF)+' mm' : '—', cRed],
+        ['Excedente', m.EXC>0.05 ? fmt0(m.EXC)+' mm' : '—', cBlue]
+      ];
+      rows.forEach(([k,v,c]) => {
+        const row = document.createElement('div'); row.className='tt-row';
+        const kEl = document.createElement('span'); kEl.className='k';
+        const key = document.createElement('span'); key.className='tt-key'; key.style.background=c;
+        kEl.appendChild(key); kEl.appendChild(document.createTextNode(k));
+        const vEl = document.createElement('span'); vEl.className='v'; vEl.textContent = v;
+        row.appendChild(kEl); row.appendChild(vEl);
+        tooltip.appendChild(row);
+      });
+      tooltip.hidden = false;
+      const wrapRect = wrap.getBoundingClientRect();
+      const svgRect = svg.getBoundingClientRect();
+      const scaleX = svgRect.width / W;
+      const px = cx * scaleX;
+      let left = px + 14;
+      if (left + 175 > wrapRect.width) left = px - 175 - 14;
+      tooltip.style.left = Math.max(4,left)+'px';
+      tooltip.style.top = '8px';
+    }
+    function hideTooltip(){ tooltip.hidden = true; crosshair.setAttribute('opacity','0'); }
+    hitLayer.querySelectorAll('rect').forEach(r => {
+      const i = +r.dataset.idx;
+      r.addEventListener('pointerenter', ()=>showTooltip(i));
+      r.addEventListener('pointermove', ()=>showTooltip(i));
+      r.addEventListener('focus', ()=>showTooltip(i));
+      r.addEventListener('pointerleave', hideTooltip);
+      r.addEventListener('blur', hideTooltip);
+    });
+
+    const legend = el('balanceLegend');
+    legend.innerHTML = '';
+    [['Precipitação',cPrecip,'bar'],['ETP (ETo)',cEto,''],['Excedente',cBlue,'bar'],['Déficit',cRed,'bar']].forEach(([label,c,cls]) => {
+      const li = document.createElement('div'); li.className='legend-item';
+      li.innerHTML = `<span class="legend-swatch ${cls}" style="background:${c}"></span> ${label}`;
+      legend.appendChild(li);
+    });
+
+    // summary + table
+    const totalP = wb.reduce((s,m)=>s+m.P,0);
+    const totalETP = wb.reduce((s,m)=>s+m.ETP,0);
+    const totalDef = wb.reduce((s,m)=>s+m.DEF,0);
+    const totalExc = wb.reduce((s,m)=>s+m.EXC,0);
+    const deficitMonths = wb.filter(m => m.DEF>0.05).length;
+    el('balanceSummary').innerHTML = `Total anual: <b>${fmt0(totalP)} mm</b> de chuva • <b>${fmt0(totalETP)} mm</b> de ETP(ETo) • Déficit hídrico <b>${fmt0(totalDef)} mm</b> em <b>${deficitMonths}</b> mês(es) • Excedente <b>${fmt0(totalExc)} mm</b> • CAD = ${fmt0(cad)} mm.`;
+
+    const table = el('balanceTable');
+    table.innerHTML = '<thead><tr><th>Mês</th><th>Precip. (mm)</th><th>ETP (mm)</th><th>ARM (mm)</th><th>ETR (mm)</th><th>Déficit (mm)</th><th>Excedente (mm)</th></tr></thead>';
+    const tbody = document.createElement('tbody');
+    wb.forEach(m => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${MONTH_NAMES[m.month-1]}</td><td>${fmt0(m.P)}</td><td>${fmt0(m.ETP)}</td><td>${fmt0(m.ARM)}</td><td>${fmt0(m.ETR)}</td><td>${m.DEF>0.05?fmt0(m.DEF):'—'}</td><td>${m.EXC>0.05?fmt0(m.EXC):'—'}</td>`;
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+  }
+
+  // ---- Temperature chart (single hue line + area) ----
+  function renderTempChart(months){
+    const svg = el('tempSvg');
+    svg.innerHTML = '';
+    const W=780, plotX0=44, plotX1=764, plotW=plotX1-plotX0;
+    const y0=14, y1=178, labelY=198;
+    const colW = plotW/12;
+
+    const styles = getComputedStyle(document.documentElement);
+    const cGrid = styles.getPropertyValue('--grid').trim();
+    const cMuted = styles.getPropertyValue('--text-muted').trim();
+    const cBaseline = styles.getPropertyValue('--baseline').trim();
+    const cTemp = styles.getPropertyValue('--series-temp').trim();
+    const cSurface = styles.getPropertyValue('--surface-1').trim();
+    const cPrimary = styles.getPropertyValue('--text-primary').trim();
+
+    const vals = months.map(m=>m.tmax).filter(v=>v!=null);
+    const scaleTemp = niceScaleRange(Math.min(...vals, 20), Math.max(...vals, 25), 5);
+    const minV = scaleTemp.min, maxV = scaleTemp.max;
+    const y = v => y1 - ((v-minV)/(maxV-minV))*(y1-y0);
+
+    scaleTemp.ticks.forEach(val => {
+      const yy = y(val);
+      svg.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:yy,y2:yy,stroke:cGrid,'stroke-width':1}));
+      const t = sv('text',{x:plotX0-8,y:yy+3,'text-anchor':'end','font-size':10,fill:cMuted});
+      t.textContent = fmt0(val)+'°'; svg.appendChild(t);
+    });
+    svg.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:y1,y2:y1,stroke:cBaseline,'stroke-width':1}));
+
+    const pts = [];
+    months.forEach((m,i) => {
+      const cx = plotX0 + colW*(i+0.5);
+      if (m.tmax!=null) pts.push([cx, y(m.tmax), m.tmax, i]);
+      const lbl = sv('text',{x:cx,y:labelY,'text-anchor':'middle','font-size':11,fill:cMuted});
+      lbl.textContent = MONTH_NAMES[m.month-1]; svg.appendChild(lbl);
+    });
+
+    if (pts.length > 1){
+      const areaD = 'M'+pts[0][0]+','+y1+' '+pts.map(p=>'L'+p[0]+','+p[1]).join(' ')+' L'+pts[pts.length-1][0]+','+y1+' Z';
+      svg.appendChild(sv('path',{d:areaD, fill:cTemp, opacity:0.10}));
+      const lineD = pts.map((p,i)=>(i===0?'M':'L')+p[0]+','+p[1]).join(' ');
+      svg.appendChild(sv('path',{d:lineD, fill:'none', stroke:cTemp,'stroke-width':2,'stroke-linecap':'round','stroke-linejoin':'round'}));
+    }
+    let peak = null;
+    pts.forEach(p => { if (!peak || p[2]>peak[2]) peak = p; });
+    pts.forEach(p => {
+      svg.appendChild(sv('circle',{cx:p[0],cy:p[1],r:6,fill:cSurface}));
+      svg.appendChild(sv('circle',{cx:p[0],cy:p[1],r:4,fill:cTemp}));
+    });
+    if (peak){
+      const t = sv('text',{x:peak[0],y:peak[1]-12,'text-anchor':'middle','font-size':11,'font-weight':700,fill:cPrimary});
+      t.textContent = fmt1(peak[2])+'°C'; svg.appendChild(t);
+    }
+
+    // hit columns + tooltip
+    const tooltip = el('tempTooltip');
+    const wrap = el('tempChartWrap');
+    const crosshair = sv('line',{x1:0,x2:0,y1:y0,y2:y1,stroke:cMuted,'stroke-width':1,'stroke-dasharray':'3,3',opacity:0});
+    svg.appendChild(crosshair);
+    const hitLayer = sv('g',{});
+    months.forEach((m,i) => {
+      const cx = plotX0 + colW*(i+0.5);
+      const hit = sv('rect',{x:plotX0+colW*i, y:y0, width:colW, height:y1-y0, fill:'transparent', tabindex:'0'});
+      hit.dataset.idx = i;
+      hitLayer.appendChild(hit);
+    });
+    svg.appendChild(hitLayer);
+
+    function showTip(i){
+      const m = months[i];
+      const cx = plotX0+colW*(i+0.5);
+      crosshair.setAttribute('x1',cx); crosshair.setAttribute('x2',cx); crosshair.setAttribute('opacity','1');
+      tooltip.innerHTML = '';
+      const title = document.createElement('div'); title.className='tt-title';
+      title.textContent = MONTH_NAMES_FULL[m.month-1]; tooltip.appendChild(title);
+      const row = document.createElement('div'); row.className='tt-row';
+      const kEl = document.createElement('span'); kEl.className='k';
+      const key = document.createElement('span'); key.className='tt-key'; key.style.background=cTemp;
+      kEl.appendChild(key); kEl.appendChild(document.createTextNode('Temp. máx.'));
+      const vEl = document.createElement('span'); vEl.className='v'; vEl.textContent = m.tmax==null?'—':fmt1(m.tmax)+' °C';
+      row.appendChild(kEl); row.appendChild(vEl); tooltip.appendChild(row);
+      tooltip.hidden = false;
+      const wrapRect = wrap.getBoundingClientRect();
+      const svgRect = svg.getBoundingClientRect();
+      const scaleX = svgRect.width / W;
+      const px = cx*scaleX;
+      let left = px+14;
+      if (left+150 > wrapRect.width) left = px-150-14;
+      tooltip.style.left = Math.max(4,left)+'px';
+      tooltip.style.top = '8px';
+    }
+    function hideTip(){ tooltip.hidden=true; crosshair.setAttribute('opacity','0'); }
+    hitLayer.querySelectorAll('rect').forEach(r=>{
+      const i=+r.dataset.idx;
+      r.addEventListener('pointerenter',()=>showTip(i));
+      r.addEventListener('pointermove',()=>showTip(i));
+      r.addEventListener('focus',()=>showTip(i));
+      r.addEventListener('pointerleave',hideTip);
+      r.addEventListener('blur',hideTip);
+    });
+  }
+
+  // ================= Main flow =================
+  async function loadClimateAndRender(){
+    if (!farmGeo){ return; }
+    const year = +el('yearSelect').value;
+    setStatus('Buscando dados climáticos (NASA POWER)…');
+    el('refreshBtn').disabled = true;
+    try{
+      climateMonths = await fetchClimate(farmGeo.centroid.lat, farmGeo.centroid.lon, year, farmGeo.elevation);
+      renderMonthCards(year);
+      recalcBalance();
+      renderTempChart(climateMonths);
+      recalcIrrigation();
+      updatePrintHeader();
+      updateSourcesNote();
+      setStatus('Dados atualizados.', false);
+    } catch(err){
+      console.error(err);
+      setStatus('Erro ao buscar clima: '+err.message, true);
+    } finally {
+      el('refreshBtn').disabled = false;
+    }
+  }
+
+  function recalcBalance(){
+    if (!climateMonths){ renderBalanceChart(null, cadValue); return; }
+    const wb = computeWaterBalance(climateMonths, cadValue);
+    renderBalanceChart(wb, cadValue);
+  }
+
+  // ================= Rendering: Quadro Irrigação =================
+  function buildKcGrid(){
+    const grid = el('kcGrid');
+    grid.innerHTML = '';
+    for (let i=0;i<12;i++){
+      const cell = document.createElement('div'); cell.className='kc-cell';
+      const phase = document.createElement('div'); phase.className='kc-phase'; phase.textContent = CROP_PHASE[i];
+      const month = document.createElement('div'); month.className='kc-month'; month.textContent = MONTH_NAMES[i];
+      const input = document.createElement('input');
+      input.type='number'; input.min='0'; input.step='0.01'; input.value = irrigationCfg.kc[i];
+      input.addEventListener('input', () => {
+        const v = parseFloat(input.value);
+        irrigationCfg.kc[i] = Number.isFinite(v) ? v : 0;
+        recalcIrrigation();
+      });
+      cell.appendChild(phase); cell.appendChild(month); cell.appendChild(input);
+      grid.appendChild(cell);
+    }
+  }
+
+  function updateCropStats(){
+    const gc = irrigationCfg.rowSpacing>0 ? Math.min(1, Math.max(0, irrigationCfg.canopyDiam/irrigationCfg.rowSpacing)) : 0;
+    const kl = gc + irrigationCfg.bareSoilFactor*(1-gc);
+    const plantArea = irrigationCfg.rowSpacing*irrigationCfg.plantSpacing;
+    const plantsHa = plantArea>0 ? 10000/plantArea : 0;
+    el('valGc').textContent = Math.round(gc*100)+'%';
+    el('valKl').textContent = fmt1(kl);
+    el('valPlantsHa').textContent = fmt0(plantsHa);
+  }
+
+  function recalcIrrigation(){
+    updateCropStats();
+    if (!climateMonths){ return; }
+    const irr = computeIrrigationNeed(climateMonths, irrigationCfg);
+    renderIrrigationSection(irr);
+  }
+
+  function renderIrrigationSection(irr){
+    const grid = el('irrigGrid');
+    grid.innerHTML = '';
+    irr.forEach(m => {
+      const card = document.createElement('div'); card.className = 'month-card';
+      const title = document.createElement('div'); title.className='mname';
+      title.textContent = MONTH_NAMES[m.month-1]+' ';
+      const phaseSpan = document.createElement('span');
+      phaseSpan.style.cssText='font-size:0.62rem;color:var(--text-muted);font-weight:400;text-transform:uppercase;';
+      phaseSpan.textContent = m.phase;
+      title.appendChild(phaseSpan);
+      card.appendChild(title);
+
+      const rowKc = document.createElement('div'); rowKc.className='row';
+      rowKc.innerHTML = '<span>Kc</span>';
+      const bKc = document.createElement('b'); bKc.textContent = fmt1(m.kc);
+      rowKc.appendChild(bKc); card.appendChild(rowKc);
+
+      const rowEtc = document.createElement('div'); rowEtc.className='row';
+      rowEtc.innerHTML = '<span>💧 Etc loc.</span>';
+      const bEtc = document.createElement('b'); bEtc.textContent = m.etcLocDiaMM==null ? '—' : fmt1(m.etcLocDiaMM)+' mm/d';
+      rowEtc.appendChild(bEtc); card.appendChild(rowEtc);
+
+      const rowL = document.createElement('div'); rowL.className='row';
+      rowL.innerHTML = '<span>🚿 L/planta</span>';
+      const bL = document.createElement('b'); bL.textContent = m.litrosPlantaDia==null ? '—' : fmt1(m.litrosPlantaDia)+' L/d';
+      rowL.appendChild(bL); card.appendChild(rowL);
+
+      grid.appendChild(card);
+    });
+
+    renderIrrigChart(irr);
+
+    const valid = irr.filter(m => m.litrosPlantaDia!=null);
+    if (!valid.length){
+      el('irrigSummary').textContent = '';
+      el('irrigTable').innerHTML = '';
+      return;
+    }
+    let peak = valid[0];
+    valid.forEach(m => { if (m.litrosPlantaDia > peak.litrosPlantaDia) peak = m; });
+    const avgL = valid.reduce((s,m)=>s+m.litrosPlantaDia,0)/valid.length;
+    el('irrigSummary').innerHTML = `Mês crítico: <b>${MONTH_NAMES_FULL[peak.month-1]}</b> (${peak.phase}) — <b>${fmt1(peak.litrosPlantaDia)} L/planta/dia</b> (${fmt1(peak.etcLocDiaMM)} mm/dia • ${fmt1(peak.m3HaDia)} m³/ha/dia) • Média anual: <b>${fmt1(avgL)} L/planta/dia</b> • <b>${fmt0(peak.plantsPerHa||0)}</b> plantas/ha.`;
+
+    const table = el('irrigTable');
+    table.innerHTML = '<thead><tr><th>Mês</th><th>Fase</th><th>Kc</th><th>Etc bruto (mm/d)</th><th>Etc localizado (mm/d)</th><th>L/planta/dia</th><th>m³/ha/dia</th></tr></thead>';
+    const tbody = document.createElement('tbody');
+    irr.forEach(m => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${MONTH_NAMES[m.month-1]}</td><td>${m.phase}</td><td>${fmt1(m.kc)}</td><td>${m.etcBrutoDiaMM==null?'—':fmt1(m.etcBrutoDiaMM)}</td><td>${m.etcLocDiaMM==null?'—':fmt1(m.etcLocDiaMM)}</td><td>${m.litrosPlantaDia==null?'—':fmt1(m.litrosPlantaDia)}</td><td>${m.m3HaDia==null?'—':fmt1(m.m3HaDia)}</td>`;
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+  }
+
+  function renderIrrigChart(irr){
+    const svg = el('irrigSvg');
+    svg.innerHTML = '';
+    const W=780, plotX0=44, plotX1=764, plotW=plotX1-plotX0;
+    const y0=14, y1=178, labelY=198;
+    const colW = plotW/12;
+
+    const styles = getComputedStyle(document.documentElement);
+    const cGrid = styles.getPropertyValue('--grid').trim();
+    const cMuted = styles.getPropertyValue('--text-muted').trim();
+    const cBaseline = styles.getPropertyValue('--baseline').trim();
+    const cPrecip = styles.getPropertyValue('--series-precip').trim();
+    const cPrimary = styles.getPropertyValue('--text-primary').trim();
+
+    const vals = irr.map(m=>m.etcLocDiaMM).filter(v=>v!=null);
+    if (!vals.length){
+      const t = sv('text',{x:W/2,y:100,'text-anchor':'middle','font-size':13,fill:cMuted});
+      t.textContent = 'Sem dados suficientes.'; svg.appendChild(t);
+      return;
+    }
+    const scale = niceScale(Math.max(...vals), 5);
+    const y = v => y1 - (v/scale.max)*(y1-y0);
+
+    scale.ticks.forEach(val => {
+      const yy = y(val);
+      svg.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:yy,y2:yy,stroke:cGrid,'stroke-width':1}));
+      const t = sv('text',{x:plotX0-8,y:yy+3,'text-anchor':'end','font-size':10,fill:cMuted});
+      t.textContent = fmt1(val); svg.appendChild(t);
+    });
+    svg.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:y1,y2:y1,stroke:cBaseline,'stroke-width':1}));
+
+    let peak = null;
+    const hitLayer = sv('g',{});
+    irr.forEach((m,i) => {
+      const cx = plotX0 + colW*(i+0.5);
+      if (m.etcLocDiaMM != null){
+        const bw = Math.min(24, colW*0.5);
+        const path = roundedTopRect(cx-bw/2, y(m.etcLocDiaMM), bw, y1-y(m.etcLocDiaMM), 4);
+        svg.appendChild(sv('path',{d:path, fill:cPrecip}));
+        if (!peak || m.etcLocDiaMM > peak.v) peak = { v:m.etcLocDiaMM, x:cx, y:y(m.etcLocDiaMM) };
+      }
+      const lbl = sv('text',{x:cx,y:labelY,'text-anchor':'middle','font-size':11,fill:cMuted});
+      lbl.textContent = MONTH_NAMES[m.month-1]; svg.appendChild(lbl);
+
+      const hit = sv('rect',{x:plotX0+colW*i,y:y0,width:colW,height:y1-y0,fill:'transparent',tabindex:'0'});
+      hit.dataset.idx = i; hitLayer.appendChild(hit);
+    });
+    if (peak){
+      const t = sv('text',{x:peak.x,y:peak.y-10,'text-anchor':'middle','font-size':11,'font-weight':700,fill:cPrimary});
+      t.textContent = fmt1(peak.v)+' mm/dia'; svg.appendChild(t);
+    }
+
+    const tooltip = el('irrigTooltip');
+    const wrap = el('irrigChartWrap');
+    const crosshair = sv('line',{x1:0,x2:0,y1:y0,y2:y1,stroke:cMuted,'stroke-width':1,'stroke-dasharray':'3,3',opacity:0});
+    svg.appendChild(crosshair);
+    svg.appendChild(hitLayer);
+
+    function showTip(i){
+      const m = irr[i];
+      const cx = plotX0+colW*(i+0.5);
+      crosshair.setAttribute('x1',cx); crosshair.setAttribute('x2',cx); crosshair.setAttribute('opacity','1');
+      tooltip.innerHTML = '';
+      const title = document.createElement('div'); title.className='tt-title';
+      title.textContent = MONTH_NAMES_FULL[m.month-1]+' — '+m.phase; tooltip.appendChild(title);
+      const rows = [
+        ['Etc localizado', m.etcLocDiaMM==null?'—':fmt1(m.etcLocDiaMM)+' mm/dia'],
+        ['Litros/planta/dia', m.litrosPlantaDia==null?'—':fmt1(m.litrosPlantaDia)+' L'],
+        ['m³/ha/dia', m.m3HaDia==null?'—':fmt1(m.m3HaDia)+' m³']
+      ];
+      rows.forEach(([k,v]) => {
+        const row = document.createElement('div'); row.className='tt-row';
+        const kEl = document.createElement('span'); kEl.className='k'; kEl.textContent = k;
+        const vEl = document.createElement('span'); vEl.className='v'; vEl.textContent = v;
+        row.appendChild(kEl); row.appendChild(vEl); tooltip.appendChild(row);
+      });
+      tooltip.hidden = false;
+      const wrapRect = wrap.getBoundingClientRect();
+      const svgRect = svg.getBoundingClientRect();
+      const scaleX = svgRect.width/W;
+      const px = cx*scaleX;
+      let left = px+14;
+      if (left+160 > wrapRect.width) left = px-160-14;
+      tooltip.style.left = Math.max(4,left)+'px';
+      tooltip.style.top = '8px';
+    }
+    function hideTip(){ tooltip.hidden = true; crosshair.setAttribute('opacity','0'); }
+    hitLayer.querySelectorAll('rect').forEach(r => {
+      const i = +r.dataset.idx;
+      r.addEventListener('pointerenter', ()=>showTip(i));
+      r.addEventListener('pointermove', ()=>showTip(i));
+      r.addEventListener('focus', ()=>showTip(i));
+      r.addEventListener('pointerleave', hideTip);
+      r.addEventListener('blur', hideTip);
+    });
+  }
+
+  function updatePrintHeader(){
+    const name = el('farmName').value.trim() || 'Fazenda (sem nome)';
+    const year = el('yearSelect').value;
+    el('printTitle').textContent = 'Balanço Climático — '+name;
+    el('printSub').textContent = 'Ano de referência: '+year+' • Relatório gerado em '+new Date().toLocaleDateString('pt-BR');
+  }
+
+  function updateSourcesNote(){
+    const elevTxt = farmGeo ? fmt0(farmGeo.elevation)+' m ('+(ELEV_SOURCE_LABEL[farmGeo.elevationSource]||'origem desconhecida')+')' : '—';
+    el('sourcesNote').innerHTML =
+      '<b>Fontes de dados —</b> Imagem de satélite: Esri World Imagery (mosaico de múltiplos provedores; resolução e data variam por local). ' +
+      'Clima: <a href="https://power.larc.nasa.gov/" target="_blank" rel="noopener">NASA POWER</a> (comunidade Agroclimatologia, base de reanálise MERRA-2/POWER), consultado em '+new Date().toLocaleDateString('pt-BR')+'. ' +
+      'Precipitação total mensal = média diária × dias do mês. ETo = evapotranspiração de referência calculada pelo método padrão <b>FAO-56 Penman-Monteith</b> (grama de referência), a partir de Tmáx/Tmín, umidade relativa, vento a 2 m e radiação solar mensal do NASA POWER, com fluxo de calor no solo G≈0 (aproximação mensal). Elevação usada no cálculo: '+elevTxt+'.<br>'+
+      'Balanço hídrico do solo: método sequencial de <b>Thornthwaite &amp; Mather (1955)</b>, na formulação de ROLIM, G.S.; SENTELHAS, P.C.; BARBIERI, V. <i>Planilhas no ambiente EXCEL™ para os cálculos de balanços hídricos</i>, Rev. Bras. Agrometeorologia, v.6, n.1, p.133-137, 1998 (ESALQ/USP) — aqui usando ETo FAO-56 como ETP de entrada em vez de Thornthwaite (1948), método mais adequado para climas não-úmidos. ' +
+      'Necessidade de irrigação: Etc = ETo × Kc; coeficiente de localização Kl = Gc + f·(1−Gc) (Keller &amp; Bliesner) reduz a ETc pela fração de solo não coberto pela copa, prática usual em projetos de irrigação localizada.';
+  }
+
+  async function handleKML(file){
+    setStatus('Lendo KML…');
+    try{
+      const text = await file.text();
+      farmPolygons = parseKMLText(text);
+      farmGeo = computeFarmGeometry(farmPolygons);
+      renderFarmStats();
+      const bounds = renderMap(farmPolygons);
+      el('refreshBtn').disabled = false;
+      setStatus('Consultando data/fonte da imagem e elevação do terreno…');
+
+      const [imageryResult, elevResult] = await Promise.allSettled([
+        fetchImageryMeta(farmGeo.centroid.lat, farmGeo.centroid.lon, bounds, map.getSize()),
+        fetchElevation(farmGeo.centroid.lat, farmGeo.centroid.lon)
+      ]);
+
+      imageryMeta = imageryResult.status === 'fulfilled' ? imageryResult.value : null;
+      if (imageryResult.status === 'rejected') console.warn(imageryResult.reason);
+
+      if (elevResult.status === 'fulfilled'){
+        farmGeo.elevation = elevResult.value;
+        farmGeo.elevationSource = 'api';
+      } else {
+        console.warn(elevResult.reason);
+        // mantém o valor do KML se havia; senão cai para 0 m com aviso explícito
+        farmGeo.elevationSource = farmGeo.elevationSource === 'kml' ? 'kml' : 'fallback';
+      }
+      renderFarmStats();
+      renderImageryCaption();
+      setStatus('Polígono carregado.', false);
+      await loadClimateAndRender();
+    } catch(err){
+      console.error(err);
+      setStatus('Erro ao importar KML: '+err.message, true);
+    }
+  }
+
+  function populateYearSelect(){
+    const sel = el('yearSelect');
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const defaultYear = currentYear - 1;
+    for (let y=currentYear; y>=1985; y--){
+      const opt = document.createElement('option');
+      opt.value = y; opt.textContent = y;
+      if (y===defaultYear) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  }
+
+  function init(){
+    populateYearSelect();
+    el('kmlBtn').addEventListener('click', ()=> el('kmlInput').click());
+    el('kmlInput').addEventListener('change', e => { if (e.target.files[0]) handleKML(e.target.files[0]); });
+    el('refreshBtn').addEventListener('click', loadClimateAndRender);
+    el('yearSelect').addEventListener('change', () => { if (farmGeo) loadClimateAndRender(); });
+    el('farmName').addEventListener('input', updatePrintHeader);
+    el('printBtn').addEventListener('click', () => window.print());
+
+    el('cadInput').addEventListener('input', () => {
+      const v = parseFloat(el('cadInput').value);
+      cadValue = Number.isFinite(v) && v > 0 ? v : cadValue;
+      recalcBalance();
+    });
+
+    const cropInput = (id, key) => el(id).addEventListener('input', () => {
+      const v = parseFloat(el(id).value);
+      if (Number.isFinite(v) && v > 0) irrigationCfg[key] = v;
+      recalcIrrigation();
+    });
+    cropInput('rowSpacingInput', 'rowSpacing');
+    cropInput('plantSpacingInput', 'plantSpacing');
+    cropInput('canopyDiamInput', 'canopyDiam');
+
+    el('resetKcBtn').addEventListener('click', () => {
+      irrigationCfg.kc = DEFAULT_KC.slice();
+      buildKcGrid();
+      recalcIrrigation();
+    });
+
+    buildKcGrid();
+    updateCropStats();
+    updateSourcesNote();
+    updatePrintHeader();
+    window.addEventListener('resize', () => {
+      if (climateMonths){ recalcBalance(); renderTempChart(climateMonths); recalcIrrigation(); }
+    });
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
