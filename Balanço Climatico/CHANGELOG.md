@@ -3,6 +3,22 @@
 Todas as mudanças notáveis deste app ficam registradas aqui. O número de versão aparece
 no canto do título, dentro do próprio app (`v2.0.0` etc.) — clique nele pra abrir este arquivo.
 
+## v2.2.0 — 2026-08-21
+
+### Adicionado
+- **Seletor de fonte de dados** na barra superior (NASA POWER ou Open-Meteo/ERA5-Land) —
+  todos os cálculos (balanço hídrico, irrigação) passam a usar só a fonte escolhida.
+  Quando a fonte é Open-Meteo, a ETo já vem pronta do provedor (não recalcula FAO-56).
+- **Período de até 10 anos consecutivos**: além do ano único de sempre, agora dá pra
+  escolher "N anos (média)" — cada mês do relatório vira a **média histórica** desse
+  mês calendário ao longo do período (ex.: "Janeiro" = média de todos os janeiros do
+  intervalo), como uma normal climatológica. Um único request a cada API (o endpoint
+  mensal da NASA POWER e o diário do Open-Meteo aceitam intervalos de anos direto).
+- A **Conferência entre Fontes** virou opcional: checkbox "Comparar com outra fonte"
+  na barra (desligado por padrão) — só busca e mostra a segunda fonte quando ligado,
+  em vez de sempre rodar as duas. Os rótulos do quadro agora refletem dinamicamente
+  qual fonte é a principal e qual é a de comparação.
+
 ## v2.1.0 — 2026-08-21
 
 ### Adicionado
