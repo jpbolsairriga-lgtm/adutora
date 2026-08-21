@@ -220,7 +220,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
     <div class="hdr-logo">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
       <div class="hdr-brand">
-        <h1>Curva de Bombas <span class="ver-badge">v1.20</span></h1>
+        <h1>Curva de Bombas <span class="ver-badge">v1.21</span></h1>
         <p>Digitalizador de curvas — importe imagem/PDF e extraia os pontos</p>
       </div>
     </div>
@@ -557,7 +557,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
 // ============================================================================
-// Curva de Bombas — Digitalizador  v1.20 (2026-08-20)
+// Curva de Bombas — Digitalizador  v1.21 (2026-08-21)
 // Build inicial (v1.0): importação de imagem/PDF (pdf.js), calibração de eixos
 // (linear/log, 4 pontos estilo WebPlotDigitizer), múltiplas séries,
 // ajuste de curva (polinomial grau 1-3 / potência) por mínimos quadrados,
@@ -929,6 +929,28 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
 // mecânico de antes (mais conservador — o elétrico real é sempre ≥ o
 // mecânico). O relatório PDF ganhou uma coluna "Base do kWh" avisando qual
 // dos dois cada operação está usando.
+// ============================================================================
+// v1.21: usuário reportou dois bugs visuais depois da v1.19 mudar a legenda
+// pro canto inferior esquerdo DENTRO da área de plotagem — (1) numa
+// Operação de rotação bem baixa, a curva inteira (H ou P) fica espremida
+// numa faixa fina bem no fundo do gráfico, EXATAMENTE onde a legenda passou
+// a ficar — a curva não tinha sumido, só ficou embaixo da caixa branca da
+// legenda; (2) o ponto de trabalho nunca apareceu no gráfico de POTÊNCIA de
+// nenhuma Operação — só a curva de PRESSÃO (`pressVfd.targetPoint`) recebia
+// o Q/H marcado, a curva de potência (`powVfd`/`powCalc`) nunca ganhava o
+// seu próprio `targetPoint`.
+// - Legenda movida pra FORA da área de plotagem — layoutLegendRows() organiza
+//   os rótulos em linhas HORIZONTAIS que cabem na largura do gráfico
+//   (truncando com "…" se precisar) e computeChartLayout() reserva esse
+//   espaço aumentando a margem inferior ANTES de desenhar — não fica em cima
+//   de nenhuma curva por construção, não só "normalmente" vazio.
+// - `powVfd.targetPoint`/`powCalc.targetPoint` agora recebem {Q, H:Padj} do
+//   mesmo jeito que a curva de pressão já recebia — o ponto de trabalho
+//   aparece nos dois gráficos de cada Operação agora.
+// - De brinde: achado e corrigido um "abrir gráfico em nova aba" quebrado
+//   (`fmtNumRaw is not defined`) — a lista de funções serializadas pra essa
+//   página standalone não incluía `fmtNumRaw`, que `fmtNum` passou a usar
+//   desde a v1.18 (regressão silenciosa de duas versões atrás).
 // ============================================================================
 (function(){
 'use strict';
@@ -1703,6 +1725,7 @@ function computeOperation(op){
       powVfd={id:newSeriesId(), name:powName, color:nextColor(), points:[], fitType:'poly3', fit:null, type:'vfd', srcId:digitizedPower.id, targetRpm, quantityExp:3, opId:op.id, opKind:'power', error:null};
       S.series.push(powVfd);
     } else { powVfd.name=powName; powVfd.srcId=digitizedPower.id; powVfd.targetRpm=targetRpm; powVfd.quantityExp=3; }
+    powVfd.targetPoint={Q:Qt, H:Padj};
     powerSeriesId=powVfd.id;
   } else {
     const srcObj=getSourceOf(hSrc), bep=srcObj&&srcObj.bep;
@@ -1716,6 +1739,7 @@ function computeOperation(op){
         powCalc={id:newSeriesId(), name:powName, color:nextColor(), points:[], fitType:'none', fit:null, type:'power_calc', srcId:hSrc.id, targetRpm, opId:op.id, error:null};
         S.series.push(powCalc);
       } else { powCalc.name=powName; powCalc.srcId=hSrc.id; powCalc.targetRpm=targetRpm; }
+      powCalc.targetPoint={Q:Qt, H:Padj};
       powerSeriesId=powCalc.id;
     }
   }
@@ -1887,7 +1911,7 @@ function staticSvgFor(seriesId){
   if(!ser) return '<p style="color:#c62828">Gráfico indisponível (série removida).</p>';
   const spec=buildChartSpec(ser);
   if(spec.error) return '<p style="color:#c62828">'+escapeHtml(spec.error)+'</p>';
-  const L=computeChartLayout(spec.seriesArr, spec.targetPoint);
+  const L=computeChartLayout(spec.seriesArr, spec.targetPoint, spec.legendLabels);
   if(!L) return '<p style="color:#c62828">'+escapeHtml(spec.overlapErr||'Sem sobreposição de dados.')+'</p>';
   const items=buildChartItems(spec.seriesArr, L, spec.heroIdx, spec.legendLabels);
   return buildChartSVG(L, items, {chartTitle:spec.chartTitle, subtitle:spec.subtitle, targetPoint:spec.targetPoint, ySymbol:spec.ySymbol});
@@ -2529,10 +2553,35 @@ function sampleCurve(ser, lo, hi, n){
   }
   return pts;
 }
+// Organiza os rótulos da legenda em linhas HORIZONTAIS que cabem na largura
+// disponível (pw), truncando com "…" quando um rótulo sozinho já não cabe.
+// Usado tanto por computeChartLayout (só precisa saber quantas linhas, pra
+// reservar espaço ABAIXO do eixo X) quanto por buildChartSVG (desenha
+// exatamente essas linhas) — nunca ficam dessincronizados um do outro.
+// Ficar fora da área de plotagem (em vez de dentro, num canto "vazio") evita
+// o bug de cobrir a própria curva: numa Operação com rotação bem baixa a
+// curva inteira fica espremida numa faixa fina perto do fundo do gráfico —
+// não tem canto que fique garantidamente livre.
+function layoutLegendRows(legendLabels, pw){
+  if(!legendLabels || !legendLabels.length) return [];
+  const gap=22, swatchW=26, swatchGap=8, itemPad=18;
+  const maxChars=Math.max(6, Math.floor((pw*0.92-56)/6.2));
+  const rows=[]; let row=[], rowW=0;
+  legendLabels.forEach((label,i)=>{
+    const shown = label.length>maxChars? label.slice(0,maxChars-1)+'…' : label;
+    const w = swatchW+swatchGap+shown.length*6.2+itemPad;
+    if(row.length && rowW+gap+w>pw){ rows.push(row); row=[]; rowW=0; }
+    if(row.length) rowW+=gap;
+    row.push({i,label,shown,w});
+    rowW+=w;
+  });
+  if(row.length) rows.push(row);
+  return rows;
+}
 // Camada de geometria compartilhada — recebe uma lista de séries quaisquer
 // (2 pra VFD: origem + simulada · 3 pra combinada: A, B, total) e devolve o
 // mapeamento pixel↔dado comum a todas elas.
-function computeChartLayout(seriesArr, extraPoint){
+function computeChartLayout(seriesArr, extraPoint, legendLabels){
   const doms=seriesArr.map(seriesDomain);
   if(doms.some(d=>!d)) return null;
   let qlo=Math.min(...doms.map(d=>d[0])), qhi=Math.max(...doms.map(d=>d[1]));
@@ -2545,6 +2594,12 @@ function computeChartLayout(seriesArr, extraPoint){
   const pad=(hhi-hlo)*0.08 || 1;
   hhi += pad; hlo = hlo<0? hlo-pad*0.15 : 0;
   const W=960, H=600, M={l:92,r:40,t:88,b:66};
+  const pw0=W-M.l-M.r;
+  const legendRows=layoutLegendRows(legendLabels, pw0);
+  // cada linha de legenda "empurra" o eixo X (e a curva) um pouco pra cima,
+  // abrindo uma faixa reservada só pra ela entre os rótulos do eixo X e o
+  // título "Q (...)" — que continuam nas mesmas posições fixas de sempre.
+  if(legendRows.length) M.b += legendRows.length*20+16;
   const pw=W-M.l-M.r, ph=H-M.t-M.b;
   const mapX=q=> M.l + (q-qlo)/((qhi-qlo)||1)*pw;
   const mapY=h=> M.t + ph - (h-hlo)/((hhi-hlo)||1)*ph;
@@ -2558,7 +2613,7 @@ function computeChartLayout(seriesArr, extraPoint){
     if(src && !xUnit) xUnit=src.xUnit||'';
     if(!yUnit){ const yu=effectiveYUnit(ser); if(yu) yUnit=yu; }
   });
-  return {qlo,qhi,hlo,hhi,W,H,M,pw,ph,mapX,mapY,invX,curves,xUnit,yUnit};
+  return {qlo,qhi,hlo,hhi,W,H,M,pw,ph,mapX,mapY,invX,curves,xUnit,yUnit,legendRows};
 }
 // Empacota cada série com sua curva amostrada + papel visual: heroIdx é a
 // curva em destaque (grossa, sem marcadores — a "resposta"); as demais ficam
@@ -2601,28 +2656,26 @@ function buildChartSVG(L,items,meta){
     }
   });
 
-  // Canto inferior esquerdo — pras curvas de bomba (H caindo com Q) e de
-  // potência (P subindo com Q) essa costuma ser a região mais vazia do
-  // gráfico. Ficava no canto superior direito antes, o que cobria a curva
-  // logo de cara e, com os nomes de série longos que a própria app gera
-  // (ex: "... — Operação 02 @ 2606.19 RPM (44.6776 Hz)"), vazava pra fora
-  // da moldura porque a largura da caixa não respeitava um limite real.
-  // Agora a largura tem um teto de verdade e o texto que não coube é
-  // truncado com "…" (com o nome completo disponível no title/tooltip).
-  const legItems=items.map(it=>({color: it.isHero?'#0a2540':it.ser.color, label: it.legendLabel, w: it.isHero?4.2:2.4}));
-  const maxLegW=Math.min(380, pw-20);
-  const estW=Math.max(...legItems.map(it=>it.label.length*6.2+56));
-  const legW=Math.min(maxLegW, Math.max(190, estW));
-  const maxChars=Math.max(6, Math.floor((legW-56)/6.2));
-  const legX=M.l+10;
-  const legH=24*legItems.length+14;
-  const legY=M.t+ph-legH-6;
-  svg += '<rect x="'+(legX-14)+'" y="'+(legY-8)+'" width="'+legW+'" height="'+legH+'" fill="#ffffff" stroke="#dbe3ea" rx="8"/>';
-  legItems.forEach((it,i)=>{
-    const ly=legY+i*24+10;
-    const shown = it.label.length>maxChars? it.label.slice(0,maxChars-1)+'…' : it.label;
-    svg += '<line x1="'+legX+'" y1="'+ly+'" x2="'+(legX+26)+'" y2="'+ly+'" stroke="'+it.color+'" stroke-width="'+it.w+'"/>';
-    svg += '<text x="'+(legX+34)+'" y="'+(ly+4)+'" font-size="12" fill="#0a2540">'+(shown!==it.label?'<title>'+escapeHtml(it.label)+'</title>':'')+escapeHtml(shown)+'</text>';
+  // Fora da área de plotagem, numa faixa reservada logo abaixo dos números
+  // do eixo X (computeChartLayout já abriu esse espaço aumentando M.b) — não
+  // fica em cima de NENHUMA curva, nem quando ela fica espremida numa faixa
+  // fina perto do fundo do gráfico (rotação muito baixa numa Operação, por
+  // exemplo — cobria a própria curva quando a legenda ficava dentro da área
+  // de plotagem, em qualquer canto). As linhas já vêm prontas de
+  // computeChartLayout (layoutLegendRows) — aqui só desenha.
+  const legColorOf=it=> it.isHero? '#0a2540' : it.ser.color;
+  const legWidthOf=it=> it.isHero? 4.2 : 2.4;
+  const legRowsY0=M.t+ph+42;
+  (L.legendRows||[]).forEach((row,ri)=>{
+    const ly=legRowsY0+ri*20;
+    const totalW=row.reduce((a,it)=>a+it.w,0)+(row.length-1)*22;
+    let lx=M.l+Math.max(0,(pw-totalW)/2); // cada linha centralizada na largura do gráfico
+    row.forEach(it=>{
+      const item=items[it.i];
+      svg += '<line x1="'+lx+'" y1="'+ly+'" x2="'+(lx+26)+'" y2="'+ly+'" stroke="'+legColorOf(item)+'" stroke-width="'+legWidthOf(item)+'"/>';
+      svg += '<text x="'+(lx+34)+'" y="'+(ly+4)+'" font-size="12" fill="#0a2540">'+(it.shown!==it.label?'<title>'+escapeHtml(it.label)+'</title>':'')+escapeHtml(it.shown)+'</text>';
+      lx += it.w+22;
+    });
   });
 
   if(meta.targetPoint){
@@ -2821,7 +2874,7 @@ function renderChartFor(container, seriesId){
   const ser=S.series.find(s=>s.id===seriesId);
   const spec=buildChartSpec(ser);
   if(spec.error){ container.innerHTML='<div class="tbl-empty">'+escapeHtml(spec.error)+'</div>'; return null; }
-  const L=computeChartLayout(spec.seriesArr, spec.targetPoint);
+  const L=computeChartLayout(spec.seriesArr, spec.targetPoint, spec.legendLabels);
   if(!L){ container.innerHTML='<div class="tbl-empty">'+escapeHtml(spec.overlapErr||'Sem sobreposição de dados.')+'</div>'; return null; }
   const items=buildChartItems(spec.seriesArr, L, spec.heroIdx, spec.legendLabels);
   container.innerHTML=buildChartSVG(L, items, {chartTitle:spec.chartTitle, subtitle:spec.subtitle, targetPoint:spec.targetPoint, ySymbol:spec.ySymbol});
@@ -2861,7 +2914,7 @@ function exportChartSvgAsPng(container, filenamePrefix){
 // do app.
 function buildStandaloneChartHTML(L,items,meta){
   const payload={
-    L:{qlo:L.qlo,qhi:L.qhi,hlo:L.hlo,hhi:L.hhi,W:L.W,H:L.H,M:L.M,pw:L.pw,ph:L.ph,xUnit:L.xUnit,yUnit:L.yUnit},
+    L:{qlo:L.qlo,qhi:L.qhi,hlo:L.hlo,hhi:L.hhi,W:L.W,H:L.H,M:L.M,pw:L.pw,ph:L.ph,xUnit:L.xUnit,yUnit:L.yUnit,legendRows:L.legendRows},
     items:items.map(it=>({
       ser:{name:it.ser.name,color:it.ser.color,points: it.isHero? [] : (it.ser.points||[]).map(p=>({x:p.x,y:p.y}))},
       curve:it.curve, isHero:it.isHero, legendLabel:it.legendLabel
@@ -2878,7 +2931,7 @@ function buildStandaloneChartHTML(L,items,meta){
     L.invX=function(px){ return L.qlo + (px-L.M.l)/L.pw*(L.qhi-L.qlo); };
     return L;
   }
-  const fnSrc=[escapeHtml,fmtNum,niceValues,interpCurve,hydrateLayout,buildChartSVG,attachChartInteractivity].map(f=>f.toString()).join('\n');
+  const fnSrc=[escapeHtml,fmtNumRaw,fmtNum,niceValues,interpCurve,hydrateLayout,buildChartSVG,attachChartInteractivity].map(f=>f.toString()).join('\n');
   return '<!doctype html><html lang="pt-BR"><head><meta charset="UTF-8">'
     +'<title>'+escapeHtml(meta.pageTitle||meta.chartTitle||'Curva de Bombas')+' — Curva de Bombas</title>'
     +'<style>html,body{margin:0;min-height:100%;background:#f4f7fb;font-family:"Segoe UI",Arial,sans-serif}'
@@ -2899,7 +2952,7 @@ function openChartInNewTab(seriesId){
   const ser=S.series.find(s=>s.id===seriesId);
   const spec=buildChartSpec(ser);
   if(spec.error){ alert(spec.error); return; }
-  const L=computeChartLayout(spec.seriesArr, spec.targetPoint);
+  const L=computeChartLayout(spec.seriesArr, spec.targetPoint, spec.legendLabels);
   if(!L){ alert(spec.overlapErr||'Não foi possível gerar o gráfico.'); return; }
   const items=buildChartItems(spec.seriesArr, L, spec.heroIdx, spec.legendLabels);
   const html=buildStandaloneChartHTML(L, items, {chartTitle:spec.chartTitle, subtitle:spec.subtitle, pageTitle:spec.title, targetPoint:spec.targetPoint, ySymbol:spec.ySymbol});
