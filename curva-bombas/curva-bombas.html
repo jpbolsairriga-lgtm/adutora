@@ -223,7 +223,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
     <div class="hdr-logo">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
       <div class="hdr-brand">
-        <h1>Curva de Bombas <span class="ver-badge">v1.22</span></h1>
+        <h1>Curva de Bombas <span class="ver-badge">v1.23</span></h1>
         <p>Digitalizador de curvas — importe imagem/PDF e extraia os pontos</p>
       </div>
     </div>
@@ -560,7 +560,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
 // ============================================================================
-// Curva de Bombas — Digitalizador  v1.22 (2026-08-21)
+// Curva de Bombas — Digitalizador  v1.23 (2026-08-21)
 // Build inicial (v1.0): importação de imagem/PDF (pdf.js), calibração de eixos
 // (linear/log, 4 pontos estilo WebPlotDigitizer), múltiplas séries,
 // ajuste de curva (polinomial grau 1-3 / potência) por mínimos quadrados,
@@ -977,6 +977,30 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
 //   ponto de trabalho quando isso acontece, com aviso "⚠ além da faixa
 //   digitalizada" — deixa visualmente óbvio o que é dado digitalizado e o
 //   que é extrapolação, em vez do ponto ficar solto no meio do gráfico.
+// ============================================================================
+// v1.23: usuário pediu 4 ajustes no relatório PDF depois de ver o gráfico
+// do Sistema (Bombas em série, todas as Operações empilhadas):
+// - O relatório tinha CADA operação numa página própria
+//   (`.op-section{page-break-before:always}` forçava isso sempre) — trocado
+//   por só `page-break-inside:avoid` (não quebra NO MEIO de uma operação,
+//   mas deixa várias caberem numa página só antes de pular sozinho pra
+//   próxima). Testado gerando o PDF de verdade via Playwright: um projeto
+//   com 6 Operações caiu de pelo menos 7 páginas pra 3.
+// - O gráfico "Gráfico do Sistema" (associação em série) agora abre o
+//   relatório, antes da tabela — só aparece se existir uma série 'combined'
+//   no projeto.
+// - `layoutLegendRows` trocado de empacotamento guloso (item por item) pra
+//   colunas de largura UNIFORME (baseada no rótulo mais largo) — com muitas
+//   séries no mesmo gráfico (o do Sistema pode ter 1 curva por Operação), o
+//   empacotamento guloso deixava a maioria das linhas com 1 item mas
+//   "aproveitava" espaço sobrando numa linha aleatória pra colar 2 juntos
+//   (ex: "Operação 06" + "Curva Total" na mesma linha) — parecia quebrado.
+//   Colunas uniformes: todas as linhas (menos a última) têm a MESMA
+//   quantidade de itens.
+// - A caixinha de dica ao passar o mouse (`attachChartInteractivity`) fica
+//   desproporcional com muitas séries (uma linha de texto por curva) —
+//   fonte e altura de linha agora encolhem sozinhas quando o gráfico tem
+//   mais de 5 séries.
 // ============================================================================
 (function(){
 'use strict';
@@ -1961,6 +1985,9 @@ function buildReportHTML(){
 
   let html='<h1>Relatório de Economia de Energia — Inversor de Frequência</h1>';
   html+='<p class="meta">Gerado por Curva de Bombas — Bolsa Irriga · '+new Date().toLocaleDateString('pt-BR')+'</p>';
+  S.series.filter(s=>s.type==='combined').forEach(cs=>{
+    html+='<div class="system-chart-section">'+staticSvgFor(cs.id)+'</div>';
+  });
   html+='<table class="report-table"><thead><tr><th>Operação</th><th>Bomba</th><th>Q alvo</th><th>H alvo</th><th>Rotação</th><th>P antes</th><th>P depois</th><th>Economia</th><th>h/dia</th><th>dias/ano</th><th>kWh/ano</th>'+(tariff>0?'<th>R$/ano</th>':'')+'<th>Base do kWh</th></tr></thead><tbody>';
   rows.forEach(({op})=>{
     const r=op.result, costYear=r.kwhYear!=null? r.kwhYear*tariff : null;
@@ -1997,11 +2024,17 @@ function buildReportHTML(){
     +'table.report-table th,table.report-table td{border:1px solid #d0e4f0;padding:.4rem .5rem;text-align:left}'
     +'table.report-table th{background:#caf0f8;color:#003d5c}'
     +'.totals{font-size:1rem;background:#e6f7ed;padding:.6rem .8rem;border-radius:8px;display:inline-block}'
-    +'.op-section{page-break-inside:avoid;margin-top:2rem;border-top:2px solid #d0e4f0;padding-top:1rem}'
-    +'.charts-row{display:flex;gap:1rem;flex-wrap:wrap}'
-    +'.chart-col{flex:1;min-width:380px} .chart-col svg{width:100%;height:auto}'
+    +'.system-chart-section{page-break-inside:avoid;margin-bottom:1.5rem;max-width:760px} .system-chart-section svg{width:100%;height:auto}'
+    +'.op-section{page-break-inside:avoid;margin-top:1.1rem;border-top:2px solid #d0e4f0;padding-top:.6rem}'
+    +'.charts-row{display:flex;gap:.8rem;flex-wrap:wrap}'
+    +'.chart-col{flex:1;min-width:320px} .chart-col svg{width:100%;height:auto}'
     +'.print-btn{position:fixed;top:1rem;right:1rem;background:#0077b6;color:#fff;border:none;padding:.6rem 1.1rem;border-radius:8px;font-weight:700;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.2)}'
-    +'@media print{ .print-btn{display:none} .op-section{page-break-before:always} }'
+    // sem page-break-before forçado — cada bloco (.op-section) só evita
+    // QUEBRAR NO MEIO (page-break-inside:avoid); o navegador empilha quantos
+    // couberem numa página só antes de pular pra próxima sozinho. Era um
+    // "page-break-before:always" em CADA operação que forçava exatamente
+    // uma por página — por isso o relatório tinha tantas páginas.
+    +'@media print{ .print-btn{display:none} body{padding-top:.5rem} }'
     +'</style></head><body>'
     +'<button class="print-btn" onclick="window.print()">&#128424; Imprimir / Salvar PDF</button>'
     +html
@@ -2617,16 +2650,23 @@ function layoutLegendRows(legendLabels, pw){
   if(!legendLabels || !legendLabels.length) return [];
   const gap=22, swatchW=26, swatchGap=8, itemPad=18;
   const maxChars=Math.max(6, Math.floor((pw*0.92-56)/6.2));
-  const rows=[]; let row=[], rowW=0;
-  legendLabels.forEach((label,i)=>{
+  const items=legendLabels.map((label,i)=>{
     const shown = label.length>maxChars? label.slice(0,maxChars-1)+'…' : label;
     const w = swatchW+swatchGap+shown.length*6.2+itemPad;
-    if(row.length && rowW+gap+w>pw){ rows.push(row); row=[]; rowW=0; }
-    if(row.length) rowW+=gap;
-    row.push({i,label,shown,w});
-    rowW+=w;
+    return {i,label,shown,w};
   });
-  if(row.length) rows.push(row);
+  // Colunas de largura UNIFORME (baseada no rótulo mais largo), não um
+  // empacotamento guloso item-a-item — com muitas séries (ex: o gráfico do
+  // Sistema com uma Operação por curva) o empacotamento guloso deixava a
+  // maioria das linhas com 1 item só (rótulos longos) mas de vez em quando
+  // "aproveitava" um espaço sobrando pra colar 2 itens numa linha só —
+  // ficava com uma linha "diferente" das outras, parecendo quebrado. Com
+  // coluna uniforme, todas as linhas (menos a última) têm a MESMA
+  // quantidade de itens.
+  const maxW=Math.max(...items.map(it=>it.w));
+  const perRow=Math.max(1, Math.floor((pw+gap)/(maxW+gap)));
+  const rows=[];
+  for(let i=0;i<items.length;i+=perRow) rows.push(items.slice(i,i+perRow));
   return rows;
 }
 // Camada de geometria compartilhada — recebe uma lista de séries quaisquer
@@ -2798,9 +2838,16 @@ function attachChartInteractivity(svgEl, L, items){
   });
   const tipBg=document.createElementNS(ns,'rect'); tipBg.setAttribute('rx','7'); tipBg.setAttribute('fill','#0a2540'); tipBg.setAttribute('opacity','0.95');
   g.appendChild(tipBg);
+  // Com MUITAS séries no mesmo gráfico (o do Sistema pode ter uma bomba +
+  // uma Operação por curva), a caixinha de dica ficava desproporcional —
+  // fonte/altura de linha menores aqui deixam ela compacta mesmo com 8-9
+  // linhas, sem precisar cortar nenhuma série da lista.
+  const many=items.length>5;
+  const tipLineH = many? 14.5 : 18;
+  const tipFs0 = many? '11.5' : '12.5', tipFs1 = many? '10.5' : '12';
   const tipText=items.concat([0]).map((_,i)=>{
     const t=document.createElementNS(ns,'text');
-    t.setAttribute('font-size', i===0?'12.5':'12');
+    t.setAttribute('font-size', i===0?tipFs0:tipFs1);
     t.setAttribute('font-weight', i===0?'800':'600');
     t.setAttribute('fill', i===0?'#ffffff':'#dfe9f4');
     g.appendChild(t); return t;
@@ -2842,14 +2889,14 @@ function attachChartInteractivity(svgEl, L, items){
       tipText[i+1].textContent=label;
       maxLen=Math.max(maxLen,label.length);
     });
-    const boxW=Math.min(320,Math.max(196,maxLen*6.3+24)), boxH=18*(items.length+1)+16;
+    const boxW=Math.min(320,Math.max(196,maxLen*(many?5.8:6.3)+24)), boxH=tipLineH*(items.length+1)+16;
     let bx=x+16, by=yRef-boxH-16;
     if(bx+boxW > L.M.l+L.pw) bx=x-boxW-16;
     if(bx < L.M.l) bx=L.M.l;
     if(by < L.M.t) by=yRef+16;
     if(by+boxH > L.M.t+L.ph) by=L.M.t+L.ph-boxH;
     tipBg.setAttribute('x',bx); tipBg.setAttribute('y',by); tipBg.setAttribute('width',boxW); tipBg.setAttribute('height',boxH);
-    tipText.forEach((t,i)=>{ t.setAttribute('x',bx+12); t.setAttribute('y',by+19+i*18); });
+    tipText.forEach((t,i)=>{ t.setAttribute('x',bx+12); t.setAttribute('y',by+(many?16:19)+i*tipLineH); });
   }
   hitRect.addEventListener('mousemove', e=>move(e.clientX,e.clientY));
   hitRect.addEventListener('mouseleave', ()=>{ g.style.display='none'; });
