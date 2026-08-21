@@ -123,12 +123,14 @@ main.layout{flex:1;min-height:0;display:flex;gap:1rem;padding:.9rem 1rem;max-wid
 .op-row .op-status{font-size:.68rem;color:var(--mu);flex-shrink:0;width:14px;text-align:center}
 .op-row .op-status.ok{color:var(--ok)}
 .op-row .op-status.err{color:var(--err)}
+.op-row .op-status.warn{color:var(--warn)}
 .op-row .op-name-input{flex:1;min-width:0;border:1px solid transparent;background:transparent;font-weight:700;font-size:.78rem;padding:.15rem .3rem;border-radius:4px;color:var(--tx)}
 .op-row .op-name-input:hover,.op-row .op-name-input:focus{border-color:var(--bdr);background:#fff}
 .op-row .op-edit-btn{flex-shrink:0;padding:.2rem .5rem;font-size:.68rem}
 .op-row .op-row-summary{margin:.3rem 0 0 26px;font-size:.68rem;color:var(--mu);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .op-row .op-row-summary.ok{color:var(--ok)}
 .op-row .op-row-summary.err{color:var(--err)}
+.op-row .op-row-summary.warn{color:var(--warn)}
 .op-modal-card{max-width:560px}
 .op-modal-body .field-row{margin-bottom:.7rem}
 .op-modal-body .field-row label{width:100px;font-size:.8rem}
@@ -138,6 +140,7 @@ main.layout{flex:1;min-height:0;display:flex;gap:1rem;padding:.9rem 1rem;max-wid
 .op-modal-actions{display:flex;align-items:center;gap:1.2rem;margin-top:.4rem;flex-wrap:wrap}
 .op-result{font-size:.7rem;color:var(--tx);line-height:1.5;margin-top:.35rem;padding:.35rem .45rem;border-radius:6px;background:var(--bg)}
 .op-result.err{color:var(--err);background:var(--errbg)}
+.op-result.warn{color:var(--warn);background:var(--warnbg)}
 .op-result.ok{background:var(--okbg)}
 .op-modal-body .op-result{font-size:.8rem;margin-top:1rem}
 .op-clear{font-size:.68rem;color:var(--mu);text-decoration:underline;cursor:pointer;display:inline-block}
@@ -220,7 +223,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
     <div class="hdr-logo">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
       <div class="hdr-brand">
-        <h1>Curva de Bombas <span class="ver-badge">v1.21</span></h1>
+        <h1>Curva de Bombas <span class="ver-badge">v1.22</span></h1>
         <p>Digitalizador de curvas — importe imagem/PDF e extraia os pontos</p>
       </div>
     </div>
@@ -557,7 +560,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
 // ============================================================================
-// Curva de Bombas — Digitalizador  v1.21 (2026-08-21)
+// Curva de Bombas — Digitalizador  v1.22 (2026-08-21)
 // Build inicial (v1.0): importação de imagem/PDF (pdf.js), calibração de eixos
 // (linear/log, 4 pontos estilo WebPlotDigitizer), múltiplas séries,
 // ajuste de curva (polinomial grau 1-3 / potência) por mínimos quadrados,
@@ -951,6 +954,29 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
 //   (`fmtNumRaw is not defined`) — a lista de funções serializadas pra essa
 //   página standalone não incluía `fmtNumRaw`, que `fmtNum` passou a usar
 //   desde a v1.18 (regressão silenciosa de duas versões atrás).
+// ============================================================================
+// v1.22: usuário reportou "alguns pontos estão fora da curva" — Operação 06
+// (rotação bem baixa, 999.864 RPM) tinha o ponto de trabalho pendurado bem
+// longe de onde a curva termina, nos dois gráficos (pressão e potência).
+// Causa raiz: `solveVfdRotationForPoint` acha r resolvendo
+// evalSeriesAt(hSrc, targetQ/r) — e um ajuste poly3 (evalPoly) é uma função
+// definida em QUALQUER x, então o solver aceita de bom grado uma rotação
+// cuja "vazão de referência" (targetQ/r) caia bem fora da faixa realmente
+// digitalizada. Nesse caso específico, target Q=16.68 e r=0.2857 pedem uma
+// leitura em Q≈58.4 — 35,8% além do máximo digitalizado (43.01). O
+// polinômio extrapola sem reclamar, mas nada garante que a bomba real se
+// comporte assim fora dos pontos medidos — e a curva desenhada (limitada à
+// faixa real, corretamente) nunca alcançava o ponto, parecendo bug de
+// desenho quando era o cálculo apoiado em dado que não existe.
+// - `extrapolationInfo()` (nova, compartilhada) detecta isso com a mesma
+//   tolerância de 30% que o painel avulso do inversor já usava (só ele
+//   tinha essa checagem — as Operações nunca tinham herdado) — agora as
+//   Operações também avisam, com destaque laranja (`.warn`, reaproveitando
+//   `var(--warn)` já existente) tanto na linha compacta quanto no modal.
+// - O gráfico ganhou um trecho TRACEJADO ligando o fim real da curva até o
+//   ponto de trabalho quando isso acontece, com aviso "⚠ além da faixa
+//   digitalizada" — deixa visualmente óbvio o que é dado digitalizado e o
+//   que é extrapolação, em vez do ponto ficar solto no meio do gráfico.
 // ============================================================================
 (function(){
 'use strict';
@@ -1699,6 +1725,7 @@ function computeOperation(op){
   const r=solveVfdRotationForPoint(hSrc, Qt, HtForSrc, exp);
   if(r==null){ op.error='Não foi possível achar uma rotação (5%–300% da referência) que atenda esse ponto com esta bomba.'; return; }
   const targetRpm=refRpm*r, targetHz=refHz*r;
+  const extrapolation=extrapolationInfo(hSrc, Qt, r);
 
   // curva de PRESSÃO dedicada desta operação
   const pressName=hSrc.name+' — '+op.name+' @ '+fmtNum(targetRpm)+' RPM ('+fmtNum(targetHz)+' Hz)';
@@ -1760,10 +1787,14 @@ function computeOperation(op){
   const kwhYear = (savingsCv!=null && hoursYear!=null)? electricalKw(savingsCv*0.7355, getSourceOf(hSrc))*hoursYear : null;
 
   op.error=null;
-  op.result={targetRpm,targetHz,r,Qt,Ht,HtForSrc,partnerName:partner?partner.name:null,partnerH,Pref,Padj,savingsCv,pct,powerSource,hoursYear,kwhYear,motorEta,pressVfdId:pressVfd.id,powerVfdId:powerSeriesId,pumpName:hSrc.name};
+  op.result={targetRpm,targetHz,r,Qt,Ht,HtForSrc,partnerName:partner?partner.name:null,partnerH,Pref,Padj,savingsCv,pct,powerSource,hoursYear,kwhYear,motorEta,extrapolation,pressVfdId:pressVfd.id,powerVfdId:powerSeriesId,pumpName:hSrc.name};
 }
 function opStatusClassAndText(op){
   if(op.error) return {cls:'err', icon:'⚠', text:op.error};
+  if(op.result && op.result.extrapolation){
+    const ex=op.result.extrapolation;
+    return {cls:'warn', icon:'⚠', text:'Essa rotação só existe extrapolando a curva '+fmtNum(ex.pctBeyond)+'% além da faixa digitalizada ('+fmtNum(ex.domain[0])+'–'+fmtNum(ex.domain[1])+') — resultado pouco confiável, verifique se essa vazão/pressão faz sentido pra essa bomba antes de usar. Rotação: '+fmtNum(op.result.targetRpm)+' RPM ('+fmtNum(op.result.targetHz)+' Hz).'};
+  }
   if(!op.result) return {cls:'', icon:'—', text:'Preencha bomba, Q e H, depois clique em Calcular.'};
   const r=op.result;
   let text='Rotação: '+fmtNum(r.targetRpm)+' RPM ('+fmtNum(r.targetHz)+' Hz)';
@@ -2324,6 +2355,27 @@ function solveVfdRotationForPoint(srcSeries, targetQ, targetH, exp){
   }
   return null;
 }
+// O solver acima acha r resolvendo evalSeriesAt(srcSeries, targetQ/r) — e
+// evalPoly (o ajuste poly3) é uma função matemática definida em QUALQUER x,
+// então o solver aceita de bom grado uma rotação cuja "vazão de referência"
+// (targetQ/r, o ponto na curva a 3500 RPM que precisa ser lido pra chegar
+// nesse r) caia bem fora da faixa realmente digitalizada — o polinômio
+// extrapola sem avisar, e nada garante que a bomba real se comporte assim
+// fora dos pontos medidos. Sem checar isso, o app mostrava uma rotação e um
+// "ponto de trabalho" com toda confiança, mas a curva desenhada (limitada à
+// faixa real, corretamente) nunca alcançava o ponto — parecia bug de
+// desenho, mas era o cálculo apoiado em dado que não existe.
+function extrapolationInfo(srcSeries, targetQ, r){
+  const dom=seriesDomain(srcSeries);
+  if(!dom || !(r>0)) return null;
+  const refQ=targetQ/r;
+  // mesma tolerância de 30% que o painel avulso já usava (extrapolar um
+  // pouco além dos pontos digitalizados é prática de engenharia normal —
+  // só vira motivo de alerta quando é bem além disso).
+  if(refQ>=dom[0]*0.7 && refQ<=dom[1]*1.3) return null;
+  const pctBeyond = refQ>dom[1]? (refQ/dom[1]-1)*100 : (dom[0]-refQ)/(dom[1]-dom[0]||1)*100;
+  return {refQ, domain:dom, pctBeyond};
+}
 // Propaga a rotação encontrada pra qualquer curva "irmã" da mesma bomba —
 // digitalizada a partir da MESMA fonte/imagem que a curva usada pra resolver
 // o ponto de trabalho (na prática, o mesmo catálogo/página costuma trazer
@@ -2471,9 +2523,8 @@ vfdSolveBtn.addEventListener('click',()=>{
   } else {
     msg='Rotação encontrada: '+fmtNum(targetRpm)+' RPM ('+fmtNum(targetHz)+' Hz) — fator '+fmtNum(r)+'×';
   }
-  const dom=seriesDomain(src);
-  const Q1=Qt/r;
-  if(dom && (Q1<dom[0]*0.7 || Q1>dom[1]*1.3)) msg+=' · atenção: exige extrapolar bastante além dos pontos digitalizados';
+  const extrapolation=extrapolationInfo(src, Qt, r);
+  if(extrapolation) msg+=' · atenção: exige extrapolar a curva '+fmtNum(extrapolation.pctBeyond)+'% além dos pontos digitalizados — resultado pouco confiável';
   if(r>1.15) msg+=' · atenção: acima da faixa nominal típica de inversores (>115%)';
   if(siblingsUpdated.length) msg+=' · também atualizada a curva de '+siblingsUpdated.map(u=>u.qi.symbol).join(', ')+' desta bomba na mesma rotação';
   vfdSolveResult.style.color = msg.includes('atenção')? 'var(--warn)' : 'var(--ok)';
@@ -2588,6 +2639,26 @@ function computeChartLayout(seriesArr, extraPoint, legendLabels){
   if(extraPoint){ qlo=Math.min(qlo,extraPoint.Q); qhi=Math.max(qhi,extraPoint.Q); }
   const curves=seriesArr.map((ser,i)=>sampleCurve(ser,doms[i][0],doms[i][1],80));
   if(curves.some(c=>!c.length)) return null;
+  // Quando o ponto de trabalho exige extrapolar além da faixa REAL
+  // digitalizada de alguma série (ver extrapolationInfo), a curva
+  // corretamente não é desenhada até lá — mas isso deixava o ponto
+  // "flutuando" sozinho, sem nada ligando ele à curva, parecendo bug de
+  // desenho. Aqui monta um trecho TRACEJADO extra (só entre a borda real dos
+  // dados e o ponto) pra deixar visualmente óbvio o que é dado digitalizado
+  // e o que é extrapolação do ajuste polinomial.
+  const extrapTails = seriesArr.map((ser,i)=>{
+    if(!extraPoint) return null;
+    const d=doms[i];
+    if(extraPoint.Q>=d[0] && extraPoint.Q<=d[1]) return null;
+    const fromQ = extraPoint.Q>d[1]? d[1] : d[0];
+    const n=20, pts=[];
+    for(let k=0;k<=n;k++){
+      const x=fromQ+(extraPoint.Q-fromQ)*k/n;
+      const y=evalSeriesAt(ser,x);
+      if(y!=null && isFinite(y)) pts.push({x,y});
+    }
+    return pts.length>1? pts : null;
+  });
   const allY=curves.reduce((acc,c)=>acc.concat(c.map(p=>p.y)),[]);
   if(extraPoint) allY.push(extraPoint.H);
   let hlo=Math.min(0,...allY), hhi=Math.max(...allY);
@@ -2613,7 +2684,7 @@ function computeChartLayout(seriesArr, extraPoint, legendLabels){
     if(src && !xUnit) xUnit=src.xUnit||'';
     if(!yUnit){ const yu=effectiveYUnit(ser); if(yu) yUnit=yu; }
   });
-  return {qlo,qhi,hlo,hhi,W,H,M,pw,ph,mapX,mapY,invX,curves,xUnit,yUnit,legendRows};
+  return {qlo,qhi,hlo,hhi,W,H,M,pw,ph,mapX,mapY,invX,curves,xUnit,yUnit,legendRows,extrapTails};
 }
 // Empacota cada série com sua curva amostrada + papel visual: heroIdx é a
 // curva em destaque (grossa, sem marcadores — a "resposta"); as demais ficam
@@ -2647,12 +2718,25 @@ function buildChartSVG(L,items,meta){
   const ySym=meta.ySymbol||'H';
   svg += '<text x="20" y="'+(M.t+ph/2)+'" font-size="13" font-weight="700" fill="#0a2540" text-anchor="middle" transform="rotate(-90 20 '+(M.t+ph/2)+')">'+escapeHtml(ySym)+(L.yUnit?' ('+escapeHtml(L.yUnit)+')':'')+'</text>';
 
-  items.forEach(it=>{
+  let hasExtrapTail=false;
+  items.forEach((it,i)=>{
     if(it.isHero){
       svg += '<path d="'+pathFor(it.curve)+'" fill="none" stroke="#0a2540" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/>';
     } else {
       svg += '<path d="'+pathFor(it.curve)+'" fill="none" stroke="'+it.ser.color+'" stroke-width="2.4" opacity="0.92"/>';
       (it.ser.points||[]).forEach(p=>{ svg += '<circle cx="'+L.mapX(p.x).toFixed(2)+'" cy="'+L.mapY(p.y).toFixed(2)+'" r="3.4" fill="'+it.ser.color+'" stroke="#fff" stroke-width="1"/>'; });
+    }
+    // trecho TRACEJADO ligando a borda real dos dados até o ponto de
+    // trabalho, só quando ele exige extrapolar o ajuste além do que foi
+    // digitalizado (ver extrapTails em computeChartLayout) — sem isso o
+    // ponto ficava "flutuando" sozinho, longe do fim da curva, parecendo bug
+    // de desenho quando na real é a curva recusando (corretamente) inventar
+    // dado que não existe.
+    const tail=L.extrapTails && L.extrapTails[i];
+    if(tail && tail.length){
+      hasExtrapTail=true;
+      const color=it.isHero? '#0a2540' : it.ser.color, width=it.isHero? 3.2 : 2;
+      svg += '<path d="'+pathFor(tail)+'" fill="none" stroke="'+color+'" stroke-width="'+width+'" stroke-dasharray="7,5" opacity="0.7" stroke-linecap="round"/>';
     }
   });
 
@@ -2689,6 +2773,7 @@ function buildChartSVG(L,items,meta){
       +'<circle cx="'+tpx+'" cy="'+tpy+'" r="2.6" fill="#e07b00"/>'
       +'<text x="'+lx+'" y="'+(tpy-9)+'" font-size="11.5" font-weight="800" fill="#e07b00" text-anchor="'+(labelRight?'start':'end')+'">Ponto de trabalho</text>'
       +'<text x="'+lx+'" y="'+(tpy+7)+'" font-size="11" fill="#e07b00" text-anchor="'+(labelRight?'start':'end')+'">Q='+escapeHtml(fmtNum(meta.targetPoint.Q))+(L.xUnit?' '+escapeHtml(L.xUnit):'')+'  '+escapeHtml(ySym)+'='+escapeHtml(fmtNum(meta.targetPoint.H))+(L.yUnit?' '+escapeHtml(L.yUnit):'')+'</text>'
+      +(hasExtrapTail? '<text x="'+lx+'" y="'+(tpy+21)+'" font-size="10.5" font-weight="700" fill="#e07b00" text-anchor="'+(labelRight?'start':'end')+'">⚠ além da faixa digitalizada (tracejado)</text>' : '')
       +'</g>';
   }
   const dateStr=new Date().toLocaleDateString('pt-BR');
@@ -2914,7 +2999,7 @@ function exportChartSvgAsPng(container, filenamePrefix){
 // do app.
 function buildStandaloneChartHTML(L,items,meta){
   const payload={
-    L:{qlo:L.qlo,qhi:L.qhi,hlo:L.hlo,hhi:L.hhi,W:L.W,H:L.H,M:L.M,pw:L.pw,ph:L.ph,xUnit:L.xUnit,yUnit:L.yUnit,legendRows:L.legendRows},
+    L:{qlo:L.qlo,qhi:L.qhi,hlo:L.hlo,hhi:L.hhi,W:L.W,H:L.H,M:L.M,pw:L.pw,ph:L.ph,xUnit:L.xUnit,yUnit:L.yUnit,legendRows:L.legendRows,extrapTails:L.extrapTails},
     items:items.map(it=>({
       ser:{name:it.ser.name,color:it.ser.color,points: it.isHero? [] : (it.ser.points||[]).map(p=>({x:p.x,y:p.y}))},
       curve:it.curve, isHero:it.isHero, legendLabel:it.legendLabel
