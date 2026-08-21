@@ -194,7 +194,7 @@
 <body>
 
 <header class="app-header no-print">
-  <h1>🌦️ Balanço Climático <a class="version-badge" id="versionBadge" href="CHANGELOG.md" target="_blank" rel="noopener" title="Ver histórico de versões (CHANGELOG.md)">v2.2.0</a></h1>
+  <h1>🌦️ Balanço Climático <a class="version-badge" id="versionBadge" href="CHANGELOG.md" target="_blank" rel="noopener" title="Ver histórico de versões (CHANGELOG.md)">v2.3.0</a></h1>
   <p>Área da fazenda via KML + imagem de satélite + clima mensal (NASA POWER ou Open-Meteo, ano único ou média histórica) + balanço hídrico do solo e necessidade de irrigação da cultura.</p>
 </header>
 
@@ -218,6 +218,7 @@
     <select id="sourceSelect">
       <option value="nasa" selected>NASA POWER</option>
       <option value="openmeteo">Open-Meteo (ERA5-Land)</option>
+      <option value="brdwgd">BR-DWGD (Earth Engine)</option>
     </select>
   </div>
   <div class="field">
@@ -230,10 +231,19 @@
   </div>
   <button class="btn primary" id="refreshBtn" type="button" disabled>🔄 Atualizar dados</button>
   <button class="btn" id="printBtn" type="button">🖨️ Imprimir relatório</button>
-  <label class="field-inline no-print" style="margin-left:4px;">
-    <input type="checkbox" id="compareCheckbox"> Comparar com outra fonte
-  </label>
+  <div class="field">
+    <label for="compareSelect">Comparar com</label>
+    <select id="compareSelect">
+      <option value="" selected>Nenhuma</option>
+      <option value="nasa">NASA POWER</option>
+      <option value="openmeteo">Open-Meteo (ERA5-Land)</option>
+      <option value="brdwgd">BR-DWGD (Earth Engine)</option>
+    </select>
+  </div>
   <span class="status-msg" id="statusMsg"></span>
+</div>
+<div class="note no-print" id="brdwgdNote" style="margin-top:-10px; margin-bottom:14px; display:none;">
+  ℹ️ BR-DWGD exige login com sua conta Google (Earth Engine) e só tem dados históricos (até ~2020-2022, sem anos recentes). Ao clicar em "Atualizar dados" com essa fonte, uma janela de login do Google vai abrir.
 </div>
 
 <section class="quadro" id="quadroMapa">
@@ -361,6 +371,7 @@
 <footer class="app-footer no-print">Balanço Climático — ferramenta local, sem envio de dados a servidores próprios.</footer>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@google/earthengine@1.7.40/build/ee_api_js.js"></script>
 <script>
 (function(){
   'use strict';
@@ -766,9 +777,118 @@
     }));
   }
 
+  // ================= BR-DWGD (Google Earth Engine) — fonte nacional =================
+  // Brazilian Daily Weather Gridded Data (Xavier et al., UFES), grade de 0.1° calibrada com
+  // 1.250+ estações do INMET + 11.000+ pluviômetros. Só tem dados históricos (até ~2020-2022,
+  // sem anos recentes). Acesso exige login Google (o próprio Earth Engine não tem API pública
+  // anônima) — por isso essa fonte só funciona com o app publicado em http(s), nunca em file://.
+  const EE_CLIENT_ID = '848906933006-92ripvv94rbim1sem86ugcrlj8ouvqe3.apps.googleusercontent.com';
+  const EE_PROJECT_ID = 'balanco-climatico';
+  const EE_ASSETS = {
+    PR:   'projects/sat-io/open-datasets/BR-DWGD/PR',
+    TMAX: 'projects/sat-io/open-datasets/BR-DWGD/TMAX',
+    TMIN: 'projects/sat-io/open-datasets/BR-DWGD/TMIN',
+    RS:   'projects/sat-io/open-datasets/BR-DWGD/RS',
+    RH:   'projects/sat-io/open-datasets/BR-DWGD/RH',
+    U2:   'projects/sat-io/open-datasets/BR-DWGD/U2'
+  };
+  const EE_SCALE_M = 11132; // ~0.1° no equador
+
+  let eeAuthPromise = null;
+
+  function eeAuthenticate(){
+    if (eeAuthPromise) return eeAuthPromise;
+    eeAuthPromise = new Promise((resolve, reject) => {
+      if (typeof ee === 'undefined'){
+        reject(new Error('Biblioteca do Earth Engine não carregou (verifique sua conexão).'));
+        eeAuthPromise = null;
+        return;
+      }
+      ee.data.authenticateViaOauth(
+        EE_CLIENT_ID,
+        () => {
+          ee.initialize(null, null,
+            () => resolve(),
+            (err) => { eeAuthPromise = null; reject(new Error('Falha ao inicializar o Earth Engine: '+err)); },
+            null, EE_PROJECT_ID
+          );
+        },
+        (err) => { eeAuthPromise = null; reject(new Error('Login com Google falhou ou foi cancelado: '+err)); },
+        ['https://www.googleapis.com/auth/earthengine.readonly'],
+        null,
+        true
+      );
+    });
+    return eeAuthPromise;
+  }
+
+  // Monta UMA consulta que devolve a climatologia dos 12 meses de uma vez (evita 1 round-trip
+  // por mês/variável — o servidor do Earth Engine faz toda a agregação).
+  function eeMonthlyClimatology(lat, lon, startYear, endYear){
+    const point = ee.Geometry.Point([lon, lat]);
+    const nYears = endYear - startYear + 1;
+    const months = ee.List.sequence(1, 12);
+
+    const fc = ee.FeatureCollection(months.map((m) => {
+      m = ee.Number(m);
+      const yearFilter = ee.Filter.calendarRange(startYear, endYear, 'year');
+      const monthFilter = ee.Filter.calendarRange(m, m, 'month');
+      const monthly = (assetId) => ee.ImageCollection(assetId).filter(yearFilter).filter(monthFilter);
+
+      const tmaxImg = monthly(EE_ASSETS.TMAX).mean().rename('tmax');
+      const tminImg = monthly(EE_ASSETS.TMIN).mean().rename('tmin');
+      const rhImg   = monthly(EE_ASSETS.RH).mean().rename('rh');
+      const u2Img   = monthly(EE_ASSETS.U2).mean().rename('u2');
+      const rsImg   = monthly(EE_ASSETS.RS).mean().rename('rs');
+      const prImg   = monthly(EE_ASSETS.PR).sum().divide(nYears).rename('precip'); // soma dos dias / nº de anos = média do total mensal
+
+      const combined = ee.Image.cat([tmaxImg, tminImg, rhImg, u2Img, rsImg, prImg]);
+      const vals = combined.reduceRegion({ reducer: ee.Reducer.mean(), geometry: point, scale: EE_SCALE_M, maxPixels: 1e9 });
+      return ee.Feature(null, vals.set('month', m));
+    }));
+
+    return new Promise((resolve, reject) => {
+      fc.evaluate((result, error) => {
+        if (error) reject(new Error(String(error)));
+        else resolve(result);
+      });
+    });
+  }
+
+  async function fetchClimateBRDWGD(lat, lon, startYear, endYear, elevM){
+    await eeAuthenticate();
+    const result = await eeMonthlyClimatology(lat, lon, startYear, endYear);
+    const byMonth = {};
+    (result.features || []).forEach(f => { byMonth[f.properties.month] = f.properties; });
+
+    const midYear = Math.round((startYear+endYear)/2);
+    const months = [];
+    for (let m=1; m<=12; m++){
+      const p = byMonth[m] || {};
+      const tmax = Number.isFinite(p.tmax) ? p.tmax : null;
+      const tmin = Number.isFinite(p.tmin) ? p.tmin : null;
+      const rh = Number.isFinite(p.rh) ? p.rh : null;
+      const u2 = Number.isFinite(p.u2) ? p.u2 : null;
+      const rs = Number.isFinite(p.rs) ? p.rs : null;
+      const precip = Number.isFinite(p.precip) ? p.precip : null; // já é total mensal médio (mm)
+      const dim = daysInMonth(endYear, m);
+      const etoDay = eto_FAO56_monthly({ tmax, tmin, rh, ws2: u2, rs, latDeg: lat, elevM, year: midYear, month: m });
+      months.push({
+        month: m,
+        days: dim,
+        tmax,
+        precip,
+        eto: etoDay==null ? null : etoDay*dim,
+        nYears: (endYear-startYear+1)
+      });
+    }
+    return months;
+  }
+
   const CLIMATE_SOURCES = {
     nasa: { label: 'NASA POWER', fn: fetchClimateNASA },
-    openmeteo: { label: 'Open-Meteo (ERA5-Land)', fn: fetchClimateOpenMeteo }
+    openmeteo: { label: 'Open-Meteo (ERA5-Land)', fn: fetchClimateOpenMeteo },
+    brdwgd: { label: 'BR-DWGD (Earth Engine)', fn: fetchClimateBRDWGD }
   };
 
   function fetchClimate(source, lat, lon, startYear, endYear, elevM){
@@ -1398,7 +1518,7 @@
 
   function renderComparison(){
     const quadro = el('quadroConferencia');
-    const compareOn = el('compareCheckbox').checked;
+    const compareOn = !!secondarySource;
     quadro.style.display = compareOn ? '' : 'none';
     if (!compareOn) return;
 
@@ -1467,8 +1587,9 @@
     const endYear = +el('yearSelect').value;
     const period = +el('periodSelect').value || 1;
     const startYear = endYear - (period-1);
-    const compareOn = el('compareCheckbox').checked;
-    const otherSource = source === 'nasa' ? 'openmeteo' : 'nasa';
+    const compareValue = el('compareSelect').value;
+    const compareOn = !!compareValue && compareValue !== source;
+    const otherSource = compareValue;
 
     setStatus('Buscando dados climáticos ('+CLIMATE_SOURCES[source].label+(compareOn ? ' + '+CLIMATE_SOURCES[otherSource].label : '')+')…');
     el('refreshBtn').disabled = true;
@@ -1714,9 +1835,12 @@
   function updateSourcesNote(){
     const elevTxt = farmGeo ? fmt0(farmGeo.elevation)+' m ('+(ELEV_SOURCE_LABEL[farmGeo.elevationSource]||'origem desconhecida')+')' : '—';
     const srcLabel = CLIMATE_SOURCES[activeSource].label;
-    const srcLine = activeSource === 'nasa'
-      ? 'Clima: <a href="https://power.larc.nasa.gov/" target="_blank" rel="noopener">NASA POWER</a> (comunidade Agroclimatologia, base de reanálise MERRA-2/POWER). '
-      : 'Clima: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (reanálise ERA5-Land; ETo já vem calculada por FAO-56 Penman-Monteith pelo próprio provedor, usada diretamente sem recálculo). ';
+    const srcLines = {
+      nasa: 'Clima: <a href="https://power.larc.nasa.gov/" target="_blank" rel="noopener">NASA POWER</a> (comunidade Agroclimatologia, base de reanálise MERRA-2/POWER). ',
+      openmeteo: 'Clima: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (reanálise ERA5-Land; ETo já vem calculada por FAO-56 Penman-Monteith pelo próprio provedor, usada diretamente sem recálculo). ',
+      brdwgd: 'Clima: <b>BR-DWGD</b> (Brazilian Daily Weather Gridded Data, Xavier et al./UFES, via Google Earth Engine) — grade de 0,1° calibrada com 1.250+ estações do INMET e 11.000+ pluviômetros; só cobre até ~2020-2022. '
+    };
+    const srcLine = srcLines[activeSource] || srcLines.nasa;
     const periodLine = activePeriod.startYear && activePeriod.startYear !== activePeriod.endYear
       ? 'Cada mês mostrado é a <b>média histórica</b> desse mês calendário ao longo de '+(activePeriod.endYear-activePeriod.startYear+1)+' anos ('+activePeriod.startYear+'–'+activePeriod.endYear+'). '
       : '';
@@ -1725,7 +1849,7 @@
       srcLine + periodLine +
       'Consultado em '+new Date().toLocaleDateString('pt-BR')+'. Fonte ativa usada em todos os cálculos abaixo: <b>'+srcLabel+'</b> (mude no seletor "Fonte de dados" da barra superior). ' +
       'Precipitação total mensal = média diária × dias do mês (ou média das somas mensais, no caso de média histórica). ' +
-      (activeSource==='nasa' ? 'ETo = evapotranspiração de referência calculada pelo método padrão <b>FAO-56 Penman-Monteith</b> (grama de referência), a partir de Tmáx/Tmín, umidade relativa, vento a 2 m e radiação solar mensal do NASA POWER, com fluxo de calor no solo G≈0 (aproximação mensal). ' : '') +
+      (activeSource==='nasa' || activeSource==='brdwgd' ? 'ETo = evapotranspiração de referência calculada pelo método padrão <b>FAO-56 Penman-Monteith</b> (grama de referência), a partir de Tmáx/Tmín, umidade relativa, vento a 2 m e radiação solar mensal da fonte ativa, com fluxo de calor no solo G≈0 (aproximação mensal). ' : '') +
       'Elevação usada no cálculo: '+elevTxt+'.<br>'+
       'Balanço hídrico do solo: método sequencial de <b>Thornthwaite &amp; Mather (1955)</b>, na formulação de ROLIM, G.S.; SENTELHAS, P.C.; BARBIERI, V. <i>Planilhas no ambiente EXCEL™ para os cálculos de balanços hídricos</i>, Rev. Bras. Agrometeorologia, v.6, n.1, p.133-137, 1998 (ESALQ/USP) — aqui usando a ETo da fonte escolhida como ETP de entrada em vez de Thornthwaite (1948), método mais adequado para climas não-úmidos. ' +
       'Necessidade de irrigação: Etc = ETo × Kc; coeficiente de localização Kl = Gc + f·(1−Gc) (Keller &amp; Bliesner) reduz a ETc pela fração de solo não coberto pela copa, prática usual em projetos de irrigação localizada.';
@@ -1798,8 +1922,13 @@
     el('refreshBtn').addEventListener('click', loadClimateAndRender);
     el('yearSelect').addEventListener('change', () => { if (farmGeo) loadClimateAndRender(); });
     el('periodSelect').addEventListener('change', () => { if (farmGeo) loadClimateAndRender(); });
-    el('sourceSelect').addEventListener('change', () => { if (farmGeo) loadClimateAndRender(); });
-    el('compareCheckbox').addEventListener('change', () => {
+    const updateBrdwgdNote = () => {
+      const usesEE = el('sourceSelect').value === 'brdwgd' || el('compareSelect').value === 'brdwgd';
+      el('brdwgdNote').style.display = usesEE ? '' : 'none';
+    };
+    el('sourceSelect').addEventListener('change', () => { updateBrdwgdNote(); if (farmGeo) loadClimateAndRender(); });
+    el('compareSelect').addEventListener('change', () => {
+      updateBrdwgdNote();
       if (farmGeo && climateMonths) loadClimateAndRender(); else renderComparison();
     });
     el('farmName').addEventListener('input', updatePrintHeader);

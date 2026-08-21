@@ -3,6 +3,24 @@
 Todas as mudanças notáveis deste app ficam registradas aqui. O número de versão aparece
 no canto do título, dentro do próprio app (`v2.0.0` etc.) — clique nele pra abrir este arquivo.
 
+## v2.3.0 — 2026-08-21
+
+### Adicionado
+- **BR-DWGD como 3ª fonte de dados** (Brazilian Daily Weather Gridded Data, Xavier et
+  al./UFES — grade de 0,1° calibrada com 1.250+ estações do INMET e 11.000+ pluviômetros),
+  acessada via Google Earth Engine. É a fonte "nacional" mais robusta disponível sem
+  precisar de importação manual — mas só cobre dados históricos (até ~2020-2022, sem
+  anos recentes) e exige login com conta Google (o Earth Engine não tem API pública
+  anônima).
+- O app **mudou de hospedagem**: agora vive publicado no GitHub Pages
+  (`https://jpbolsairriga-lgtm.github.io/adutora/balanco-climatico/balanco-climatico.html`)
+  em vez de só um arquivo local — necessário porque o login do Google não aceita a
+  origem `file://`. Continua funcionando 100% no navegador, sem servidor próprio.
+- "Comparar com outra fonte" virou um seletor com as 3 fontes (antes era um checkbox
+  de liga/desliga só pra Open-Meteo).
+- Pasta do projeto renomeada de "Balanço Climatico" pra "balanco-climatico" (sem
+  acento/espaço, URL mais limpa).
+
 ## v2.2.0 — 2026-08-21
 
 ### Adicionado
