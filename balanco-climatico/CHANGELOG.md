@@ -3,6 +3,22 @@
 Todas as mudanças notáveis deste app ficam registradas aqui. O número de versão aparece
 no canto do título, dentro do próprio app (`v2.0.0` etc.) — clique nele pra abrir este arquivo.
 
+## v2.4.0 — 2026-08-22
+
+### Adicionado/Corrigido
+- Trocada a fonte do BR-DWGD do espelho comunitário (`sat-io/open-datasets`, que
+  parava em jul/2020) para a coleção direto do projeto do autor original
+  (`projects/ee-alexandrexavier/assets/BR-DWGD`), cobrindo **1961–2025**. Achada
+  inspecionando o código-fonte compilado do app público DataClimaBR
+  (ee-deborapdsouza.projects.earthengine.app/view/dataclimabr — colaboradora que
+  cita o mesmo Xavier et al. 2022), sugerida pelo usuário.
+- Corrigidos os fatores de escala/offset de RH, RS e vento (U2) — o resumo que eu
+  tinha usado antes (v2.3.2) trazia offset=0 pra essas três, mas o correto (confirmado
+  no mesmo código-fonte) tem um pequeno offset negativo (-0,393701 / -0,057087 /
+  -0,059055 respectivamente). PR e TMAX/TMIN já estavam certos.
+- Removido o limite automático de ano (antes travava em 2020) já que a nova fonte
+  cobre até o presente, igual as outras.
+
 ## v2.3.2 — 2026-08-22
 
 ### Corrigido

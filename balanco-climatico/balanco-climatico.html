@@ -194,7 +194,7 @@
 <body>
 
 <header class="app-header no-print">
-  <h1>🌦️ Balanço Climático <a class="version-badge" id="versionBadge" href="CHANGELOG.md" target="_blank" rel="noopener" title="Ver histórico de versões (CHANGELOG.md)">v2.3.2</a></h1>
+  <h1>🌦️ Balanço Climático <a class="version-badge" id="versionBadge" href="CHANGELOG.md" target="_blank" rel="noopener" title="Ver histórico de versões (CHANGELOG.md)">v2.4.0</a></h1>
   <p>Área da fazenda via KML + imagem de satélite + clima mensal (NASA POWER ou Open-Meteo, ano único ou média histórica) + balanço hídrico do solo e necessidade de irrigação da cultura.</p>
 </header>
 
@@ -243,7 +243,7 @@
   <span class="status-msg" id="statusMsg"></span>
 </div>
 <div class="note no-print" id="brdwgdNote" style="margin-top:-10px; margin-bottom:14px; display:none;">
-  ℹ️ BR-DWGD exige login com sua conta Google (Earth Engine) e só cobre até <b>2020</b> (a precipitação vai até 2022, mas Tmáx/Tmín/umidade/vento/radiação param em 2020 — o "Ano final" ajusta sozinho). Ao clicar em "Atualizar dados" com essa fonte, uma janela de login do Google vai abrir.
+  ℹ️ BR-DWGD exige login com sua conta Google (Earth Engine) e cobre 1961–2025 (Xavier et al. 2022). Ao clicar em "Atualizar dados" com essa fonte, uma janela de login do Google vai abrir. Meses muito recentes podem ainda não estar disponíveis (aparecem como "sem dado").
 </div>
 
 <section class="quadro" id="quadroMapa">
@@ -778,33 +778,30 @@
   }
 
   // ================= BR-DWGD (Google Earth Engine) — fonte nacional =================
-  // Brazilian Daily Weather Gridded Data (Xavier et al., UFES), grade de 0.1° calibrada com
-  // 1.250+ estações do INMET + 11.000+ pluviômetros. Só tem dados históricos (até ~2020-2022,
-  // sem anos recentes). Acesso exige login Google (o próprio Earth Engine não tem API pública
-  // anônima) — por isso essa fonte só funciona com o app publicado em http(s), nunca em file://.
+  // Brazilian Daily Weather Gridded Data (Xavier et al. 2022, UFES), grade de 0.1° calibrada
+  // com 1.250+ estações do INMET + 11.000+ pluviômetros. Acesso exige login Google (o Earth
+  // Engine não tem API pública anônima) — por isso essa fonte só funciona com o app publicado
+  // em http(s), nunca em file://.
+  // Coleção única multi-banda direto do projeto do autor (cobre até 2025) — mais atual que o
+  // espelho da comunidade (sat-io/open-datasets), que para em jul/2020. Achada inspecionando o
+  // código-fonte do app público DataClimaBR (ee-deborapdsouza.projects.earthengine.app), que
+  // usa e cita a mesma fonte (Xavier et al. 2022).
   const EE_CLIENT_ID = '848906933006-92ripvv94rbim1sem86ugcrlj8ouvqe3.apps.googleusercontent.com';
   const EE_PROJECT_ID = 'balanco-climatico';
-  const EE_ASSETS = {
-    PR:   'projects/sat-io/open-datasets/BR-DWGD/PR',
-    TMAX: 'projects/sat-io/open-datasets/BR-DWGD/TMAX',
-    TMIN: 'projects/sat-io/open-datasets/BR-DWGD/TMIN',
-    RS:   'projects/sat-io/open-datasets/BR-DWGD/RS',
-    RH:   'projects/sat-io/open-datasets/BR-DWGD/RH',
-    U2:   'projects/sat-io/open-datasets/BR-DWGD/U2'
-  };
+  const EE_ASSET_BRDWGD = 'projects/ee-alexandrexavier/assets/BR-DWGD';
+  const EE_BANDS = { PR:'pr', TMAX:'Tmax', TMIN:'Tmin', RH:'RH', RS:'Rs', U2:'u2' };
   const EE_SCALE_M = 11132; // ~0.1° no equador
 
-  // Fator de conversão (valor real = bruto × escala + offset) documentado no script de
-  // ingestão do catálogo (github.com/samapriya/awesome-gee-community-datasets, br_dwgd.md).
-  // As bandas do BR-DWGD são inteiras (int16/byte) pra economizar espaço — sem isso os
-  // valores vêm em unidades arbitrárias (ex.: Tmáx bruto ~15976 em vez de ~32°C).
+  // Fator de conversão (valor real = bruto × escala + offset), confirmado no código-fonte do
+  // DataClimaBR (bate com o script de ingestão do catálogo comunitário pra PR/TMAX/TMIN; RH/RS/U2
+  // têm um pequeno offset adicional que o resumo que eu tinha usado antes não trazia).
   const EE_SCALE_OFFSET = {
-    PR:   { scale: 0.006866665, offset: 225 },
-    TMAX: { scale: 0.001068148, offset: 15 },
-    TMIN: { scale: 0.001068148, offset: 15 },
-    RH:   { scale: 0.393700787, offset: 0 },
-    RS:   { scale: 0.157086614, offset: 0 },
-    U2:   { scale: 0.059055118, offset: 0 }
+    PR:   { scale: 0.00686666, offset: 225.0 },
+    TMAX: { scale: 0.00106815, offset: 15.0 },
+    TMIN: { scale: 0.00106815, offset: 15.0 },
+    RS:   { scale: 0.15708661, offset: -0.057087 },
+    RH:   { scale: 0.39370079, offset: -0.393701 },
+    U2:   { scale: 0.05905512, offset: -0.059055 }
   };
 
   let eeAuthPromise = null;
@@ -853,18 +850,19 @@
     const point = ee.Geometry.Point([lon, lat]);
     const nYears = endYear - startYear + 1;
     const months = ee.List.sequence(1, 12);
+    const baseCol = ee.ImageCollection(EE_ASSET_BRDWGD);
 
     const fc = ee.FeatureCollection(months.map((m) => {
       m = ee.Number(m);
       const yearFilter = ee.Filter.calendarRange(startYear, endYear, 'year');
       const monthFilter = ee.Filter.calendarRange(m, m, 'month');
+      const filtered = baseCol.filter(yearFilter).filter(monthFilter);
       // Converte CADA imagem diária (bruto → valor real) antes de somar/tirar média —
       // não dá pra converter só o resultado agregado, porque o offset precisaria ser
       // multiplicado pelo nº de dias somados, não aplicado uma vez só no final.
       const monthly = (key) => {
         const so = EE_SCALE_OFFSET[key];
-        return ee.ImageCollection(EE_ASSETS[key]).filter(yearFilter).filter(monthFilter)
-          .map(img => img.multiply(so.scale).add(so.offset));
+        return filtered.select(EE_BANDS[key]).map(img => img.multiply(so.scale).add(so.offset));
       };
 
       const tmaxImg = eeSafeReduce(monthly('TMAX'), 'mean').rename('tmax');
@@ -1873,7 +1871,7 @@
     const srcLines = {
       nasa: 'Clima: <a href="https://power.larc.nasa.gov/" target="_blank" rel="noopener">NASA POWER</a> (comunidade Agroclimatologia, base de reanálise MERRA-2/POWER). ',
       openmeteo: 'Clima: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (reanálise ERA5-Land; ETo já vem calculada por FAO-56 Penman-Monteith pelo próprio provedor, usada diretamente sem recálculo). ',
-      brdwgd: 'Clima: <b>BR-DWGD</b> (Brazilian Daily Weather Gridded Data, Xavier et al./UFES, via Google Earth Engine) — grade de 0,1° calibrada com 1.250+ estações do INMET e 11.000+ pluviômetros; só cobre até ~2020-2022. '
+      brdwgd: 'Clima: <b>BR-DWGD</b> (Brazilian Daily Weather Gridded Data, Xavier et al. 2022/UFES, via Google Earth Engine) — grade de 0,1° calibrada com 1.250+ estações do INMET e 11.000+ pluviômetros; cobertura 1961–2025. '
     };
     const srcLine = srcLines[activeSource] || srcLines.nasa;
     const periodLine = activePeriod.startYear && activePeriod.startYear !== activePeriod.endYear
@@ -1957,16 +1955,12 @@
     el('refreshBtn').addEventListener('click', loadClimateAndRender);
     el('yearSelect').addEventListener('change', () => { if (farmGeo) loadClimateAndRender(); });
     el('periodSelect').addEventListener('change', () => { if (farmGeo) loadClimateAndRender(); });
-    const BRDWGD_LAST_YEAR = 2020; // Tmáx/Tmín/RH/vento/radiação só cobrem até aqui (chuva vai até 2022)
     const updateBrdwgdNote = () => {
       const usesEE = el('sourceSelect').value === 'brdwgd' || el('compareSelect').value === 'brdwgd';
       el('brdwgdNote').style.display = usesEE ? '' : 'none';
     };
     el('sourceSelect').addEventListener('change', () => {
       updateBrdwgdNote();
-      if (el('sourceSelect').value === 'brdwgd' && +el('yearSelect').value > BRDWGD_LAST_YEAR){
-        el('yearSelect').value = String(BRDWGD_LAST_YEAR);
-      }
       if (farmGeo) loadClimateAndRender();
     });
     el('compareSelect').addEventListener('change', () => {
