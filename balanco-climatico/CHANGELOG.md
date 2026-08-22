@@ -3,6 +3,19 @@
 Todas as mudanças notáveis deste app ficam registradas aqui. O número de versão aparece
 no canto do título, dentro do próprio app (`v2.0.0` etc.) — clique nele pra abrir este arquivo.
 
+## v2.3.2 — 2026-08-22
+
+### Corrigido
+- Bug real e sério: os valores do BR-DWGD vinham em unidades absurdas (Tmáx ~15.000,
+  chuva negativa em milhares de mm). Causa: as bandas do dataset são inteiras
+  (int16/byte) escaladas pra economizar espaço, e eu não estava aplicando a
+  conversão. Achado o fator real de escala/offset no script de ingestão do
+  publicador (github.com/samapriya/awesome-gee-community-datasets) — aplicado
+  agora em cada imagem diária antes de somar/tirar média (não dava pra converter
+  só o resultado agregado, o offset quebraria a soma). Depurado com dados reais
+  em colaboração com o usuário (login e consultas reais no Earth Engine, algo que
+  eu não consigo testar sozinho).
+
 ## v2.3.1 — 2026-08-21
 
 ### Corrigido

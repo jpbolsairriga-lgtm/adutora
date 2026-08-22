@@ -194,7 +194,7 @@
 <body>
 
 <header class="app-header no-print">
-  <h1>🌦️ Balanço Climático <a class="version-badge" id="versionBadge" href="CHANGELOG.md" target="_blank" rel="noopener" title="Ver histórico de versões (CHANGELOG.md)">v2.3.1</a></h1>
+  <h1>🌦️ Balanço Climático <a class="version-badge" id="versionBadge" href="CHANGELOG.md" target="_blank" rel="noopener" title="Ver histórico de versões (CHANGELOG.md)">v2.3.2</a></h1>
   <p>Área da fazenda via KML + imagem de satélite + clima mensal (NASA POWER ou Open-Meteo, ano único ou média histórica) + balanço hídrico do solo e necessidade de irrigação da cultura.</p>
 </header>
 
@@ -794,6 +794,19 @@
   };
   const EE_SCALE_M = 11132; // ~0.1° no equador
 
+  // Fator de conversão (valor real = bruto × escala + offset) documentado no script de
+  // ingestão do catálogo (github.com/samapriya/awesome-gee-community-datasets, br_dwgd.md).
+  // As bandas do BR-DWGD são inteiras (int16/byte) pra economizar espaço — sem isso os
+  // valores vêm em unidades arbitrárias (ex.: Tmáx bruto ~15976 em vez de ~32°C).
+  const EE_SCALE_OFFSET = {
+    PR:   { scale: 0.006866665, offset: 225 },
+    TMAX: { scale: 0.001068148, offset: 15 },
+    TMIN: { scale: 0.001068148, offset: 15 },
+    RH:   { scale: 0.393700787, offset: 0 },
+    RS:   { scale: 0.157086614, offset: 0 },
+    U2:   { scale: 0.059055118, offset: 0 }
+  };
+
   let eeAuthPromise = null;
 
   function eeAuthenticate(){
@@ -845,15 +858,22 @@
       m = ee.Number(m);
       const yearFilter = ee.Filter.calendarRange(startYear, endYear, 'year');
       const monthFilter = ee.Filter.calendarRange(m, m, 'month');
-      const monthly = (assetId) => ee.ImageCollection(assetId).filter(yearFilter).filter(monthFilter);
+      // Converte CADA imagem diária (bruto → valor real) antes de somar/tirar média —
+      // não dá pra converter só o resultado agregado, porque o offset precisaria ser
+      // multiplicado pelo nº de dias somados, não aplicado uma vez só no final.
+      const monthly = (key) => {
+        const so = EE_SCALE_OFFSET[key];
+        return ee.ImageCollection(EE_ASSETS[key]).filter(yearFilter).filter(monthFilter)
+          .map(img => img.multiply(so.scale).add(so.offset));
+      };
 
-      const tmaxImg = eeSafeReduce(monthly(EE_ASSETS.TMAX), 'mean').rename('tmax');
-      const tminImg = eeSafeReduce(monthly(EE_ASSETS.TMIN), 'mean').rename('tmin');
-      const rhImg   = eeSafeReduce(monthly(EE_ASSETS.RH), 'mean').rename('rh');
-      const u2Img   = eeSafeReduce(monthly(EE_ASSETS.U2), 'mean').rename('u2');
-      const rsImg   = eeSafeReduce(monthly(EE_ASSETS.RS), 'mean').rename('rs');
-      // soma dos dias / nº de anos = média do total mensal
-      const prImg   = eeSafeReduce(monthly(EE_ASSETS.PR), 'sum', nYears).rename('precip');
+      const tmaxImg = eeSafeReduce(monthly('TMAX'), 'mean').rename('tmax');
+      const tminImg = eeSafeReduce(monthly('TMIN'), 'mean').rename('tmin');
+      const rhImg   = eeSafeReduce(monthly('RH'), 'mean').rename('rh');
+      const u2Img   = eeSafeReduce(monthly('U2'), 'mean').rename('u2');
+      const rsImg   = eeSafeReduce(monthly('RS'), 'mean').rename('rs');
+      // soma dos dias (já convertidos p/ mm reais) / nº de anos = média do total mensal
+      const prImg   = eeSafeReduce(monthly('PR'), 'sum', nYears).rename('precip');
 
       const combined = ee.Image.cat([tmaxImg, tminImg, rhImg, u2Img, rsImg, prImg]);
       const vals = combined.reduceRegion({ reducer: ee.Reducer.mean(), geometry: point, scale: EE_SCALE_M, maxPixels: 1e9 });
@@ -868,39 +888,10 @@
     });
   }
 
-  // Teste direto: valor de UM pixel em UM dia só, sem nenhuma agregação — isola se o
-  // problema é escala/unidade do dado bruto ou algo na minha lógica de mês/ano.
-  async function eeDebugAssetInfo(lat, lon){
-    try{
-      const point = ee.Geometry.Point([lon, lat]);
-      for (const key of ['TMAX','PR','RH']){
-        const img = ee.ImageCollection(EE_ASSETS[key]).filterDate('2019-01-15','2019-01-16').first();
-        const info = await new Promise((resolve, reject) => {
-          img.getInfo((r, err) => err ? reject(err) : resolve(r));
-        });
-        console.log('[BR-DWGD debug]', key, '— id da imagem:', info && info.id, '| bandas:', JSON.stringify(info && info.bands));
-        console.log('[BR-DWGD debug]', key, '— properties da imagem (procure "scale"/"offset"/"gain"):', JSON.stringify(info && info.properties, null, 2));
-        const collInfo = await new Promise((resolve) => {
-          ee.ImageCollection(EE_ASSETS[key]).limit(1).getInfo((r) => resolve(r), () => resolve(null));
-        });
-        console.log('[BR-DWGD debug]', key, '— properties da COLEÇÃO (procure "scale"/"offset"/"gain"/"description"):', JSON.stringify(collInfo && collInfo.properties, null, 2));
-        const val = await new Promise((resolve, reject) => {
-          img.reduceRegion({ reducer: ee.Reducer.first(), geometry: point, scale: EE_SCALE_M })
-            .evaluate((r, err) => err ? reject(err) : resolve(r));
-        });
-        console.log('[BR-DWGD debug]', key, '— valor bruto de 1 pixel em 2019-01-15:', JSON.stringify(val));
-      }
-    } catch(e){
-      console.warn('[BR-DWGD debug] falha no teste direto:', e);
-    }
-  }
-
   async function fetchClimateBRDWGD(lat, lon, startYear, endYear, elevM){
     await eeAuthenticate();
-    await eeDebugAssetInfo(lat, lon);
     const result = await eeMonthlyClimatology(lat, lon, startYear, endYear);
-    console.log('[BR-DWGD debug] ponto:', lat, lon, '| período:', startYear, '-', endYear);
-    console.log('[BR-DWGD debug] resultado bruto do Earth Engine:');
+    console.log('[BR-DWGD] ponto:', lat, lon, '| período:', startYear, '-', endYear, '— valores já convertidos:');
     console.table((result.features||[]).map(f => f.properties));
     const byMonth = {};
     (result.features || []).forEach(f => { byMonth[f.properties.month] = f.properties; });
