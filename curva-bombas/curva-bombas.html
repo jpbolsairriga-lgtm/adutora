@@ -223,7 +223,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
     <div class="hdr-logo">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
       <div class="hdr-brand">
-        <h1>Curva de Bombas <span class="ver-badge">v1.24</span></h1>
+        <h1>Curva de Bombas <span class="ver-badge">v1.25</span></h1>
         <p>Digitalizador de curvas — importe imagem/PDF e extraia os pontos</p>
       </div>
     </div>
@@ -568,7 +568,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
 // ============================================================================
-// Curva de Bombas — Digitalizador  v1.24 (2026-08-21)
+// Curva de Bombas — Digitalizador  v1.25 (2026-08-21)
 // Build inicial (v1.0): importação de imagem/PDF (pdf.js), calibração de eixos
 // (linear/log, 4 pontos estilo WebPlotDigitizer), múltiplas séries,
 // ajuste de curva (polinomial grau 1-3 / potência) por mínimos quadrados,
@@ -1027,6 +1027,22 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
 // - `projectInfo` persistido no .json — reabrir um projeto salvo já
 //   preenche os 3 campos de volta sozinho. Projeto salvo ANTES dessa
 //   versão (sem `projectInfo`) não quebra nem limpa os campos.
+// ============================================================================
+// v1.25: usuário mandou print da caixinha de dica (hover) do gráfico do
+// Sistema ainda vazando texto pra fora do fundo azul, e pediu pra mover
+// esse gráfico pra depois da tabela no relatório.
+// - A caixinha tinha a LARGURA calculada com um teto (pra não dominar o
+//   gráfico com muitas séries), mas o TEXTO de cada linha nunca era cortado
+//   de verdade pra caber ali dentro — só entrava no cálculo da largura,
+//   nunca era truncado de fato. Agora trunca (com "…") cada linha pro
+//   tamanho que realmente cabe, usando a mesma estimativa de largura por
+//   caractere do cálculo da caixa — testado medindo a borda direita de cada
+//   `<text>` (getBBox) contra a borda da caixa: nenhuma linha vaza mais.
+// - Gráfico do Sistema (associação em série) movido de "antes da tabela"
+//   pra "depois da tabela/nota, antes dos gráficos de cada Operação" — pra
+//   TODOS os gráficos do relatório ficarem juntos numa sequência só (visão
+//   geral primeiro, depois cada operação em detalhe), com a tabela sozinha
+//   como bloco de dados no meio, não separando os gráficos em dois grupos.
 // ============================================================================
 (function(){
 'use strict';
@@ -2051,9 +2067,6 @@ function buildReportHTML(){
 
   let html='<h1>Relatório de Economia de Energia — Inversor de Frequência</h1>';
   html+='<p class="meta">Gerado por Curva de Bombas — Bolsa Irriga · '+new Date().toLocaleDateString('pt-BR')+'</p>';
-  S.series.filter(s=>s.type==='combined').forEach(cs=>{
-    html+='<div class="system-chart-section">'+staticSvgFor(cs.id)+'</div>';
-  });
   html+='<table class="report-table"><thead><tr><th>Operação</th><th>Bomba</th><th>Q alvo</th><th>H alvo</th><th>Rotação</th><th>P antes</th><th>P depois</th><th>Economia</th><th>h/dia</th><th>dias/ano</th><th>kWh/ano</th>'+(tariff>0?'<th>R$/ano</th>':'')+'<th>Base do kWh</th></tr></thead><tbody>';
   rows.forEach(({op})=>{
     const r=op.result, costYear=r.kwhYear!=null? r.kwhYear*tariff : null;
@@ -2072,6 +2085,14 @@ function buildReportHTML(){
   html+='</tbody></table>';
   html+='<p class="totals"><b>Total estimado (todas as operações):</b> '+fmtNum(totalKwh)+' kWh/ano'+(tariff>0?' — R$ '+fmtNum(totalCost)+'/ano':'')+'</p>';
   html+='<p class="meta">"P antes"/"P depois" são sempre potência MECÂNICA no eixo da bomba (a mesma da curva do fabricante). A coluna "Base do kWh" mostra se a economia em kWh/ano dessa operação já foi convertida pra consumo ELÉTRICO (informando o rendimento motor+inversor da bomba) ou se ainda é a mecânica — mais conservadora, já que o consumo elétrico real é sempre igual ou maior que o mecânico.</p>';
+  // Gráfico do Sistema (bombas em série, com todas as Operações empilhadas)
+  // logo ANTES dos gráficos de cada Operação — não mais lá em cima, antes da
+  // tabela — pra todos os gráficos do relatório ficarem juntos numa
+  // sequência só (visão geral primeiro, depois cada operação em detalhe),
+  // com a tabela sozinha como bloco de dados no meio.
+  S.series.filter(s=>s.type==='combined').forEach(cs=>{
+    html+='<div class="system-chart-section">'+staticSvgFor(cs.id)+'</div>';
+  });
   rows.forEach(({op})=>{
     const r=op.result;
     html+='<div class="op-section"><h2>'+escapeHtml(op.name)+' — '+escapeHtml(r.pumpName)+'</h2>';
@@ -2093,7 +2114,7 @@ function buildReportHTML(){
     +'table.report-table th,table.report-table td{border:1px solid #d0e4f0;padding:.4rem .5rem;text-align:left}'
     +'table.report-table th{background:#caf0f8;color:#003d5c}'
     +'.totals{font-size:1rem;background:#e6f7ed;padding:.6rem .8rem;border-radius:8px;display:inline-block}'
-    +'.system-chart-section{page-break-inside:avoid;margin-bottom:1.5rem;max-width:760px} .system-chart-section svg{width:100%;height:auto}'
+    +'.system-chart-section{page-break-inside:avoid;margin-top:1.1rem;margin-bottom:1.5rem;max-width:760px} .system-chart-section svg{width:100%;height:auto}'
     +'.op-section{page-break-inside:avoid;margin-top:1.1rem;border-top:2px solid #d0e4f0;padding-top:.6rem}'
     +'.charts-row{display:flex;gap:.8rem;flex-wrap:wrap}'
     +'.chart-col{flex:1;min-width:320px} .chart-col svg{width:100%;height:auto}'
@@ -2951,14 +2972,22 @@ function attachChartInteractivity(svgEl, L, items){
       dots[i].removeAttribute('display');
       dots[i].setAttribute('cx',x); dots[i].setAttribute('cy',L.mapY(v));
     });
-    tipText[0].textContent='Q = '+fmtNum(Q)+(L.xUnit?' '+L.xUnit:'');
-    let maxLen=tipText[0].textContent.length;
-    items.forEach((it,i)=>{
-      const label=it.legendLabel+': '+(vals[i]!=null? fmtNum(vals[i])+(L.yUnit?' '+L.yUnit:''): '—');
-      tipText[i+1].textContent=label;
-      maxLen=Math.max(maxLen,label.length);
-    });
-    const boxW=Math.min(320,Math.max(196,maxLen*(many?5.8:6.3)+24)), boxH=tipLineH*(items.length+1)+16;
+    const qLine='Q = '+fmtNum(Q)+(L.xUnit?' '+L.xUnit:'');
+    const labels=items.map((it,i)=>it.legendLabel+': '+(vals[i]!=null? fmtNum(vals[i])+(L.yUnit?' '+L.yUnit:''): '—'));
+    let maxLen=Math.max(qLine.length, ...labels.map(l=>l.length));
+    const charW=many?5.8:6.3;
+    // a caixa tem largura MÁXIMA (senão dominaria o gráfico com muitas
+    // séries) — mas o texto de cada linha só era cortado na hora de decidir
+    // a largura da caixa, nunca de verdade: linhas compridas continuavam
+    // sendo escritas por inteiro e vazavam pra fora do fundo azul. Agora
+    // trunca (com "…") cada linha pro tamanho que REALMENTE cabe dentro da
+    // largura escolhida, usando a mesma estimativa de largura por caractere
+    // usada pra calcular a caixa — garante que nunca mais vaza.
+    const boxW=Math.min(340,Math.max(196,maxLen*charW+24)), boxH=tipLineH*(items.length+1)+16;
+    const maxCharsInBox=Math.max(6, Math.floor((boxW-24)/charW));
+    const truncFit=s=> s.length>maxCharsInBox? s.slice(0,maxCharsInBox-1)+'…' : s;
+    tipText[0].textContent=truncFit(qLine);
+    labels.forEach((label,i)=>{ tipText[i+1].textContent=truncFit(label); });
     let bx=x+16, by=yRef-boxH-16;
     if(bx+boxW > L.M.l+L.pw) bx=x-boxW-16;
     if(bx < L.M.l) bx=L.M.l;

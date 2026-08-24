@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ETP Diária & Balanço Hídrico v1.5 — Bolsa Irriga</title>
+<title>ETP Diária & Balanço Hídrico v1.6 — Bolsa Irriga</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 <style>
@@ -113,7 +113,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     </div>
   </div>
   <div class="hdr-nav">
-    <span class="ver-tag">v1.5</span>
+    <span class="ver-tag">v1.6</span>
     <a class="back-link" href="../index.html">&#8592; Menu</a>
     <div class="hdr-right">
       <b>Jo&#227;o Paulo de Oliveira</b>
@@ -145,34 +145,57 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
       </div>
     </div>
 
-    <!-- Card 2: Adicionar dia -->
+    <!-- Card 2: Adicionar dados -->
     <div class="card">
-      <h2><span class="n">2</span>Adicionar Dia</h2>
-      <div class="field" style="margin-bottom:10px;">
-        <label>Data</label>
-        <input type="date" id="date">
+      <h2><span class="n">2</span>Buscar Per&#237;odo Automaticamente</h2>
+      <div class="row2">
+        <div class="field">
+          <label>Data inicial</label>
+          <input type="date" id="dateStart">
+        </div>
+        <div class="field">
+          <label>Data final</label>
+          <input type="date" id="dateEnd">
+        </div>
       </div>
-      <div class="actions" style="margin-top:0;margin-bottom:10px;">
-        <button class="btn-secondary" id="btnFetch">&#127758; Buscar temperatura automaticamente</button>
+      <div class="actions" style="margin-top:0;margin-bottom:6px;">
+        <button class="btn-primary" id="btnFetchRange">&#127758; Buscar e preencher todo o per&#237;odo</button>
       </div>
       <div class="status" id="fetchStatus"></div>
-      <div class="row3" style="margin-top:8px;">
-        <div class="field">
-          <label>Tmin (°C)</label>
-          <input type="number" id="tmin" step="0.1">
-        </div>
-        <div class="field">
-          <label>Tmax (°C)</label>
-          <input type="number" id="tmax" step="0.1">
-        </div>
-        <div class="field">
-          <label>Precipita&#231;&#227;o (mm)</label>
-          <input type="number" id="precip" step="0.1" value="0">
-        </div>
+      <div class="hint">
+        Busca Tmin/Tmax/Precipita&#231;&#227;o dia a dia (hist&#243;rico + previs&#227;o, Open-Meteo) e j&#225; adiciona
+        todos os dias do intervalo ao balan&#231;o &#8212; sem precisar buscar um dia de cada vez.
       </div>
-      <div class="actions">
-        <button class="btn-primary" id="btnAdd">+ Adicionar ao balan&#231;o</button>
-      </div>
+
+      <details style="margin-top:14px;">
+        <summary style="cursor:pointer;font-size:.78rem;font-weight:600;color:var(--slate);">Adicionar / editar um dia manualmente</summary>
+        <div style="margin-top:10px;">
+          <div class="field" style="margin-bottom:10px;">
+            <label>Data</label>
+            <input type="date" id="date">
+          </div>
+          <div class="actions" style="margin-top:0;margin-bottom:10px;">
+            <button class="btn-secondary" id="btnFetch">&#127758; Buscar temperatura deste dia</button>
+          </div>
+          <div class="row3" style="margin-top:8px;">
+            <div class="field">
+              <label>Tmin (°C)</label>
+              <input type="number" id="tmin" step="0.1">
+            </div>
+            <div class="field">
+              <label>Tmax (°C)</label>
+              <input type="number" id="tmax" step="0.1">
+            </div>
+            <div class="field">
+              <label>Precipita&#231;&#227;o (mm)</label>
+              <input type="number" id="precip" step="0.1" value="0">
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn-primary" id="btnAdd">+ Adicionar ao balan&#231;o</button>
+          </div>
+        </div>
+      </details>
     </div>
   </div>
 
@@ -294,6 +317,8 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
   let days = [];
 
   $('date').valueAsDate = new Date();
+  $('dateEnd').valueAsDate = new Date();
+  $('dateStart').valueAsDate = new Date(Date.now()-6*86400000);
 
   /* ── Astronomia / Hargreaves-Samani ── */
   function dayOfYear(dateStr){
@@ -348,6 +373,69 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     }
     st.textContent='Não foi possível obter dados automaticamente. Preencha manualmente.';
     st.className='status err';
+  }
+
+  /* ── Busca automática de período (Data inicial → Data final) ── */
+  async function fetchWeatherRange(){
+    const lat=parseFloat($('lat').value),lon=parseFloat($('lon').value);
+    const startDate=$('dateStart').value,endDate=$('dateEnd').value;
+    const st=$('fetchStatus');
+    if(isNaN(lat)||isNaN(lon)||!startDate||!endDate){
+      st.textContent='Preencha latitude, longitude, data inicial e data final.';st.className='status err';return;
+    }
+    if(startDate>endDate){
+      st.textContent='A data inicial deve ser anterior ou igual à data final.';st.className='status err';return;
+    }
+    st.textContent='Buscando dados do período...';st.className='status busy';
+
+    const params=`latitude=${lat}&longitude=${lon}&start_date=${startDate}&end_date=${endDate}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto`;
+    const archiveUrl=`https://archive-api.open-meteo.com/v1/archive?${params}`;
+    const forecastUrl=`https://api.open-meteo.com/v1/forecast?${params}`;
+
+    let archiveData=null,forecastData=null;
+    try{const r=await fetch(archiveUrl);if(r.ok)archiveData=await r.json();}catch(e){}
+    try{const r=await fetch(forecastUrl);if(r.ok)forecastData=await r.json();}catch(e){}
+
+    // Mescla: prioriza histórico (archive); usa previsão (forecast) para dias sem dado no histórico
+    const map={};
+    function ingest(data){
+      if(!data?.daily?.time)return;
+      data.daily.time.forEach((date,i)=>{
+        const tmax=data.daily.temperature_2m_max[i];
+        const tmin=data.daily.temperature_2m_min[i];
+        if(tmax==null||tmin==null)return;
+        if(!map[date])map[date]={tmax,tmin,prec:data.daily.precipitation_sum[i]??0};
+      });
+    }
+    ingest(archiveData);ingest(forecastData);
+
+    // Lista de todas as datas do intervalo pedido
+    const dates=[];
+    let d=new Date(startDate+'T00:00:00');
+    const end=new Date(endDate+'T00:00:00');
+    while(d<=end){dates.push(d.toISOString().slice(0,10));d.setDate(d.getDate()+1);}
+
+    let added=0;const missing=[];
+    dates.forEach(date=>{
+      const w=map[date];
+      if(!w){missing.push(date);return;}
+      days=days.filter(dd=>dd.date!==date);
+      days.push({date,tmin:w.tmin,tmax:w.tmax,precip:w.prec,origin:'auto'});
+      added++;
+    });
+    days.sort((a,b)=>a.date.localeCompare(b.date));
+    render();
+
+    if(added===0){
+      st.textContent='Não foi possível obter dados para esse período. Tente um intervalo diferente ou adicione manualmente.';
+      st.className='status err';
+    }else if(missing.length){
+      st.textContent=`✓ ${added} dia(s) adicionados. ${missing.length} dia(s) sem dado disponível: ${missing.slice(0,5).join(', ')}${missing.length>5?'…':''}`;
+      st.className='status ok';
+    }else{
+      st.textContent=`✓ ${added} dia(s) do período adicionados automaticamente ao balanço.`;
+      st.className='status ok';
+    }
   }
 
   /* ── Gerenciamento de dados ── */
@@ -718,6 +806,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
 
   /* ── Eventos ── */
   $('btnFetch').addEventListener('click',fetchWeather);
+  $('btnFetchRange').addEventListener('click',fetchWeatherRange);
   $('btnAdd').addEventListener('click',addDay);
   $('btnPDF').addEventListener('click',gerarRelatorio);
   $('btnCSV').addEventListener('click',exportCSV);
