@@ -3,9 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ETP Diária & Balanço Hídrico v1.7 — Bolsa Irriga</title>
+<title>ETP Diária & Balanço Hídrico v1.8 — Bolsa Irriga</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
 :root{
   --teal-dark:#1f4e4c;--teal:#2f7a78;--teal-light:#dceeee;
@@ -84,12 +86,31 @@ tfoot td:first-child{font-family:var(--sans);}
 .badge-manual{background:#eaf0ff;color:#2a4fa0;}
 .badge-auto{background:#e6f5ee;color:var(--green);}
 
-/* ── Cidade (geocoding) ── */
-.city-suggestions{display:none;position:absolute;left:0;right:0;z-index:6;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.14);max-height:230px;overflow:auto;margin-top:3px;}
-.city-opt{padding:8px 11px;font-size:.8rem;cursor:pointer;border-bottom:1px solid var(--slate-light);color:var(--ink);}
-.city-opt:last-child{border-bottom:none;}
-.city-opt:hover{background:var(--teal-light);}
-.city-opt small{color:#8b9aa1;display:block;font-size:.68rem;margin-top:1px;}
+/* ── Local: abas Coordenadas / Polígono KML ── */
+.seg-tabs{display:flex;gap:6px;margin-bottom:12px;}
+.seg-tab{flex:1;background:var(--slate-light);color:var(--slate);border:none;border-radius:7px;padding:8px 10px;font-size:.78rem;font-weight:600;cursor:pointer;transition:background .12s;}
+.seg-tab:hover{background:#e2e7ee;}
+.seg-tab.active{background:var(--teal-dark);color:#fff;}
+#kmlMap{height:220px;border-radius:8px;border:1px solid var(--line);margin-top:10px;}
+.kml-info{font-size:.74rem;color:var(--teal-dark);background:var(--teal-light);border-radius:6px;padding:7px 10px;margin-top:8px;font-family:var(--mono);}
+
+/* ── Botão de informações + modal ── */
+.info-btn{display:inline-flex;align-items:center;gap:.3rem;font-size:.78rem;color:rgba(255,255,255,.88);border:1.5px solid rgba(255,255,255,.35);padding:.3rem .75rem;border-radius:6px;background:transparent;cursor:pointer;white-space:nowrap;font-weight:600;font-family:var(--sans);}
+.info-btn:hover{background:rgba(255,255,255,.15);}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(20,30,30,.55);z-index:50;align-items:center;justify-content:center;padding:20px;}
+.modal-overlay.open{display:flex;}
+.modal-box{background:#fff;border-radius:12px;max-width:720px;width:100%;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.3);}
+.modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--line);background:linear-gradient(135deg,var(--teal-dark),var(--teal));border-radius:12px 12px 0 0;}
+.modal-head h3{margin:0;color:#fff;font-size:1rem;}
+.modal-close{background:rgba(255,255,255,.15);border:none;color:#fff;width:26px;height:26px;border-radius:50%;cursor:pointer;font-size:.85rem;line-height:1;}
+.modal-close:hover{background:rgba(255,255,255,.3);}
+.modal-body{padding:18px 22px;overflow-y:auto;font-size:.84rem;line-height:1.65;color:var(--ink);}
+.modal-body h4{margin:16px 0 6px;color:var(--teal-dark);font-size:.86rem;}
+.modal-body h4:first-child{margin-top:0;}
+.modal-body p{margin:4px 0 8px;}
+.modal-body ul{margin:4px 0 8px;padding-left:20px;}
+.modal-body li{margin-bottom:4px;}
+.modal-body code{background:var(--slate-light);padding:1px 5px;border-radius:4px;font-family:var(--mono);font-size:.82em;}
 
 /* ── KPIs ── */
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-top:14px;}
@@ -120,7 +141,8 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     </div>
   </div>
   <div class="hdr-nav">
-    <span class="ver-tag">v1.7</span>
+    <span class="ver-tag">v1.8</span>
+    <button class="info-btn" id="btnInfo" type="button">&#8505;&#65039; Como funciona</button>
     <a class="back-link" href="../index.html">&#8592; Menu</a>
     <div class="hdr-right">
       <b>Jo&#227;o Paulo de Oliveira</b>
@@ -136,19 +158,15 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     <!-- Card 1: Local -->
     <div class="card">
       <h2><span class="n">1</span>Local</h2>
-      <div class="field" style="position:relative;">
-        <label>Cidade</label>
-        <input type="text" id="cityInput" placeholder="Ex: Ribeir&#227;o Preto, SP" value="Ribeir&#227;o Preto, SP" autocomplete="off">
-        <div class="city-suggestions" id="citySuggestions"></div>
-      </div>
-      <div class="actions" style="margin-top:8px;margin-bottom:2px;">
-        <button class="btn-secondary" id="btnCitySearch">&#128269; Buscar cidade</button>
-      </div>
-      <div class="status" id="cityStatus"></div>
 
-      <details style="margin-top:10px;">
-        <summary style="cursor:pointer;font-size:.78rem;font-weight:600;color:var(--slate);">Coordenadas (preenchidas automaticamente — ajuste fino aqui)</summary>
-        <div class="row2" style="margin-top:10px;">
+      <div class="seg-tabs">
+        <button type="button" class="seg-tab active" id="tabCoord">&#128205; Coordenadas</button>
+        <button type="button" class="seg-tab" id="tabKml">&#128506;&#65039; Pol&#237;gono (KML)</button>
+      </div>
+
+      <!-- Modo coordenadas -->
+      <div id="modeCoord">
+        <div class="row2">
           <div class="field">
             <label>Latitude (°, negativa = Sul)</label>
             <input type="number" id="lat" value="-20.53" step="0.0001">
@@ -158,7 +176,18 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
             <input type="number" id="lon" value="-47.40" step="0.0001">
           </div>
         </div>
-      </details>
+      </div>
+
+      <!-- Modo polígono KML -->
+      <div id="modeKml" style="display:none;">
+        <div class="actions" style="margin-top:0;margin-bottom:0;">
+          <button class="btn-secondary" id="btnKml" type="button">&#128193; Importar KML</button>
+          <input type="file" id="kmlInput" accept=".kml" style="display:none;">
+        </div>
+        <div class="status" id="kmlStatus"></div>
+        <div id="kmlMap" style="display:none;"></div>
+        <div class="kml-info" id="kmlInfo" style="display:none;"></div>
+      </div>
 
       <div class="hint" style="margin-top:8px;">
         Modelo simplificado: a ETR consome apenas a chuva do dia (sem armazenamento no solo).
@@ -332,6 +361,43 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
 
 </main>
 
+<!-- Modal: Como funciona -->
+<div class="modal-overlay" id="infoOverlay">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h3>&#8505;&#65039; Como este aplicativo funciona</h3>
+      <button class="modal-close" id="btnInfoClose" type="button">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      <h4>De onde v&#234;m os dados de temperatura</h4>
+      <p>Os dados n&#227;o vêm de uma "esta&#231;&#227;o meteorol&#243;gica" espec&#237;fica escolhida pelo app. Eles v&#234;m da <b>Open-Meteo</b>, que entrega valores de <b>modelos num&#233;ricos em grade</b>, interpolados exatamente para a coordenada informada:</p>
+      <ul>
+        <li><b>Per&#237;odo hist&#243;rico:</b> reanálise <b>ERA5 / ERA5-Land</b> (ECMWF) &mdash; grade de ~9&#8211;25&#8239;km que assimila sat&#233;lite, radiossondas, esta&#231;&#245;es, etc.</li>
+        <li><b>Dias recentes/futuros:</b> combina&#231;&#227;o dos melhores modelos de previs&#227;o dispon&#237;veis para a regi&#227;o (ICON, GFS, ECMWF IFS...).</li>
+      </ul>
+      <p>Isso significa que a precis&#227;o depende do <b>ponto exato</b> (lat/lon) usado &mdash; quanto mais perto do talh&#227;o real, melhor.</p>
+
+      <h4>Como informar o local</h4>
+      <ul>
+        <li><b>Coordenadas:</b> digite lat/lon manualmente (ex: do GPS ou Google Maps).</li>
+        <li><b>Pol&#237;gono (KML):</b> importe o contorno da &#225;rea (exportado do Google Earth, QGIS, etc.) &mdash; o app calcula o <b>centr&#243;ide</b> do pol&#237;gono automaticamente e usa esse ponto para buscar o clima, al&#233;m de mostrar a &#225;rea sobre imagem de sat&#233;lite (<b>Esri World Imagery</b>, mosaico gratuito, data/resolu&#231;&#227;o variam por local).</li>
+      </ul>
+
+      <h4>C&#225;lculo da ETP</h4>
+      <p><b>Hargreaves-Samani</b> (FAO-56, sem tabela de coeficiente K): <code>ETP = 0,0023 &times; (Tmed + 17,8) &times; &radic;(Tmax&minus;Tmin) &times; Ra</code>, onde <b>Ra</b> (radia&#231;&#227;o extraterrestre) &#233; calculada pela latitude e dia do ano &mdash; por isso s&#243; precisa de Tmin/Tmax, sem precisar de radia&#231;&#227;o solar medida.</p>
+
+      <h4>ETc localizada (gotejamento)</h4>
+      <p><code>ETc_loc = ETP &times; Kc &times; fc</code>, onde <b>fc</b> &#233; a fra&#231;&#227;o de cobertura do dossel (Fereres &amp; Soriano, 2007) &mdash; a transpira&#231;&#227;o &#233; proporcional &#224; &#225;rea sombreada pela copa, n&#227;o &#224; &#225;rea molhada pelo gotejador.</p>
+
+      <h4>Balan&#231;o h&#237;drico sequencial</h4>
+      <p>Modelo simplificado dia a dia, sem capacidade de armazenamento no solo: <code>Dispon&#237;vel = Reserva do dia anterior + Chuva</code>. <code>ETR = m&#237;n(ETc_loc, Dispon&#237;vel)</code>. Se sobrar &#225;gua, vira <b>Reserva</b> pro dia seguinte; se faltar, vira <b>D&#233;ficit</b> (a ser suprido pela irriga&#231;&#227;o).</p>
+
+      <h4>Horas de irriga&#231;&#227;o</h4>
+      <p><code>Horas = D&#233;ficit &divide; Efici&#234;ncia &divide; Taxa de aplica&#231;&#227;o do gotejador</code>, onde a taxa &#233; <code>Vaz&#227;o do emissor &divide; (Espa&#231;. emissor &times; Espa&#231;. lateral)</code>.</p>
+    </div>
+  </div>
+</div>
+
 <script>
 (function(){
   const $ = id => document.getElementById(id);
@@ -364,41 +430,124 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     return 0.0023*(tmean+17.8)*Math.sqrt(dt)*ra;
   }
 
-  /* ── Busca de cidade (geocoding) → preenche Lat/Lon ── */
-  function applyCity(r){
-    $('lat').value=r.latitude.toFixed(4);
-    $('lon').value=r.longitude.toFixed(4);
-    const label=r.name+(r.admin1?', '+r.admin1:'')+(r.country?' — '+r.country:'');
-    $('cityInput').value=r.name+(r.admin1?', '+r.admin1:'');
-    $('citySuggestions').style.display='none';$('citySuggestions').innerHTML='';
-    $('cityStatus').textContent=`✓ ${label} · Lat ${r.latitude.toFixed(4)}, Lon ${r.longitude.toFixed(4)}`;
-    $('cityStatus').className='status ok';
-    if(days.length)render();
+  /* ── Local: abas Coordenadas / Polígono KML ── */
+  function setLocalMode(mode){
+    $('modeCoord').style.display=mode==='coord'?'':'none';
+    $('modeKml').style.display=mode==='kml'?'':'none';
+    $('tabCoord').classList.toggle('active',mode==='coord');
+    $('tabKml').classList.toggle('active',mode==='kml');
+    if(mode==='kml'&&kmlMap)setTimeout(()=>kmlMap.invalidateSize(),60);
   }
-  async function searchCity(){
-    const q=$('cityInput').value.trim();
-    const st=$('cityStatus'),sugg=$('citySuggestions');
-    sugg.style.display='none';sugg.innerHTML='';
-    if(!q){st.textContent='Digite o nome de uma cidade.';st.className='status err';return;}
-    st.textContent='Buscando cidade...';st.className='status busy';
-    try{
-      const url=`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=6&language=pt&format=json`;
-      const res=await fetch(url);
-      const data=await res.json();
-      const results=data?.results||[];
-      if(!results.length){
-        st.textContent='Cidade não encontrada. Tente outro nome (ou ajuste a coordenada manualmente abaixo).';
-        st.className='status err';return;
+
+  /* ── Geometria: centróide + área de polígono(s) (projeção local equiretangular) ── */
+  const R_EARTH=6378137;
+  function toXY(lat,lon,lat0){
+    const x=(lon*Math.PI/180)*R_EARTH*Math.cos(lat0*Math.PI/180);
+    const y=(lat*Math.PI/180)*R_EARTH;
+    return[x,y];
+  }
+  function ringAreaAndCentroid(ring,lat0){
+    const pts=ring.map(([la,lo])=>toXY(la,lo,lat0));
+    let area=0,cx=0,cy=0;const n=pts.length;
+    for(let i=0;i<n;i++){
+      const[x0,y0]=pts[i],[x1,y1]=pts[(i+1)%n];
+      const cross=x0*y1-x1*y0;
+      area+=cross;cx+=(x0+x1)*cross;cy+=(y0+y1)*cross;
+    }
+    area=area/2;
+    if(Math.abs(area)>1e-6){cx=cx/(6*area);cy=cy/(6*area);}
+    return{area:Math.abs(area),cx,cy};
+  }
+  function computeCentroidArea(polygons){
+    const allPts=polygons.flatMap(p=>p.outer);
+    const lat0=allPts.reduce((s,[la])=>s+la,0)/allPts.length;
+    let totalArea=0,weightedCx=0,weightedCy=0,weightSum=0;
+    for(const poly of polygons){
+      const outer=ringAreaAndCentroid(poly.outer,lat0);
+      let netArea=outer.area;
+      for(const hole of poly.holes){netArea-=ringAreaAndCentroid(hole,lat0).area;}
+      totalArea+=netArea;
+      weightedCx+=outer.cx*outer.area;weightedCy+=outer.cy*outer.area;weightSum+=outer.area;
+    }
+    const cx=weightSum>0?weightedCx/weightSum:allPts.reduce((s,[,lo])=>s+lo,0)/allPts.length;
+    const cy=weightSum>0?weightedCy/weightSum:0;
+    let centroidLat,centroidLon;
+    if(weightSum>0){
+      centroidLat=(cy/R_EARTH)*180/Math.PI;
+      centroidLon=(cx/(R_EARTH*Math.cos(lat0*Math.PI/180)))*180/Math.PI;
+    }else{centroidLat=lat0;centroidLon=cx;}
+    return{areaHa:totalArea/10000,centroid:{lat:centroidLat,lon:centroidLon}};
+  }
+
+  /* ── Parsing de KML (<Polygon>) ── */
+  function firstChildTag(node,tag){const f=node.getElementsByTagName(tag);return f.length?f[0]:null;}
+  function parseCoordText(text){
+    return text.trim().split(/\s+/).filter(Boolean).map(tuple=>{
+      const parts=tuple.split(',');
+      const lon=parseFloat(parts[0]),lat=parseFloat(parts[1]);
+      return[lat,lon];
+    }).filter(([la,lo])=>Number.isFinite(la)&&Number.isFinite(lo));
+  }
+  function parseKMLText(text){
+    const xml=new DOMParser().parseFromString(text,'text/xml');
+    if(xml.getElementsByTagName('parsererror').length)throw new Error('Arquivo KML inválido (erro ao interpretar o XML).');
+    const polygonEls=Array.from(xml.getElementsByTagName('Polygon'));
+    if(!polygonEls.length)throw new Error('Nenhum polígono (<Polygon>) encontrado no KML.');
+    const polygons=[];
+    for(const pEl of polygonEls){
+      const outerB=firstChildTag(pEl,'outerBoundaryIs');if(!outerB)continue;
+      const outerCoordsEl=firstChildTag(outerB,'coordinates');if(!outerCoordsEl)continue;
+      const outer=parseCoordText(outerCoordsEl.textContent);
+      if(outer.length<3)continue;
+      const holes=[];
+      const innerBs=pEl.getElementsByTagName('innerBoundaryIs');
+      for(let i=0;i<innerBs.length;i++){
+        const ic=firstChildTag(innerBs[i],'coordinates');
+        if(ic){const ring=parseCoordText(ic.textContent);if(ring.length>=3)holes.push(ring);}
       }
-      if(results.length===1){applyCity(results[0]);return;}
-      st.textContent=`${results.length} resultados — selecione o correto:`;st.className='status';
-      sugg.innerHTML=results.map((r,i)=>`<div class="city-opt" data-i="${i}">${r.name}${r.admin1?', '+r.admin1:''}<small>${r.country||''}${r.population?' · '+r.population.toLocaleString('pt-BR')+' hab.':''}</small></div>`).join('');
-      sugg.style.display='block';
-      sugg.querySelectorAll('.city-opt').forEach(el=>{
-        el.addEventListener('click',()=>applyCity(results[parseInt(el.dataset.i)]));
-      });
+      polygons.push({outer,holes});
+    }
+    if(!polygons.length)throw new Error('Não foi possível extrair coordenadas válidas do KML.');
+    return polygons;
+  }
+
+  /* ── Mapa (Leaflet + satélite Esri World Imagery) ── */
+  let kmlMap=null,kmlPolyLayer=null;
+  function renderKmlMap(polygons){
+    $('kmlMap').style.display='block';
+    if(!kmlMap){
+      kmlMap=L.map('kmlMap',{attributionControl:true});
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{
+        maxZoom:19,attribution:'Imagery &copy; Esri, Maxar, Earthstar Geographics'
+      }).addTo(kmlMap);
+    }
+    if(kmlPolyLayer)kmlMap.removeLayer(kmlPolyLayer);
+    const layers=polygons.map(poly=>{
+      const latlngs=poly.holes.length?[poly.outer,...poly.holes]:poly.outer;
+      return L.polygon(latlngs,{color:'#f2b134',weight:2.5,fillColor:'#f2b134',fillOpacity:0.18});
+    });
+    kmlPolyLayer=L.featureGroup(layers).addTo(kmlMap);
+    const bounds=kmlPolyLayer.getBounds();
+    kmlMap.fitBounds(bounds,{padding:[20,20],animate:false});
+    setTimeout(()=>kmlMap.invalidateSize(),80);
+  }
+
+  async function handleKmlFile(file){
+    const st=$('kmlStatus');
+    st.textContent='Lendo KML...';st.className='status busy';
+    try{
+      const text=await file.text();
+      const polygons=parseKMLText(text);
+      const{areaHa,centroid}=computeCentroidArea(polygons);
+      $('lat').value=centroid.lat.toFixed(5);
+      $('lon').value=centroid.lon.toFixed(5);
+      renderKmlMap(polygons);
+      $('kmlInfo').style.display='block';
+      $('kmlInfo').textContent=`Centro do polígono: Lat ${centroid.lat.toFixed(5)}, Lon ${centroid.lon.toFixed(5)} · Área: ${areaHa.toFixed(2)} ha`;
+      st.textContent=`✓ Polígono "${file.name}" carregado.`;st.className='status ok';
+      if(days.length)render();
     }catch(e){
-      st.textContent='Erro ao buscar cidade. Verifique sua conexão.';st.className='status err';
+      st.textContent='Erro ao importar KML: '+e.message;st.className='status err';
     }
   }
 
@@ -864,17 +1013,14 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
   }
 
   /* ── Eventos ── */
-  $('btnCitySearch').addEventListener('click',searchCity);
-  $('cityInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();searchCity();}});
-  $('cityInput').addEventListener('input',()=>{
-    $('citySuggestions').style.display='none';$('citySuggestions').innerHTML='';
-    $('cityStatus').textContent='';$('cityStatus').className='status';
-  });
-  document.addEventListener('click',e=>{
-    if(!e.target.closest('#cityInput')&&!e.target.closest('#citySuggestions')){
-      $('citySuggestions').style.display='none';
-    }
-  });
+  $('tabCoord').addEventListener('click',()=>setLocalMode('coord'));
+  $('tabKml').addEventListener('click',()=>setLocalMode('kml'));
+  $('btnKml').addEventListener('click',()=>$('kmlInput').click());
+  $('kmlInput').addEventListener('change',e=>{if(e.target.files[0])handleKmlFile(e.target.files[0]);});
+  $('btnInfo').addEventListener('click',()=>$('infoOverlay').classList.add('open'));
+  $('btnInfoClose').addEventListener('click',()=>$('infoOverlay').classList.remove('open'));
+  $('infoOverlay').addEventListener('click',e=>{if(e.target.id==='infoOverlay')$('infoOverlay').classList.remove('open');});
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')$('infoOverlay').classList.remove('open');});
   $('btnFetch').addEventListener('click',fetchWeather);
   $('btnFetchRange').addEventListener('click',fetchWeatherRange);
   $('btnAdd').addEventListener('click',addDay);
