@@ -3,6 +3,19 @@
 Todas as mudanças notáveis deste app ficam registradas aqui. O número de versão aparece
 no canto do título, dentro do próprio app (`v2.0.0` etc.) — clique nele pra abrir este arquivo.
 
+## v2.5.2 — 2026-08-24
+
+### Corrigido
+- Login do Google dava "Erro 400: invalid_request — doesn't comply with Google's
+  OAuth 2.0 policy for keeping apps secure" (client ID novo, criado há poucos dias,
+  caindo num fluxo antigo/descontinuado baseado em gapi.auth2). Adicionado o script
+  do Google Identity Services (accounts.google.com/gsi/client), que a própria
+  biblioteca do Earth Engine já usa internamente (confirmado inspecionando o código-
+  fonte) quando disponível — sem ele, cai num caminho incompatível com as políticas
+  atuais do Google. Testado `authenticateViaPopup` como alternativa (não usa Client
+  ID próprio) mas dá erro "Missing required parameter client_id" nessa versão da
+  biblioteca — mantido `authenticateViaOauth` com o Client ID de sempre.
+
 ## v2.5.1 — 2026-08-24
 
 ### Corrigido
