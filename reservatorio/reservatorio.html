@@ -102,6 +102,18 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:1.1rem 1.5rem;mar
 .fdn .fn{font-weight:800;color:var(--bl2);font-size:.88rem}
 .fdn .fr{font-size:.74rem;color:var(--mu);line-height:1.5}
 .fc{font-size:.71rem;color:var(--mu);text-align:right;line-height:1.7}
+/* ══ 3D VIEWER ══ */
+.viewport3d-wrap{position:relative;border-radius:10px;overflow:hidden;background:radial-gradient(ellipse at 50% 30%,#1c2733,#0f151c 78%);border:2px solid #0d3a52;height:62vh;min-height:520px}
+.viewport3d-wrap canvas{display:block;width:100%;height:100%}
+.v3-toolbar{position:absolute;top:10px;left:10px;display:flex;flex-wrap:wrap;gap:6px;z-index:5;max-width:78%}
+.v3-btn{background:rgba(10,25,40,.8);backdrop-filter:blur(4px);color:#dff0ff;border:1px solid rgba(120,180,220,.35);border-radius:7px;padding:.42rem .72rem;font-size:.73rem;font-weight:700;cursor:pointer;transition:.15s;white-space:nowrap}
+.v3-btn:hover{background:rgba(0,119,182,.6);border-color:#00b4d8}
+.v3-toggles{position:absolute;top:10px;right:10px;display:flex;flex-direction:column;gap:5px;z-index:5;background:rgba(10,25,40,.8);backdrop-filter:blur(4px);border:1px solid rgba(120,180,220,.35);border-radius:8px;padding:.55rem .7rem}
+.v3-toggles label{display:flex;align-items:center;gap:.4rem;font-size:.72rem;color:#dff0ff;text-transform:none;letter-spacing:0;font-weight:600;cursor:pointer;white-space:nowrap}
+.v3-toggles input{accent-color:#00b4d8;cursor:pointer}
+.viewport3d-wrap canvas.v3-gizmo{position:absolute;bottom:12px;left:12px;width:82px!important;height:82px!important;border-radius:50%;background:rgba(10,25,40,.5);border:1px solid rgba(120,180,220,.3);z-index:5}
+.v3-hint{position:absolute;bottom:12px;right:12px;font-size:.66rem;color:rgba(220,240,255,.6);z-index:5;text-align:right;line-height:1.5;background:rgba(10,25,40,.5);padding:.35rem .6rem;border-radius:6px}
+.v3-loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#9fc8e8;font-size:.85rem;line-height:1.6;z-index:4;text-align:center;padding:1rem}
 </style>
 </head>
 <body>
@@ -130,6 +142,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:1.1rem 1.5rem;mar
     <button class="tb active" onclick="tab('def',this)">&#128200; Simula&#231;&#227;o com D&#233;ficit Di&#225;rio</button>
     <button class="tb"        onclick="tab('lay1',this)">&#128208; Layout 01 &#8212; Corte Transversal</button>
     <button class="tb"        onclick="tab('lay2',this)">&#128205; Layout 02 &#8212; Planta Baixa</button>
+    <button class="tb"        onclick="tab('vis3d',this)">&#129520; Visualiza&#231;&#227;o 3D</button>
   </div>
 </div>
 
@@ -277,6 +290,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:1.1rem 1.5rem;mar
     <button class="btn bg" onclick="resetForm()">&#8635; Limpar</button>
     <button class="btn bp" onclick="tab('lay1',document.querySelectorAll('.tb')[1])">&#128208; Layout 01</button>
     <button class="btn bp" onclick="tab('lay2',document.querySelectorAll('.tb')[2])">&#128205; Layout 02</button>
+    <button class="btn bp" onclick="tab('vis3d',document.querySelectorAll('.tb')[3])">&#129520; Visualiza&#231;&#227;o 3D</button>
     <button class="btn bpdf" onclick="gerarPDF()">&#128196; Gerar Relat&#243;rio PDF</button>
   </div>
 </div>
@@ -342,6 +356,59 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:1.1rem 1.5rem;mar
   </div>
 </div>
 
+<!-- ══ VISUALIZA&#199;&#195;O 3D ══ -->
+<div id="pane-vis3d" class="pane">
+  <div class="dw">
+    <div class="dh"><h2>&#129520; VISUALIZA&#199;&#195;O 3D &#8212; Modelo do Reservat&#243;rio</h2><span id="vis3d-sub">&#8212;</span></div>
+    <div class="db">
+      <div>
+        <div class="cl">MODELO 3D &#8212; Navega&#231;&#227;o Livre</div>
+        <div class="cf2" style="padding:0;border:none;box-shadow:none;background:transparent">
+          <div class="viewport3d-wrap" id="c3d-container">
+            <canvas id="c3d"></canvas>
+            <div class="v3-toolbar">
+              <button class="v3-btn" onclick="setView3D('iso')">&#9634; Isom&#233;trica</button>
+              <button class="v3-btn" onclick="setView3D('top')">&#8681; Topo</button>
+              <button class="v3-btn" onclick="setView3D('front')">&#9647; Frente</button>
+              <button class="v3-btn" onclick="setView3D('side')">&#9648; Lateral</button>
+              <button class="v3-btn" onclick="fitView3D()">&#10530; Enquadrar</button>
+              <button class="v3-btn" onclick="toggleFullscreen3D()">&#9974; Tela Cheia</button>
+            </div>
+            <div class="v3-toggles">
+              <label><input type="checkbox" id="v3-chk-water" checked onchange="toggle3D('water',this.checked)"> &#193;gua</label>
+              <label><input type="checkbox" id="v3-chk-dim" checked onchange="toggle3D('dim',this.checked)"> Cotas</label>
+              <label><input type="checkbox" id="v3-chk-grid" checked onchange="toggle3D('grid',this.checked)"> Terreno / Grade</label>
+              <label><input type="checkbox" id="v3-chk-wire" onchange="toggle3D('wire',this.checked)"> Wireframe</label>
+            </div>
+            <canvas class="v3-gizmo" id="c3d-gizmo" width="82" height="82"></canvas>
+            <div class="v3-hint">Arrastar: orbitar &middot; Bot&#227;o direito: pan &middot; Scroll: zoom</div>
+            <div class="v3-loading" id="v3-loading">Preencha as dimens&#245;es na aba Simula&#231;&#227;o<br>para gerar o modelo 3D</div>
+          </div>
+        </div>
+      </div>
+      <div class="ds">
+        <div class="card" style="margin:0"><div class="ct">Dimens&#245;es do Modelo</div><div id="specs-3d"></div></div>
+        <div class="card" style="margin:0;background:linear-gradient(135deg,#e3f2fd,#bbdefb);border-color:#90caf9">
+          <div style="text-align:center;padding:.5rem">
+            <div style="font-size:1.8rem;font-weight:900;color:#003d5c" id="big-vol-util-3d">&#8212;</div>
+            <div style="font-size:.72rem;color:#607080">m&#179; volume &#250;til</div>
+          </div>
+        </div>
+        <div class="card" style="margin:0"><div class="ct">Legenda</div>
+          <div class="rs"><span class="rl">&#128311; &#193;gua (volume &#250;til)</span><span class="rv">&nbsp;</span></div>
+          <div class="rs"><span class="rl">&#9642; Geomembrana / Talude</span><span class="rv">&nbsp;</span></div>
+          <div class="rs"><span class="rl">&#9478; Linha Vol. Morto</span><span class="rv">&nbsp;</span></div>
+          <div class="rs"><span class="rl">&#9478; Linha N.A. M&#225;x (Borda Livre)</span><span class="rv">&nbsp;</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="abar">
+    <button class="btn bg" onclick="tab('def',document.querySelectorAll('.tb')[0])">&#8592; Voltar</button>
+    <button class="btn bpdf" onclick="gerarPDF()">&#128196; Gerar PDF</button>
+  </div>
+</div>
+
 </div><!-- /page -->
 
 <footer>
@@ -359,6 +426,8 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:1.1rem 1.5rem;mar
   </div>
 </footer>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 const gv=id=>parseFloat($(id).value)||0;
@@ -881,11 +950,13 @@ function rrect(ctx,x,y,w,h,r2){
 function calc(){
   const r=calcRes(),d=calcDef(r);
   dispAll(r,d);drawCross(r);drawTop(r);drawBalBars(d,r);drawBalLine(d,r);
+  if(v3.ready)buildScene3D(r);else v3.lastR=r;
 }
 function tab(name,btn){
   document.querySelectorAll('.pane').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.tb').forEach(b=>b.classList.remove('active'));
   $('pane-'+name).classList.add('active');btn.classList.add('active');
+  if(name==='vis3d'){init3D();resume3D();}else{pause3D();}
 }
 function resetForm(){
   ['d-cVaz','d-cHrs','d-aVaz','d-aHrs','d-per','d-evap','L1','W1','h','h-morto','h-borda',
@@ -1094,6 +1165,267 @@ function _buildPopup(r,d,iCross,iTop,iBars,iLine){
   const win=window.open(url,'_blank');
   if(!win){alert('Por favor, permita popups neste site e tente novamente.');}
   setTimeout(()=>URL.revokeObjectURL(url),120000);
+}
+
+/* ══ 3D VIEWER (Three.js) ══════════════════════════════════════ */
+let v3={ready:false,running:false,scene:null,camera:null,renderer:null,controls:null,
+  group:null,soilMesh:null,edges:null,water:null,dimGroup:null,ground:null,grid:null,
+  gizmoScene:null,gizmoCam:null,gizmoRenderer:null,ro:null,raf:null,lastR:null};
+
+function frustumGeom(Lt,Wt,Lb,Wb,yTop,yBot,topCap,bottomCap){
+  const TFL=[-Lt/2,yTop,-Wt/2],TFR=[Lt/2,yTop,-Wt/2],TBR=[Lt/2,yTop,Wt/2],TBL=[-Lt/2,yTop,Wt/2];
+  const BFL=[-Lb/2,yBot,-Wb/2],BFR=[Lb/2,yBot,-Wb/2],BBR=[Lb/2,yBot,Wb/2],BBL=[-Lb/2,yBot,Wb/2];
+  const pos=[];
+  const quad=(a,b,c,d)=>{pos.push(...a,...b,...c,...a,...c,...d);};
+  quad(TFL,TFR,BFR,BFL);quad(TBR,TBL,BBL,BBR);quad(TBL,TFL,BFL,BBL);quad(TFR,TBR,BBR,BFR);
+  if(bottomCap)quad(BFL,BBL,BBR,BFR);
+  if(topCap)quad(TBL,TBR,TFR,TFL);
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+  geo.computeVertexNormals();
+  return geo;
+}
+function makeLabelSprite(text,opts={}){
+  const pad=14,fs=opts.fs||40;
+  const c=document.createElement('canvas'),ctx=c.getContext('2d');
+  ctx.font=`800 ${fs}px Segoe UI, sans-serif`;
+  const tw=ctx.measureText(text).width;
+  c.width=Math.ceil(tw+pad*2);c.height=Math.ceil(fs+pad*1.6);
+  ctx.font=`800 ${fs}px Segoe UI, sans-serif`;
+  if(opts.bg!=='transparent'){
+    ctx.fillStyle=opts.bg||'rgba(0,25,45,.82)';
+    rrect(ctx,0,0,c.width,c.height,10);ctx.fill();
+    ctx.strokeStyle=opts.border||'rgba(0,180,216,.65)';ctx.lineWidth=2;ctx.stroke();
+  }
+  ctx.fillStyle=opts.color||'#eaf6ff';
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText(text,c.width/2,c.height/2+1);
+  const tex=new THREE.CanvasTexture(c);tex.needsUpdate=true;
+  const mat=new THREE.SpriteMaterial({map:tex,depthTest:false,depthWrite:false,transparent:true});
+  const spr=new THREE.Sprite(mat);
+  const hgt=opts.height||.85,asp=c.width/c.height;
+  spr.scale.set(hgt*asp,hgt,1);
+  spr.renderOrder=999;
+  return spr;
+}
+function dashedRing(Lx,Wz,y,color){
+  const pts=[
+    new THREE.Vector3(-Lx/2,y,-Wz/2),new THREE.Vector3(Lx/2,y,-Wz/2),
+    new THREE.Vector3(Lx/2,y,Wz/2),new THREE.Vector3(-Lx/2,y,Wz/2),
+    new THREE.Vector3(-Lx/2,y,-Wz/2)
+  ];
+  const geo=new THREE.BufferGeometry().setFromPoints(pts);
+  const mat=new THREE.LineDashedMaterial({color,dashSize:.35,gapSize:.22});
+  const line=new THREE.Line(geo,mat);
+  line.computeLineDistances();
+  return line;
+}
+function init3D(){
+  if(v3.ready)return;
+  if(typeof THREE==='undefined'||typeof THREE.OrbitControls==='undefined'){
+    $('v3-loading').style.display='flex';
+    $('v3-loading').innerHTML='&#9888;&#65039; N&#227;o foi poss&#237;vel carregar o motor 3D.<br>Verifique sua conex&#227;o com a internet e recarregue a p&#225;gina.';
+    return;
+  }
+  const container=$('c3d-container'),canvas=$('c3d');
+  const w=container.clientWidth||800,h=container.clientHeight||560;
+
+  v3.scene=new THREE.Scene();
+  v3.scene.background=new THREE.Color(0x141b22);
+  v3.scene.fog=new THREE.Fog(0x141b22,25,180);
+
+  v3.camera=new THREE.PerspectiveCamera(42,w/h,.05,2000);
+  v3.camera.position.set(16,13,16);
+
+  v3.renderer=new THREE.WebGLRenderer({canvas,antialias:true});
+  v3.renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+  v3.renderer.setSize(w,h,false);
+  v3.renderer.shadowMap.enabled=true;
+  v3.renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+  if('outputEncoding' in v3.renderer)v3.renderer.outputEncoding=THREE.sRGBEncoding;
+
+  v3.controls=new THREE.OrbitControls(v3.camera,v3.renderer.domElement);
+  v3.controls.enableDamping=true;v3.controls.dampingFactor=.09;
+  v3.controls.minDistance=2;v3.controls.maxDistance=300;
+  v3.controls.maxPolarAngle=Math.PI*.495;
+  v3.controls.target.set(0,-1.5,0);
+
+  v3.scene.add(new THREE.AmbientLight(0xffffff,.6));
+  v3.scene.add(new THREE.HemisphereLight(0xbfe0ff,0x3a2e1a,.55));
+  const sun=new THREE.DirectionalLight(0xfff2df,1.15);
+  sun.position.set(22,32,14);sun.castShadow=true;
+  sun.shadow.mapSize.set(2048,2048);
+  Object.assign(sun.shadow.camera,{left:-35,right:35,top:35,bottom:-35,near:1,far:120});
+  sun.shadow.camera.updateProjectionMatrix();
+  v3.scene.add(sun);
+
+  v3.group=new THREE.Group();v3.scene.add(v3.group);
+
+  // mini gizmo de eixos
+  v3.gizmoScene=new THREE.Scene();
+  v3.gizmoCam=new THREE.OrthographicCamera(-2.2,2.2,2.2,-2.2,.1,10);
+  v3.gizmoScene.add(new THREE.AxesHelper(1.5));
+  [['X',0xdd3344,[1.9,0,0]],['Y',0x3fa74a,[0,1.9,0]],['Z',0x2f7fd8,[0,0,1.9]]].forEach(([t,c,p])=>{
+    const spr=makeLabelSprite(t,{bg:'transparent',color:'#'+c.toString(16).padStart(6,'0'),fs:34});
+    spr.position.set(...p);spr.scale.multiplyScalar(.5);
+    v3.gizmoScene.add(spr);
+  });
+  v3.gizmoRenderer=new THREE.WebGLRenderer({canvas:$('c3d-gizmo'),alpha:true,antialias:true});
+  v3.gizmoRenderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+  v3.gizmoRenderer.setSize(82,82,false);
+
+  if(window.ResizeObserver){
+    v3.ro=new ResizeObserver(()=>{
+      const cw=container.clientWidth,ch=container.clientHeight;
+      if(!cw||!ch||!v3.camera)return;
+      v3.camera.aspect=cw/ch;v3.camera.updateProjectionMatrix();
+      v3.renderer.setSize(cw,ch,false);
+    });
+    v3.ro.observe(container);
+  }
+
+  v3.ready=true;
+  buildScene3D(v3.lastR);
+}
+function clearGroup3D(){
+  while(v3.group.children.length){
+    const o=v3.group.children.pop();
+    o.traverse(n=>{
+      if(n.geometry)n.geometry.dispose();
+      if(n.material){(Array.isArray(n.material)?n.material:[n.material]).forEach(m=>{if(m.map)m.map.dispose();m.dispose();});}
+    });
+  }
+}
+function buildScene3D(r){
+  if(!v3.ready)return;
+  v3.lastR=r;
+  clearGroup3D();
+  const loading=$('v3-loading');
+  if(!r){
+    loading.style.display='flex';
+    loading.innerHTML='Preencha as dimens&#245;es na aba Simula&#231;&#227;o<br>para gerar o modelo 3D';
+    $('specs-3d').innerHTML='';$('big-vol-util-3d').textContent='—';
+    $('vis3d-sub').textContent='—';
+    return;
+  }
+  loading.style.display='none';
+  const {L1,W1,L2,W2,h,hm,hb}=r;
+  const wireOn=$('v3-chk-wire').checked;
+
+  // terreno com abertura retangular no rebordo superior
+  const pad=Math.max(L1,W1)*.9+8;
+  const shape=new THREE.Shape();
+  shape.moveTo(-pad,-pad);shape.lineTo(pad,-pad);shape.lineTo(pad,pad);shape.lineTo(-pad,pad);shape.closePath();
+  const hole=new THREE.Path();
+  hole.moveTo(-L1/2,-W1/2);hole.lineTo(L1/2,-W1/2);hole.lineTo(L1/2,W1/2);hole.lineTo(-L1/2,W1/2);hole.closePath();
+  shape.holes.push(hole);
+  const groundGeo=new THREE.ShapeGeometry(shape);
+  groundGeo.rotateX(-Math.PI/2);
+  const ground=new THREE.Mesh(groundGeo,new THREE.MeshStandardMaterial({color:0x4d7c47,roughness:1,metalness:0}));
+  ground.receiveShadow=true;
+  ground.visible=$('v3-chk-grid').checked;
+  v3.group.add(ground);v3.ground=ground;
+
+  const grid=new THREE.GridHelper(pad*2,Math.max(10,Math.round(pad)),0x2fa0c8,0x24404e);
+  grid.position.y=.01;grid.material.opacity=.35;grid.material.transparent=true;
+  grid.visible=$('v3-chk-grid').checked;
+  v3.group.add(grid);v3.grid=grid;
+
+  // paredes escavadas (geomembrana), y:0 topo -> -h fundo, sem tampa superior
+  const soilGeo=frustumGeom(L1,W1,L2,W2,0,-h,false,true);
+  const soil=new THREE.Mesh(soilGeo,new THREE.MeshStandardMaterial({color:0x6d7f8c,roughness:.55,metalness:.15,side:THREE.DoubleSide,wireframe:wireOn}));
+  soil.castShadow=true;soil.receiveShadow=true;
+  v3.group.add(soil);v3.soilMesh=soil;
+
+  const edges=new THREE.LineSegments(new THREE.EdgesGeometry(soilGeo,15),new THREE.LineBasicMaterial({color:0x0a2536}));
+  edges.visible=!wireOn;
+  v3.group.add(edges);v3.edges=edges;
+
+  // água (preenche de e=0 até e=h-borda livre)
+  const hbC=Math.min(Math.max(hb,0),h*.98),hmC=Math.min(Math.max(hm,0),h*.98);
+  const eTop=h-hbC;
+  const Lz=e=>L2+(L1-L2)*(e/h),Wz=e=>W2+(W1-W2)*(e/h);
+  const waterGeo=frustumGeom(Lz(eTop),Wz(eTop),L2,W2,-hbC,-h,true,true);
+  const water=new THREE.Mesh(waterGeo,new THREE.MeshPhysicalMaterial({color:0x1f8fd6,transparent:true,opacity:.58,roughness:.12,metalness:0,side:THREE.DoubleSide,clearcoat:.4}));
+  water.visible=$('v3-chk-water').checked;
+  v3.group.add(water);v3.water=water;
+
+  // linhas de referência (vol. morto / borda livre) e cotas
+  const dimGroup=new THREE.Group();
+  if(hbC>.001&&hbC<h)dimGroup.add(dashedRing(Lz(eTop),Wz(eTop),-hbC+.015,0xffc400));
+  if(hmC>.001&&hmC<h)dimGroup.add(dashedRing(Lz(hmC),Wz(hmC),-h+hmC,0xff7a1a));
+  const off=Math.max(L1,W1)*.06+.5;
+  const lbl=(t,x,y,z,c)=>{const s=makeLabelSprite(t,{border:c});s.position.set(x,y,z);dimGroup.add(s);};
+  lbl(`L1 = ${fmt(L1)} m`,0,.5,-W1/2-off,'#00b4d8');
+  lbl(`W1 = ${fmt(W1)} m`,L1/2+off,.5,0,'#00b4d8');
+  lbl(`h = ${fmt(h)} m`,-L1/2-off,-h/2,-W1/2-off,'#f2b705');
+  lbl(`L2 = ${fmt(L2)} m`,0,-h+.35,-W2/2-off*.6,'#8fd4ff');
+  lbl(`W2 = ${fmt(W2)} m`,L2/2+off*.6,-h+.35,0,'#8fd4ff');
+  dimGroup.visible=$('v3-chk-dim').checked;
+  v3.group.add(dimGroup);v3.dimGroup=dimGroup;
+
+  fitView3D();
+
+  $('vis3d-sub').textContent=`${fmt(L1,1)}×${fmt(W1,1)}×${fmt(h,1)} m — Talude ${$('talude').options[$('talude').selectedIndex].text}`;
+  $('big-vol-util-3d').textContent=fmt(r.volUtil);
+  $('specs-3d').innerHTML=`
+    <div class="rs"><span class="rl">L1 × W1 (topo)</span><span class="rv">${fmt(L1,1)} × ${fmt(W1,1)} m</span></div>
+    <div class="rs"><span class="rl">L2 × W2 (fundo)</span><span class="rv">${fmt(L2,1)} × ${fmt(W2,1)} m</span></div>
+    <div class="rs"><span class="rl">Profundidade (h)</span><span class="rv">${fmt(h,2)} m</span></div>
+    <div class="rs"><span class="rl">&#194;ngulo do talude</span><span class="rv">${fmt(r.slopeAngle,1)}°</span></div>
+    <div class="rs"><span class="rl">Volume total</span><span class="rv">${fmt(r.vol)} m³</span></div>
+    <div class="rs"><span class="rl">Volume &#250;til</span><span class="rv">${fmt(r.volUtil)} m³</span></div>`;
+}
+function fitView3D(){
+  if(!v3.ready)return;
+  setView3D('iso');
+}
+function setView3D(preset){
+  if(!v3.ready)return;
+  const r=v3.lastR||{L1:10,W1:10,h:3};
+  const R=Math.max(r.L1,r.W1,r.h)*1.15+5;
+  const ty=-r.h*.45;
+  const map={
+    iso:[R*.72,R*.55,R*.72],
+    top:[.001,R*1.05,.001],
+    front:[0,ty,R*1.05],
+    side:[R*1.05,ty,.001]
+  };
+  const p=map[preset]||map.iso;
+  v3.camera.position.set(...p);
+  v3.camera.near=Math.max(.05,R*.01);v3.camera.far=R*20;v3.camera.updateProjectionMatrix();
+  v3.controls.target.set(0,ty,0);
+  v3.controls.update();
+}
+function toggle3D(what,val){
+  if(!v3.ready)return;
+  if(what==='water'&&v3.water)v3.water.visible=val;
+  if(what==='dim'&&v3.dimGroup)v3.dimGroup.visible=val;
+  if(what==='grid'){if(v3.ground)v3.ground.visible=val;if(v3.grid)v3.grid.visible=val;}
+  if(what==='wire'&&v3.soilMesh){v3.soilMesh.material.wireframe=val;if(v3.edges)v3.edges.visible=!val;}
+}
+function toggleFullscreen3D(){
+  const el=$('c3d-container');
+  if(!document.fullscreenElement){el.requestFullscreen&&el.requestFullscreen();}
+  else{document.exitFullscreen&&document.exitFullscreen();}
+}
+function resume3D(){
+  if(!v3.ready||v3.running)return;
+  v3.running=true;
+  const loop=()=>{
+    if(!v3.running)return;
+    v3.raf=requestAnimationFrame(loop);
+    v3.controls.update();
+    v3.renderer.render(v3.scene,v3.camera);
+    const dir=v3.camera.position.clone().sub(v3.controls.target).normalize().multiplyScalar(5);
+    v3.gizmoCam.position.copy(dir);v3.gizmoCam.lookAt(0,0,0);v3.gizmoCam.up.copy(v3.camera.up);
+    v3.gizmoRenderer.render(v3.gizmoScene,v3.gizmoCam);
+  };
+  loop();
+}
+function pause3D(){
+  v3.running=false;
+  if(v3.raf)cancelAnimationFrame(v3.raf);
 }
 
 /* ══ INIT ══ */
