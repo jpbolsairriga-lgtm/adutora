@@ -330,7 +330,9 @@ function fmt(n,d=0){return(+n).toLocaleString('pt-BR',{minimumFractionDigits:d,m
 // o resultado como data URL — nunca depende de rede no momento de imprimir o relatório.
 async function stitchEsriTile(cLat,cLng,zoom,W,H){
   try{
-    const tileZ=Math.max(0,Math.min(19,Math.round(zoom)));
+    // zoom 18 é o teto mais confiável de cobertura do Esri World_Imagery — 19 costuma "furar"
+    // (volta tile de aviso "Map data not yet available") em muitas áreas
+    const tileZ=Math.max(0,Math.min(18,Math.round(zoom)));
     const scale=256*Math.pow(2,tileZ);
     const wx=lng=>(lng+180)/360*scale;
     const wy=lat=>{const s=Math.sin(lat*Math.PI/180);return(0.5-Math.log((1+s)/(1-s))/(4*Math.PI))*scale;};
@@ -1482,6 +1484,7 @@ function gerarVista3D(){
   rdr3.setSize(W3,H3);rdr3.setPixelRatio(Math.min(devicePixelRatio,2));
   rdr3.shadowMap.enabled=true;rdr3.shadowMap.type=THREE.PCFSoftShadowMap;
   rdr3.toneMapping=THREE.ACESFilmicToneMapping;rdr3.toneMappingExposure=1.1;
+  rdr3.outputEncoding=THREE.sRGBEncoding;
   _3d_renderer=rdr3;
   scene3.add(new THREE.AmbientLight(0xfff5e0,0.42));
   const sun3=new THREE.DirectionalLight(0xfffae8,2.1);
@@ -1536,8 +1539,11 @@ function gerarVista3D(){
       terrV.push({gx,gy,yEl:terrY(gx,gy),ins});
     }
   }
-  const tPos=[],tIdx=[];
+  const tPos=[],tIdx=[],tUV=[];
   const tVI=(ii,jj)=>jj*(NGT+1)+ii;
+  // UV de cada vértice = posição normalizada dentro do quadrado [bcx±ext, bcy±ext] — mesma área
+  // que a foto de satélite vai cobrir, então a textura cola certinho na malha do terreno.
+  const uvOf=v=>[(v.gx-(bcx-ext))/(2*ext),(v.gy-(bcy-ext))/(2*ext)];
   for(let jj=0;jj<NGT;jj++){
     for(let ii=0;ii<NGT;ii++){
       const va=terrV[tVI(ii,jj)],vb=terrV[tVI(ii+1,jj)],vc=terrV[tVI(ii,jj+1)],vd=terrV[tVI(ii+1,jj+1)];
@@ -1545,12 +1551,35 @@ function gerarVista3D(){
       const b=tPos.length/3;
       tPos.push(va.gx,va.yEl,-va.gy,vb.gx,vb.yEl,-vb.gy,vc.gx,vc.yEl,-vc.gy,vd.gx,vd.yEl,-vd.gy);
       tIdx.push(b,b+1,b+2,b+1,b+3,b+2);
+      tUV.push(...uvOf(va),...uvOf(vb),...uvOf(vc),...uvOf(vd));
     }
   }
   const tGeo=new THREE.BufferGeometry();
   tGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(tPos),3));
+  tGeo.setAttribute('uv',new THREE.BufferAttribute(new Float32Array(tUV),2));
   tGeo.setIndex(tIdx);tGeo.computeVertexNormals();
   addTerr3(tGeo);
+
+  // Foto de satélite como textura do terreno natural (assíncrono — a malha já aparece verde e a
+  // textura "aparece por cima" assim que os tiles chegarem, sem travar a abertura da Vista 3D).
+  (async()=>{
+    try{
+      const satCLat=cLat+bcy/mLat, satCLng=cLng+bcx/mLng;
+      const TEX=1024;
+      const mpp=(2*ext)/TEX;
+      // zoom 18 é o teto usado com sucesso nos relatórios 2D — zoom 19 costuma "furar" a cobertura
+      // do Esri em muitas áreas (volta um tile de aviso "Map data not yet available")
+      const zoomT=Math.max(0,Math.min(18,Math.round(Math.log2(156543.03392*Math.cos(satCLat*Math.PI/180)/mpp))));
+      const dataUrl=await getSatelliteDataUrl(satCLat,satCLng,zoomT,TEX,TEX);
+      if(!dataUrl||!_3d_renderer)return; // modal pode ter sido fechado enquanto buscava
+      const img=new Image();
+      await new Promise((res,rej)=>{img.onload=res;img.onerror=rej;img.src=dataUrl;});
+      if(!_3d_renderer)return;
+      const tex=new THREE.Texture(img);
+      tex.needsUpdate=true;tex.encoding=THREE.sRGBEncoding;tex.anisotropy=4;
+      matTerr3.map=tex;matTerr3.color.set(0xffffff);matTerr3.needsUpdate=true;
+    }catch(e){console.error('Satélite 3D:',e);}
+  })();
   function addLoop3(ring,y,hex){const pts=ring.map(q=>new THREE.Vector3(q.x,y,-q.y));pts.push(pts[0].clone());scene3.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:hex})));}
   // Linha do pé externo acompanha a cota REAL do terreno (mesma fórmula da malha do talude externo) —
   // antes ficava "flutuando" numa cota plana (zN), fora do lugar em terrenos com desnível.
