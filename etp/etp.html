@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ETP Diária & Balanço Hídrico v1.6 — Bolsa Irriga</title>
+<title>ETP Diária & Balanço Hídrico v1.7 — Bolsa Irriga</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 <style>
@@ -84,6 +84,13 @@ tfoot td:first-child{font-family:var(--sans);}
 .badge-manual{background:#eaf0ff;color:#2a4fa0;}
 .badge-auto{background:#e6f5ee;color:var(--green);}
 
+/* ── Cidade (geocoding) ── */
+.city-suggestions{display:none;position:absolute;left:0;right:0;z-index:6;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.14);max-height:230px;overflow:auto;margin-top:3px;}
+.city-opt{padding:8px 11px;font-size:.8rem;cursor:pointer;border-bottom:1px solid var(--slate-light);color:var(--ink);}
+.city-opt:last-child{border-bottom:none;}
+.city-opt:hover{background:var(--teal-light);}
+.city-opt small{color:#8b9aa1;display:block;font-size:.68rem;margin-top:1px;}
+
 /* ── KPIs ── */
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-top:14px;}
 .kpi{background:var(--slate-light);border-radius:8px;padding:10px 12px;}
@@ -113,7 +120,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     </div>
   </div>
   <div class="hdr-nav">
-    <span class="ver-tag">v1.6</span>
+    <span class="ver-tag">v1.7</span>
     <a class="back-link" href="../index.html">&#8592; Menu</a>
     <div class="hdr-right">
       <b>Jo&#227;o Paulo de Oliveira</b>
@@ -129,16 +136,30 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     <!-- Card 1: Local -->
     <div class="card">
       <h2><span class="n">1</span>Local</h2>
-      <div class="row2">
-        <div class="field">
-          <label>Latitude (°, negativa = Sul)</label>
-          <input type="number" id="lat" value="-20.53" step="0.0001">
-        </div>
-        <div class="field">
-          <label>Longitude (°)</label>
-          <input type="number" id="lon" value="-47.40" step="0.0001">
-        </div>
+      <div class="field" style="position:relative;">
+        <label>Cidade</label>
+        <input type="text" id="cityInput" placeholder="Ex: Ribeir&#227;o Preto, SP" value="Ribeir&#227;o Preto, SP" autocomplete="off">
+        <div class="city-suggestions" id="citySuggestions"></div>
       </div>
+      <div class="actions" style="margin-top:8px;margin-bottom:2px;">
+        <button class="btn-secondary" id="btnCitySearch">&#128269; Buscar cidade</button>
+      </div>
+      <div class="status" id="cityStatus"></div>
+
+      <details style="margin-top:10px;">
+        <summary style="cursor:pointer;font-size:.78rem;font-weight:600;color:var(--slate);">Coordenadas (preenchidas automaticamente — ajuste fino aqui)</summary>
+        <div class="row2" style="margin-top:10px;">
+          <div class="field">
+            <label>Latitude (°, negativa = Sul)</label>
+            <input type="number" id="lat" value="-20.53" step="0.0001">
+          </div>
+          <div class="field">
+            <label>Longitude (°)</label>
+            <input type="number" id="lon" value="-47.40" step="0.0001">
+          </div>
+        </div>
+      </details>
+
       <div class="hint" style="margin-top:8px;">
         Modelo simplificado: a ETR consome apenas a chuva do dia (sem armazenamento no solo).
         Chuva abate o saldo acumulado negativo at&#233; zero&#8239;—&#8239;o excedente &#233; contabilizado como EXC.
@@ -341,6 +362,44 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     const tmean=(tmin+tmax)/2;
     const dt=Math.max(0,tmax-tmin);
     return 0.0023*(tmean+17.8)*Math.sqrt(dt)*ra;
+  }
+
+  /* ── Busca de cidade (geocoding) → preenche Lat/Lon ── */
+  function applyCity(r){
+    $('lat').value=r.latitude.toFixed(4);
+    $('lon').value=r.longitude.toFixed(4);
+    const label=r.name+(r.admin1?', '+r.admin1:'')+(r.country?' — '+r.country:'');
+    $('cityInput').value=r.name+(r.admin1?', '+r.admin1:'');
+    $('citySuggestions').style.display='none';$('citySuggestions').innerHTML='';
+    $('cityStatus').textContent=`✓ ${label} · Lat ${r.latitude.toFixed(4)}, Lon ${r.longitude.toFixed(4)}`;
+    $('cityStatus').className='status ok';
+    if(days.length)render();
+  }
+  async function searchCity(){
+    const q=$('cityInput').value.trim();
+    const st=$('cityStatus'),sugg=$('citySuggestions');
+    sugg.style.display='none';sugg.innerHTML='';
+    if(!q){st.textContent='Digite o nome de uma cidade.';st.className='status err';return;}
+    st.textContent='Buscando cidade...';st.className='status busy';
+    try{
+      const url=`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=6&language=pt&format=json`;
+      const res=await fetch(url);
+      const data=await res.json();
+      const results=data?.results||[];
+      if(!results.length){
+        st.textContent='Cidade não encontrada. Tente outro nome (ou ajuste a coordenada manualmente abaixo).';
+        st.className='status err';return;
+      }
+      if(results.length===1){applyCity(results[0]);return;}
+      st.textContent=`${results.length} resultados — selecione o correto:`;st.className='status';
+      sugg.innerHTML=results.map((r,i)=>`<div class="city-opt" data-i="${i}">${r.name}${r.admin1?', '+r.admin1:''}<small>${r.country||''}${r.population?' · '+r.population.toLocaleString('pt-BR')+' hab.':''}</small></div>`).join('');
+      sugg.style.display='block';
+      sugg.querySelectorAll('.city-opt').forEach(el=>{
+        el.addEventListener('click',()=>applyCity(results[parseInt(el.dataset.i)]));
+      });
+    }catch(e){
+      st.textContent='Erro ao buscar cidade. Verifique sua conexão.';st.className='status err';
+    }
   }
 
   /* ── Busca automática de temperatura ── */
@@ -805,6 +864,17 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
   }
 
   /* ── Eventos ── */
+  $('btnCitySearch').addEventListener('click',searchCity);
+  $('cityInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();searchCity();}});
+  $('cityInput').addEventListener('input',()=>{
+    $('citySuggestions').style.display='none';$('citySuggestions').innerHTML='';
+    $('cityStatus').textContent='';$('cityStatus').className='status';
+  });
+  document.addEventListener('click',e=>{
+    if(!e.target.closest('#cityInput')&&!e.target.closest('#citySuggestions')){
+      $('citySuggestions').style.display='none';
+    }
+  });
   $('btnFetch').addEventListener('click',fetchWeather);
   $('btnFetchRange').addEventListener('click',fetchWeatherRange);
   $('btnAdd').addEventListener('click',addDay);
