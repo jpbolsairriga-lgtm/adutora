@@ -3,6 +3,14 @@
 Todas as mudanças notáveis deste app ficam registradas aqui. O número de versão aparece
 no canto do título, dentro do próprio app (`v2.0.0` etc.) — clique nele pra abrir este arquivo.
 
+## v2.5.1 — 2026-08-24
+
+### Corrigido
+- CFSv2 travava com `subset.select(...).pow is not a function` — `.select()` numa
+  ImageCollection devolve outra ImageCollection, não uma Image (só Image tem `.pow()`).
+  Corrige calculando a magnitude do vento por leitura de 6h individual (`.map()`
+  imagem a imagem) antes de tirar a média do dia.
+
 ## v2.5.0 — 2026-08-24
 
 ### Adicionado

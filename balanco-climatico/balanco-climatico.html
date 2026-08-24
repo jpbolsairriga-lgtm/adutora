@@ -194,7 +194,7 @@
 <body>
 
 <header class="app-header no-print">
-  <h1>🌦️ Balanço Climático <a class="version-badge" id="versionBadge" href="CHANGELOG.md" target="_blank" rel="noopener" title="Ver histórico de versões (CHANGELOG.md)">v2.5.0</a></h1>
+  <h1>🌦️ Balanço Climático <a class="version-badge" id="versionBadge" href="CHANGELOG.md" target="_blank" rel="noopener" title="Ver histórico de versões (CHANGELOG.md)">v2.5.1</a></h1>
   <p>Área da fazenda via KML + imagem de satélite + clima mensal (NASA POWER ou Open-Meteo, ano único ou média histórica) + balanço hídrico do solo e necessidade de irrigação da cultura.</p>
 </header>
 
@@ -946,9 +946,14 @@
       const dayEnd = dayStart.advance(1, 'day');
       const subset = base.filterDate(dayStart, dayEnd);
       const n = subset.size();
-      const windSpeed = subset.select('u-component_of_wind_height_above_ground').pow(2)
-        .add(subset.select('v-component_of_wind_height_above_ground').pow(2))
-        .sqrt().mean().rename('wind10');
+      // .select() numa ImageCollection devolve outra ImageCollection (não dá pra chamar
+      // .pow() nela direto) — precisa calcular a magnitude do vento imagem a imagem (.map)
+      // e só depois tirar a média das leituras de 6h do dia.
+      const windSpeed = subset.map((img) => {
+        const u = img.select('u-component_of_wind_height_above_ground');
+        const v = img.select('v-component_of_wind_height_above_ground');
+        return u.pow(2).add(v.pow(2)).sqrt().rename('wind10');
+      }).mean();
       return ee.Algorithms.If(
         n.gt(0),
         ee.Image.cat([
