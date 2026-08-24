@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ETP Diária & Balanço Hídrico v1.8 — Bolsa Irriga</title>
+<title>ETP Diária & Balanço Hídrico v1.9 — Bolsa Irriga</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -84,7 +84,8 @@ tfoot td:first-child{font-family:var(--sans);}
 .empty{padding:32px;text-align:center;color:#8b9aa1;font-size:.85rem;}
 .badge{display:inline-block;padding:1px 6px;border-radius:20px;font-size:.62rem;font-weight:700;}
 .badge-manual{background:#eaf0ff;color:#2a4fa0;}
-.badge-auto{background:#e6f5ee;color:var(--green);}
+.badge-historico{background:#e6f5ee;color:var(--green);}
+.badge-previsao{background:#fff4e0;color:#b8720c;}
 
 /* ── Local: abas Coordenadas / Polígono KML ── */
 .seg-tabs{display:flex;gap:6px;margin-bottom:12px;}
@@ -141,7 +142,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     </div>
   </div>
   <div class="hdr-nav">
-    <span class="ver-tag">v1.8</span>
+    <span class="ver-tag">v1.9</span>
     <button class="info-btn" id="btnInfo" type="button">&#8505;&#65039; Como funciona</button>
     <a class="back-link" href="../index.html">&#8592; Menu</a>
     <div class="hdr-right">
@@ -376,6 +377,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
         <li><b>Dias recentes/futuros:</b> combina&#231;&#227;o dos melhores modelos de previs&#227;o dispon&#237;veis para a regi&#227;o (ICON, GFS, ECMWF IFS...).</li>
       </ul>
       <p>Isso significa que a precis&#227;o depende do <b>ponto exato</b> (lat/lon) usado &mdash; quanto mais perto do talh&#227;o real, melhor.</p>
+      <p>O app busca as duas fontes e escolhe automaticamente: usa o <b>hist&#243;rico</b> (dado fechado, definitivo) sempre que a data j&#225; passou, e cai pra <b>previs&#227;o</b> (estimativa, que pode mudar at&#233; a data chegar) para hoje e dias futuros &mdash; a API de hist&#243;rico simplesmente n&#227;o aceita datas futuras. Cada linha da tabela mostra qual das duas foi usada, com o badge <span class="badge badge-historico" style="font-size:.68rem;">hist&#243;rico</span> ou <span class="badge badge-previsao" style="font-size:.68rem;">previs&#227;o</span> &mdash; passe o mouse sobre o badge pra ver o detalhe. Chuva marcada como previs&#227;o pode n&#227;o bater com o que realmente cair; vale reconferir esses dias mais perto da data.</p>
 
       <h4>Como informar o local</h4>
       <ul>
@@ -402,6 +404,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
 (function(){
   const $ = id => document.getElementById(id);
   let days = [];
+  let lastFetchOrigin = null; // 'historico' | 'previsao' | null — fonte do último fetchWeather() bem-sucedido
 
   $('date').valueAsDate = new Date();
   $('dateEnd').valueAsDate = new Date();
@@ -574,11 +577,13 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
         if(tmax!=null&&tmin!=null){
           $('tmax').value=tmax.toFixed(1);$('tmin').value=tmin.toFixed(1);
           $('precip').value=(prec!=null?prec:0).toFixed(1);
-          st.textContent=`✓ Dados obtidos (${url.includes('archive')?'histórico':'previsão'})`;
+          lastFetchOrigin=url.includes('archive')?'historico':'previsao';
+          st.textContent=`✓ Dados obtidos (${lastFetchOrigin==='historico'?'histórico':'previsão'})`;
           st.className='status ok';return;
         }
       }catch(e){}
     }
+    lastFetchOrigin=null;
     st.textContent='Não foi possível obter dados automaticamente. Preencha manualmente.';
     st.className='status err';
   }
@@ -596,26 +601,34 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     }
     st.textContent='Buscando dados do período...';st.className='status busy';
 
-    const params=`latitude=${lat}&longitude=${lon}&start_date=${startDate}&end_date=${endDate}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto`;
-    const archiveUrl=`https://archive-api.open-meteo.com/v1/archive?${params}`;
-    const forecastUrl=`https://api.open-meteo.com/v1/forecast?${params}`;
+    // A API de histórico rejeita a chamada INTEIRA se end_date passar de hoje — por isso
+    // limitamos o pedido de histórico até hoje, senão perderíamos os dias passados válidos
+    // do mesmo período (ex.: período que vai até a semana que vem).
+    const todayStr=new Date().toISOString().slice(0,10);
+    const archiveEnd=endDate<todayStr?endDate:todayStr;
+    const forecastParams=`latitude=${lat}&longitude=${lon}&start_date=${startDate}&end_date=${endDate}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto`;
+    const forecastUrl=`https://api.open-meteo.com/v1/forecast?${forecastParams}`;
 
     let archiveData=null,forecastData=null;
-    try{const r=await fetch(archiveUrl);if(r.ok)archiveData=await r.json();}catch(e){}
+    if(startDate<=archiveEnd){
+      const archiveParams=`latitude=${lat}&longitude=${lon}&start_date=${startDate}&end_date=${archiveEnd}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto`;
+      try{const r=await fetch(`https://archive-api.open-meteo.com/v1/archive?${archiveParams}`);if(r.ok)archiveData=await r.json();}catch(e){}
+    }
     try{const r=await fetch(forecastUrl);if(r.ok)forecastData=await r.json();}catch(e){}
 
     // Mescla: prioriza histórico (archive); usa previsão (forecast) para dias sem dado no histórico
+    // — cada dia guarda de qual fonte veio, pra exibir o badge correto na tabela
     const map={};
-    function ingest(data){
+    function ingest(data,source){
       if(!data?.daily?.time)return;
       data.daily.time.forEach((date,i)=>{
         const tmax=data.daily.temperature_2m_max[i];
         const tmin=data.daily.temperature_2m_min[i];
         if(tmax==null||tmin==null)return;
-        if(!map[date])map[date]={tmax,tmin,prec:data.daily.precipitation_sum[i]??0};
+        if(!map[date])map[date]={tmax,tmin,prec:data.daily.precipitation_sum[i]??0,source};
       });
     }
-    ingest(archiveData);ingest(forecastData);
+    ingest(archiveData,'historico');ingest(forecastData,'previsao');
 
     // Lista de todas as datas do intervalo pedido
     const dates=[];
@@ -623,13 +636,14 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     const end=new Date(endDate+'T00:00:00');
     while(d<=end){dates.push(d.toISOString().slice(0,10));d.setDate(d.getDate()+1);}
 
-    let added=0;const missing=[];
+    let added=0,addedHist=0,addedPrev=0;const missing=[];
     dates.forEach(date=>{
       const w=map[date];
       if(!w){missing.push(date);return;}
       days=days.filter(dd=>dd.date!==date);
-      days.push({date,tmin:w.tmin,tmax:w.tmax,precip:w.prec,origin:'auto'});
+      days.push({date,tmin:w.tmin,tmax:w.tmax,precip:w.prec,origin:w.source});
       added++;
+      if(w.source==='historico')addedHist++;else addedPrev++;
     });
     days.sort((a,b)=>a.date.localeCompare(b.date));
     render();
@@ -637,11 +651,13 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     if(added===0){
       st.textContent='Não foi possível obter dados para esse período. Tente um intervalo diferente ou adicione manualmente.';
       st.className='status err';
-    }else if(missing.length){
-      st.textContent=`✓ ${added} dia(s) adicionados. ${missing.length} dia(s) sem dado disponível: ${missing.slice(0,5).join(', ')}${missing.length>5?'…':''}`;
-      st.className='status ok';
     }else{
-      st.textContent=`✓ ${added} dia(s) do período adicionados automaticamente ao balanço.`;
+      const partes=[];
+      if(addedHist)partes.push(`${addedHist} histórico${addedHist>1?'s':''}`);
+      if(addedPrev)partes.push(`${addedPrev} previsão`);
+      let msg=`✓ ${added} dia(s) adicionados (${partes.join(' + ')}).`;
+      if(missing.length)msg+=` ${missing.length} dia(s) sem dado disponível: ${missing.slice(0,5).join(', ')}${missing.length>5?'…':''}`;
+      st.textContent=msg;
       st.className='status ok';
     }
   }
@@ -652,12 +668,13 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     const tmin=parseFloat($('tmin').value);
     const tmax=parseFloat($('tmax').value);
     const precip=parseFloat($('precip').value)||0;
-    const origin=$('fetchStatus').classList.contains('ok')?'auto':'manual';
+    const origin=($('fetchStatus').classList.contains('ok')&&lastFetchOrigin)?lastFetchOrigin:'manual';
     if(!date||isNaN(tmin)||isNaN(tmax)){alert('Preencha data, Tmin e Tmax.');return;}
     if(tmax<tmin){alert('Tmax não pode ser menor que Tmin.');return;}
     days=days.filter(d=>d.date!==date);
     days.push({date,tmin,tmax,precip,origin});
     days.sort((a,b)=>a.date.localeCompare(b.date));
+    lastFetchOrigin=null;
     render();
     $('fetchStatus').textContent='';$('fetchStatus').className='status';
   }
@@ -731,6 +748,14 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
   function fmtDate(s){
     if(!s)return'';const[y,m,d]=s.split('-');return`${d}/${m}/${y}`;
   }
+  function origemLabel(o){
+    return o==='historico'?'histórico':o==='previsao'?'previsão':'manual';
+  }
+  function origemTitle(o){
+    if(o==='historico')return'Dado observado/reanálise (ERA5) — período já fechado, valor definitivo.';
+    if(o==='previsao')return'Dado de previsão do tempo — estimativa que pode mudar até a data chegar (sobretudo a chuva).';
+    return'Digitado manualmente.';
+  }
 
   /* ── Renderização ── */
   function render(){
@@ -747,7 +772,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
       const irrigStyle=r.irrigH>0.005?'font-weight:700;color:#1a4a2e;background:#e8f5ee;':'color:#aaa;';
       return`<tr class="${rowCls}">
         <td>${fmtDate(r.date)}</td>
-        <td><span class="badge ${r.origin==='auto'?'badge-auto':'badge-manual'}">${r.origin==='auto'?'auto':'manual'}</span></td>
+        <td><span class="badge badge-${r.origin}" title="${origemTitle(r.origin)}">${origemLabel(r.origin)}</span></td>
         <td>${fmt(r.tmin,1)}</td><td>${fmt(r.tmax,1)}</td>
         <td>${fmt(r.eto)}</td>
         <td>${fmt(r.etc)}</td>
@@ -967,7 +992,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
       startY:y,
       head:[['Data','Orig.','Tmin','Tmax','ETP','ETc','ETc_loc','P','Disp.','ETR','DEF','Reserva','Irrig.']],
       body:rows.map(r=>[
-        fmtDate(r.date),r.origin,
+        fmtDate(r.date),r.origin==='historico'?'Hist.':r.origin==='previsao'?'Prev.':'Man.',
         fmt(r.tmin,1),fmt(r.tmax,1),
         fmt(r.eto),fmt(r.etc),fmt(r.etcLoc),
         fmt(r.precip),fmt(r.disponivel),fmt(r.etr),
@@ -1022,6 +1047,9 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
   $('infoOverlay').addEventListener('click',e=>{if(e.target.id==='infoOverlay')$('infoOverlay').classList.remove('open');});
   document.addEventListener('keydown',e=>{if(e.key==='Escape')$('infoOverlay').classList.remove('open');});
   $('btnFetch').addEventListener('click',fetchWeather);
+  ['tmin','tmax','precip'].forEach(id=>{
+    $(id).addEventListener('input',()=>{lastFetchOrigin=null;}); // edição manual invalida a origem do fetch
+  });
   $('btnFetchRange').addEventListener('click',fetchWeatherRange);
   $('btnAdd').addEventListener('click',addDay);
   $('btnPDF').addEventListener('click',gerarRelatorio);
