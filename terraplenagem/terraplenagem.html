@@ -226,6 +226,7 @@ input[type=number],select,input[type=text],input[type=password]{width:100%;backg
     <div id="boxRes"></div>
     <div style="margin-top:8px;display:flex;flex-direction:column;gap:4px;">
       <button class="btn btn-sec" onclick="$('modalCortes').classList.add('open')">📊 Cortes Transversais</button>
+      <button class="btn" style="background:#00838f;color:#fff;" onclick="gerarVista3D()">🧊 Vista 3D Interativa</button>
       <button class="btn" style="background:#4a148c;color:#fff;" onclick="equalizarTerra()">⚖ Equalizar Corte/Aterro</button>
 <button class="btn" style="background:#37474f;color:#fff;" onclick="gerarPlantaTecnica()">📋 Planta Técnica</button>
       <button class="btn" style="background:#2e7d32;color:#fff;" onclick="gerarKML()">🗺️ Exportar KML</button>
@@ -1388,16 +1389,22 @@ function gerarVista3D(){
   rdr3.shadowMap.enabled=true;rdr3.shadowMap.type=THREE.PCFSoftShadowMap;
   rdr3.toneMapping=THREE.ACESFilmicToneMapping;rdr3.toneMappingExposure=1.1;
   _3d_renderer=rdr3;
-  scene3.add(new THREE.AmbientLight(0xfff5e0,0.38));
-  const sun3=new THREE.DirectionalLight(0xfffae8,2.4);
+  scene3.add(new THREE.AmbientLight(0xfff5e0,0.42));
+  const sun3=new THREE.DirectionalLight(0xfffae8,2.1);
   sun3.castShadow=true;sun3.shadow.mapSize.set(2048,2048);
+  sun3.shadow.bias=-0.0012;sun3.shadow.normalBias=0.6; // evita "shadow acne" (moiré) em terrenos grandes
   const sc3=sun3.shadow.camera;sc3.near=10;sc3.far=7000;sc3.left=sc3.bottom=-2000;sc3.right=sc3.top=2000;
   scene3.add(sun3);
   const fill3=new THREE.DirectionalLight(0x2040a0,0.22);fill3.position.set(-1,0.4,-1).normalize().multiplyScalar(600);scene3.add(fill3);
   const ctl3=new THREE.OrbitControls(cam3,cv);
   ctl3.enableDamping=true;ctl3.dampingFactor=0.07;ctl3.minDistance=20;ctl3.maxDistance=9000;ctl3.maxPolarAngle=Math.PI*0.490;
-  const mat3=new THREE.MeshPhongMaterial({color:0xD4A017,shininess:32,specular:new THREE.Color(0x553300),side:THREE.DoubleSide});
+  // Terra movimentada (escavação + aterro) vs. terreno natural vs. água — materiais distintos p/ leitura clara
+  const mat3=new THREE.MeshStandardMaterial({color:0xB98A4A,roughness:.92,metalness:0,side:THREE.DoubleSide});
+  const matTerr3=new THREE.MeshStandardMaterial({color:0x8fbf6a,roughness:1,metalness:0,side:THREE.DoubleSide});
+  const matWater3=new THREE.MeshStandardMaterial({color:0x1f8fd6,roughness:.15,metalness:0,transparent:true,opacity:.72,side:THREE.DoubleSide});
   function addM3(geo){const m=new THREE.Mesh(geo,mat3);m.castShadow=true;m.receiveShadow=true;scene3.add(m);return m;}
+  function addTerr3(geo){const m=new THREE.Mesh(geo,matTerr3);m.receiveShadow=true;scene3.add(m);return m;}
+  function addWater3(geo){const m=new THREE.Mesh(geo,matWater3);m.receiveShadow=true;scene3.add(m);return m;}
 
   const NS=96,zF=D.zF,zN=D.zN,zC=D.zC;
   const naR3=_resample(D.naR,NS),fdR3=D.fdR?_resample(D.fdR,NS):null;
@@ -1407,6 +1414,7 @@ function gerarVista3D(){
   function terrY(gx,gy){let b=Infinity,el=r.z_na;const lt=cLat+gy/mLat,lg=cLng+gx/mLng;for(const c of allCellsTerr){const d=(c.lat-lt)**2+(c.lng-lg)**2;if(d<b){b=d;el=c.elev;}}return el-r.z_na;}
   if(fdR3)addM3(_fanGeo(fdR3,zF));
   if(fdR3){addM3(_stripGeo(fdR3,zF,naR3,zN));}else{let cx0=0,cy0=0;naR3.forEach(q=>{cx0+=q.x;cy0+=q.y;});cx0/=NS;cy0/=NS;addM3(_stripGeo(naR3.map(()=>({x:cx0,y:cy0})),zF,naR3,zN));}
+  addWater3(_fanGeo(naR3,zN+0.02)); // espelho d'água na cota do NA (leve offset evita z-fighting com o talude)
   if(crR3)addM3(_stripGeo(naR3,zN,crR3,zC));
   // Talude externo: pé na cota real do terreno (corrige triangulos e cria rampa correta)
   if(crR3){
@@ -1428,7 +1436,8 @@ function gerarVista3D(){
       const gx=(bcx-ext)+ii*gxStep,gy=(bcy-ext)+jj*gyStep;
       const lng2=cLng+gx/mLng,lat2=cLat+gy/mLat;
       const ins=turf.booleanPointInPolygon([lng2,lat2],innerPolyGeo);
-      terrV.push({gx,gy,yEl:ins?zC:terrY(gx,gy),ins});
+      // Cota real do terreno sempre (mesmo p/ pontos "ins") — evita picos artificiais na costura com o talude
+      terrV.push({gx,gy,yEl:terrY(gx,gy),ins});
     }
   }
   const tPos=[],tIdx=[];
@@ -1445,7 +1454,7 @@ function gerarVista3D(){
   const tGeo=new THREE.BufferGeometry();
   tGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(tPos),3));
   tGeo.setIndex(tIdx);tGeo.computeVertexNormals();
-  addM3(tGeo);
+  addTerr3(tGeo);
   function addLoop3(ring,y,hex){const pts=ring.map(q=>new THREE.Vector3(q.x,y,-q.y));pts.push(pts[0].clone());scene3.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:hex})));}
   if(crR3)addLoop3(crR3,zC,0xffd700);if(peR3)addLoop3(peR3,zN,0xa07830);
   cam3.position.set(bcx+span*0.55,span*0.50+zC,-(bcy)+span*0.68);
