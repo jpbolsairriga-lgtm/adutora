@@ -194,7 +194,7 @@
 <body>
 
 <header class="app-header no-print">
-  <h1>🌦️ Balanço Climático <a class="version-badge" id="versionBadge" href="CHANGELOG.md" target="_blank" rel="noopener" title="Ver histórico de versões (CHANGELOG.md)">v2.4.0</a></h1>
+  <h1>🌦️ Balanço Climático <a class="version-badge" id="versionBadge" href="CHANGELOG.md" target="_blank" rel="noopener" title="Ver histórico de versões (CHANGELOG.md)">v2.5.0</a></h1>
   <p>Área da fazenda via KML + imagem de satélite + clima mensal (NASA POWER ou Open-Meteo, ano único ou média histórica) + balanço hídrico do solo e necessidade de irrigação da cultura.</p>
 </header>
 
@@ -219,6 +219,7 @@
       <option value="nasa" selected>NASA POWER</option>
       <option value="openmeteo">Open-Meteo (ERA5-Land)</option>
       <option value="brdwgd">BR-DWGD (Earth Engine)</option>
+      <option value="cfsv2">CFSv2 (NOAA/Earth Engine)</option>
     </select>
   </div>
   <div class="field">
@@ -238,12 +239,13 @@
       <option value="nasa">NASA POWER</option>
       <option value="openmeteo">Open-Meteo (ERA5-Land)</option>
       <option value="brdwgd">BR-DWGD (Earth Engine)</option>
+      <option value="cfsv2">CFSv2 (NOAA/Earth Engine)</option>
     </select>
   </div>
   <span class="status-msg" id="statusMsg"></span>
 </div>
 <div class="note no-print" id="brdwgdNote" style="margin-top:-10px; margin-bottom:14px; display:none;">
-  ℹ️ BR-DWGD exige login com sua conta Google (Earth Engine) e cobre 1961–2025 (Xavier et al. 2022). Ao clicar em "Atualizar dados" com essa fonte, uma janela de login do Google vai abrir. Meses muito recentes podem ainda não estar disponíveis (aparecem como "sem dado").
+  ℹ️ BR-DWGD e CFSv2 exigem login com sua conta Google (Earth Engine). BR-DWGD cobre 1961–2025 (Xavier et al. 2022, grade nacional calibrada com estações do INMET). CFSv2 é global (NOAA), cobre 1979–hoje. Ao clicar em "Atualizar dados" com uma dessas fontes, uma janela de login do Google vai abrir. Meses muito recentes podem ainda não estar disponíveis (aparecem como "sem dado").
 </div>
 
 <section class="quadro" id="quadroMapa">
@@ -918,10 +920,137 @@
     return months;
   }
 
+  // ================= CFSv2 (NOAA, catálogo oficial do Earth Engine) =================
+  // Climate Forecast System v2, 6 em 6 horas, cobertura 1979–hoje (mais atual que as
+  // outras fontes). Dataset oficial do catálogo público do Earth Engine (sem risco de
+  // permissão, ao contrário do BR-DWGD que está num projeto pessoal). Achado inspecionando
+  // o app público "ENSO Monitor" (ee-ruizch.projects.earthengine.app/view/enso-monitor).
+  // Não tem umidade relativa direta (só "umidade específica") nem vento a 2m (só a 10m) —
+  // convertidos abaixo com fórmulas meteorológicas padrão.
+  const EE_ASSET_CFSV2 = 'NOAA/CFSV2/FOR6H_HARMONIZED';
+  const EE_SCALE_M_CFSV2 = 22264; // resolução nativa do dataset
+
+  // Monta 1 imagem por DIA a partir das leituras de 6h (necessário pra Tmáx/Tmín: a média
+  // mensal precisa ser "média dos máximos diários", não o máximo entre todas as leituras
+  // do mês inteiro, que seria um número bem maior).
+  function eeBuildCFSv2Daily(startYear, endYear){
+    const start = ee.Date.fromYMD(startYear, 1, 1);
+    const end = ee.Date.fromYMD(endYear+1, 1, 1);
+    const nDays = end.difference(start, 'day');
+    const days = ee.List.sequence(0, nDays.subtract(1));
+    const base = ee.ImageCollection(EE_ASSET_CFSV2);
+
+    const images = days.map((offset) => {
+      offset = ee.Number(offset);
+      const dayStart = start.advance(offset, 'day');
+      const dayEnd = dayStart.advance(1, 'day');
+      const subset = base.filterDate(dayStart, dayEnd);
+      const n = subset.size();
+      const windSpeed = subset.select('u-component_of_wind_height_above_ground').pow(2)
+        .add(subset.select('v-component_of_wind_height_above_ground').pow(2))
+        .sqrt().mean().rename('wind10');
+      return ee.Algorithms.If(
+        n.gt(0),
+        ee.Image.cat([
+          subset.select('Maximum_temperature_height_above_ground_6_Hour_Interval').max().subtract(273.15).rename('tmax'),
+          subset.select('Minimum_temperature_height_above_ground_6_Hour_Interval').min().subtract(273.15).rename('tmin'),
+          subset.select('Precipitation_rate_surface_6_Hour_Average').sum().multiply(21600).rename('precip'),
+          subset.select('Downward_Short-Wave_Radiation_Flux_surface_6_Hour_Average').mean().rename('rs_wm2'),
+          windSpeed,
+          subset.select('Specific_humidity_height_above_ground').mean().rename('q'),
+          subset.select('Pressure_surface').mean().rename('psfc')
+        ]).set('system:time_start', dayStart.millis()),
+        null
+      );
+    });
+    return ee.ImageCollection.fromImages(ee.List(images).removeAll([null]));
+  }
+
+  function eeMonthlyClimatologyCFSv2(lat, lon, startYear, endYear){
+    const point = ee.Geometry.Point([lon, lat]);
+    const nYears = endYear - startYear + 1;
+    const dailyCol = eeBuildCFSv2Daily(startYear, endYear);
+    const months = ee.List.sequence(1, 12);
+
+    const fc = ee.FeatureCollection(months.map((m) => {
+      m = ee.Number(m);
+      const filtered = dailyCol.filter(ee.Filter.calendarRange(m, m, 'month'));
+
+      const tmaxImg = eeSafeReduce(filtered.select('tmax'), 'mean').rename('tmax');
+      const tminImg = eeSafeReduce(filtered.select('tmin'), 'mean').rename('tmin');
+      const prImg   = eeSafeReduce(filtered.select('precip'), 'sum', nYears).rename('precip');
+      // W/m² (potência média) → MJ/m²/dia (energia diária): × 86400 s/dia ÷ 1e6
+      const rsImg   = eeSafeReduce(filtered.select('rs_wm2'), 'mean').multiply(86400/1e6).rename('rs');
+      const windImg = eeSafeReduce(filtered.select('wind10'), 'mean').rename('wind10');
+      const qImg    = eeSafeReduce(filtered.select('q'), 'mean').rename('q');
+      const pImg    = eeSafeReduce(filtered.select('psfc'), 'mean').rename('psfc');
+
+      const combined = ee.Image.cat([tmaxImg, tminImg, prImg, rsImg, windImg, qImg, pImg]);
+      const vals = combined.reduceRegion({ reducer: ee.Reducer.mean(), geometry: point, scale: EE_SCALE_M_CFSV2, maxPixels: 1e9 });
+      return ee.Feature(null, vals.set('month', m));
+    }));
+
+    return new Promise((resolve, reject) => {
+      fc.evaluate((result, error) => {
+        if (error) reject(new Error(String(error)));
+        else resolve(result);
+      });
+    });
+  }
+
+  async function fetchClimateCFSv2(lat, lon, startYear, endYear, elevM){
+    await eeAuthenticate();
+    const result = await eeMonthlyClimatologyCFSv2(lat, lon, startYear, endYear);
+    console.log('[CFSv2] ponto:', lat, lon, '| período:', startYear, '-', endYear, '— valores já convertidos:');
+    console.table((result.features||[]).map(f => f.properties));
+    const byMonth = {};
+    (result.features || []).forEach(f => { byMonth[f.properties.month] = f.properties; });
+
+    const midYear = Math.round((startYear+endYear)/2);
+    const months = [];
+    for (let m=1; m<=12; m++){
+      const p = byMonth[m] || {};
+      const tmax = Number.isFinite(p.tmax) ? p.tmax : null;
+      const tmin = Number.isFinite(p.tmin) ? p.tmin : null;
+      const rs = Number.isFinite(p.rs) ? p.rs : null;
+      const precip = Number.isFinite(p.precip) ? p.precip : null;
+      const wind10 = Number.isFinite(p.wind10) ? p.wind10 : null;
+      const q = Number.isFinite(p.q) ? p.q : null;      // umidade específica (kg/kg)
+      const psfc = Number.isFinite(p.psfc) ? p.psfc : null; // pressão (Pa)
+
+      // vento: ajusta de 10 m (altura do CFSv2) pra 2 m — FAO-56, eq. 47
+      const ws2 = wind10==null ? null : wind10 * (4.87/Math.log(67.8*10-5.42));
+
+      // umidade específica → pressão de vapor real (ea, kPa) → % equivalente, pra
+      // reaproveitar a mesma fórmula FAO-56 usada nas outras fontes (que recebe RH%).
+      let rh = null;
+      if (q!=null && psfc!=null && tmax!=null && tmin!=null){
+        const pKPa = psfc/1000;
+        const ea = (q*pKPa)/(0.622+0.378*q);
+        const tmean = (tmax+tmin)/2;
+        const es = 0.6108*Math.exp(17.27*tmean/(tmean+237.3));
+        rh = Math.min(100, Math.max(0, 100*ea/es));
+      }
+
+      const dim = daysInMonth(endYear, m);
+      const etoDay = eto_FAO56_monthly({ tmax, tmin, rh, ws2, rs, latDeg: lat, elevM, year: midYear, month: m });
+      months.push({
+        month: m,
+        days: dim,
+        tmax,
+        precip,
+        eto: etoDay==null ? null : etoDay*dim,
+        nYears: (endYear-startYear+1)
+      });
+    }
+    return months;
+  }
+
   const CLIMATE_SOURCES = {
     nasa: { label: 'NASA POWER', fn: fetchClimateNASA },
     openmeteo: { label: 'Open-Meteo (ERA5-Land)', fn: fetchClimateOpenMeteo },
-    brdwgd: { label: 'BR-DWGD (Earth Engine)', fn: fetchClimateBRDWGD }
+    brdwgd: { label: 'BR-DWGD (Earth Engine)', fn: fetchClimateBRDWGD },
+    cfsv2: { label: 'CFSv2 (NOAA/Earth Engine)', fn: fetchClimateCFSv2 }
   };
 
   function fetchClimate(source, lat, lon, startYear, endYear, elevM){
@@ -1871,7 +2000,8 @@
     const srcLines = {
       nasa: 'Clima: <a href="https://power.larc.nasa.gov/" target="_blank" rel="noopener">NASA POWER</a> (comunidade Agroclimatologia, base de reanálise MERRA-2/POWER). ',
       openmeteo: 'Clima: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (reanálise ERA5-Land; ETo já vem calculada por FAO-56 Penman-Monteith pelo próprio provedor, usada diretamente sem recálculo). ',
-      brdwgd: 'Clima: <b>BR-DWGD</b> (Brazilian Daily Weather Gridded Data, Xavier et al. 2022/UFES, via Google Earth Engine) — grade de 0,1° calibrada com 1.250+ estações do INMET e 11.000+ pluviômetros; cobertura 1961–2025. '
+      brdwgd: 'Clima: <b>BR-DWGD</b> (Brazilian Daily Weather Gridded Data, Xavier et al. 2022/UFES, via Google Earth Engine) — grade de 0,1° calibrada com 1.250+ estações do INMET e 11.000+ pluviômetros; cobertura 1961–2025. ',
+      cfsv2: 'Clima: <b>CFSv2</b> (Climate Forecast System v2, NOAA, catálogo oficial do Google Earth Engine) — reanálise global de 6 em 6 horas, cobertura 1979–hoje; vento ajustado de 10m pra 2m (FAO-56) e umidade relativa derivada da umidade específica. '
     };
     const srcLine = srcLines[activeSource] || srcLines.nasa;
     const periodLine = activePeriod.startYear && activePeriod.startYear !== activePeriod.endYear
@@ -1882,7 +2012,7 @@
       srcLine + periodLine +
       'Consultado em '+new Date().toLocaleDateString('pt-BR')+'. Fonte ativa usada em todos os cálculos abaixo: <b>'+srcLabel+'</b> (mude no seletor "Fonte de dados" da barra superior). ' +
       'Precipitação total mensal = média diária × dias do mês (ou média das somas mensais, no caso de média histórica). ' +
-      (activeSource==='nasa' || activeSource==='brdwgd' ? 'ETo = evapotranspiração de referência calculada pelo método padrão <b>FAO-56 Penman-Monteith</b> (grama de referência), a partir de Tmáx/Tmín, umidade relativa, vento a 2 m e radiação solar mensal da fonte ativa, com fluxo de calor no solo G≈0 (aproximação mensal). ' : '') +
+      (activeSource!=='openmeteo' ? 'ETo = evapotranspiração de referência calculada pelo método padrão <b>FAO-56 Penman-Monteith</b> (grama de referência), a partir de Tmáx/Tmín, umidade relativa, vento a 2 m e radiação solar mensal da fonte ativa, com fluxo de calor no solo G≈0 (aproximação mensal). ' : '') +
       'Elevação usada no cálculo: '+elevTxt+'.<br>'+
       'Balanço hídrico do solo: método sequencial de <b>Thornthwaite &amp; Mather (1955)</b>, na formulação de ROLIM, G.S.; SENTELHAS, P.C.; BARBIERI, V. <i>Planilhas no ambiente EXCEL™ para os cálculos de balanços hídricos</i>, Rev. Bras. Agrometeorologia, v.6, n.1, p.133-137, 1998 (ESALQ/USP) — aqui usando a ETo da fonte escolhida como ETP de entrada em vez de Thornthwaite (1948), método mais adequado para climas não-úmidos. ' +
       'Necessidade de irrigação: Etc = ETo × Kc; coeficiente de localização Kl = Gc + f·(1−Gc) (Keller &amp; Bliesner) reduz a ETc pela fração de solo não coberto pela copa, prática usual em projetos de irrigação localizada.';
@@ -1955,8 +2085,9 @@
     el('refreshBtn').addEventListener('click', loadClimateAndRender);
     el('yearSelect').addEventListener('change', () => { if (farmGeo) loadClimateAndRender(); });
     el('periodSelect').addEventListener('change', () => { if (farmGeo) loadClimateAndRender(); });
+    const EE_SOURCES = ['brdwgd','cfsv2'];
     const updateBrdwgdNote = () => {
-      const usesEE = el('sourceSelect').value === 'brdwgd' || el('compareSelect').value === 'brdwgd';
+      const usesEE = EE_SOURCES.includes(el('sourceSelect').value) || EE_SOURCES.includes(el('compareSelect').value);
       el('brdwgdNote').style.display = usesEE ? '' : 'none';
     };
     el('sourceSelect').addEventListener('change', () => {

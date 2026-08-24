@@ -3,6 +3,23 @@
 Todas as mudanças notáveis deste app ficam registradas aqui. O número de versão aparece
 no canto do título, dentro do próprio app (`v2.0.0` etc.) — clique nele pra abrir este arquivo.
 
+## v2.5.0 — 2026-08-24
+
+### Adicionado
+- **CFSv2 como 4ª fonte de dados** (Climate Forecast System v2, NOAA, catálogo
+  oficial do Google Earth Engine — `NOAA/CFSV2/FOR6H_HARMONIZED`). Reanálise global
+  de 6 em 6 horas, cobertura 1979–hoje (a mais atual de todas as fontes). Achada
+  inspecionando o app público "ENSO Monitor" (Luis Fernando Chimelo Ruiz,
+  ee-ruizch.projects.earthengine.app/view/enso-monitor), sugerida pelo usuário.
+  Como dataset oficial do catálogo, não tem o risco de permissão que o BR-DWGD tem
+  (que está num projeto pessoal do autor).
+  - Vento: dataset só tem a 10m — ajustado pra 2m com a fórmula padrão FAO-56 (eq. 47).
+  - Umidade: dataset só tem "umidade específica" — convertida pra pressão de vapor
+    real e depois pra um "% de umidade relativa equivalente" (mesma fórmula das
+    outras fontes), usando a pressão atmosférica também disponível no dataset.
+  - Radiação: convertida de W/m² (potência) pra MJ/m²/dia (energia diária).
+  - Testado: wiring da UI, login, sem regressão nas fontes existentes.
+
 ## v2.4.0 — 2026-08-22
 
 ### Adicionado/Corrigido
