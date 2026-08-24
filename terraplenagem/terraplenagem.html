@@ -286,6 +286,7 @@ input[type=number],select,input[type=text],input[type=password]{width:100%;backg
   <canvas id="canvas3d" style="width:100%;height:100%;display:block;"></canvas>
   <div id="m3d-inf" style="position:absolute;top:14px;left:14px;background:rgba(5,10,18,.72);color:#ffffffcc;font-size:11.5px;line-height:1.9;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,215,0,.22);pointer-events:none;display:none;"></div>
   <div style="position:absolute;bottom:14px;left:50%;transform:translateX(-50%);color:#ffffff44;font-size:10px;letter-spacing:.6px;pointer-events:none;">Arraste: rotacionar &nbsp;·&nbsp; Scroll: zoom &nbsp;·&nbsp; Botão direito: mover</div>
+  <button id="m3d-toggleAgua" onclick="toggleAgua3D()" style="position:absolute;top:14px;right:112px;background:rgba(255,255,255,.13);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:7px;padding:7px 16px;font-size:13px;font-weight:700;cursor:pointer;">💧 Ocultar Água</button>
   <button onclick="fecharVista3D()" style="position:absolute;top:14px;right:14px;background:rgba(255,255,255,.13);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:7px;padding:7px 16px;font-size:13px;font-weight:700;cursor:pointer;">✕ Fechar</button>
 </div>
 
@@ -1329,14 +1330,21 @@ function gerarCortesSVG(){
 }
 
 // ── Vista 3D — Three.js WebGL (modal inline) ──────────────────────────────────
-let _3d_raf=null,_3d_renderer=null;
+let _3d_raf=null,_3d_renderer=null,_3d_waterMesh=null;
 function fecharVista3D(){
   $('modal3d').style.display='none';
   if(_3d_raf){cancelAnimationFrame(_3d_raf);_3d_raf=null;}
   if(_3d_renderer){_3d_renderer.dispose();_3d_renderer=null;}
+  _3d_waterMesh=null;
   // Substituir canvas: dispose() perde o contexto WebGL; canvas novo garante contexto limpo
   const modal=$('modal3d'),old=$('canvas3d');
   if(old){const nc=document.createElement('canvas');nc.id='canvas3d';nc.style.cssText='width:100%;height:100%;display:block;';modal.replaceChild(nc,old);}
+}
+function toggleAgua3D(){
+  if(!_3d_waterMesh)return;
+  _3d_waterMesh.visible=!_3d_waterMesh.visible;
+  const b=$('m3d-toggleAgua');
+  if(b)b.innerHTML=_3d_waterMesh.visible?'💧 Ocultar Água':'💧 Mostrar Água';
 }
 function gerarVista3D(){
   if(!resultado||!polyPts||polyPts.length<3){alert('Dimensione o reservatório primeiro.');return;}
@@ -1414,7 +1422,9 @@ function gerarVista3D(){
   function terrY(gx,gy){let b=Infinity,el=r.z_na;const lt=cLat+gy/mLat,lg=cLng+gx/mLng;for(const c of allCellsTerr){const d=(c.lat-lt)**2+(c.lng-lg)**2;if(d<b){b=d;el=c.elev;}}return el-r.z_na;}
   if(fdR3)addM3(_fanGeo(fdR3,zF));
   if(fdR3){addM3(_stripGeo(fdR3,zF,naR3,zN));}else{let cx0=0,cy0=0;naR3.forEach(q=>{cx0+=q.x;cy0+=q.y;});cx0/=NS;cy0/=NS;addM3(_stripGeo(naR3.map(()=>({x:cx0,y:cy0})),zF,naR3,zN));}
-  addWater3(_fanGeo(naR3,zN+0.02)); // espelho d'água na cota do NA (leve offset evita z-fighting com o talude)
+  _3d_waterMesh=addWater3(_fanGeo(naR3,zN+0.02)); // espelho d'água na cota do NA (leve offset evita z-fighting com o talude)
+  _3d_waterMesh.visible=true;
+  const _btnAgua=$('m3d-toggleAgua');if(_btnAgua)_btnAgua.innerHTML='💧 Ocultar Água';
   if(crR3)addM3(_stripGeo(naR3,zN,crR3,zC));
   // Talude externo: pé na cota real do terreno (corrige triangulos e cria rampa correta)
   if(crR3){
@@ -1456,7 +1466,10 @@ function gerarVista3D(){
   tGeo.setIndex(tIdx);tGeo.computeVertexNormals();
   addTerr3(tGeo);
   function addLoop3(ring,y,hex){const pts=ring.map(q=>new THREE.Vector3(q.x,y,-q.y));pts.push(pts[0].clone());scene3.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:hex})));}
-  if(crR3)addLoop3(crR3,zC,0xffd700);if(peR3)addLoop3(peR3,zN,0xa07830);
+  // Linha do pé externo acompanha a cota REAL do terreno (mesma fórmula da malha do talude externo) —
+  // antes ficava "flutuando" numa cota plana (zN), fora do lugar em terrenos com desnível.
+  function addLoopTerrain3(ring,hex){const pts=ring.map(q=>new THREE.Vector3(q.x,Math.min(terrY(q.x,q.y),zC-0.05),-q.y));pts.push(pts[0].clone());scene3.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:hex})));}
+  if(crR3)addLoop3(crR3,zC,0xffd700);if(peR3)addLoopTerrain3(peR3,0xa07830);
   cam3.position.set(bcx+span*0.55,span*0.50+zC,-(bcy)+span*0.68);
   cam3.lookAt(bcx,-D.H*0.25,-bcy);ctl3.target.set(bcx,-D.H*0.25,-bcy);ctl3.update();
   sun3.position.set(span+200,span*1.1+200,span*0.7+200);
