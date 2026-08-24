@@ -966,10 +966,23 @@ async function dimensionar(){
       if(xs.length<2) return null;
       const c0=xs[0].geometry.coordinates,c1=xs[xs.length-1].geometry.coordinates;
       function _elAt(lat2,lng2){let b=Infinity,el=z_na;perimCells.forEach(c=>{const d=(c.lat-lat2)**2+(c.lng-lng2)**2;if(d<b){b=d;el=c.elev;}});return el;}
-      return {ptL:{lat:c0[1],lng:c0[0]},ptR:{lat:c1[1],lng:c1[0]},z_tL:_elAt(c0[1],c0[0]),z_tR:_elAt(c1[1],c1[0])};
+      // Largura REAL do fundo nesta direção (corda do polígono do fundo cortada pela mesma reta) —
+      // sem isso o corte usava um diâmetro circular-equivalente (2·√(Af/π)) igual nas duas direções,
+      // fazendo A-B e C-D saírem quase do mesmo tamanho mesmo num reservatório bem alongado.
+      let fdW=null;
+      if(fundoBuf){
+        try{
+          const fxs=turf.lineIntersect(ln,turf.polygonToLine(fundoBuf)).features;
+          if(fxs.length>=2){
+            const f0=fxs[0].geometry.coordinates,f1=fxs[fxs.length-1].geometry.coordinates;
+            fdW=geoDistM(f0[1],f0[0],f1[1],f1[0]);
+          }
+        }catch(e){}
+      }
+      return {ptL:{lat:c0[1],lng:c0[0]},ptR:{lat:c1[1],lng:c1[0]},z_tL:_elAt(c0[1],c0[0]),z_tR:_elAt(c1[1],c1[0]),fdW};
     }
-    const _lc=_cutLine(_uLg,_uLa)||{ptL:perimCells[0],ptR:perimCells[0],z_tL:z_na,z_tR:z_na};
-    const _tc=_cutLine(-_uLa,_uLg)||{ptL:perimCells[0],ptR:perimCells[0],z_tL:z_na,z_tR:z_na};
+    const _lc=_cutLine(_uLg,_uLa)||{ptL:perimCells[0],ptR:perimCells[0],z_tL:z_na,z_tR:z_na,fdW:null};
+    const _tc=_cutLine(-_uLa,_uLg)||{ptL:perimCells[0],ptR:perimCells[0],z_tL:z_na,z_tR:z_na,fdW:null};
     const z_t_A=_lc.z_tL,z_t_B=_lc.z_tR,z_t_C=_tc.z_tL,z_t_D=_tc.z_tR;
     const h_at_A=Math.max(0,z_crista-z_t_A);
     const h_at_C=Math.max(0,z_crista-z_t_C);
@@ -983,6 +996,7 @@ async function dimensionar(){
       Perim_na, Perim_fd,
       z_t_A, z_t_B, z_t_C, z_t_D, h_at_A, h_at_C,
       pt_A:_lc.ptL, pt_B:_lc.ptR, pt_C:_tc.ptL, pt_D:_tc.ptR,
+      fdW_AB:_lc.fdW, fdW_CD:_tc.fdW,
       fundoBuf, cristaBuf, peExtBuf,
       A_pe_total, V_limpeza, V_bota, n_bota, n_limp,
     };
@@ -1156,11 +1170,14 @@ function mostrarResultados(){
 }
 
 // ── SVG Corte Transversal (seção completa A→B) ───────────────────────────────
-function svgCorte(id, titleStr, ptLabelL, ptLabelR, z_tL, z_tR, r, terrainProfile){
+function svgCorte(id, titleStr, ptLabelL, ptLabelR, z_tL, z_tR, r, terrainProfile, fdWReal){
   var p=r.p, Ti=p.Ti, Te=p.Te, Lc=p.Lc, BL=p.BL;
   var H=r.H, zNa=r.z_na, zCr=r.z_crista, zFd=r.z_fundo;
   var h_atL=Math.max(0,zCr-z_tL), h_atR=Math.max(0,zCr-z_tR);
-  var rFd=Math.max(4,Math.sqrt(r.Af/Math.PI)), fd_w=2*rFd;
+  // Largura do fundo NESTA direção do corte — usa a corda real (fdWReal) quando disponível;
+  // o diâmetro circular-equivalente (2·√(Af/π)) é só um último recurso (reservatório alongado
+  // tem fundo bem mais largo num eixo que no outro, um valor circular único não representa isso).
+  var fd_w=(fdWReal&&fdWReal>0)?fdWReal:2*Math.max(4,Math.sqrt(r.Af/Math.PI));
 
   // Coordenadas horizontais (m desde o pé externo esquerdo)
   var x0=0, x1=h_atL*Te, x2=x1+Lc;
@@ -1393,9 +1410,9 @@ function gerarCortesSVG(){
   const profAB=sampleTransect(r.pt_A,r.pt_B,24);
   const profCD=sampleTransect(r.pt_C,r.pt_D,24);
   addCorte('CORTE A-B — LONGITUDINAL ('+r.h_at_A.toFixed(2)+' m)',
-    svgCorte('ab','CORTE A-B — LONGITUDINAL ('+r.h_at_A.toFixed(2)+' m)','A','B',r.z_t_A,r.z_t_B,r,profAB));
+    svgCorte('ab','CORTE A-B — LONGITUDINAL ('+r.h_at_A.toFixed(2)+' m)','A','B',r.z_t_A,r.z_t_B,r,profAB,r.fdW_AB));
   addCorte('CORTE C-D — TRANSVERSAL ('+r.h_at_C.toFixed(2)+' m)',
-    svgCorte('cd','CORTE C-D — TRANSVERSAL ('+r.h_at_C.toFixed(2)+' m)','C','D',r.z_t_C,r.z_t_D,r,profCD));
+    svgCorte('cd','CORTE C-D — TRANSVERSAL ('+r.h_at_C.toFixed(2)+' m)','C','D',r.z_t_C,r.z_t_D,r,profCD,r.fdW_CD));
 }
 
 // ── Vista 3D — Three.js WebGL (modal inline) ──────────────────────────────────
@@ -1614,8 +1631,8 @@ async function gerarPlantaTecnica(){
   const showVA=naMaxX<MW-16&&(naMaxY-naMinY)>25;
   const naWLbl=naW_m+' m', naHLbl=naH_m+' m';
   const naWLblW=naWLbl.length*5+8, naHLblW=naHLbl.length*5+8;
-  const svgAB=svgCorte('pt','CORTE A-B — LONGITUDINAL ('+r.h_at_A.toFixed(2)+' m)','A','B',r.z_t_A,r.z_t_B,r);
-  const svgCD=svgCorte('ptcd','CORTE C-D — TRANSVERSAL ('+r.h_at_C.toFixed(2)+' m)','C','D',r.z_t_C,r.z_t_D,r);
+  const svgAB=svgCorte('pt','CORTE A-B — LONGITUDINAL ('+r.h_at_A.toFixed(2)+' m)','A','B',r.z_t_A,r.z_t_B,r,null,r.fdW_AB);
+  const svgCD=svgCorte('ptcd','CORTE C-D — TRANSVERSAL ('+r.h_at_C.toFixed(2)+' m)','C','D',r.z_t_C,r.z_t_D,r,null,r.fdW_CD);
   let crMinX=MW,crMaxX=0,crMinY=MH,crMaxY=0;
   if(r.cristaBuf){r.cristaBuf.geometry.coordinates[0].forEach(c=>{const px=toPx2(c[1],c[0]);if(px.x<crMinX)crMinX=px.x;if(px.x>crMaxX)crMaxX=px.x;if(px.y<crMinY)crMinY=px.y;if(px.y>crMaxY)crMaxY=px.y;});}
   const crW_m=Math.round((crMaxX-crMinX)*mPerPx),crH_m=Math.round((crMaxY-crMinY)*mPerPx);
@@ -2060,8 +2077,8 @@ async function gerarPDF(){
   const balancoTxt=(r.balanco>0?'+':'')+fmt(r.balanco)+' m³ '+(r.balanco>0?'(excedente)':'(importar)');
 
   // Cross-section SVGs
-  const svgAB=svgCorte('pab','CORTE A-B — LONGITUDINAL ('+r.h_at_A.toFixed(2)+' m)','A','B',r.z_t_A,r.z_t_B,r);
-  const svgCD=svgCorte('pcd','CORTE C-D — TRANSVERSAL ('+r.h_at_C.toFixed(2)+' m)','C','D',r.z_t_C,r.z_t_D,r);
+  const svgAB=svgCorte('pab','CORTE A-B — LONGITUDINAL ('+r.h_at_A.toFixed(2)+' m)','A','B',r.z_t_A,r.z_t_B,r,null,r.fdW_AB);
+  const svgCD=svgCorte('pcd','CORTE C-D — TRANSVERSAL ('+r.h_at_C.toFixed(2)+' m)','C','D',r.z_t_C,r.z_t_D,r,null,r.fdW_CD);
 
   function tr(lbl,val,bold=false,color=''){return`<tr><td>${lbl}</td><td style="text-align:right;font-weight:${bold?'700':'500'};color:${color||'#1a2535'}">${val}</td></tr>`;}
   function th(t){return`<tr><td colspan="2" style="background:#003d5c;color:#fff;font-size:7.5pt;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:3px 6px;">${t}</td></tr>`;}
