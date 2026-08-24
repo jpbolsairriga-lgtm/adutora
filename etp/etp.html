@@ -84,8 +84,8 @@ tfoot td:first-child{font-family:var(--sans);}
 .empty{padding:32px;text-align:center;color:#8b9aa1;font-size:.85rem;}
 .badge{display:inline-block;padding:1px 6px;border-radius:20px;font-size:.62rem;font-weight:700;}
 .badge-manual{background:#eaf0ff;color:#2a4fa0;}
-.badge-historico{background:#e6f5ee;color:var(--green);}
-.badge-previsao{background:#fff4e0;color:#b8720c;}
+.badge-hist{background:#e6f5ee;color:var(--green);}
+.badge-prev{background:#fff2df;color:#a86400;}
 
 /* ── Local: abas Coordenadas / Polígono KML ── */
 .seg-tabs{display:flex;gap:6px;margin-bottom:12px;}
@@ -216,6 +216,8 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
       <div class="hint">
         Busca Tmin/Tmax/Precipita&#231;&#227;o dia a dia (hist&#243;rico + previs&#227;o, Open-Meteo) e j&#225; adiciona
         todos os dias do intervalo ao balan&#231;o &#8212; sem precisar buscar um dia de cada vez.
+        Dias com badge <span class="badge badge-hist" style="vertical-align:1px;">hist&#243;rico</span> j&#225; foram observados;
+        dias com <span class="badge badge-prev" style="vertical-align:1px;">previs&#227;o</span> (inclusive chuva) s&#227;o estimativa de modelo e podem mudar at&#233; o dia chegar.
       </div>
 
       <details style="margin-top:14px;">
@@ -377,7 +379,9 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
         <li><b>Dias recentes/futuros:</b> combina&#231;&#227;o dos melhores modelos de previs&#227;o dispon&#237;veis para a regi&#227;o (ICON, GFS, ECMWF IFS...).</li>
       </ul>
       <p>Isso significa que a precis&#227;o depende do <b>ponto exato</b> (lat/lon) usado &mdash; quanto mais perto do talh&#227;o real, melhor.</p>
-      <p>O app busca as duas fontes e escolhe automaticamente: usa o <b>hist&#243;rico</b> (dado fechado, definitivo) sempre que a data j&#225; passou, e cai pra <b>previs&#227;o</b> (estimativa, que pode mudar at&#233; a data chegar) para hoje e dias futuros &mdash; a API de hist&#243;rico simplesmente n&#227;o aceita datas futuras. Cada linha da tabela mostra qual das duas foi usada, com o badge <span class="badge badge-historico" style="font-size:.68rem;">hist&#243;rico</span> ou <span class="badge badge-previsao" style="font-size:.68rem;">previs&#227;o</span> &mdash; passe o mouse sobre o badge pra ver o detalhe. Chuva marcada como previs&#227;o pode n&#227;o bater com o que realmente cair; vale reconferir esses dias mais perto da data.</p>
+
+      <h4>Por que aparece chuva "prevista" nos &#250;ltimos dias?</h4>
+      <p>O hist&#243;rico (ERA5) tem uma defasagem de ~5 dias antes de ficar dispon&#237;vel &mdash; ent&#227;o pros dias mais recentes e qualquer dia futuro, o app usa a <b>previs&#227;o do tempo</b> no lugar do hist&#243;rico (inclusive a precipita&#231;&#227;o). Esses dias aparecem com o badge <span class="badge badge-prev">previs&#227;o</span> na tabela &mdash; diferente do <span class="badge badge-hist">hist&#243;rico</span>, que j&#225; &#233; um dado observado e n&#227;o muda mais. Vale reabrir o per&#237;odo e buscar de novo mais perto da data pra atualizar a previs&#227;o (ela &#233; refeita a cada rodada do modelo).</p>
 
       <h4>Como informar o local</h4>
       <ul>
@@ -404,7 +408,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
 (function(){
   const $ = id => document.getElementById(id);
   let days = [];
-  let lastFetchOrigin = null; // 'historico' | 'previsao' | null — fonte do último fetchWeather() bem-sucedido
+  let lastFetchOrigin = null; // 'hist' | 'prev' — origem do último fetch manual bem-sucedido (card "dia manual")
 
   $('date').valueAsDate = new Date();
   $('dateEnd').valueAsDate = new Date();
@@ -577,13 +581,12 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
         if(tmax!=null&&tmin!=null){
           $('tmax').value=tmax.toFixed(1);$('tmin').value=tmin.toFixed(1);
           $('precip').value=(prec!=null?prec:0).toFixed(1);
-          lastFetchOrigin=url.includes('archive')?'historico':'previsao';
-          st.textContent=`✓ Dados obtidos (${lastFetchOrigin==='historico'?'histórico':'previsão'})`;
+          lastFetchOrigin=url.includes('archive')?'hist':'prev';
+          st.textContent=`✓ Dados obtidos (${lastFetchOrigin==='hist'?'histórico':'previsão'})`;
           st.className='status ok';return;
         }
       }catch(e){}
     }
-    lastFetchOrigin=null;
     st.textContent='Não foi possível obter dados automaticamente. Preencha manualmente.';
     st.className='status err';
   }
@@ -601,34 +604,36 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     }
     st.textContent='Buscando dados do período...';st.className='status busy';
 
-    // A API de histórico rejeita a chamada INTEIRA se end_date passar de hoje — por isso
-    // limitamos o pedido de histórico até hoje, senão perderíamos os dias passados válidos
-    // do mesmo período (ex.: período que vai até a semana que vem).
+    const params=`latitude=${lat}&longitude=${lon}&start_date=${startDate}&end_date=${endDate}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto`;
+    const forecastUrl=`https://api.open-meteo.com/v1/forecast?${params}`;
+
+    // A API de histórico rejeita a requisição INTEIRA (HTTP 400) se end_date cair no
+    // futuro — então quando o período pedido cruza hoje, limitamos a chamada do
+    // histórico até hoje, senão perderíamos também os dias passados válidos do mesmo pedido.
     const todayStr=new Date().toISOString().slice(0,10);
-    const archiveEnd=endDate<todayStr?endDate:todayStr;
-    const forecastParams=`latitude=${lat}&longitude=${lon}&start_date=${startDate}&end_date=${endDate}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto`;
-    const forecastUrl=`https://api.open-meteo.com/v1/forecast?${forecastParams}`;
+    const archiveEndDate=endDate<todayStr?endDate:todayStr;
+    const archiveUrl=startDate<=archiveEndDate
+      ?`https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}&start_date=${startDate}&end_date=${archiveEndDate}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto`
+      :null;
 
     let archiveData=null,forecastData=null;
-    if(startDate<=archiveEnd){
-      const archiveParams=`latitude=${lat}&longitude=${lon}&start_date=${startDate}&end_date=${archiveEnd}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto`;
-      try{const r=await fetch(`https://archive-api.open-meteo.com/v1/archive?${archiveParams}`);if(r.ok)archiveData=await r.json();}catch(e){}
-    }
+    if(archiveUrl){try{const r=await fetch(archiveUrl);if(r.ok)archiveData=await r.json();}catch(e){}}
     try{const r=await fetch(forecastUrl);if(r.ok)forecastData=await r.json();}catch(e){}
 
-    // Mescla: prioriza histórico (archive); usa previsão (forecast) para dias sem dado no histórico
-    // — cada dia guarda de qual fonte veio, pra exibir o badge correto na tabela
+    // Mescla: prioriza histórico (archive, dado observado); usa previsão (forecast,
+    // estimativa de modelo) só para dias que o histórico ainda não cobre — tipicamente
+    // os últimos ~5 dias (defasagem do ERA5) e qualquer dia futuro.
     const map={};
-    function ingest(data,source){
+    function ingest(data,label){
       if(!data?.daily?.time)return;
       data.daily.time.forEach((date,i)=>{
         const tmax=data.daily.temperature_2m_max[i];
         const tmin=data.daily.temperature_2m_min[i];
         if(tmax==null||tmin==null)return;
-        if(!map[date])map[date]={tmax,tmin,prec:data.daily.precipitation_sum[i]??0,source};
+        if(!map[date])map[date]={tmax,tmin,prec:data.daily.precipitation_sum[i]??0,origin:label};
       });
     }
-    ingest(archiveData,'historico');ingest(forecastData,'previsao');
+    ingest(archiveData,'hist');ingest(forecastData,'prev');
 
     // Lista de todas as datas do intervalo pedido
     const dates=[];
@@ -636,14 +641,14 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     const end=new Date(endDate+'T00:00:00');
     while(d<=end){dates.push(d.toISOString().slice(0,10));d.setDate(d.getDate()+1);}
 
-    let added=0,addedHist=0,addedPrev=0;const missing=[];
+    let added=0,addedPrev=0;const missing=[];
     dates.forEach(date=>{
       const w=map[date];
       if(!w){missing.push(date);return;}
       days=days.filter(dd=>dd.date!==date);
-      days.push({date,tmin:w.tmin,tmax:w.tmax,precip:w.prec,origin:w.source});
+      days.push({date,tmin:w.tmin,tmax:w.tmax,precip:w.prec,origin:w.origin});
       added++;
-      if(w.source==='historico')addedHist++;else addedPrev++;
+      if(w.origin==='prev')addedPrev++;
     });
     days.sort((a,b)=>a.date.localeCompare(b.date));
     render();
@@ -652,13 +657,11 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
       st.textContent='Não foi possível obter dados para esse período. Tente um intervalo diferente ou adicione manualmente.';
       st.className='status err';
     }else{
-      const partes=[];
-      if(addedHist)partes.push(`${addedHist} histórico${addedHist>1?'s':''}`);
-      if(addedPrev)partes.push(`${addedPrev} previsão`);
-      let msg=`✓ ${added} dia(s) adicionados (${partes.join(' + ')}).`;
-      if(missing.length)msg+=` ${missing.length} dia(s) sem dado disponível: ${missing.slice(0,5).join(', ')}${missing.length>5?'…':''}`;
-      st.textContent=msg;
-      st.className='status ok';
+      let msg=`✓ ${added} dia(s) adicionados`;
+      if(addedPrev>0)msg+=` (${addedPrev} vindo de previsão — pode mudar até o dia chegar)`;
+      if(missing.length)msg+=`. ${missing.length} dia(s) sem dado disponível: ${missing.slice(0,5).join(', ')}${missing.length>5?'…':''}`;
+      else msg+='.';
+      st.textContent=msg;st.className='status ok';
     }
   }
 
@@ -668,15 +671,15 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     const tmin=parseFloat($('tmin').value);
     const tmax=parseFloat($('tmax').value);
     const precip=parseFloat($('precip').value)||0;
-    const origin=($('fetchStatus').classList.contains('ok')&&lastFetchOrigin)?lastFetchOrigin:'manual';
+    const origin=$('fetchStatus').classList.contains('ok')?(lastFetchOrigin||'hist'):'manual';
     if(!date||isNaN(tmin)||isNaN(tmax)){alert('Preencha data, Tmin e Tmax.');return;}
     if(tmax<tmin){alert('Tmax não pode ser menor que Tmin.');return;}
     days=days.filter(d=>d.date!==date);
     days.push({date,tmin,tmax,precip,origin});
     days.sort((a,b)=>a.date.localeCompare(b.date));
-    lastFetchOrigin=null;
     render();
     $('fetchStatus').textContent='';$('fetchStatus').className='status';
+    lastFetchOrigin=null;
   }
 
   function removeDay(date){days=days.filter(d=>d.date!==date);render();}
@@ -748,14 +751,8 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
   function fmtDate(s){
     if(!s)return'';const[y,m,d]=s.split('-');return`${d}/${m}/${y}`;
   }
-  function origemLabel(o){
-    return o==='historico'?'histórico':o==='previsao'?'previsão':'manual';
-  }
-  function origemTitle(o){
-    if(o==='historico')return'Dado observado/reanálise (ERA5) — período já fechado, valor definitivo.';
-    if(o==='previsao')return'Dado de previsão do tempo — estimativa que pode mudar até a data chegar (sobretudo a chuva).';
-    return'Digitado manualmente.';
-  }
+  const ORIGIN_LABEL={hist:'histórico',prev:'previsão',manual:'manual'};
+  const ORIGIN_CLASS={hist:'badge-hist',prev:'badge-prev',manual:'badge-manual'};
 
   /* ── Renderização ── */
   function render(){
@@ -772,7 +769,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
       const irrigStyle=r.irrigH>0.005?'font-weight:700;color:#1a4a2e;background:#e8f5ee;':'color:#aaa;';
       return`<tr class="${rowCls}">
         <td>${fmtDate(r.date)}</td>
-        <td><span class="badge badge-${r.origin}" title="${origemTitle(r.origin)}">${origemLabel(r.origin)}</span></td>
+        <td><span class="badge ${ORIGIN_CLASS[r.origin]||'badge-manual'}" title="${r.origin==='prev'?'Previsão de modelo meteorológico — ainda pode mudar até o dia chegar':r.origin==='hist'?'Dado observado (reanálise histórica)':'Digitado manualmente'}">${ORIGIN_LABEL[r.origin]||r.origin}</span></td>
         <td>${fmt(r.tmin,1)}</td><td>${fmt(r.tmax,1)}</td>
         <td>${fmt(r.eto)}</td>
         <td>${fmt(r.etc)}</td>
@@ -992,7 +989,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
       startY:y,
       head:[['Data','Orig.','Tmin','Tmax','ETP','ETc','ETc_loc','P','Disp.','ETR','DEF','Reserva','Irrig.']],
       body:rows.map(r=>[
-        fmtDate(r.date),r.origin==='historico'?'Hist.':r.origin==='previsao'?'Prev.':'Man.',
+        fmtDate(r.date),ORIGIN_LABEL[r.origin]||r.origin,
         fmt(r.tmin,1),fmt(r.tmax,1),
         fmt(r.eto),fmt(r.etc),fmt(r.etcLoc),
         fmt(r.precip),fmt(r.disponivel),fmt(r.etr),
@@ -1027,7 +1024,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     const rows=computeBalance();
     const hdr=['Data','Origem','Tmin_C','Tmax_C','Ra_mm','ETP_mm','ETc_mm','ETc_loc_mm','P_mm','Disponivel_mm','ETR_mm','DEF_mm','Reserva_mm','Irrigacao_h'];
     const lines=[hdr.join(';')].concat(rows.map(r=>[
-      r.date,r.origin,fmt(r.tmin,1),fmt(r.tmax,1),fmt(r.ra),fmt(r.eto),fmt(r.etc),fmt(r.etcLoc),
+      r.date,ORIGIN_LABEL[r.origin]||r.origin,fmt(r.tmin,1),fmt(r.tmax,1),fmt(r.ra),fmt(r.eto),fmt(r.etc),fmt(r.etcLoc),
       fmt(r.precip),fmt(r.disponivel),fmt(r.etr),fmt(r.def),fmt(r.reserva),fmt(r.irrigH,1)
     ].join(';')));
     const blob=new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8;'});
@@ -1047,9 +1044,6 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
   $('infoOverlay').addEventListener('click',e=>{if(e.target.id==='infoOverlay')$('infoOverlay').classList.remove('open');});
   document.addEventListener('keydown',e=>{if(e.key==='Escape')$('infoOverlay').classList.remove('open');});
   $('btnFetch').addEventListener('click',fetchWeather);
-  ['tmin','tmax','precip'].forEach(id=>{
-    $(id).addEventListener('input',()=>{lastFetchOrigin=null;}); // edição manual invalida a origem do fetch
-  });
   $('btnFetchRange').addEventListener('click',fetchWeatherRange);
   $('btnAdd').addEventListener('click',addDay);
   $('btnPDF').addEventListener('click',gerarRelatorio);
