@@ -270,10 +270,10 @@ input[type=number],select,input[type=text],input[type=password]{width:100%;backg
   <div class="modal" style="max-width:400px;">
     <button class="modal-close" onclick="$('modalChave').classList.remove('open')">✕</button>
     <h2>🔑 Chave Google Maps API</h2>
-    <p style="color:#90a4ae;font-size:11px;margin-bottom:8px;">A chave ativa o mapa satélite Google e o serviço de elevação — necessário para calcular corte e aterro.</p>
+    <p style="color:#90a4ae;font-size:11px;margin-bottom:8px;">A chave ativa o mapa satélite Google e o serviço de elevação — necessário para calcular corte e aterro. Sem chave, o app usa satélite Esri (grátis) no mapa e nos relatórios — a chave só melhora a qualidade da imagem no PDF.</p>
     <ol style="padding-left:16px;font-size:11px;color:#cfd8dc;">
       <li style="margin-bottom:6px;">Acesse <strong>console.cloud.google.com</strong> e crie/selecione um projeto.</li>
-      <li style="margin-bottom:6px;">Ative <strong>Maps JavaScript API</strong> e <strong>Maps Elevation API</strong>.</li>
+      <li style="margin-bottom:6px;">Ative <strong>Maps JavaScript API</strong>, <strong>Maps Elevation API</strong> e <strong>Maps Static API</strong> (esta última é a que gera a imagem de satélite dos relatórios PDF — sem ela o PDF cai automaticamente no satélite Esri).</li>
       <li style="margin-bottom:6px;">Em <strong>Credenciais → + Criar Credencial → Chave de API</strong>, copie a chave.</li>
       <li>Cole a chave no campo acima e pressione ✓.</li>
     </ol>
@@ -321,6 +321,64 @@ function updateVutilHint(){
 
 function setStatus(msg, tipo=''){const el=$('status');if(el){el.textContent=msg;el.className=tipo;}}
 function fmt(n,d=0){return(+n).toLocaleString('pt-BR',{minimumFractionDigits:d,maximumFractionDigits:d});}
+
+// ── Imagem satélite p/ relatórios (Google Static Maps se houver chave, senão Esri sem chave) ──
+// A API "Maps Static" do Google costuma não estar habilitada mesmo quando a chave funciona pro
+// mapa/elevação — e o endpoint /export do Esri World_Imagery não funciona (é um serviço "cached",
+// sem suporte a export dinâmico). Solução robusta: montar a imagem localmente juntando os mesmos
+// tiles XYZ que já alimentam o mapa interativo (CORS liberado nesse serviço) num canvas, e embutir
+// o resultado como data URL — nunca depende de rede no momento de imprimir o relatório.
+async function stitchEsriTile(cLat,cLng,zoom,W,H){
+  try{
+    const tileZ=Math.max(0,Math.min(19,Math.round(zoom)));
+    const scale=256*Math.pow(2,tileZ);
+    const wx=lng=>(lng+180)/360*scale;
+    const wy=lat=>{const s=Math.sin(lat*Math.PI/180);return(0.5-Math.log((1+s)/(1-s))/(4*Math.PI))*scale;};
+    const originX=wx(cLng)-W/2, originY=wy(cLat)-H/2;
+    const tx0=Math.floor(originX/256), ty0=Math.floor(originY/256);
+    const tx1=Math.floor((originX+W)/256), ty1=Math.floor((originY+H)/256);
+    const canvas=document.createElement('canvas');canvas.width=W;canvas.height=H;
+    const ctx=canvas.getContext('2d');
+    const maxTile=Math.pow(2,tileZ);
+    const loads=[];
+    for(let ty=ty0;ty<=ty1;ty++){
+      if(ty<0||ty>=maxTile)continue;
+      for(let tx=tx0;tx<=tx1;tx++){
+        const wrapX=((tx%maxTile)+maxTile)%maxTile;
+        const px=tx*256-originX, py=ty*256-originY;
+        const url=`https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${tileZ}/${ty}/${wrapX}`;
+        loads.push(new Promise(res=>{
+          const img=new Image();img.crossOrigin='anonymous';
+          img.onload=()=>{try{ctx.drawImage(img,px,py,256,256);}catch(e){}res();};
+          img.onerror=()=>res();
+          img.src=url;
+        }));
+      }
+    }
+    await Promise.all(loads);
+    return canvas.toDataURL('image/jpeg',0.85);
+  }catch(e){console.error('stitchEsriTile:',e);return null;}
+}
+async function getSatelliteDataUrl(cLat,cLng,zoom,W,H){
+  const key=localStorage.getItem('mapskey_terra')||'';
+  if(key){
+    try{
+      const g=`https://maps.googleapis.com/maps/api/staticmap?center=${cLat},${cLng}&zoom=${zoom}&size=${W}x${H}&scale=2&maptype=satellite&key=${key}`;
+      const resp=await fetch(g);
+      if(resp.ok){
+        const blob=await resp.blob();
+        if(blob.size>800){ // respostas de erro do Google costumam vir como PNG pequeno de aviso
+          return await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=rej;fr.readAsDataURL(blob);});
+        }
+      }
+    }catch(e){/* chave sem "Maps Static API" habilitada, CORS ou rede — cai no fallback abaixo */}
+  }
+  return await stitchEsriTile(cLat,cLng,zoom,W,H);
+}
+function satelliteImgHtml(dataUrl,attrs,altTxt){
+  if(dataUrl)return `<img src="${dataUrl}" ${attrs} alt="${altTxt}"/>`;
+  return `<div style="width:100%;height:100%;background:#c8d4e0;display:flex;align-items:center;justify-content:center;font-size:9pt;color:#666;text-align:center;padding:6px;">Sem conexão — imagem de satélite indisponível</div>`;
+}
 function haversineM(a,b){const R=6371000,dLat=(b.lat-a.lat)*Math.PI/180,dLng=(b.lng-a.lng)*Math.PI/180;const s=Math.sin(dLat/2)**2+Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.sin(dLng/2)**2;return R*2*Math.asin(Math.sqrt(s));}
 
 // ── Mapa ─────────────────────────────────────────────────────────────────────
@@ -1189,10 +1247,21 @@ function svgCorte(id, titleStr, ptLabelL, ptLabelR, z_tL, z_tR, r, terrainProfil
     {z:zFd,c:'#00838f',d:'6,4',lbl:zFd.toFixed(2)+' Fundo'}
   ];
   if(r.h_m>0.05) refs.push({z:zFd+r.h_m,c:'#f57f17',d:'14,5',lbl:(zFd+r.h_m).toFixed(2)+' V. morto'});
-  refs.forEach(function(rf){
-    var y=sy(rf.z); if(y<pt_-8||y>Ybot+8)return;
-    out.push('<line x1="'+pl_+'" y1="'+y.toFixed(1)+'" x2="'+(W-pr_+2)+'" y2="'+y.toFixed(1)+'" stroke="'+rf.c+'" stroke-width="1" stroke-dasharray="'+rf.d+'"/>');
-    out.push('<text x="'+(W-pr_+8)+'" y="'+(y+4.5).toFixed(1)+'" font-size="9" fill="'+rf.c+'" font-weight="bold">'+rf.lbl+'</text>');
+  // Cotas podem ficar muito próximas (ex: Crista/NA separadas só pela borda livre) e os rótulos
+  // se sobrepõem. A linha tracejada fica na cota real; o RÓTULO é "desengrudado" com espaçamento
+  // mínimo, com um traço curto ligando-o de volta à linha quando precisa deslocar.
+  var visRefs=refs.map(function(rf){return{z:rf.z,c:rf.c,d:rf.d,lbl:rf.lbl,yTrue:sy(rf.z),y:sy(rf.z)};})
+    .filter(function(rf){return rf.yTrue>=pt_-8&&rf.yTrue<=Ybot+8;});
+  visRefs.sort(function(a,b){return a.y-b.y;});
+  var minSep=11;
+  for(var _i=1;_i<visRefs.length;_i++){if(visRefs[_i].y-visRefs[_i-1].y<minSep)visRefs[_i].y=visRefs[_i-1].y+minSep;}
+  for(var _i=visRefs.length-2;_i>=0;_i--){if(visRefs[_i+1].y-visRefs[_i].y<minSep)visRefs[_i].y=visRefs[_i+1].y-minSep;}
+  visRefs.forEach(function(rf){
+    out.push('<line x1="'+pl_+'" y1="'+rf.yTrue.toFixed(1)+'" x2="'+(W-pr_+2)+'" y2="'+rf.yTrue.toFixed(1)+'" stroke="'+rf.c+'" stroke-width="1" stroke-dasharray="'+rf.d+'"/>');
+    if(Math.abs(rf.y-rf.yTrue)>1.2){
+      out.push('<line x1="'+(W-pr_+2)+'" y1="'+rf.yTrue.toFixed(1)+'" x2="'+(W-pr_+7)+'" y2="'+rf.y.toFixed(1)+'" stroke="'+rf.c+'" stroke-width="0.8"/>');
+    }
+    out.push('<text x="'+(W-pr_+8)+'" y="'+(rf.y+3.2).toFixed(1)+'" font-size="9" fill="'+rf.c+'" font-weight="bold">'+rf.lbl+'</text>');
   });
 
   // 6. Rótulos de inclinação dos taludes
@@ -1486,7 +1555,7 @@ function gerarVista3D(){
 }
 
 // ── Planta Técnica ────────────────────────────────────────────────────────────
-function gerarPlantaTecnica(){
+async function gerarPlantaTecnica(){
   if(!resultado||!polyPts||polyPts.length<3){alert('Dimensione o reservatório primeiro.');return;}
   const r=resultado;
   const win=window.open('','_blank');
@@ -1496,7 +1565,6 @@ function gerarPlantaTecnica(){
   const consultor=$('rConsultor').value.trim()||'João Paulo de Oliveira';
   const cliente=$('rCliente').value.trim()||'—';
   const prop=$('rProp').value.trim()||'—';
-  const key=localStorage.getItem('mapskey_terra')||'';
 
   // Bounds com padding para o mapa satélite
   const bbox=turf.bbox(r.peExtBuf||r.cristaBuf||turfPoly);
@@ -1508,7 +1576,8 @@ function gerarPlantaTecnica(){
 
   function _zoom2(sw,ne,W,H){const T=256;const latRad=lat=>Math.log((1+Math.sin(lat*Math.PI/180))/(1-Math.sin(lat*Math.PI/180)))/2;const latF=Math.abs(latRad(ne.lat)-latRad(sw.lat))/Math.PI;const lngF=Math.abs(ne.lng-sw.lng)/360;const zL=Math.floor(Math.log(2*H/T/latF)/Math.LN2);const zG=Math.floor(Math.log(W/T/lngF)/Math.LN2);return{zoom:Math.min(zL,zG,20),cLat:(sw.lat+ne.lat)/2,cLng:(sw.lng+ne.lng)/2};}
   const {zoom:zm,cLat:cLt,cLng:cLg}=_zoom2(sw,ne,MW,MH);
-  const staticUrl=key?`https://maps.googleapis.com/maps/api/staticmap?center=${cLt},${cLg}&zoom=${zm}&size=${MW}x${MH}&scale=2&maptype=satellite&key=${key}`:'';
+  const satDataUrl=await getSatelliteDataUrl(cLt,cLg,zm,MW,MH);
+  const staticImgHtml=satelliteImgHtml(satDataUrl,'style="width:100%;height:100%;object-fit:cover;display:block;"','Sat');
 
   function _mkToPx2(cLat,cLng,zoom,W,H){const S=256*Math.pow(2,zoom);const wx=lng=>(lng+180)/360*S;const wy=lat=>{const s=Math.sin(lat*Math.PI/180);return(0.5-Math.log((1+s)/(1-s))/(4*Math.PI))*S;};const cx=wx(cLng),cy=wy(cLat);return(lat,lng)=>({x:wx(lng)-cx+W/2,y:wy(lat)-cy+H/2});}
   const toPx2=_mkToPx2(cLt,cLg,zm,MW,MH);
@@ -1591,7 +1660,7 @@ tr:nth-child(even) td:not(.th2){background:#f7f9fb;}
 <div>
   <div style="font-size:5.5pt;font-weight:700;letter-spacing:.08em;color:#546e7a;text-transform:uppercase;margin-bottom:1.5mm;">PLANTA BAIXA — MOVIMENTAÇÃO DE TERRA</div>
   <div style="position:relative;width:100%;aspect-ratio:512/307;overflow:hidden;border:0.8pt solid #888;">
-      ${staticUrl?`<img src="${staticUrl}" style="width:100%;height:100%;object-fit:cover;display:block;" alt="Sat"/>`:'<div style="width:100%;height:100%;background:#c8d4e0;display:flex;align-items:center;justify-content:center;font-size:8.5pt;color:#666;">Chave Google API necessária para imagem satélite</div>'}
+      ${staticImgHtml}
       <svg viewBox="0 0 ${MW} ${MH}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" style="position:absolute;inset:0;width:100%;height:100%;">
         <defs>
           <pattern id="hPE2" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(-45)"><line x1="4" y1="0" x2="4" y2="8" stroke="#2e7d32" stroke-width="2"/></pattern>
@@ -1948,7 +2017,7 @@ function gerarKML3D(){
 }
 
 // ── PDF ───────────────────────────────────────────────────────────────────────
-function gerarPDF(){
+async function gerarPDF(){
   if(!resultado){alert('Dimensione o reservatório primeiro.');return;}
   const r=resultado;
   const win=window.open('','_blank');
@@ -1957,7 +2026,6 @@ function gerarPDF(){
   const consultor=$('rConsultor').value.trim()||'João Paulo de Oliveira';
   const cliente=$('rCliente').value.trim()||'—';
   const prop=$('rProp').value.trim()||'—';
-  const key=localStorage.getItem('mapskey_terra')||'';
   const comp_pct=r.comp_pct;
 
   // Static map bounding box (expand to include pé externo)
@@ -1970,7 +2038,8 @@ function gerarPDF(){
 
   function _zoom(sw,ne,W,H){const T=256,LN2=Math.LN2;const latRad=lat=>Math.log((1+Math.sin(lat*Math.PI/180))/(1-Math.sin(lat*Math.PI/180)))/2;const latF=Math.abs(latRad(ne.lat)-latRad(sw.lat))/Math.PI;const lngF=Math.abs(ne.lng-sw.lng)/360;const zL=Math.floor(Math.log(2*H/T/latF)/LN2);const zG=Math.floor(Math.log(W/T/lngF)/LN2);return{zoom:Math.min(zL,zG,20),cLat:(sw.lat+ne.lat)/2,cLng:(sw.lng+ne.lng)/2};}
   const {zoom,cLat,cLng}=_zoom(sw,ne,MW,MH);
-  const staticUrl=key?`https://maps.googleapis.com/maps/api/staticmap?center=${cLat},${cLng}&zoom=${zoom}&size=${MW}x${MH}&scale=2&maptype=satellite&key=${key}`:'';
+  const satDataUrl=await getSatelliteDataUrl(cLat,cLng,zoom,MW,MH);
+  const staticImgHtml=satelliteImgHtml(satDataUrl,'','Mapa satélite');
 
   function _mkToPx(cLat,cLng,zoom,W,H){const S=256*Math.pow(2,zoom);const wx=lng=>(lng+180)/360*S;const wy=lat=>{const s=Math.sin(lat*Math.PI/180);return(0.5-Math.log((1+s)/(1-s))/(4*Math.PI))*S;};const cx=wx(cLng),cy=wy(cLat);return(lat,lng)=>({x:wx(lng)-cx+W/2,y:wy(lat)-cy+H/2});}
   const toPx=_mkToPx(cLat,cLng,zoom,MW,MH);
@@ -2041,7 +2110,7 @@ tr:nth-child(even) td:not([colspan]){background:#f8fafc;}
   <div class="plan-col">
     <div class="plan-title">PLANTA BAIXA — ESC. INDICADA</div>
     <div class="plan-wrap">
-      ${staticUrl?`<img src="${staticUrl}" alt="Mapa satélite"/>`:'<div style="width:100%;height:100%;background:#c8d4e0;display:flex;align-items:center;justify-content:center;font-size:9pt;color:#666;">Chave API necessária para imagem satélite</div>'}
+      ${staticImgHtml}
       <svg viewBox="0 0 ${MW} ${MH}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
         ${pePath?`<path d="${pePath}" fill="none" stroke="#6a1b9a" stroke-width="1.5" stroke-dasharray="5,3" opacity="0.9"/>`:''}
         ${crPath?`<path d="${crPath}" fill="none" stroke="#9c27b0" stroke-width="2" opacity="0.9"/>`:''}
