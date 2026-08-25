@@ -3,6 +3,18 @@
 Todas as mudanças notáveis deste app ficam registradas aqui. O número de versão aparece
 no canto do título, dentro do próprio app (`v2.0.0` etc.) — clique nele pra abrir este arquivo.
 
+## v2.8.0 — 2026-08-25
+
+### Alterado
+- O "Extrato do Balanço Hídrico" (v2.7.0) e o painel de Armazenamento no Solo (ARM)
+  foram **fundidos num único gráfico**: um só eixo vertical contínuo em mm, com o
+  **ARM acima do zero (azul)** e o **déficit abaixo do zero (vermelho)**, ancorados
+  na mesma linha de base — mostra visualmente o solo secando (ARM caindo rumo a
+  zero) até entrar em déficit hídrico (mergulha abaixo de zero), ao contrário de
+  antes que eram dois painéis com escalas separadas. Excedente deixou de ser
+  desenhado no gráfico (continua na tabela/CSV) — avisar se quiser ele de volta de
+  algum jeito.
+
 ## v2.7.0 — 2026-08-25
 
 ### Alterado

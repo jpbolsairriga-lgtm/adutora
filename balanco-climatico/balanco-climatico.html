@@ -223,7 +223,7 @@
 <body>
 
 <header class="app-header no-print">
-  <h1>🌦️ Balanço Climático <a class="version-badge" id="versionBadge" href="CHANGELOG.md" target="_blank" rel="noopener" title="Ver histórico de versões (CHANGELOG.md)">v2.7.0</a></h1>
+  <h1>🌦️ Balanço Climático <a class="version-badge" id="versionBadge" href="CHANGELOG.md" target="_blank" rel="noopener" title="Ver histórico de versões (CHANGELOG.md)">v2.8.0</a></h1>
   <p>Área da fazenda via KML + imagem de satélite + clima mensal (NASA POWER ou Open-Meteo, ano único ou média histórica) + balanço hídrico do solo e necessidade de irrigação da cultura.</p>
 </header>
 
@@ -330,7 +330,7 @@
 
 <section class="quadro" id="quadroBalanco">
   <h2>⚖️ Balanço Hídrico Climático <span class="method-tag">Thornthwaite &amp; Mather (1955)</span></h2>
-  <p class="sub">Balanço sequencial do solo: chuva × ETo, armazenamento de água disponível, déficit (vermelho) e excedente (azul).</p>
+  <p class="sub">Balanço sequencial do solo: chuva × ETo, e um único gráfico com armazenamento de água disponível (azul, acima do zero) × déficit hídrico (vermelho, abaixo do zero).</p>
   <div class="chart-head">
     <div class="field field-inline">
       <label for="cadInput">CAD do solo (mm)</label>
@@ -340,7 +340,7 @@
     <button class="btn no-print" id="exportBalanceCsvBtn" type="button" style="margin-left:auto;" disabled>⬇️ Exportar CSV</button>
   </div>
   <div class="chart-wrap" id="balanceChartWrap">
-    <svg id="balanceSvg" viewBox="0 0 780 392" preserveAspectRatio="xMidYMid meet"></svg>
+    <svg id="balanceSvg" viewBox="0 0 780 380" preserveAspectRatio="xMidYMid meet"></svg>
     <div class="chart-tooltip" id="balanceTooltip" hidden></div>
   </div>
   <p class="chart-summary" id="balanceSummary"></p>
@@ -1354,9 +1354,8 @@
 
     const W=780, plotX0=52, plotX1=764, plotW=plotX1-plotX0;
     const mainY0=14, mainY1=168;                 // P (barras) x ETP (linha)
-    const extY0=192, extY1=276; const extMid=(extY0+extY1)/2;   // extrato do balanço hídrico (déficit/excedente, curva única cruzando o zero)
-    const armY0=300, armY1=354;                   // armazenamento no solo (ARM)
-    const labelY = 372;
+    const combY0=192, combY1=340;                 // armazenamento no solo (ARM, acima do zero) × déficit (abaixo do zero), 1 eixo só
+    const labelY = 358;
     const colW = plotW/12;
 
     const styles = getComputedStyle(document.documentElement);
@@ -1373,15 +1372,13 @@
     const scaleMain = niceScale(Math.max(1, ...wb.map(m => Math.max(m.P||0, m.ETP||0))), 5);
     const maxMain = scaleMain.max;
 
-    // Extrato do Balanço Hídrico (Thornthwaite & Mather): uma única curva mensal, positiva
-    // no excedente e negativa no déficit (déficit×-1) — não é acumulado, é o valor de cada mês.
-    const extVals = wb.map(m => (m.EXC||0) - (m.DEF||0));
-    const scaleExt = niceScale(Math.max(1, ...wb.map(m => Math.max(m.DEF||0, m.EXC||0))), 4);
-    const maxExt = scaleExt.max;
-
+    // Armazenamento no solo (ARM, 0..CAD) e déficit (0..∞, mostrado ×-1) num único eixo vertical
+    // contínuo, em mm — não são valores diferentes normalizados em duas escalas, é a mesma régua:
+    // o solo vai secando (ARM cai rumo a 0) até entrar em déficit hídrico (cai abaixo de 0).
+    const combTop = cad;
+    const combBottom = -niceScale(Math.max(1, ...wb.map(m => m.DEF||0)), 4).max;
+    const yComb = v => combY0 + ((combTop - v)/(combTop - combBottom))*(combY1 - combY0);
     const yMain = v => mainY1 - (v/maxMain)*(mainY1-mainY0);
-    const yExt = v => extMid - (v/maxExt)*((extY1-extY0)/2);
-    const yArm = v => armY1 - (Math.min(v,cad)/cad)*(armY1-armY0);
 
     // -- painel 1: P x ETP --
     scaleMain.ticks.forEach(val => {
@@ -1392,33 +1389,17 @@
     });
     svg.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:mainY1,y2:mainY1,stroke:cBaseline,'stroke-width':1}));
 
-    // -- painel 2: Extrato do Balanço Hídrico --
-    scaleExt.ticks.forEach(val => {
-      if (val === 0) return;
-      [val, -val].forEach(v => {
-        const y = yExt(v);
-        svg.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:y,y2:y,stroke:cGrid,'stroke-width':1}));
-        const t = sv('text',{x:plotX0-8,y:y+3,'text-anchor':'end','font-size':10,fill:cMuted});
-        t.textContent = fmt0(val); svg.appendChild(t);
-      });
-    });
-    svg.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:extMid,y2:extMid,stroke:cBaseline,'stroke-width':1}));
-    const eLabel = sv('text',{x:plotX0-8,y:extMid+3,'text-anchor':'end','font-size':9,fill:cMuted});
-    eLabel.textContent = '0'; svg.appendChild(eLabel);
-    const extTitle = sv('text',{x:plotX0,y:extY0-6,'font-size':10,'font-weight':700,fill:cMuted});
-    extTitle.textContent = 'EXTRATO DO BALANÇO HÍDRICO'; svg.appendChild(extTitle);
-
-    // -- painel 3: armazenamento no solo (ARM) --
-    [0, cad].forEach(val => {
-      const y = yArm(val);
-      svg.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:y,y2:y,stroke:cGrid,'stroke-width':1}));
-      const t = sv('text',{x:plotX0-8,y:y+3,'text-anchor':'end','font-size':10,fill:cMuted});
+    // -- painel 2: ARM × Déficit, um eixo só --
+    [combTop, 0, combBottom].forEach(val => {
+      const y = yComb(val);
+      svg.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:y,y2:y,stroke: val===0 ? cBaseline : cGrid,'stroke-width':1}));
+      const t = sv('text',{x:plotX0-8,y:y+3,'text-anchor':'end','font-size':val===0?9:10,fill:cMuted});
       t.textContent = fmt0(val); svg.appendChild(t);
     });
-    const armTitle = sv('text',{x:plotX0,y:armY0-6,'font-size':10,'font-weight':700,fill:cMuted});
-    armTitle.textContent = 'ARMAZENAMENTO NO SOLO (ARM)'; svg.appendChild(armTitle);
+    const combTitle = sv('text',{x:plotX0,y:combY0-6,'font-size':10,'font-weight':700,fill:cMuted});
+    combTitle.textContent = 'ARMAZENAMENTO NO SOLO (ARM) × DÉFICIT'; svg.appendChild(combTitle);
 
-    const linePts = [], armPts = [], extPts = [];
+    const linePts = [], armPts = [], defPts = [];
     const hitLayer = sv('g',{});
     wb.forEach((m,i) => {
       const cx = plotX0 + colW*(i+0.5);
@@ -1426,13 +1407,13 @@
       const path = roundedTopRect(cx-bw/2, yMain(m.P), bw, mainY1-yMain(m.P), 4);
       svg.appendChild(sv('path',{d:path, fill:cPrecip}));
       linePts.push([cx, yMain(m.ETP)]);
-      armPts.push([cx, yArm(m.ARM)]);
-      extPts.push([cx, extVals[i]]);
+      armPts.push([cx, yComb(m.ARM)]);
+      defPts.push([cx, yComb(-(m.DEF||0))]);
 
       const lbl = sv('text',{x:cx,y:labelY,'text-anchor':'middle','font-size':11,fill:cMuted});
       lbl.textContent = MONTH_NAMES[m.month-1]; svg.appendChild(lbl);
 
-      const hit = sv('rect',{x:plotX0+colW*i, y:mainY0, width:colW, height:armY1-mainY0, fill:'transparent', tabindex:'0'});
+      const hit = sv('rect',{x:plotX0+colW*i, y:mainY0, width:colW, height:combY1-mainY0, fill:'transparent', tabindex:'0'});
       hit.dataset.idx = i;
       hitLayer.appendChild(hit);
     });
@@ -1447,54 +1428,34 @@
       svg.appendChild(sv('circle',{cx:x,cy:y,r:4,fill:cEto}));
     });
 
-    // Extrato do Balanço Hídrico: curva única (reta entre meses) que cruza o zero — o
-    // preenchimento é separado em excedente (azul, acima) e déficit (vermelho, abaixo) inserindo
-    // um ponto interpolado exatamente onde a reta cruza o zero entre dois meses de sinal oposto,
-    // pra a transição de cor ficar na posição real do cruzamento (como no "Extrato" clássico),
-    // não presa ao centro do mês.
-    const extAug = [];
-    extPts.forEach((p,i) => {
-      extAug.push(p);
-      if (i < extPts.length-1){
-        const [x0,v0] = p, [x1,v1] = extPts[i+1];
-        if ((v0>0 && v1<0) || (v0<0 && v1>0)){
-          const t = v0/(v0-v1);
-          extAug.push([x0+t*(x1-x0), 0]);
-        }
-      }
-    });
-    function clampedAreaPath(clampFn){
-      const pts = extAug.map(([x,v]) => [x, yExt(clampFn(v))]);
-      return 'M'+pts[0][0]+','+extMid+' '+pts.map(p=>'L'+p[0]+','+p[1]).join(' ')+' L'+pts[pts.length-1][0]+','+extMid+' Z';
-    }
-    svg.appendChild(sv('path',{d:clampedAreaPath(v=>Math.max(0,v)), fill:cBlue, opacity:0.22}));
-    svg.appendChild(sv('path',{d:clampedAreaPath(v=>Math.min(0,v)), fill:cRed, opacity:0.22}));
-    function clampedLinePath(clampFn){
-      const pts = extAug.map(([x,v]) => [x, yExt(clampFn(v))]);
-      return pts.map((p,i)=>(i===0?'M':'L')+p[0]+','+p[1]).join(' ');
-    }
-    svg.appendChild(sv('path',{d:clampedLinePath(v=>Math.max(0,v)), fill:'none', stroke:cBlue,'stroke-width':2,'stroke-linecap':'round','stroke-linejoin':'round'}));
-    svg.appendChild(sv('path',{d:clampedLinePath(v=>Math.min(0,v)), fill:'none', stroke:cRed,'stroke-width':2,'stroke-linecap':'round','stroke-linejoin':'round'}));
-    extPts.forEach(([x,v]) => {
-      if (Math.abs(v) <= 0.05) return;
-      const y = yExt(v);
-      svg.appendChild(sv('circle',{cx:x,cy:y,r:6,fill:cSurface}));
-      svg.appendChild(sv('circle',{cx:x,cy:y,r:4,fill: v>0 ? cBlue : cRed}));
-    });
-
-    // ARM área + linha
+    // ARM (azul, acima do zero) — área + linha, ancorada no zero do eixo combinado
+    const zeroY = yComb(0);
     if (armPts.length > 1){
-      const areaD = 'M'+armPts[0][0]+','+armY1+' '+armPts.map(p=>'L'+p[0]+','+p[1]).join(' ')+' L'+armPts[armPts.length-1][0]+','+armY1+' Z';
-      svg.appendChild(sv('path',{d:areaD, fill:cPrecip, opacity:0.12}));
+      const areaD = 'M'+armPts[0][0]+','+zeroY+' '+armPts.map(p=>'L'+p[0]+','+p[1]).join(' ')+' L'+armPts[armPts.length-1][0]+','+zeroY+' Z';
+      svg.appendChild(sv('path',{d:areaD, fill:cBlue, opacity:0.2}));
       const lineD = armPts.map((p,i)=>(i===0?'M':'L')+p[0]+','+p[1]).join(' ');
-      svg.appendChild(sv('path',{d:lineD, fill:'none', stroke:cPrecip,'stroke-width':2,'stroke-linecap':'round','stroke-linejoin':'round'}));
+      svg.appendChild(sv('path',{d:lineD, fill:'none', stroke:cBlue,'stroke-width':2,'stroke-linecap':'round','stroke-linejoin':'round'}));
     }
     armPts.forEach(([x,y]) => {
       svg.appendChild(sv('circle',{cx:x,cy:y,r:5,fill:cSurface}));
-      svg.appendChild(sv('circle',{cx:x,cy:y,r:3,fill:cPrecip}));
+      svg.appendChild(sv('circle',{cx:x,cy:y,r:3,fill:cBlue}));
     });
 
-    const crosshair = sv('line',{x1:0,x2:0,y1:mainY0,y2:armY1,stroke:cMuted,'stroke-width':1,'stroke-dasharray':'3,3',opacity:0});
+    // Déficit (vermelho, abaixo do zero) — área + linha, mesma âncora no zero
+    if (defPts.length > 1){
+      const areaD = 'M'+defPts[0][0]+','+zeroY+' '+defPts.map(p=>'L'+p[0]+','+p[1]).join(' ')+' L'+defPts[defPts.length-1][0]+','+zeroY+' Z';
+      svg.appendChild(sv('path',{d:areaD, fill:cRed, opacity:0.2}));
+      const lineD = defPts.map((p,i)=>(i===0?'M':'L')+p[0]+','+p[1]).join(' ');
+      svg.appendChild(sv('path',{d:lineD, fill:'none', stroke:cRed,'stroke-width':2,'stroke-linecap':'round','stroke-linejoin':'round'}));
+    }
+    wb.forEach((m,i) => {
+      if (!(m.DEF > 0.05)) return;
+      const [x,y] = defPts[i];
+      svg.appendChild(sv('circle',{cx:x,cy:y,r:5,fill:cSurface}));
+      svg.appendChild(sv('circle',{cx:x,cy:y,r:3,fill:cRed}));
+    });
+
+    const crosshair = sv('line',{x1:0,x2:0,y1:mainY0,y2:combY1,stroke:cMuted,'stroke-width':1,'stroke-dasharray':'3,3',opacity:0});
     svg.appendChild(crosshair);
     svg.appendChild(hitLayer);
 
@@ -1508,7 +1469,7 @@
       const rows = [
         ['Precipitação', fmt0(m.P)+' mm', cPrecip],
         ['ETP (ETo)', fmt0(m.ETP)+' mm', cEto],
-        ['Armazenamento', fmt0(m.ARM)+' mm', cPrecip],
+        ['Armazenamento', fmt0(m.ARM)+' mm', cBlue],
         ['Déficit', m.DEF>0.05 ? fmt0(m.DEF)+' mm' : '—', cRed],
         ['Excedente', m.EXC>0.05 ? fmt0(m.EXC)+' mm' : '—', cBlue]
       ];
@@ -1543,7 +1504,7 @@
 
     const legend = el('balanceLegend');
     legend.innerHTML = '';
-    [['Precipitação',cPrecip,'bar'],['ETP (ETo)',cEto,''],['Excedente',cBlue,''],['Déficit',cRed,'']].forEach(([label,c,cls]) => {
+    [['Precipitação',cPrecip,'bar'],['ETP (ETo)',cEto,''],['Armazenamento (ARM)',cBlue,''],['Déficit',cRed,'']].forEach(([label,c,cls]) => {
       const li = document.createElement('div'); li.className='legend-item';
       li.innerHTML = `<span class="legend-swatch ${cls}" style="background:${c}"></span> ${label}`;
       legend.appendChild(li);
