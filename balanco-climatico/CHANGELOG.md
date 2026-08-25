@@ -3,6 +3,20 @@
 Todas as mudanças notáveis deste app ficam registradas aqui. O número de versão aparece
 no canto do título, dentro do próprio app (`v2.0.0` etc.) — clique nele pra abrir este arquivo.
 
+## v2.7.0 — 2026-08-25
+
+### Alterado
+- Os painéis "Déficit/Excedente" (mensal, em barra) e "Déficit/Excedente Acumulado"
+  (v2.6.0/v2.6.1) foram **unificados** num único painel: **"Extrato do Balanço
+  Hídrico"**, no formato clássico de Thornthwaite & Mather (Rolim/Ortolani-Camargo)
+  — uma curva contínua por mês (reta entre os pontos), positiva no excedente (azul,
+  acima do zero) e negativa no déficit (vermelho, abaixo do zero), com a transição
+  de cor exatamente no ponto onde a reta cruza o zero entre dois meses (não presa
+  ao centro do mês). Volta a mostrar o valor mensal (não acumulado) — o recurso de
+  acumulado das versões anteriores foi descontinuado em favor desse formato mais
+  reconhecido/consolidado no meio agrometeorológico. Tabela, CSV, tooltip e resumo
+  voltaram às colunas originais (sem os acumulados).
+
 ## v2.6.1 — 2026-08-25
 
 ### Alterado

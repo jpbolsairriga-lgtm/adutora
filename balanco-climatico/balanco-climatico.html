@@ -223,7 +223,7 @@
 <body>
 
 <header class="app-header no-print">
-  <h1>🌦️ Balanço Climático <a class="version-badge" id="versionBadge" href="CHANGELOG.md" target="_blank" rel="noopener" title="Ver histórico de versões (CHANGELOG.md)">v2.6.1</a></h1>
+  <h1>🌦️ Balanço Climático <a class="version-badge" id="versionBadge" href="CHANGELOG.md" target="_blank" rel="noopener" title="Ver histórico de versões (CHANGELOG.md)">v2.7.0</a></h1>
   <p>Área da fazenda via KML + imagem de satélite + clima mensal (NASA POWER ou Open-Meteo, ano único ou média histórica) + balanço hídrico do solo e necessidade de irrigação da cultura.</p>
 </header>
 
@@ -340,7 +340,7 @@
     <button class="btn no-print" id="exportBalanceCsvBtn" type="button" style="margin-left:auto;" disabled>⬇️ Exportar CSV</button>
   </div>
   <div class="chart-wrap" id="balanceChartWrap">
-    <svg id="balanceSvg" viewBox="0 0 780 440" preserveAspectRatio="xMidYMid meet"></svg>
+    <svg id="balanceSvg" viewBox="0 0 780 392" preserveAspectRatio="xMidYMid meet"></svg>
     <div class="chart-tooltip" id="balanceTooltip" hidden></div>
   </div>
   <p class="chart-summary" id="balanceSummary"></p>
@@ -1335,7 +1335,7 @@
     return n;
   }
 
-  // ---- Balance chart (precip bars + ETo line + diverging ribbon) ----
+  // ---- Balance chart (precip bars + ETo line, "Extrato do Balanço Hídrico" diverging area, ARM) ----
   function renderBalanceChart(wb, cad){
     const svg = el('balanceSvg');
     svg.innerHTML = '';
@@ -1354,10 +1354,9 @@
 
     const W=780, plotX0=52, plotX1=764, plotW=plotX1-plotX0;
     const mainY0=14, mainY1=168;                 // P (barras) x ETP (linha)
-    const ribbonY0=192, ribbonY1=244; const ribbonMid=(ribbonY0+ribbonY1)/2;   // déficit/excedente do mês
-    const cumY0=268, cumY1=322; const cumMid=(cumY0+cumY1)/2;   // déficit/excedente acumulado no ano
-    const armY0=346, armY1=400;                   // armazenamento no solo (ARM)
-    const labelY = 418;
+    const extY0=192, extY1=276; const extMid=(extY0+extY1)/2;   // extrato do balanço hídrico (déficit/excedente, curva única cruzando o zero)
+    const armY0=300, armY1=354;                   // armazenamento no solo (ARM)
+    const labelY = 372;
     const colW = plotW/12;
 
     const styles = getComputedStyle(document.documentElement);
@@ -1373,18 +1372,15 @@
 
     const scaleMain = niceScale(Math.max(1, ...wb.map(m => Math.max(m.P||0, m.ETP||0))), 5);
     const maxMain = scaleMain.max;
-    const maxBal = niceScale(Math.max(1, ...wb.map(m => Math.max(m.DEF||0, m.EXC||0))), 3).max;
 
-    // Déficit e excedente acumulados ao longo do ano (soma corrida jan→dez) — mostra o quanto
-    // o "buraco" de água ou a sobra vão se aprofundando/empilhando mês a mês, não só o valor isolado.
-    let defAccRun = 0, excAccRun = 0;
-    const defAccArr = [], excAccArr = [];
-    wb.forEach(m => { defAccRun += m.DEF; excAccRun += m.EXC; defAccArr.push(defAccRun); excAccArr.push(excAccRun); });
-    const maxCum = niceScale(Math.max(1, ...defAccArr, ...excAccArr), 3).max;
+    // Extrato do Balanço Hídrico (Thornthwaite & Mather): uma única curva mensal, positiva
+    // no excedente e negativa no déficit (déficit×-1) — não é acumulado, é o valor de cada mês.
+    const extVals = wb.map(m => (m.EXC||0) - (m.DEF||0));
+    const scaleExt = niceScale(Math.max(1, ...wb.map(m => Math.max(m.DEF||0, m.EXC||0))), 4);
+    const maxExt = scaleExt.max;
 
     const yMain = v => mainY1 - (v/maxMain)*(mainY1-mainY0);
-    const yRibbon = v => ribbonMid - (v/maxBal)*((ribbonY1-ribbonY0)/2);
-    const yCum = v => cumMid - (v/maxCum)*((cumY1-cumY0)/2);
+    const yExt = v => extMid - (v/maxExt)*((extY1-extY0)/2);
     const yArm = v => armY1 - (Math.min(v,cad)/cad)*(armY1-armY0);
 
     // -- painel 1: P x ETP --
@@ -1396,27 +1392,23 @@
     });
     svg.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:mainY1,y2:mainY1,stroke:cBaseline,'stroke-width':1}));
 
-    // -- painel 2: déficit/excedente --
-    svg.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:ribbonMid,y2:ribbonMid,stroke:cBaseline,'stroke-width':1}));
-    const rLabel = sv('text',{x:plotX0-8,y:ribbonMid+3,'text-anchor':'end','font-size':9,fill:cMuted});
-    rLabel.textContent = '0'; svg.appendChild(rLabel);
-    const ribbonTitle = sv('text',{x:plotX0,y:ribbonY0-6,'font-size':10,'font-weight':700,fill:cMuted});
-    ribbonTitle.textContent = 'DÉFICIT / EXCEDENTE'; svg.appendChild(ribbonTitle);
-
-    // -- painel 3: déficit/excedente acumulado no ano (barras divergentes, mesma linguagem do ribbon mensal) --
-    [maxCum, -maxCum].forEach(val => {
-      const y = yCum(val);
-      svg.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:y,y2:y,stroke:cGrid,'stroke-width':1}));
-      const t = sv('text',{x:plotX0-8,y:y+3,'text-anchor':'end','font-size':10,fill:cMuted});
-      t.textContent = fmt0(Math.abs(val)); svg.appendChild(t);
+    // -- painel 2: Extrato do Balanço Hídrico --
+    scaleExt.ticks.forEach(val => {
+      if (val === 0) return;
+      [val, -val].forEach(v => {
+        const y = yExt(v);
+        svg.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:y,y2:y,stroke:cGrid,'stroke-width':1}));
+        const t = sv('text',{x:plotX0-8,y:y+3,'text-anchor':'end','font-size':10,fill:cMuted});
+        t.textContent = fmt0(val); svg.appendChild(t);
+      });
     });
-    svg.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:cumMid,y2:cumMid,stroke:cBaseline,'stroke-width':1}));
-    const cLabel = sv('text',{x:plotX0-8,y:cumMid+3,'text-anchor':'end','font-size':9,fill:cMuted});
-    cLabel.textContent = '0'; svg.appendChild(cLabel);
-    const cumTitle = sv('text',{x:plotX0,y:cumY0-6,'font-size':10,'font-weight':700,fill:cMuted});
-    cumTitle.textContent = 'DÉFICIT / EXCEDENTE ACUMULADO'; svg.appendChild(cumTitle);
+    svg.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:extMid,y2:extMid,stroke:cBaseline,'stroke-width':1}));
+    const eLabel = sv('text',{x:plotX0-8,y:extMid+3,'text-anchor':'end','font-size':9,fill:cMuted});
+    eLabel.textContent = '0'; svg.appendChild(eLabel);
+    const extTitle = sv('text',{x:plotX0,y:extY0-6,'font-size':10,'font-weight':700,fill:cMuted});
+    extTitle.textContent = 'EXTRATO DO BALANÇO HÍDRICO'; svg.appendChild(extTitle);
 
-    // -- painel 4: armazenamento no solo (ARM) --
+    // -- painel 3: armazenamento no solo (ARM) --
     [0, cad].forEach(val => {
       const y = yArm(val);
       svg.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:y,y2:y,stroke:cGrid,'stroke-width':1}));
@@ -1426,7 +1418,7 @@
     const armTitle = sv('text',{x:plotX0,y:armY0-6,'font-size':10,'font-weight':700,fill:cMuted});
     armTitle.textContent = 'ARMAZENAMENTO NO SOLO (ARM)'; svg.appendChild(armTitle);
 
-    const linePts = [], armPts = [];
+    const linePts = [], armPts = [], extPts = [];
     const hitLayer = sv('g',{});
     wb.forEach((m,i) => {
       const cx = plotX0 + colW*(i+0.5);
@@ -1435,34 +1427,10 @@
       svg.appendChild(sv('path',{d:path, fill:cPrecip}));
       linePts.push([cx, yMain(m.ETP)]);
       armPts.push([cx, yArm(m.ARM)]);
+      extPts.push([cx, extVals[i]]);
 
       const lbl = sv('text',{x:cx,y:labelY,'text-anchor':'middle','font-size':11,fill:cMuted});
       lbl.textContent = MONTH_NAMES[m.month-1]; svg.appendChild(lbl);
-
-      const bw2 = Math.min(20, colW*0.4);
-      if (m.DEF > 0.05){
-        // déficit cresce para baixo a partir do zero: espelha yRibbon em torno de ribbonMid
-        const endY = 2*ribbonMid - yRibbon(m.DEF);
-        const p = divergingBarPath(cx-bw2/2, bw2, ribbonMid, endY, 3);
-        svg.appendChild(sv('path',{d:p, fill:cRed}));
-      } else if (m.EXC > 0.05){
-        const p = divergingBarPath(cx-bw2/2, bw2, ribbonMid, yRibbon(m.EXC), 3);
-        svg.appendChild(sv('path',{d:p, fill:cBlue}));
-      }
-
-      // déficit/excedente ACUMULADO — barras divergentes a partir de cumMid; ao contrário do
-      // ribbon mensal (se/senão), aqui os dois podem estar presentes juntos no mesmo mês
-      // (ex: já teve excedente lá atrás e vem acumulando déficit agora), por isso são 2 barras
-      // independentes, uma pra cada lado do zero.
-      if (excAccArr[i] > 0.05){
-        const p = divergingBarPath(cx-bw2/2, bw2, cumMid, yCum(excAccArr[i]), 3);
-        svg.appendChild(sv('path',{d:p, fill:cBlue}));
-      }
-      if (defAccArr[i] > 0.05){
-        const endY = 2*cumMid - yCum(defAccArr[i]);
-        const p = divergingBarPath(cx-bw2/2, bw2, cumMid, endY, 3);
-        svg.appendChild(sv('path',{d:p, fill:cRed}));
-      }
 
       const hit = sv('rect',{x:plotX0+colW*i, y:mainY0, width:colW, height:armY1-mainY0, fill:'transparent', tabindex:'0'});
       hit.dataset.idx = i;
@@ -1477,6 +1445,41 @@
     linePts.forEach(([x,y]) => {
       svg.appendChild(sv('circle',{cx:x,cy:y,r:6,fill:cSurface}));
       svg.appendChild(sv('circle',{cx:x,cy:y,r:4,fill:cEto}));
+    });
+
+    // Extrato do Balanço Hídrico: curva única (reta entre meses) que cruza o zero — o
+    // preenchimento é separado em excedente (azul, acima) e déficit (vermelho, abaixo) inserindo
+    // um ponto interpolado exatamente onde a reta cruza o zero entre dois meses de sinal oposto,
+    // pra a transição de cor ficar na posição real do cruzamento (como no "Extrato" clássico),
+    // não presa ao centro do mês.
+    const extAug = [];
+    extPts.forEach((p,i) => {
+      extAug.push(p);
+      if (i < extPts.length-1){
+        const [x0,v0] = p, [x1,v1] = extPts[i+1];
+        if ((v0>0 && v1<0) || (v0<0 && v1>0)){
+          const t = v0/(v0-v1);
+          extAug.push([x0+t*(x1-x0), 0]);
+        }
+      }
+    });
+    function clampedAreaPath(clampFn){
+      const pts = extAug.map(([x,v]) => [x, yExt(clampFn(v))]);
+      return 'M'+pts[0][0]+','+extMid+' '+pts.map(p=>'L'+p[0]+','+p[1]).join(' ')+' L'+pts[pts.length-1][0]+','+extMid+' Z';
+    }
+    svg.appendChild(sv('path',{d:clampedAreaPath(v=>Math.max(0,v)), fill:cBlue, opacity:0.22}));
+    svg.appendChild(sv('path',{d:clampedAreaPath(v=>Math.min(0,v)), fill:cRed, opacity:0.22}));
+    function clampedLinePath(clampFn){
+      const pts = extAug.map(([x,v]) => [x, yExt(clampFn(v))]);
+      return pts.map((p,i)=>(i===0?'M':'L')+p[0]+','+p[1]).join(' ');
+    }
+    svg.appendChild(sv('path',{d:clampedLinePath(v=>Math.max(0,v)), fill:'none', stroke:cBlue,'stroke-width':2,'stroke-linecap':'round','stroke-linejoin':'round'}));
+    svg.appendChild(sv('path',{d:clampedLinePath(v=>Math.min(0,v)), fill:'none', stroke:cRed,'stroke-width':2,'stroke-linecap':'round','stroke-linejoin':'round'}));
+    extPts.forEach(([x,v]) => {
+      if (Math.abs(v) <= 0.05) return;
+      const y = yExt(v);
+      svg.appendChild(sv('circle',{cx:x,cy:y,r:6,fill:cSurface}));
+      svg.appendChild(sv('circle',{cx:x,cy:y,r:4,fill: v>0 ? cBlue : cRed}));
     });
 
     // ARM área + linha
@@ -1507,9 +1510,7 @@
         ['ETP (ETo)', fmt0(m.ETP)+' mm', cEto],
         ['Armazenamento', fmt0(m.ARM)+' mm', cPrecip],
         ['Déficit', m.DEF>0.05 ? fmt0(m.DEF)+' mm' : '—', cRed],
-        ['Excedente', m.EXC>0.05 ? fmt0(m.EXC)+' mm' : '—', cBlue],
-        ['Déficit acum.', fmt0(defAccArr[i])+' mm', cRed],
-        ['Excedente acum.', fmt0(excAccArr[i])+' mm', cBlue]
+        ['Excedente', m.EXC>0.05 ? fmt0(m.EXC)+' mm' : '—', cBlue]
       ];
       rows.forEach(([k,v,c]) => {
         const row = document.createElement('div'); row.className='tt-row';
@@ -1542,7 +1543,7 @@
 
     const legend = el('balanceLegend');
     legend.innerHTML = '';
-    [['Precipitação',cPrecip,'bar'],['ETP (ETo)',cEto,''],['Excedente',cBlue,'bar'],['Déficit',cRed,'bar'],['Excedente acum.',cBlue,'bar'],['Déficit acum.',cRed,'bar']].forEach(([label,c,cls]) => {
+    [['Precipitação',cPrecip,'bar'],['ETP (ETo)',cEto,''],['Excedente',cBlue,''],['Déficit',cRed,'']].forEach(([label,c,cls]) => {
       const li = document.createElement('div'); li.className='legend-item';
       li.innerHTML = `<span class="legend-swatch ${cls}" style="background:${c}"></span> ${label}`;
       legend.appendChild(li);
@@ -1554,32 +1555,29 @@
     const totalDef = wb.reduce((s,m)=>s+m.DEF,0);
     const totalExc = wb.reduce((s,m)=>s+m.EXC,0);
     const deficitMonths = wb.filter(m => m.DEF>0.05).length;
-    const peakDef = Math.max(...defAccArr);
-    const peakDefMonth = MONTH_NAMES[wb[defAccArr.indexOf(peakDef)].month-1];
-    const peakDefBit = peakDef>0.05 ? ` • Déficit acumulado máximo: <b>${fmt0(peakDef)} mm</b> (até ${peakDefMonth})` : '';
-    el('balanceSummary').innerHTML = `Total anual: <b>${fmt0(totalP)} mm</b> de chuva • <b>${fmt0(totalETP)} mm</b> de ETP(ETo) • Déficit hídrico <b>${fmt0(totalDef)} mm</b> em <b>${deficitMonths}</b> mês(es) • Excedente <b>${fmt0(totalExc)} mm</b> • CAD = ${fmt0(cad)} mm${peakDefBit}.`;
+    el('balanceSummary').innerHTML = `Total anual: <b>${fmt0(totalP)} mm</b> de chuva • <b>${fmt0(totalETP)} mm</b> de ETP(ETo) • Déficit hídrico <b>${fmt0(totalDef)} mm</b> em <b>${deficitMonths}</b> mês(es) • Excedente <b>${fmt0(totalExc)} mm</b> • CAD = ${fmt0(cad)} mm.`;
 
     const table = el('balanceTable');
-    table.innerHTML = '<thead><tr><th>Mês</th><th>Precip. (mm)</th><th>ETP (mm)</th><th>ARM (mm)</th><th>ETR (mm)</th><th>Déficit (mm)</th><th>Excedente (mm)</th><th>Déf. acum. (mm)</th><th>Exc. acum. (mm)</th></tr></thead>';
+    table.innerHTML = '<thead><tr><th>Mês</th><th>Precip. (mm)</th><th>ETP (mm)</th><th>ARM (mm)</th><th>ETR (mm)</th><th>Déficit (mm)</th><th>Excedente (mm)</th></tr></thead>';
     const tbody = document.createElement('tbody');
-    wb.forEach((m,i) => {
+    wb.forEach(m => {
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${MONTH_NAMES[m.month-1]}</td><td>${fmt0(m.P)}</td><td>${fmt0(m.ETP)}</td><td>${fmt0(m.ARM)}</td><td>${fmt0(m.ETR)}</td><td>${m.DEF>0.05?fmt0(m.DEF):'—'}</td><td>${m.EXC>0.05?fmt0(m.EXC):'—'}</td><td>${fmt0(defAccArr[i])}</td><td>${fmt0(excAccArr[i])}</td>`;
+      tr.innerHTML = `<td>${MONTH_NAMES[m.month-1]}</td><td>${fmt0(m.P)}</td><td>${fmt0(m.ETP)}</td><td>${fmt0(m.ARM)}</td><td>${fmt0(m.ETR)}</td><td>${m.DEF>0.05?fmt0(m.DEF):'—'}</td><td>${m.EXC>0.05?fmt0(m.EXC):'—'}</td>`;
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
 
-    lastBalanceData = { wb, cad, defAccArr, excAccArr };
+    lastBalanceData = { wb, cad };
     el('exportBalanceCsvBtn').disabled = false;
   }
 
   function exportBalanceCSV(){
     if (!lastBalanceData) return;
-    const { wb, cad, defAccArr, excAccArr } = lastBalanceData;
-    const rows = [['Mês','Precip. (mm)','ETP (mm)','ARM (mm)','ETR (mm)','Déficit (mm)','Excedente (mm)','Déficit acum. (mm)','Excedente acum. (mm)']];
-    wb.forEach((m,i) => rows.push([
+    const { wb, cad } = lastBalanceData;
+    const rows = [['Mês','Precip. (mm)','ETP (mm)','ARM (mm)','ETR (mm)','Déficit (mm)','Excedente (mm)']];
+    wb.forEach(m => rows.push([
       MONTH_NAMES_FULL[m.month-1], fmt0(m.P), fmt0(m.ETP), fmt0(m.ARM), fmt0(m.ETR),
-      m.DEF>0.05?fmt0(m.DEF):'0', m.EXC>0.05?fmt0(m.EXC):'0', fmt0(defAccArr[i]), fmt0(excAccArr[i])
+      m.DEF>0.05?fmt0(m.DEF):'0', m.EXC>0.05?fmt0(m.EXC):'0'
     ]));
     const farm = el('farmName').value.trim();
     const csv = rows.map(r => r.map(v => /[;"\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v).join(';')).join('\r\n');
