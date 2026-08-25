@@ -3,6 +3,25 @@
 Todas as mudanças notáveis deste app ficam registradas aqui. O número de versão aparece
 no canto do título, dentro do próprio app (`v2.0.0` etc.) — clique nele pra abrir este arquivo.
 
+## v2.9.0 — 2026-08-25
+
+### Adicionado
+- **Novo quadro "Lâmina Recomendada para o Projeto"** (método do mês crítico, padrão
+  em dimensionamento de sistemas de irrigação): abate a chuva total da ETo em cada
+  mês pra achar o déficit climático mensal, pega o mês de maior déficit (o "mês
+  crítico" — pior caso do ano), divide pelos dias do mês pra ETo diária líquida, e
+  aplica Kc e o coeficiente de localização (Kl) já usados no quadro de Necessidade
+  de Irrigação — resultando na lâmina líquida diária que o projeto precisa suportar.
+  Diferente do quadro acima (que mostra a ETc bruta mês a mês pra manejo), esse é
+  focado em dimensionamento pelo pior caso, não pela média.
+  - **Melhorias aplicadas além do pedido**: eficiência de aplicação do sistema (Ea,
+    editável, gotejo/microaspersão/aspersão) pra converter lâmina líquida → bruta;
+    margem de segurança (%) opcional; volume diário total do projeto e vazão média
+    necessária (m³/h), calculados a partir da área da fazenda importada e das horas
+    de operação do sistema — números prontos pra dimensionar bomba e tubulação.
+  - Tabela com o detalhamento completo do mês crítico (chuva, ETo, déficit, Kc, Kl,
+    Ea, lâmina líquida e bruta) pra auditoria/conferência do cálculo.
+
 ## v2.8.0 — 2026-08-25
 
 ### Alterado

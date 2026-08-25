@@ -153,6 +153,8 @@
   .field-inline label{ text-transform:none; font-size:0.82rem; color:var(--text-secondary); }
   .field-inline input{ font: inherit; font-size:0.88rem; padding:5px 8px; border-radius:8px; border:1px solid var(--border); background: var(--surface-2); color: var(--text-primary); }
   .crop-params-grid{ display:grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap:12px; align-items:end; }
+  .stat-grid{ display:grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap:12px; margin-top:14px; }
+  .stat-tile.headline .value{ font-size:1.6rem; color: var(--series-precip); }
   .crop-params-grid .field label{ white-space:nowrap; }
   .crop-params-grid input[type=number]{ font: inherit; font-size:0.88rem; padding:7px 9px; border-radius:8px; border:1px solid var(--border); background: var(--surface-2); color: var(--text-primary); width:100%; }
   .kc-grid{ display:grid; grid-template-columns: repeat(auto-fill, minmax(84px,1fr)); gap:8px; }
@@ -223,7 +225,7 @@
 <body>
 
 <header class="app-header no-print">
-  <h1>🌦️ Balanço Climático <a class="version-badge" id="versionBadge" href="CHANGELOG.md" target="_blank" rel="noopener" title="Ver histórico de versões (CHANGELOG.md)">v2.8.0</a></h1>
+  <h1>🌦️ Balanço Climático <a class="version-badge" id="versionBadge" href="CHANGELOG.md" target="_blank" rel="noopener" title="Ver histórico de versões (CHANGELOG.md)">v2.9.0</a></h1>
   <p>Área da fazenda via KML + imagem de satélite + clima mensal (NASA POWER ou Open-Meteo, ano único ou média histórica) + balanço hídrico do solo e necessidade de irrigação da cultura.</p>
 </header>
 
@@ -398,6 +400,38 @@
   </div>
 </section>
 
+<section class="quadro" id="quadroLamina">
+  <h2>🚿 Lâmina Recomendada para o Projeto <span class="method-tag">método do mês crítico</span></h2>
+  <p class="sub">Dimensionamento do sistema (não manejo mês a mês, isso é o quadro acima): abate a chuva total da ETo em cada mês, pega o mês de maior déficit climático, divide pelos dias do mês, e aplica Kc e o coeficiente de localização (Kl) — a lâmina que o projeto precisa suportar mesmo no mês mais exigente do ano.</p>
+  <div class="crop-params-grid">
+    <div class="field">
+      <label for="eaInput">Eficiência de aplicação — Ea (%)</label>
+      <input type="number" id="eaInput" min="1" max="100" step="1" value="90">
+    </div>
+    <div class="field">
+      <label for="marginInput">Margem de segurança (%)</label>
+      <input type="number" id="marginInput" min="0" max="100" step="1" value="0">
+    </div>
+    <div class="field">
+      <label for="hoursInput">Operação do sistema (h/dia)</label>
+      <input type="number" id="hoursInput" min="1" max="24" step="1" value="20">
+    </div>
+  </div>
+  <div class="stat-grid" id="laminaStats">
+    <div class="stat-tile headline"><div class="label">Lâmina líquida</div><div class="value" id="valLaminaLiq">—</div></div>
+    <div class="stat-tile headline"><div class="label">Lâmina bruta</div><div class="value" id="valLaminaBruta">—</div></div>
+    <div class="stat-tile"><div class="label">L / planta / dia</div><div class="value" id="valLaminaLPlanta" style="font-size:1.1rem;">—</div></div>
+    <div class="stat-tile"><div class="label">m³ / ha / dia</div><div class="value" id="valLaminaM3Ha" style="font-size:1.1rem;">—</div></div>
+    <div class="stat-tile"><div class="label">Volume diário do projeto</div><div class="value" id="valLaminaVolume" style="font-size:1.1rem;">—</div></div>
+    <div class="stat-tile"><div class="label">Vazão média necessária</div><div class="value" id="valLaminaVazao" style="font-size:1.1rem;">—</div></div>
+  </div>
+  <p class="chart-summary" id="laminaSummary"></p>
+  <div style="overflow-x:auto;">
+    <table class="data-table" id="laminaTable"></table>
+  </div>
+  <p class="note">Método do "mês crítico": dimensiona o sistema pelo pior mês do ano (maior ETo − chuva), não pela média — garante capacidade suficiente mesmo no mês mais exigente. Ea = eficiência de aplicação do sistema (gotejo ~90%, microaspersão ~85%, aspersão convencional ~75%); ajuste conforme seu projeto. Volume e vazão do projeto usam a área da fazenda importada no Quadro 1 — sem polígono, ficam em branco.</p>
+</section>
+
 <div class="note" id="sourcesNote"></div>
 
 <footer class="app-footer no-print">Balanço Climático — ferramenta local, sem envio de dados a servidores próprios.</footer>
@@ -435,7 +469,13 @@
     if (startYear === endYear) return 'Ano de '+endYear;
     return `Média histórica ${startYear}–${endYear} (${endYear-startYear+1} anos)`;
   }
-  let irrigationCfg = { rowSpacing: 3.4, plantSpacing: 0.7, canopyDiam: 2.0, bareSoilFactor: 0.15, kc: [1.0,1.0,1.0,1.0,0.8,0.8,0.8,0.8,0.9,1.1,1.1,1.1] };
+  let irrigationCfg = {
+    rowSpacing: 3.4, plantSpacing: 0.7, canopyDiam: 2.0, bareSoilFactor: 0.15,
+    kc: [1.0,1.0,1.0,1.0,0.8,0.8,0.8,0.8,0.9,1.1,1.1,1.1],
+    ea: 0.90,       // eficiência de aplicação do sistema (fração) — gotejo ~0.90, microaspersão ~0.85, aspersão convencional ~0.75
+    margin: 0,      // margem de segurança (%) somada à lâmina líquida
+    hoursPerDay: 20 // horas de operação do sistema por dia, pra estimar a vazão média necessária
+  };
   let cadValue = 100; // capacidade de água disponível no solo (mm)
   let lastBalanceData = null; // {wb, cad, defAccArr, excAccArr} — cache do último balanço renderizado, pra exportação em CSV
 
@@ -1173,6 +1213,47 @@
     });
   }
 
+  // ================= Lâmina recomendada para o projeto (método do mês crítico) =================
+  // Diferente do quadro "Necessidade de Irrigação" acima (que mostra a ETc BRUTA mês a mês, pra
+  // manejo/acompanhamento), isso aqui dimensiona o SISTEMA: abate a chuva total do mês da ETo pra
+  // achar o déficit climático de cada mês, pega o pior mês (maior déficit — o "mês crítico"),
+  // divide pelos dias do mês pra ter a ETo diária líquida, e só então aplica Kc e Kl. É a lâmina
+  // que o projeto precisa suportar mesmo no mês mais exigente do ano, não a média.
+  function computeLaminaRecomendada(months, cfg, areaHa){
+    const valid = months.filter(m => m.eto!=null && m.precip!=null);
+    if (!valid.length) return null;
+
+    let critical = valid[0], maxDeficit = -Infinity;
+    valid.forEach(m => {
+      const deficit = m.eto - m.precip; // déficit climático do mês (chuva já abatida da ETo)
+      if (deficit > maxDeficit){ maxDeficit = deficit; critical = m; }
+    });
+    const i = critical.month - 1;
+
+    const gc = cfg.rowSpacing > 0 ? Math.min(1, Math.max(0, cfg.canopyDiam/cfg.rowSpacing)) : 0;
+    const kl = gc + cfg.bareSoilFactor*(1-gc);
+    const kc = cfg.kc[i];
+    const ea = cfg.ea > 0 ? cfg.ea : 1;
+
+    const etoDiaLiqMM = maxDeficit / critical.days;               // ETo diária média já líquida de chuva (pode ser <0 se nem o pior mês tiver déficit)
+    const etcDiaLiqMM = etoDiaLiqMM * kc;
+    const laminaLiqMMdia = Math.max(0, etcDiaLiqMM * kl) * (1 + (cfg.margin||0)/100);
+    const laminaBrutaMMdia = laminaLiqMMdia / ea;
+
+    const plantAreaM2 = cfg.rowSpacing * cfg.plantSpacing;
+    const plantsPerHa = plantAreaM2 > 0 ? 10000/plantAreaM2 : 0;
+    const litrosPlantaDia = plantAreaM2 * laminaBrutaMMdia; // 1 mm sobre 1 m² = 1 litro
+    const m3HaDia = laminaBrutaMMdia * 10;                  // 1 mm sobre 1 ha = 10 m³
+    const volumeDiaM3 = areaHa!=null ? m3HaDia * areaHa : null;
+    const vazaoM3h = (volumeDiaM3!=null && cfg.hoursPerDay>0) ? volumeDiaM3/cfg.hoursPerDay : null;
+
+    return {
+      month: critical.month, phase: CROP_PHASE[i], P: critical.precip, ETo: critical.eto, days: critical.days,
+      deficitMM: maxDeficit, etoDiaLiqMM, kc, etcDiaLiqMM, kl, ea, margin: cfg.margin||0,
+      laminaLiqMMdia, laminaBrutaMMdia, plantAreaM2, plantsPerHa, litrosPlantaDia, m3HaDia, volumeDiaM3, vazaoM3h
+    };
+  }
+
   // ================= Formatting =================
   const fmt1 = v => v.toLocaleString('pt-BR', { maximumFractionDigits:1, minimumFractionDigits:0 });
   const fmt0 = v => v.toLocaleString('pt-BR', { maximumFractionDigits:0 });
@@ -1904,6 +1985,43 @@
     if (!climateMonths){ return; }
     const irr = computeIrrigationNeed(climateMonths, irrigationCfg);
     renderIrrigationSection(irr);
+    recalcLamina();
+  }
+
+  function recalcLamina(){
+    if (!climateMonths){ renderLaminaSection(null); return; }
+    const areaHa = farmGeo ? farmGeo.areaHa : null;
+    const res = computeLaminaRecomendada(climateMonths, irrigationCfg, areaHa);
+    renderLaminaSection(res);
+  }
+
+  function renderLaminaSection(res){
+    if (!res){
+      ['valLaminaLiq','valLaminaBruta','valLaminaLPlanta','valLaminaM3Ha','valLaminaVolume','valLaminaVazao'].forEach(id => el(id).textContent = '—');
+      el('laminaSummary').textContent = '';
+      el('laminaTable').innerHTML = '';
+      return;
+    }
+    el('valLaminaLiq').textContent = fmt1(res.laminaLiqMMdia)+' mm/d';
+    el('valLaminaBruta').textContent = fmt1(res.laminaBrutaMMdia)+' mm/d';
+    el('valLaminaLPlanta').textContent = fmt1(res.litrosPlantaDia)+' L/d';
+    el('valLaminaM3Ha').textContent = fmt1(res.m3HaDia)+' m³/d';
+    el('valLaminaVolume').textContent = res.volumeDiaM3!=null ? fmt0(res.volumeDiaM3)+' m³/d' : '—';
+    el('valLaminaVazao').textContent = res.vazaoM3h!=null ? fmt1(res.vazaoM3h)+' m³/h' : '—';
+
+    if (res.deficitMM <= 0){
+      el('laminaSummary').innerHTML = `Nenhum mês apresenta déficit climático (chuva ≥ ETo o ano todo, inclusive em <b>${MONTH_NAMES_FULL[res.month-1]}</b>, o mais próximo disso) — pelo método do mês crítico, irrigação suplementar não seria necessária. Os valores acima ficam zerados.`;
+    } else {
+      el('laminaSummary').innerHTML = `Mês crítico: <b>${MONTH_NAMES_FULL[res.month-1]}</b> (${res.phase}) — déficit climático de <b>${fmt0(res.deficitMM)} mm</b> no mês (${fmt0(res.P)} mm de chuva × ${fmt0(res.ETo)} mm de ETo, em ${res.days} dias) • ETo diária líquida <b>${fmt1(res.etoDiaLiqMM)} mm/d</b> × Kc <b>${fmt1(res.kc)}</b> × Kl <b>${fmt1(res.kl)}</b>${res.margin>0 ? ` × margem +${fmt0(res.margin)}%` : ''} = lâmina líquida • ÷ Ea <b>${Math.round(res.ea*100)}%</b> = lâmina bruta.`;
+    }
+
+    const table = el('laminaTable');
+    table.innerHTML = '<thead><tr><th>Mês crítico</th><th>Chuva (mm)</th><th>ETo (mm)</th><th>Déficit (mm)</th><th>ETo líq. (mm/d)</th><th>Kc</th><th>Kl</th><th>Ea</th><th>Lâmina líq. (mm/d)</th><th>Lâmina bruta (mm/d)</th></tr></thead>';
+    const tbody = document.createElement('tbody');
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${MONTH_NAMES_FULL[res.month-1]}</td><td>${fmt0(res.P)}</td><td>${fmt0(res.ETo)}</td><td>${fmt0(res.deficitMM)}</td><td>${fmt1(res.etoDiaLiqMM)}</td><td>${fmt1(res.kc)}</td><td>${fmt1(res.kl)}</td><td>${Math.round(res.ea*100)}%</td><td>${fmt1(res.laminaLiqMMdia)}</td><td>${fmt1(res.laminaBrutaMMdia)}</td>`;
+    tbody.appendChild(tr);
+    table.appendChild(tbody);
   }
 
   function renderIrrigationSection(irr){
@@ -2187,6 +2305,22 @@
     cropInput('rowSpacingInput', 'rowSpacing');
     cropInput('plantSpacingInput', 'plantSpacing');
     cropInput('canopyDiamInput', 'canopyDiam');
+
+    el('eaInput').addEventListener('input', () => {
+      const v = parseFloat(el('eaInput').value);
+      if (Number.isFinite(v) && v > 0) irrigationCfg.ea = Math.min(100, v)/100;
+      recalcLamina();
+    });
+    el('marginInput').addEventListener('input', () => {
+      const v = parseFloat(el('marginInput').value);
+      irrigationCfg.margin = Number.isFinite(v) && v >= 0 ? v : 0;
+      recalcLamina();
+    });
+    el('hoursInput').addEventListener('input', () => {
+      const v = parseFloat(el('hoursInput').value);
+      if (Number.isFinite(v) && v > 0) irrigationCfg.hoursPerDay = Math.min(24, v);
+      recalcLamina();
+    });
 
     el('resetKcBtn').addEventListener('click', () => {
       irrigationCfg.kc = DEFAULT_KC.slice();
