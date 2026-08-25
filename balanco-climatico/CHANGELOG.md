@@ -3,6 +3,27 @@
 Todas as mudanças notáveis deste app ficam registradas aqui. O número de versão aparece
 no canto do título, dentro do próprio app (`v2.0.0` etc.) — clique nele pra abrir este arquivo.
 
+## v2.6.0 — 2026-08-25
+
+### Adicionado
+- **Déficit e excedente acumulados** no gráfico de Balanço Hídrico: novo painel
+  (4º, entre o ribbon mensal e o armazenamento no solo) com a soma corrida de
+  jan→dez do déficit (vermelho) e do excedente (azul), como curva de área — mostra
+  o quanto o "buraco" de água se aprofunda (ou a sobra se acumula) ao longo do ano,
+  não só o valor isolado de cada mês. Refletido também no tooltip, na legenda, no
+  resumo (déficit acumulado máximo e o mês em que ocorre) e em 2 colunas novas na
+  tabela.
+- **Exportar CSV** do balanço hídrico (botão no cabeçalho do gráfico), com todas as
+  colunas da tabela incluindo os acumulados.
+- Indicador de carregamento (spinner) na mensagem de status durante busca de dados
+  climáticos e leitura de KML.
+
+### Modernizado
+- Barra de ferramentas fixa (sticky) com efeito de vidro (blur) ao rolar a página.
+- Cartões (quadros), tiles e cards de mês/estatística ganharam sombra sutil,
+  transições suaves e realce ao passar o mouse.
+- Estado de foco visível (acessibilidade de teclado) em todos os campos e botões.
+
 ## v2.5.2 — 2026-08-24
 
 ### Corrigido
