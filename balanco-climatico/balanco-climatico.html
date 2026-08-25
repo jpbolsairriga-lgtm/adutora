@@ -223,7 +223,7 @@
 <body>
 
 <header class="app-header no-print">
-  <h1>🌦️ Balanço Climático <a class="version-badge" id="versionBadge" href="CHANGELOG.md" target="_blank" rel="noopener" title="Ver histórico de versões (CHANGELOG.md)">v2.6.0</a></h1>
+  <h1>🌦️ Balanço Climático <a class="version-badge" id="versionBadge" href="CHANGELOG.md" target="_blank" rel="noopener" title="Ver histórico de versões (CHANGELOG.md)">v2.6.1</a></h1>
   <p>Área da fazenda via KML + imagem de satélite + clima mensal (NASA POWER ou Open-Meteo, ano único ou média histórica) + balanço hídrico do solo e necessidade de irrigação da cultura.</p>
 </header>
 
@@ -1355,7 +1355,7 @@
     const W=780, plotX0=52, plotX1=764, plotW=plotX1-plotX0;
     const mainY0=14, mainY1=168;                 // P (barras) x ETP (linha)
     const ribbonY0=192, ribbonY1=244; const ribbonMid=(ribbonY0+ribbonY1)/2;   // déficit/excedente do mês
-    const cumY0=268, cumY1=322;                   // déficit/excedente acumulado no ano
+    const cumY0=268, cumY1=322; const cumMid=(cumY0+cumY1)/2;   // déficit/excedente acumulado no ano
     const armY0=346, armY1=400;                   // armazenamento no solo (ARM)
     const labelY = 418;
     const colW = plotW/12;
@@ -1380,12 +1380,11 @@
     let defAccRun = 0, excAccRun = 0;
     const defAccArr = [], excAccArr = [];
     wb.forEach(m => { defAccRun += m.DEF; excAccRun += m.EXC; defAccArr.push(defAccRun); excAccArr.push(excAccRun); });
-    const scaleCum = niceScale(Math.max(1, ...defAccArr, ...excAccArr), 4);
-    const maxCum = scaleCum.max;
+    const maxCum = niceScale(Math.max(1, ...defAccArr, ...excAccArr), 3).max;
 
     const yMain = v => mainY1 - (v/maxMain)*(mainY1-mainY0);
     const yRibbon = v => ribbonMid - (v/maxBal)*((ribbonY1-ribbonY0)/2);
-    const yCum = v => cumY1 - (v/maxCum)*(cumY1-cumY0);
+    const yCum = v => cumMid - (v/maxCum)*((cumY1-cumY0)/2);
     const yArm = v => armY1 - (Math.min(v,cad)/cad)*(armY1-armY0);
 
     // -- painel 1: P x ETP --
@@ -1404,14 +1403,16 @@
     const ribbonTitle = sv('text',{x:plotX0,y:ribbonY0-6,'font-size':10,'font-weight':700,fill:cMuted});
     ribbonTitle.textContent = 'DÉFICIT / EXCEDENTE'; svg.appendChild(ribbonTitle);
 
-    // -- painel 3: déficit/excedente acumulado no ano --
-    scaleCum.ticks.forEach(val => {
+    // -- painel 3: déficit/excedente acumulado no ano (barras divergentes, mesma linguagem do ribbon mensal) --
+    [maxCum, -maxCum].forEach(val => {
       const y = yCum(val);
       svg.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:y,y2:y,stroke:cGrid,'stroke-width':1}));
       const t = sv('text',{x:plotX0-8,y:y+3,'text-anchor':'end','font-size':10,fill:cMuted});
-      t.textContent = fmt0(val); svg.appendChild(t);
+      t.textContent = fmt0(Math.abs(val)); svg.appendChild(t);
     });
-    svg.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:cumY1,y2:cumY1,stroke:cBaseline,'stroke-width':1}));
+    svg.appendChild(sv('line',{x1:plotX0,x2:plotX1,y1:cumMid,y2:cumMid,stroke:cBaseline,'stroke-width':1}));
+    const cLabel = sv('text',{x:plotX0-8,y:cumMid+3,'text-anchor':'end','font-size':9,fill:cMuted});
+    cLabel.textContent = '0'; svg.appendChild(cLabel);
     const cumTitle = sv('text',{x:plotX0,y:cumY0-6,'font-size':10,'font-weight':700,fill:cMuted});
     cumTitle.textContent = 'DÉFICIT / EXCEDENTE ACUMULADO'; svg.appendChild(cumTitle);
 
@@ -1425,7 +1426,7 @@
     const armTitle = sv('text',{x:plotX0,y:armY0-6,'font-size':10,'font-weight':700,fill:cMuted});
     armTitle.textContent = 'ARMAZENAMENTO NO SOLO (ARM)'; svg.appendChild(armTitle);
 
-    const linePts = [], armPts = [], defAccPts = [], excAccPts = [];
+    const linePts = [], armPts = [];
     const hitLayer = sv('g',{});
     wb.forEach((m,i) => {
       const cx = plotX0 + colW*(i+0.5);
@@ -1434,8 +1435,6 @@
       svg.appendChild(sv('path',{d:path, fill:cPrecip}));
       linePts.push([cx, yMain(m.ETP)]);
       armPts.push([cx, yArm(m.ARM)]);
-      defAccPts.push([cx, yCum(defAccArr[i])]);
-      excAccPts.push([cx, yCum(excAccArr[i])]);
 
       const lbl = sv('text',{x:cx,y:labelY,'text-anchor':'middle','font-size':11,fill:cMuted});
       lbl.textContent = MONTH_NAMES[m.month-1]; svg.appendChild(lbl);
@@ -1449,6 +1448,20 @@
       } else if (m.EXC > 0.05){
         const p = divergingBarPath(cx-bw2/2, bw2, ribbonMid, yRibbon(m.EXC), 3);
         svg.appendChild(sv('path',{d:p, fill:cBlue}));
+      }
+
+      // déficit/excedente ACUMULADO — barras divergentes a partir de cumMid; ao contrário do
+      // ribbon mensal (se/senão), aqui os dois podem estar presentes juntos no mesmo mês
+      // (ex: já teve excedente lá atrás e vem acumulando déficit agora), por isso são 2 barras
+      // independentes, uma pra cada lado do zero.
+      if (excAccArr[i] > 0.05){
+        const p = divergingBarPath(cx-bw2/2, bw2, cumMid, yCum(excAccArr[i]), 3);
+        svg.appendChild(sv('path',{d:p, fill:cBlue}));
+      }
+      if (defAccArr[i] > 0.05){
+        const endY = 2*cumMid - yCum(defAccArr[i]);
+        const p = divergingBarPath(cx-bw2/2, bw2, cumMid, endY, 3);
+        svg.appendChild(sv('path',{d:p, fill:cRed}));
       }
 
       const hit = sv('rect',{x:plotX0+colW*i, y:mainY0, width:colW, height:armY1-mainY0, fill:'transparent', tabindex:'0'});
@@ -1465,23 +1478,6 @@
       svg.appendChild(sv('circle',{cx:x,cy:y,r:6,fill:cSurface}));
       svg.appendChild(sv('circle',{cx:x,cy:y,r:4,fill:cEto}));
     });
-
-    // Déficit/excedente acumulado — área + linha, mesma cor da entidade (vermelho/azul)
-    // usada nas barras mensais do painel acima, só que agora como curva de soma corrida.
-    function drawCumSeries(pts, baseY, color){
-      if (pts.length > 1){
-        const areaD = 'M'+pts[0][0]+','+baseY+' '+pts.map(p=>'L'+p[0]+','+p[1]).join(' ')+' L'+pts[pts.length-1][0]+','+baseY+' Z';
-        svg.appendChild(sv('path',{d:areaD, fill:color, opacity:0.12}));
-        const lineD = pts.map((p,i)=>(i===0?'M':'L')+p[0]+','+p[1]).join(' ');
-        svg.appendChild(sv('path',{d:lineD, fill:'none', stroke:color,'stroke-width':2,'stroke-linecap':'round','stroke-linejoin':'round'}));
-      }
-      pts.forEach(([x,y]) => {
-        svg.appendChild(sv('circle',{cx:x,cy:y,r:5,fill:cSurface}));
-        svg.appendChild(sv('circle',{cx:x,cy:y,r:3,fill:color}));
-      });
-    }
-    drawCumSeries(defAccPts, cumY1, cRed);
-    drawCumSeries(excAccPts, cumY1, cBlue);
 
     // ARM área + linha
     if (armPts.length > 1){
@@ -1546,7 +1542,7 @@
 
     const legend = el('balanceLegend');
     legend.innerHTML = '';
-    [['Precipitação',cPrecip,'bar'],['ETP (ETo)',cEto,''],['Excedente',cBlue,'bar'],['Déficit',cRed,'bar'],['Excedente acum.',cBlue,''],['Déficit acum.',cRed,'']].forEach(([label,c,cls]) => {
+    [['Precipitação',cPrecip,'bar'],['ETP (ETo)',cEto,''],['Excedente',cBlue,'bar'],['Déficit',cRed,'bar'],['Excedente acum.',cBlue,'bar'],['Déficit acum.',cRed,'bar']].forEach(([label,c,cls]) => {
       const li = document.createElement('div'); li.className='legend-item';
       li.innerHTML = `<span class="legend-swatch ${cls}" style="background:${c}"></span> ${label}`;
       legend.appendChild(li);

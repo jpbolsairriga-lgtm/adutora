@@ -3,6 +3,16 @@
 Todas as mudanças notáveis deste app ficam registradas aqui. O número de versão aparece
 no canto do título, dentro do próprio app (`v2.0.0` etc.) — clique nele pra abrir este arquivo.
 
+## v2.6.1 — 2026-08-25
+
+### Alterado
+- O painel "Déficit / Excedente Acumulado" (novo na v2.6.0) virou **gráfico de barras
+  divergentes** (excedente acumulado pra cima, déficit acumulado pra baixo a partir do
+  zero) em vez de área+linha — mesma linguagem visual do ribbon mensal logo acima, só
+  que com os valores acumulados jan→dez. Diferente do ribbon mensal (que é se/senão,
+  só um dos dois por mês), aqui as duas barras podem aparecer juntas no mesmo mês,
+  porque o acumulado de cada uma segue independente.
+
 ## v2.6.0 — 2026-08-25
 
 ### Adicionado
