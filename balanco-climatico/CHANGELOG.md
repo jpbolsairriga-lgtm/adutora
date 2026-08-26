@@ -3,6 +3,15 @@
 Todas as mudanças notáveis deste app ficam registradas aqui. O número de versão aparece
 no canto do título, dentro do próprio app (`v2.0.0` etc.) — clique nele pra abrir este arquivo.
 
+## v2.9.1 — 2026-08-26
+
+### Corrigido
+- Barra de ferramentas fixa ("sticky", da v2.6.0) sobrepondo o mapa e outros quadros
+  ao rolar a página — o aviso do BR-DWGD/CFSv2 logo abaixo tem margem negativa, que
+  reduzia demais o espaço reservado pra barra fixa. Removido o comportamento sticky
+  (não era um pedido original, só uma modernização que causou esse bug visual); a
+  barra volta a rolar normalmente junto com o resto da página.
+
 ## v2.9.0 — 2026-08-25
 
 ### Adicionado
