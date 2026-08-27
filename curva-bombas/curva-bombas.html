@@ -228,7 +228,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
     <div class="hdr-logo">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
       <div class="hdr-brand">
-        <h1>Curva de Bombas <span class="ver-badge">v1.27</span></h1>
+        <h1>Curva de Bombas <span class="ver-badge">v1.28</span></h1>
         <p>Digitalizador de curvas — importe imagem/PDF e extraia os pontos</p>
       </div>
     </div>
@@ -577,7 +577,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
 // ============================================================================
-// Curva de Bombas — Digitalizador  v1.27 (2026-08-27)
+// Curva de Bombas — Digitalizador  v1.28 (2026-08-27)
 // Build inicial (v1.0): importação de imagem/PDF (pdf.js), calibração de eixos
 // (linear/log, 4 pontos estilo WebPlotDigitizer), múltiplas séries,
 // ajuste de curva (polinomial grau 1-3 / potência) por mínimos quadrados,
@@ -1097,6 +1097,23 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
 //   com a quantidade de pontos) agora ganha um selo "⚠ sem ajuste" na
 //   própria lista de séries (painel 3) — pra pegar o problema ali, antes de
 //   precisar chegar lá na Operação pra descobrir.
+// v1.28: usuário reportou "a Operação 02 está com rotação ACIMA da nominal,
+// isso não faz sentido" — o ponto de trabalho informado era 80 mca × 138,15
+// m³/h, mas a bomba nominal entrega 95 mca × 150 m³/h. Investigando o
+// projeto: os campos "Q alvo" e "H alvo" dessa Operação estavam TROCADOS
+// (Qt=80, Ht=138,18 — ou seja, 80 tinha ido pro campo de vazão e 138 pro de
+// altura, o oposto do que o usuário descreveu). Pedir 138 mca a uma bomba
+// que só entrega 95 mca no nominal força o solver a girar ACIMA da
+// referência (3.770 RPM > 3.500 RPM) pra tentar alcançar; o app calculou
+// certo — o erro estava nos dados de entrada, sem nenhuma pista visual de
+// que algo estava fora do normal.
+// - `opStatusClassAndText` ganhou um aviso automático (classe "warn",
+//   mesmo tom da extrapolação): sempre que a rotação resolvida de uma
+//   Operação fica ACIMA da rotação de referência da bomba, mostra "⚠
+//   Rotação ACIMA da referência (...) — incomum pra um estudo de redução de
+//   energia; confira se Q alvo e H alvo não foram digitados trocados" antes
+//   do resto do resultado — sem bloquear o cálculo (subir rotação é válido
+//   em alguns projetos, só raro no uso normal deste painel).
 // ============================================================================
 (function(){
 'use strict';
@@ -1985,7 +2002,7 @@ function computeOperation(op){
   const kwhYear = (savingsCv!=null && hoursYear!=null)? electricalKw(savingsCv*0.7355, getSourceOf(hSrc))*hoursYear : null;
 
   op.error=null;
-  op.result={targetRpm,targetHz,r,Qt,Ht,HtForSrc,partnerName:partner?partner.name:null,partnerH,singlePumpOnly:!!op.singlePumpOnly,Pref,Padj,savingsCv,pct,powerSource,powerFitMissing,hoursYear,kwhYear,motorEta,extrapolation,pressVfdId:pressVfd.id,powerVfdId:powerSeriesId,pumpName:hSrc.name};
+  op.result={targetRpm,targetHz,r,refRpm,Qt,Ht,HtForSrc,partnerName:partner?partner.name:null,partnerH,singlePumpOnly:!!op.singlePumpOnly,Pref,Padj,savingsCv,pct,powerSource,powerFitMissing,hoursYear,kwhYear,motorEta,extrapolation,pressVfdId:pressVfd.id,powerVfdId:powerSeriesId,pumpName:hSrc.name};
 }
 function opStatusClassAndText(op){
   if(op.error) return {cls:'err', icon:'⚠', text:op.error};
@@ -1995,7 +2012,20 @@ function opStatusClassAndText(op){
   }
   if(!op.result) return {cls:'', icon:'—', text:'Preencha bomba, Q e H, depois clique em Calcular.'};
   const r=op.result;
-  let text='Rotação: '+fmtNum(r.targetRpm)+' RPM ('+fmtNum(r.targetHz)+' Hz)';
+  // v1.28: usuário reportou uma Operação com "rotação acima da nominal" que
+  // não fazia sentido pro estudo de economia (o objetivo do painel é
+  // justamente REDUZIR rotação) — a causa era Q e H digitados TROCADOS
+  // nessa Operação (H alvo no campo de Q e vice-versa). O solver não tem
+  // como saber qual campo é qual — só sabe que a bomba precisaria girar
+  // MAIS RÁPIDO que a rotação de referência pra entregar aquele ponto, o
+  // que é raro no uso normal deste painel (reduzir rotação/energia) e um
+  // sintoma forte de troca de campo. Avisa sem bloquear (subir rotação além
+  // do nominal é fisicamente válido em alguns projetos, só incomum aqui).
+  const aboveRef = r.r!=null && isFinite(r.r) && r.r>1.0005;
+  let text = aboveRef
+    ? '⚠ Rotação ACIMA da referência ('+fmtNum(r.targetRpm)+' RPM > '+fmtNum(r.refRpm||3500)+' RPM nominal) — incomum pra um estudo de redução de energia; confira se "Q alvo" e "H alvo" desta Operação não foram digitados trocados. '
+    : '';
+  text += 'Rotação: '+fmtNum(r.targetRpm)+' RPM ('+fmtNum(r.targetHz)+' Hz)';
   if(r.partnerName) text+=' · desconta "'+r.partnerName+'" ('+fmtNum(r.partnerH)+')';
   else if(r.singlePumpOnly) text+=' · 2ª bomba desligada nesta operação';
   if(r.Pref!=null && r.Padj!=null){
@@ -2006,7 +2036,7 @@ function opStatusClassAndText(op){
   } else {
     text+=' · sem fonte de potência configurada pra esta bomba (digitalize uma Potência ou preencha o BEP dela).';
   }
-  return {cls:'ok', icon:'✓', text};
+  return {cls: aboveRef?'warn':'ok', icon: aboveRef?'⚠':'✓', text};
 }
 function refreshOperationRow(i){
   const op=S.operations[i], els=S._opEls&&S._opEls[i];
