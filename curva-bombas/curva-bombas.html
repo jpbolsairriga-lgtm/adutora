@@ -111,6 +111,7 @@ main.layout{flex:1;min-height:0;display:flex;gap:1rem;padding:.9rem 1rem;max-wid
 .ser-row .badge-combined{font-size:.62rem;font-weight:800;background:#ede7f6;color:#5e35b1;border-radius:8px;padding:.05rem .4rem;flex-shrink:0}
 .ser-row .badge-vfd{font-size:.62rem;font-weight:800;background:#fff3e0;color:#e65100;border-radius:8px;padding:.05rem .4rem;flex-shrink:0}
 .ser-row .badge-source{font-size:.62rem;font-weight:700;background:#e3f2fd;color:#0277bd;border-radius:8px;padding:.05rem .4rem;flex-shrink:0;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ser-row .badge-nofit{font-size:.62rem;font-weight:800;background:var(--warnbg);color:var(--warn);border-radius:8px;padding:.05rem .4rem;flex-shrink:0}
 
 .combine-box,.vfd-box,.bep-box{border-top:1px dashed var(--bdr);margin-top:.6rem;padding-top:.55rem}
 .bep-box .field-row label{width:70px}
@@ -227,7 +228,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
     <div class="hdr-logo">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
       <div class="hdr-brand">
-        <h1>Curva de Bombas <span class="ver-badge">v1.26</span></h1>
+        <h1>Curva de Bombas <span class="ver-badge">v1.27</span></h1>
         <p>Digitalizador de curvas — importe imagem/PDF e extraia os pontos</p>
       </div>
     </div>
@@ -576,7 +577,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
 // ============================================================================
-// Curva de Bombas — Digitalizador  v1.26 (2026-08-26)
+// Curva de Bombas — Digitalizador  v1.27 (2026-08-27)
 // Build inicial (v1.0): importação de imagem/PDF (pdf.js), calibração de eixos
 // (linear/log, 4 pontos estilo WebPlotDigitizer), múltiplas séries,
 // ajuste de curva (polinomial grau 1-3 / potência) por mínimos quadrados,
@@ -1071,6 +1072,31 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
 //   tabela-resumo (coluna Bomba) quanto no título de cada seção de gráficos
 //   — pra ficar rastreável depois, sem precisar reabrir o app pra lembrar
 //   qual operação estava em modo bomba única.
+// v1.27: usuário reportou "cadastrei uma curva de Potência mas não consigo
+// analisar a economia de energia, algo está errado e não acho o quê" —
+// mandou o projeto salvo pra eu investigar. A curva de Potência EXISTIA
+// (17 pontos, nome e fonte batendo com a bomba das Operações), mas estava
+// com "Ajuste de curva = Nenhum" no painel 4 — provavelmente trocado sem
+// querer, já que toda série nova nasce em "Polinomial (3º grau)". Sem
+// ajuste, `fit` fica null, e `findDigitizedPowerFor` (que exige `fit`
+// válido pra considerar a curva utilizável) simplesmente não a encontrava —
+// caindo pra BEP (também não preenchido) e mostrando "sem fonte de potência
+// configurada pra esta bomba", a MESMA mensagem de quando a curva nem foi
+// digitalizada. Impossível diagnosticar sem abrir o projeto e vasculhar
+// série por série (foi o que eu tive que fazer).
+// - `findDigitizedPowerFor` virou um wrapper em cima de uma nova
+//   `findDigitizedPowerCandidateFor` (mesmo casamento por fonte/nome, mas
+//   SEM exigir `fit`) — assim `computeOperation` consegue distinguir "não
+//   existe curva de Potência nenhuma" de "existe, mas está sem ajuste".
+// - Nesse segundo caso, a Operação agora avisa especificamente: 'a curva
+//   "X" foi encontrada mas está SEM AJUSTE DE CURVA — selecione essa série
+//   no painel 4 e mude o Ajuste pra Polinomial (3º grau)', em vez do
+//   genérico de sempre.
+// - Reforço na origem do problema: qualquer série digitalizada com 2+
+//   pontos mas sem ajuste válido (fitType "Nenhum", ou grau incompatível
+//   com a quantidade de pontos) agora ganha um selo "⚠ sem ajuste" na
+//   própria lista de séries (painel 3) — pra pegar o problema ali, antes de
+//   precisar chegar lá na Operação pra descobrir.
 // ============================================================================
 (function(){
 'use strict';
@@ -1573,7 +1599,12 @@ function refreshFitDisplay(){
   fitEqEl.textContent=equationString(ser.fit);
   fitR2El.textContent='R² = '+(ser.fit.r2!=null? ser.fit.r2.toFixed(4):'—');
 }
-fitTypeSel.addEventListener('change',()=>{ const ser=getActiveSeries(); if(!ser) return; ser.fitType=fitTypeSel.value; computeFit(ser); refreshTable(); refreshFitDisplay(); redraw(); });
+// v1.27: trocar o Ajuste de curva também precisa atualizar a LISTA de
+// séries (painel 3), não só a tabela de pontos — é lá que mora o selo
+// "⚠ sem ajuste" (ver refreshSeriesList), então sem esse refresh aqui o
+// selo ficava "grudado" mesmo depois de corrigir o ajuste, até o usuário
+// mexer em outra coisa que disparasse refreshSeriesList por acaso.
+fitTypeSel.addEventListener('change',()=>{ const ser=getActiveSeries(); if(!ser) return; ser.fitType=fitTypeSel.value; computeFit(ser); refreshTable(); refreshSeriesList(); refreshFitDisplay(); redraw(); });
 showFitChk.addEventListener('change',()=>{ S.showFit=showFitChk.checked; redraw(); });
 
 // ------------------------------------------------------ bombas em série ----
@@ -1736,19 +1767,33 @@ function digitizedPowerAt(powerSer, Q, targetRpm){
 // sourceId nunca bate e a curva digitalizada ficava invisível pro cálculo
 // (caía silenciosamente pro BEP, ou pra "sem fonte de potência"). Por isso,
 // se a busca exata não achar nada, tenta de novo casando pelo NOME da fonte.
-function findDigitizedPowerFor(hSrc){
-  const isP=s=>s.type==='digitized' && s.id!==hSrc.id && s.fit && quantityInfoFor(s.name).symbol==='P';
+// v1.27: mesmo casamento de findDigitizedPowerFor (mesma fonte, senão por
+// nome da fonte), mas SEM exigir `fit` válido — usuário reportou "cadastrei
+// uma curva de potência mas a economia de energia não calcula", e a causa
+// era exatamente essa: a curva de Potência FOI achada por nome, só que
+// estava com "Ajuste de curva = Nenhum" (fitType:'none', escolhido sem
+// querer no painel 4), então `fit` ficava null e o cálculo caía
+// silenciosamente pra "sem fonte de potência configurada" — mesma mensagem
+// de quando a curva nem existe, impossível de diagnosticar sem abrir o
+// projeto e vasculhar série por série. Esta função (candidata, sem exigir
+// fit) permite computeOperation avisar a causa EXATA.
+function findDigitizedPowerCandidateFor(hSrc){
+  const isP=s=>s.type==='digitized' && s.id!==hSrc.id && quantityInfoFor(s.name).symbol==='P';
   const exact=S.series.find(s=>isP(s) && s.sourceId && s.sourceId===hSrc.sourceId);
-  if(exact){ exact._matchedByName=false; return exact; }
+  if(exact) return exact;
   const hSrcObj=getSourceOf(hSrc);
   if(!hSrcObj || !hSrcObj.name) return null;
-  const byName=S.series.find(s=>{
+  return S.series.find(s=>{
     if(!isP(s)) return false;
     const srcObj=getSourceOf(s);
     return srcObj && srcObj.name===hSrcObj.name;
   }) || null;
-  if(byName) byName._matchedByName=true;
-  return byName;
+}
+function findDigitizedPowerFor(hSrc){
+  const cand=findDigitizedPowerCandidateFor(hSrc);
+  if(!cand || !cand.fit) return null;
+  cand._matchedByName = !(cand.sourceId && cand.sourceId===hSrc.sourceId);
+  return cand;
 }
 // Acha a curva de Potência desta bomba (digitalizada, com prioridade — senão
 // calculada por rendimento/BEP) e compara o consumo na rotação de
@@ -1887,7 +1932,7 @@ function computeOperation(op){
   // curva de POTÊNCIA dedicada — digitalizada se existir (prioridade),
   // calculada por rendimento (BEP) senão.
   const digitizedPower=findDigitizedPowerFor(hSrc);
-  let Pref=null, Padj=null, powerSource=null, powerSeriesId=null;
+  let Pref=null, Padj=null, powerSource=null, powerSeriesId=null, powerFitMissing=null;
   if(digitizedPower){
     Pref=digitizedPowerAt(digitizedPower, Qt, digitizedPower.refRpm||3500);
     Padj=digitizedPowerAt(digitizedPower, Qt, targetRpm);
@@ -1914,6 +1959,13 @@ function computeOperation(op){
       } else { powCalc.name=powName; powCalc.srcId=hSrc.id; powCalc.targetRpm=targetRpm; }
       powCalc.targetPoint={Q:Qt, H:Padj};
       powerSeriesId=powCalc.id;
+    } else {
+      // nem digitalizada com ajuste válido, nem BEP preenchido — antes de
+      // desistir, checa se existe uma curva de Potência CANDIDATA (achada
+      // pela mesma fonte/nome) que só está sem ajuste de curva, pra dar um
+      // aviso específico em vez do genérico "sem fonte configurada".
+      const cand=findDigitizedPowerCandidateFor(hSrc);
+      if(cand && !cand.fit) powerFitMissing=cand.name;
     }
   }
   // se o método de potência mudou de uma hora pra outra (ex: uma curva
@@ -1933,7 +1985,7 @@ function computeOperation(op){
   const kwhYear = (savingsCv!=null && hoursYear!=null)? electricalKw(savingsCv*0.7355, getSourceOf(hSrc))*hoursYear : null;
 
   op.error=null;
-  op.result={targetRpm,targetHz,r,Qt,Ht,HtForSrc,partnerName:partner?partner.name:null,partnerH,singlePumpOnly:!!op.singlePumpOnly,Pref,Padj,savingsCv,pct,powerSource,hoursYear,kwhYear,motorEta,extrapolation,pressVfdId:pressVfd.id,powerVfdId:powerSeriesId,pumpName:hSrc.name};
+  op.result={targetRpm,targetHz,r,Qt,Ht,HtForSrc,partnerName:partner?partner.name:null,partnerH,singlePumpOnly:!!op.singlePumpOnly,Pref,Padj,savingsCv,pct,powerSource,powerFitMissing,hoursYear,kwhYear,motorEta,extrapolation,pressVfdId:pressVfd.id,powerVfdId:powerSeriesId,pumpName:hSrc.name};
 }
 function opStatusClassAndText(op){
   if(op.error) return {cls:'err', icon:'⚠', text:op.error};
@@ -1949,6 +2001,8 @@ function opStatusClassAndText(op){
   if(r.Pref!=null && r.Padj!=null){
     text+=' · potência ('+r.powerSource+'): '+fmtNum(r.Pref)+' → '+fmtNum(r.Padj)+' cv (economia '+fmtNum(r.savingsCv)+' cv, '+fmtNum(r.pct)+'%)';
     if(r.kwhYear!=null) text+=' · ≈'+fmtNum(r.kwhYear)+' kWh/ano'+(r.motorEta>0? ' (elétrico, motor+inv. '+fmtNum(r.motorEta)+'%)' : ' (mecânico)');
+  } else if(r.powerFitMissing){
+    text+=' · a curva "'+r.powerFitMissing+'" foi encontrada mas está SEM AJUSTE DE CURVA ("Ajuste" = Nenhum) — selecione essa série no painel 4 e mude o Ajuste pra Polinomial (3º grau) pra habilitar a economia de energia.';
   } else {
     text+=' · sem fonte de potência configurada pra esta bomba (digitalize uma Potência ou preencha o BEP dela).';
   }
@@ -3348,6 +3402,13 @@ function refreshSeriesList(){
     if(isCombined) badge='<span class="badge-combined" title="Curva calculada, não digitalizada">&#128279; calculada</span>';
     else if(isVfd) badge='<span class="badge-vfd" title="Curva calculada por inversor de frequência">&#127744; VFD</span>';
     else if(isPowerCalc) badge='<span class="badge-vfd" title="Potência calculada por rendimento (BEP), não digitalizada">🧮 calculada</span>';
+    // v1.27: série digitalizada com 2+ pontos mas SEM ajuste de curva válido
+    // (fitType "Nenhum", ou pontos insuficientes pro grau escolhido) fica
+    // muda pro resto do app — não entra no gráfico do Sistema, no VFD, nem
+    // na economia de energia (Operações) — e isso falhava CALADO, sem
+    // nenhuma pista na lista de séries. Avisa aqui, direto onde o usuário
+    // cadastra a curva, antes de precisar caçar o motivo lá na Operação.
+    else if(!isDerived && ser.points.length>=2 && !ser.fit) badge='<span class="badge-nofit" title="Esta série tem pontos mas está sem ajuste de curva (Ajuste = Nenhum, ou grau incompatível com a quantidade de pontos) — não entra em nenhum gráfico calculado nem na economia de energia até ter um ajuste válido.">&#9888; sem ajuste</span>';
     row.innerHTML='<span class="dot" style="background:'+ser.color+'"></span>'+
       '<span class="ser-name">'+escapeHtml(ser.name)+'</span>'+
       badge+
