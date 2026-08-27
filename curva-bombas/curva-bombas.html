@@ -144,6 +144,10 @@ main.layout{flex:1;min-height:0;display:flex;gap:1rem;padding:.9rem 1rem;max-wid
 .op-result.ok{background:var(--okbg)}
 .op-modal-body .op-result{font-size:.8rem;margin-top:1rem}
 .op-clear{font-size:.68rem;color:var(--mu);text-decoration:underline;cursor:pointer;display:inline-block}
+.op-singlepump-row{background:var(--warnbg);border:1px solid #f0d9a6;border-radius:8px;padding:.5rem .6rem;margin-bottom:.7rem}
+.op-checkbox-label{display:flex;align-items:flex-start;gap:.45rem;font-size:.8rem;font-weight:700;color:var(--tx);cursor:pointer;line-height:1.35}
+.op-checkbox-label input{margin-top:.2rem;flex-shrink:0;width:15px;height:15px}
+.op-singlepump-hint{font-size:.72rem;color:var(--mu);font-weight:400;margin:.3rem 0 0 1.6rem;line-height:1.4}
 .combine-title{font-size:.72rem;font-weight:700;color:var(--mu);margin-bottom:.4rem}
 .combine-box select{width:100%}
 .combine-box .field-row label{width:58px}
@@ -223,7 +227,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
     <div class="hdr-logo">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
       <div class="hdr-brand">
-        <h1>Curva de Bombas <span class="ver-badge">v1.25</span></h1>
+        <h1>Curva de Bombas <span class="ver-badge">v1.26</span></h1>
         <p>Digitalizador de curvas — importe imagem/PDF e extraia os pontos</p>
       </div>
     </div>
@@ -550,6 +554,10 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
     <div class="modal-body op-modal-body">
       <div class="field-row"><label>Nome</label><input type="text" id="opModalName"></div>
       <div class="field-row"><label>Bomba</label><select id="opModalPump"></select></div>
+      <div class="op-singlepump-row" id="opModalSinglePumpRow" style="display:none">
+        <label class="op-checkbox-label"><input type="checkbox" id="opModalSinglePump"> <span id="opModalSinglePumpText">Desligar a 2ª bomba nesta operação</span></label>
+        <p class="op-singlepump-hint" id="opModalSinglePumpHint"></p>
+      </div>
       <div class="op-modal-grid">
         <div class="field-row"><label>Q alvo</label><input type="number" step="any" id="opModalQ" placeholder="ex: 45"></div>
         <div class="field-row"><label>H alvo</label><input type="number" step="any" id="opModalH" placeholder="ex: 36.9"></div>
@@ -568,7 +576,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
 // ============================================================================
-// Curva de Bombas — Digitalizador  v1.25 (2026-08-21)
+// Curva de Bombas — Digitalizador  v1.26 (2026-08-26)
 // Build inicial (v1.0): importação de imagem/PDF (pdf.js), calibração de eixos
 // (linear/log, 4 pontos estilo WebPlotDigitizer), múltiplas séries,
 // ajuste de curva (polinomial grau 1-3 / potência) por mínimos quadrados,
@@ -1043,6 +1051,26 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
 //   TODOS os gráficos do relatório ficarem juntos numa sequência só (visão
 //   geral primeiro, depois cada operação em detalhe), com a tabela sozinha
 //   como bloco de dados no meio, não separando os gráficos em dois grupos.
+// v1.26: usuário instalou o inversor de frequência só na PRIMEIRA bomba de
+// uma associação em série e, nalgumas operações, precisa deixar a segunda
+// bomba desligada (problema não previsto de operação) — trabalhando só com a
+// primeira, ajustada pelo inversor. Até aqui, `computeOperation` sempre
+// descontava a parceira em série do H alvo (H_total=H_parceira+H_desta), sem
+// jeito de desligar isso por operação.
+// - Cada Operação (painel "8 — Operações") ganhou uma caixa "Desligar '<nome
+//   da parceira>' nesta operação" — só aparece quando a bomba escolhida
+//   nessa operação está de fato associada em série com outra
+//   (`findSeriesPartner`); nas demais bombas (sem parceira) a caixa nem
+//   aparece, pra não confundir. Marcando, `computeOperation` passa a tratar
+//   `partner` como null SÓ para aquela operação — o H alvo inteiro vai pra
+//   bomba escolhida, sem descontar nada da parceira — sem afetar as outras 7
+//   operações nem o ponto de trabalho "avulso" do painel do inversor (que
+//   continua descontando a parceira normalmente).
+// - O resumo de cada operação (linha da lista + relatório PDF) passa a
+//   avisar "2ª bomba desligada nesta operação" quando marcado, tanto na
+//   tabela-resumo (coluna Bomba) quanto no título de cada seção de gráficos
+//   — pra ficar rastreável depois, sem precisar reabrir o app pra lembrar
+//   qual operação estava em modo bomba única.
 // ============================================================================
 (function(){
 'use strict';
@@ -1077,6 +1105,13 @@ const S = {
   operations: Array.from({length:8},(_,i)=>({
     id:'op'+(i+1), name:'Operação '+String(i+1).padStart(2,'0'),
     pumpId:null, Qt:null, Ht:null, hoursPerDay:null, daysPerYear:null,
+    // v1.26: quando a bomba desta operação está associada em série com uma
+    // parceira (ver findSeriesPartner), por padrão o H alvo é dividido entre
+    // as duas (H_total = H_parceira + H_desta). Marcando singlePumpOnly, esta
+    // operação simula a parceira DESLIGADA — o H alvo inteiro vai pra bomba
+    // escolhida (ajustada pelo inversor), sem descontar nada. Não afeta as
+    // outras operações nem o painel "avulso" do inversor.
+    singlePumpOnly:false,
     error:null, result:null
   }))
 };
@@ -1116,7 +1151,7 @@ projClientInput.addEventListener('input', ()=>{ S.projectInfo.client=projClientI
 projDateInput.addEventListener('input', ()=>{ S.projectInfo.date=projDateInput.value; });
 const energySavingsBox=$('energySavingsBox'), energySavingsSummary=$('energySavingsSummary'), energyHoursInput=$('energyHoursInput'), energyTariffInput=$('energyTariffInput'), energyAnnualResult=$('energyAnnualResult'), energySavingsHint=$('energySavingsHint');
 const operationsListEl=$('operationsList'), calcAllOpsBtn=$('calcAllOpsBtn'), reportTariffInput=$('reportTariffInput'), openReportBtn=$('openReportBtn');
-const opModalOverlay=$('opModalOverlay'), opModalTitle=$('opModalTitle'), opModalCloseBtn=$('opModalCloseBtn'), opModalName=$('opModalName'), opModalPump=$('opModalPump'), opModalQ=$('opModalQ'), opModalH=$('opModalH'), opModalHours=$('opModalHours'), opModalDays=$('opModalDays'), opModalCalcBtn=$('opModalCalcBtn'), opModalClearBtn=$('opModalClearBtn'), opModalResult=$('opModalResult');
+const opModalOverlay=$('opModalOverlay'), opModalTitle=$('opModalTitle'), opModalCloseBtn=$('opModalCloseBtn'), opModalName=$('opModalName'), opModalPump=$('opModalPump'), opModalQ=$('opModalQ'), opModalH=$('opModalH'), opModalHours=$('opModalHours'), opModalDays=$('opModalDays'), opModalCalcBtn=$('opModalCalcBtn'), opModalClearBtn=$('opModalClearBtn'), opModalResult=$('opModalResult'), opModalSinglePumpRow=$('opModalSinglePumpRow'), opModalSinglePump=$('opModalSinglePump'), opModalSinglePumpText=$('opModalSinglePumpText'), opModalSinglePumpHint=$('opModalSinglePumpHint');
 const scaleXSel=$('scaleXSel'), scaleYSel=$('scaleYSel');
 const xVal1=$('xVal1'), xVal2=$('xVal2'), yVal1=$('yVal1'), yVal2=$('yVal2');
 const statX1=$('statX1'), statX2=$('statX2'), statY1=$('statY1'), statY2=$('statY2');
@@ -1817,14 +1852,19 @@ function computeOperation(op){
   if(!(Qt>0) || Ht==null || isNaN(Ht)){ op.error='Informe Q e H alvo.'; return; }
   const refRpm=hSrc.refRpm||3500, refHz=hSrc.refHz||60;
 
-  const partner=findSeriesPartner(hSrc);
+  // singlePumpOnly: usuário marcou "desligar a 2ª bomba" pra esta operação —
+  // simula a parceira em série DESLIGADA, então ignora ela por completo (o H
+  // alvo inteiro vai pra `hSrc`, sem descontar nada). Útil pra quando o
+  // inversor foi instalado só na primeira bomba e, nalgumas operações, a
+  // segunda fica fora de operação.
+  const partner = op.singlePumpOnly? null : findSeriesPartner(hSrc);
   let HtForSrc=Ht, partnerH=null;
   if(partner && partner.fit){
     partnerH=evalSeriesAt(partner, Qt);
     if(partnerH!=null && isFinite(partnerH)) HtForSrc=Ht-partnerH;
   }
   if(partner && partnerH!=null && HtForSrc<=0){
-    op.error='"'+partner.name+'" sozinha já fornece '+fmtNum(partnerH)+' em Q='+fmtNum(Qt)+' — mais que o alvo de '+fmtNum(Ht)+'.';
+    op.error='"'+partner.name+'" sozinha já fornece '+fmtNum(partnerH)+' em Q='+fmtNum(Qt)+' — mais que o alvo de '+fmtNum(Ht)+'. Se a intenção é desligar essa parceira nesta operação, marque "Desligar a 2ª bomba".';
     return;
   }
   const exp=2;
@@ -1893,7 +1933,7 @@ function computeOperation(op){
   const kwhYear = (savingsCv!=null && hoursYear!=null)? electricalKw(savingsCv*0.7355, getSourceOf(hSrc))*hoursYear : null;
 
   op.error=null;
-  op.result={targetRpm,targetHz,r,Qt,Ht,HtForSrc,partnerName:partner?partner.name:null,partnerH,Pref,Padj,savingsCv,pct,powerSource,hoursYear,kwhYear,motorEta,extrapolation,pressVfdId:pressVfd.id,powerVfdId:powerSeriesId,pumpName:hSrc.name};
+  op.result={targetRpm,targetHz,r,Qt,Ht,HtForSrc,partnerName:partner?partner.name:null,partnerH,singlePumpOnly:!!op.singlePumpOnly,Pref,Padj,savingsCv,pct,powerSource,hoursYear,kwhYear,motorEta,extrapolation,pressVfdId:pressVfd.id,powerVfdId:powerSeriesId,pumpName:hSrc.name};
 }
 function opStatusClassAndText(op){
   if(op.error) return {cls:'err', icon:'⚠', text:op.error};
@@ -1905,6 +1945,7 @@ function opStatusClassAndText(op){
   const r=op.result;
   let text='Rotação: '+fmtNum(r.targetRpm)+' RPM ('+fmtNum(r.targetHz)+' Hz)';
   if(r.partnerName) text+=' · desconta "'+r.partnerName+'" ('+fmtNum(r.partnerH)+')';
+  else if(r.singlePumpOnly) text+=' · 2ª bomba desligada nesta operação';
   if(r.Pref!=null && r.Padj!=null){
     text+=' · potência ('+r.powerSource+'): '+fmtNum(r.Pref)+' → '+fmtNum(r.Padj)+' cv (economia '+fmtNum(r.savingsCv)+' cv, '+fmtNum(r.pct)+'%)';
     if(r.kwhYear!=null) text+=' · ≈'+fmtNum(r.kwhYear)+' kWh/ano'+(r.motorEta>0? ' (elétrico, motor+inv. '+fmtNum(r.motorEta)+'%)' : ' (mecânico)');
@@ -1959,6 +2000,23 @@ function buildOperationsUI(){
   refreshOperationsPumpSelects();
   refreshOperationsUI();
 }
+// Mostra a linha "Desligar a 2ª bomba" só quando a bomba escolhida nesta
+// operação está de fato associada em série com outra (senão não há o que
+// desligar — a caixa ficaria sem sentido nenhum ali). O rótulo/dica citam o
+// nome da parceira encontrada, pra deixar claro qual bomba seria ignorada.
+function refreshOpModalSinglePumpRow(){
+  if(S._activeOpIdx==null) return;
+  const op=S.operations[S._activeOpIdx];
+  const hSrc=S.series.find(s=>s.id===op.pumpId);
+  const partner=hSrc? findSeriesPartner(hSrc) : null;
+  if(!partner){ opModalSinglePumpRow.style.display='none'; return; }
+  opModalSinglePumpRow.style.display='block';
+  opModalSinglePumpText.textContent='Desligar "'+partner.name+'" nesta operação';
+  opModalSinglePumpHint.textContent=op.singlePumpOnly
+    ? 'O H alvo inteiro vai para "'+hSrc.name+'" (ajustada pelo inversor) — nada é descontado de "'+partner.name+'".'
+    : '"'+hSrc.name+'" e "'+partner.name+'" estão associadas em série — por padrão, o H alvo é dividido entre as duas. Marque para simular "'+partner.name+'" desligada nesta operação.';
+  if(document.activeElement!==opModalSinglePump) opModalSinglePump.checked=!!op.singlePumpOnly;
+}
 function refreshOpModalFields(){
   if(S._activeOpIdx==null) return;
   const op=S.operations[S._activeOpIdx];
@@ -1968,6 +2026,7 @@ function refreshOpModalFields(){
   if(document.activeElement!==opModalHours) opModalHours.value=op.hoursPerDay!=null? op.hoursPerDay:'';
   if(document.activeElement!==opModalDays) opModalDays.value=op.daysPerYear!=null? op.daysPerYear:'';
   if(op.pumpId && [...opModalPump.options].some(o=>o.value===op.pumpId)) opModalPump.value=op.pumpId;
+  refreshOpModalSinglePumpRow();
   const st=opStatusClassAndText(op);
   opModalResult.className='op-result'+(st.cls?' '+st.cls:'');
   opModalResult.textContent=st.text;
@@ -1996,6 +2055,12 @@ opModalName.addEventListener('input',()=>{
 opModalPump.addEventListener('change',()=>{
   if(S._activeOpIdx==null) return;
   S.operations[S._activeOpIdx].pumpId=opModalPump.value||null;
+  refreshOpModalSinglePumpRow();
+});
+opModalSinglePump.addEventListener('change',()=>{
+  if(S._activeOpIdx==null) return;
+  S.operations[S._activeOpIdx].singlePumpOnly=opModalSinglePump.checked;
+  refreshOpModalSinglePumpRow();
 });
 opModalQ.addEventListener('input',()=>{
   if(S._activeOpIdx==null) return;
@@ -2025,7 +2090,7 @@ opModalClearBtn.addEventListener('click',()=>{
   if(S._activeOpIdx==null) return;
   const i=S._activeOpIdx, op=S.operations[i];
   S.series = S.series.filter(s=>s.opId!==op.id);
-  op.pumpId=null; op.Qt=null; op.Ht=null; op.hoursPerDay=null; op.daysPerYear=null; op.error=null; op.result=null;
+  op.pumpId=null; op.Qt=null; op.Ht=null; op.hoursPerDay=null; op.daysPerYear=null; op.singlePumpOnly=false; op.error=null; op.result=null;
   opModalPump.value='';
   refreshOperationRow(i);
   refreshOpModalFields();
@@ -2071,7 +2136,8 @@ function buildReportHTML(){
   rows.forEach(({op})=>{
     const r=op.result, costYear=r.kwhYear!=null? r.kwhYear*tariff : null;
     const base=r.motorEta>0? 'Elétrico (η motor+inv. '+fmtNum(r.motorEta)+'%)' : 'Mecânico (eixo)';
-    html+='<tr><td>'+escapeHtml(op.name)+'</td><td>'+escapeHtml(r.pumpName)+'</td>'
+    const pumpCell=r.pumpName+(r.singlePumpOnly? ' (2ª bomba desligada)' : '');
+    html+='<tr><td>'+escapeHtml(op.name)+'</td><td>'+escapeHtml(pumpCell)+'</td>'
       +'<td>'+fmtNum(op.Qt)+'</td><td>'+fmtNum(op.Ht)+'</td>'
       +'<td>'+fmtNum(r.targetRpm)+' RPM</td>'
       +'<td>'+(r.Pref!=null?fmtNum(r.Pref)+' cv':'—')+'</td><td>'+(r.Padj!=null?fmtNum(r.Padj)+' cv':'—')+'</td>'
@@ -2095,7 +2161,7 @@ function buildReportHTML(){
   });
   rows.forEach(({op})=>{
     const r=op.result;
-    html+='<div class="op-section"><h2>'+escapeHtml(op.name)+' — '+escapeHtml(r.pumpName)+'</h2>';
+    html+='<div class="op-section"><h2>'+escapeHtml(op.name)+' — '+escapeHtml(r.pumpName)+(r.singlePumpOnly? ' <small style="color:#e07b00;font-weight:600">(2ª bomba desligada)</small>':'')+'</h2>';
     html+='<div class="charts-row">';
     html+='<div class="chart-col">'+staticSvgFor(r.pressVfdId)+'</div>';
     if(r.powerVfdId) html+='<div class="chart-col">'+staticSvgFor(r.powerVfdId)+'</div>';
@@ -3791,7 +3857,7 @@ saveProjectBtn.addEventListener('click',()=>{
     })),
     activeSourceId:S.activeSourceId,
     series:S.series.map(s=>({id:s.id,name:s.name,color:s.color,fitType:s.fitType,type:s.type||'digitized',sourceId:s.sourceId,srcA:s.srcA,srcB:s.srcB,srcId:s.srcId,targetRpm:s.targetRpm,quantityExp:s.quantityExp,refRpm:s.refRpm,refHz:s.refHz,targetPoint:s.targetPoint||null,autoFrom:s.autoFrom||null,opId:s.opId||null,opKind:s.opKind||null,yUnit:s.yUnit||'',points: (s.type==='combined'||s.type==='vfd'||s.type==='power_calc')? [] : s.points.map(p=>({px:p.px,py:p.py,x:p.x,y:p.y}))})),
-    operations:S.operations.map(op=>({id:op.id,name:op.name,pumpId:op.pumpId,Qt:op.Qt,Ht:op.Ht,hoursPerDay:op.hoursPerDay,daysPerYear:op.daysPerYear})),
+    operations:S.operations.map(op=>({id:op.id,name:op.name,pumpId:op.pumpId,Qt:op.Qt,Ht:op.Ht,hoursPerDay:op.hoursPerDay,daysPerYear:op.daysPerYear,singlePumpOnly:!!op.singlePumpOnly})),
     activeSeriesId:S.activeSeriesId,
     showGrid:S.showGrid, showFit:S.showFit, autoSort:S.autoSort,
     workingPointQ:S.workingPointQ!=null? S.workingPointQ : null,
@@ -3821,8 +3887,8 @@ loadProjectInput.addEventListener('change',e=>{
       S.series = (project.series||[]).map(s=>({id:s.id||newSeriesId(), name:s.name, color:s.color, fitType:s.fitType||'poly3', type:s.type||'digitized', sourceId:s.sourceId, srcA:s.srcA, srcB:s.srcB, srcId:s.srcId, targetRpm:s.targetRpm, quantityExp:s.quantityExp, refRpm:s.refRpm||3500, refHz:s.refHz||60, targetPoint:s.targetPoint||null, autoFrom:s.autoFrom||null, opId:s.opId||null, opKind:s.opKind||null, yUnit:s.yUnit||'', error:null, points:(s.points||[]).map(p=>({px:p.px,py:p.py,x:p.x,y:p.y})), fit:null}));
       S.operations = Array.from({length:8},(_,i)=>{
         const saved=(project.operations||[])[i];
-        return saved? {id:saved.id||('op'+(i+1)), name:saved.name||('Operação '+String(i+1).padStart(2,'0')), pumpId:saved.pumpId||null, Qt:saved.Qt!=null?saved.Qt:null, Ht:saved.Ht!=null?saved.Ht:null, hoursPerDay:saved.hoursPerDay!=null?saved.hoursPerDay:null, daysPerYear:saved.daysPerYear!=null?saved.daysPerYear:null, error:null, result:null}
-          : {id:'op'+(i+1), name:'Operação '+String(i+1).padStart(2,'0'), pumpId:null, Qt:null, Ht:null, hoursPerDay:null, daysPerYear:null, error:null, result:null};
+        return saved? {id:saved.id||('op'+(i+1)), name:saved.name||('Operação '+String(i+1).padStart(2,'0')), pumpId:saved.pumpId||null, Qt:saved.Qt!=null?saved.Qt:null, Ht:saved.Ht!=null?saved.Ht:null, hoursPerDay:saved.hoursPerDay!=null?saved.hoursPerDay:null, daysPerYear:saved.daysPerYear!=null?saved.daysPerYear:null, singlePumpOnly:!!saved.singlePumpOnly, error:null, result:null}
+          : {id:'op'+(i+1), name:'Operação '+String(i+1).padStart(2,'0'), pumpId:null, Qt:null, Ht:null, hoursPerDay:null, daysPerYear:null, singlePumpOnly:false, error:null, result:null};
       });
       S.activeSeriesId = project.activeSeriesId || (S.series[0]&&S.series[0].id) || null;
       S.showGrid=!!project.showGrid; S.showFit=project.showFit!==false; S.autoSort=project.autoSort!==false;
