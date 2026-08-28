@@ -228,7 +228,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
     <div class="hdr-logo">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
       <div class="hdr-brand">
-        <h1>Curva de Bombas <span class="ver-badge">v1.28</span></h1>
+        <h1>Curva de Bombas <span class="ver-badge">v1.29</span></h1>
         <p>Digitalizador de curvas — importe imagem/PDF e extraia os pontos</p>
       </div>
     </div>
@@ -577,7 +577,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
 // ============================================================================
-// Curva de Bombas — Digitalizador  v1.28 (2026-08-27)
+// Curva de Bombas — Digitalizador  v1.29 (2026-08-28)
 // Build inicial (v1.0): importação de imagem/PDF (pdf.js), calibração de eixos
 // (linear/log, 4 pontos estilo WebPlotDigitizer), múltiplas séries,
 // ajuste de curva (polinomial grau 1-3 / potência) por mínimos quadrados,
@@ -1114,6 +1114,32 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
 //   energia; confira se Q alvo e H alvo não foram digitados trocados" antes
 //   do resto do resultado — sem bloquear o cálculo (subir rotação é válido
 //   em alguns projetos, só raro no uso normal deste painel).
+// v1.29: usuário pediu 3 ajustes no relatório PDF depois de olhar um
+// exportado de verdade: (1) números com casas decimais inconsistentes linha
+// a linha (ex: "72,0437 cv" ao lado de "138,18" na mesma coluna — `fmtNum`
+// usa 6 dígitos SIGNIFICATIVOS, não um número fixo de casas); (2) número e
+// unidade quebrando em duas linhas dentro da mesma célula da tabela (larguras
+// de coluna apertadas + wrap default); (3) o gráfico de Potência de cada
+// Operação mostrando o ponto de trabalho sem unidade nenhuma ("P=32,4088"),
+// enquanto o gráfico de pressão ao lado mostra "H=... m.c.a." — a causa era
+// a curva de Potência ter sido DIGITALIZADA sem o usuário preencher o campo
+// "Unidade Y" (painel 4) com "cv".
+// - `fmtNum2` (nova): mesmo formato brasileiro de sempre (milhar com ponto,
+//   decimal com vírgula), mas SEMPRE duas casas fixas — usada só na tabela
+//   do relatório (`buildReportHTML`), sem tocar em `fmtNum` (a UI
+//   interativa do app continua com 6 dígitos significativos, de propósito).
+// - `table.report-table td/th` ganhou `white-space:nowrap`, com exceção
+//   explícita da coluna "Bomba" (`:nth-child(2)`) — só ela pode quebrar em
+//   duas linhas (nome de bomba longo + "(2ª bomba desligada)").
+// - `effectiveYUnit` passa a assumir "cv" como padrão pra qualquer série
+//   digitalizada de Potência (`quantityInfoFor(...).symbol==='P'`) que não
+//   tenha unidade Y explícita — mesma unidade que o app já assume em toda
+//   fórmula de potência calculada (BEP), só nunca tinha sido aplicada à
+//   curva DIGITALIZADA. Nunca sobrescreve uma unidade digitada de propósito.
+// - `buildChartSVG` ganhou um parâmetro opcional `meta.fmt` (formatador de
+//   número) — só o relatório (via `staticSvgFor`) passa `fmtNum2`; os
+//   gráficos da tela (modal/seção fixa/aba nova) continuam com `fmtNum` por
+//   padrão, sem nenhuma mudança visual na UI normal do app.
 // ============================================================================
 (function(){
 'use strict';
@@ -1238,6 +1264,23 @@ function fmtNum(x){
   const [intPart,fracPart]=s.split('.');
   const grouped=intPart.replace(/\B(?=(\d{3})+(?!\d))/g,'.');
   return (neg?'-':'')+grouped+(fracPart? ','+fracPart : '');
+}
+// v1.29: `fmtNum` usa 6 dígitos SIGNIFICATIVOS (toPrecision(6)) — ótimo pra
+// não sujar a UI interativa com zeros à direita em números pequenos, mas no
+// RELATÓRIO PDF isso gerava uma coluna com quantidade de casas decimais
+// inconsistente linha a linha (ex: "72,0437 cv" ao lado de "138,18" na
+// mesma tabela) — usuário pediu tudo com exatamente duas casas decimais,
+// pra ficar uniforme. `fmtNum2` é só pro relatório (tabela + rótulos de
+// ponto de trabalho nos gráficos exportados) — a UI interativa do app
+// continua com `fmtNum` normalmente, sem mudar o comportamento de sempre.
+function fmtNum2(x){
+  if(x===null||x===undefined||isNaN(x)) return '';
+  const fixed=x.toFixed(2);
+  const neg=fixed[0]==='-';
+  const s=neg? fixed.slice(1) : fixed;
+  const [intPart,fracPart]=s.split('.');
+  const grouped=intPart.replace(/\B(?=(\d{3})+(?!\d))/g,'.');
+  return (neg?'-':'')+grouped+','+fracPart;
 }
 function debounce(fn,ms){ let t; return function(){ clearTimeout(t); const a=arguments; t=setTimeout(()=>fn.apply(null,a),ms); }; }
 function getActiveSeries(){ return S.series.find(s=>s.id===S.activeSeriesId) || null; }
@@ -1509,7 +1552,15 @@ function electricalKw(kwMech, srcObj){
 // com projetos salvos antes desta versão, que só tinham unidade por fonte).
 function effectiveYUnit(ser){
   if(!ser) return '';
-  if(ser.type==='digitized') return ser.yUnit || (getSourceOf(ser)&&getSourceOf(ser).yUnit) || '';
+  // v1.29: usuário digitalizou uma curva de Potência mas nunca preencheu o
+  // campo "Unidade Y" dela (painel 4) — nem todo mundo pensa em digitar
+  // "cv" ali, já que a unidade parece "óbvia". Sem isso, o gráfico/relatório
+  // mostrava o ponto de trabalho como "P=32,41" sem unidade nenhuma, ao
+  // lado do gráfico de pressão que mostra "H=167 m.c.a." Como o app inteiro
+  // já assume potência em cv (fórmula P=ρgQH/η usada em `powerCalcAt`), dá
+  // pra assumir esse padrão aqui também quando o usuário não digitou nada —
+  // só nunca sobrescreve uma unidade que ele tenha digitado de propósito.
+  if(ser.type==='digitized') return ser.yUnit || (getSourceOf(ser)&&getSourceOf(ser).yUnit) || (quantityInfoFor(ser.name).symbol==='P'? 'cv':'');
   if(ser.type==='vfd') return effectiveYUnit(S.series.find(s=>s.id===ser.srcId));
   if(ser.type==='combined') return effectiveYUnit(S.series.find(s=>s.id===ser.srcA));
   if(ser.type==='power_calc') return 'cv'; // unidade fixa da fórmula P=ρgQH/η, não vem de nenhuma série digitalizada
@@ -2200,7 +2251,10 @@ function staticSvgFor(seriesId){
   const L=computeChartLayout(spec.seriesArr, spec.targetPoint, spec.legendLabels);
   if(!L) return '<p style="color:#c62828">'+escapeHtml(spec.overlapErr||'Sem sobreposição de dados.')+'</p>';
   const items=buildChartItems(spec.seriesArr, L, spec.heroIdx, spec.legendLabels);
-  return buildChartSVG(L, items, {chartTitle:spec.chartTitle, subtitle:spec.subtitle, targetPoint:spec.targetPoint, ySymbol:spec.ySymbol});
+  // fmt:fmtNum2 — só o relatório PDF pede números com exatamente duas casas
+  // decimais; os gráficos da tela (modal/seção fixa/aba nova) continuam com
+  // `fmtNum` (6 dígitos significativos) via o default de buildChartSVG.
+  return buildChartSVG(L, items, {chartTitle:spec.chartTitle, subtitle:spec.subtitle, targetPoint:spec.targetPoint, ySymbol:spec.ySymbol, fmt:fmtNum2});
 }
 // Monta o relatório inteiro como uma página HTML AUTÔNOMA (mesmo padrão do
 // "abrir gráfico em nova aba" — Blob URL, sem depender do app continuar
@@ -2219,21 +2273,21 @@ function buildReportHTML(){
   html+='<table class="report-table"><thead><tr><th>Operação</th><th>Bomba</th><th>Q alvo</th><th>H alvo</th><th>Rotação</th><th>P antes</th><th>P depois</th><th>Economia</th><th>h/dia</th><th>dias/ano</th><th>kWh/ano</th>'+(tariff>0?'<th>R$/ano</th>':'')+'<th>Base do kWh</th></tr></thead><tbody>';
   rows.forEach(({op})=>{
     const r=op.result, costYear=r.kwhYear!=null? r.kwhYear*tariff : null;
-    const base=r.motorEta>0? 'Elétrico (η motor+inv. '+fmtNum(r.motorEta)+'%)' : 'Mecânico (eixo)';
+    const base=r.motorEta>0? 'Elétrico (η motor+inv. '+fmtNum2(r.motorEta)+'%)' : 'Mecânico (eixo)';
     const pumpCell=r.pumpName+(r.singlePumpOnly? ' (2ª bomba desligada)' : '');
     html+='<tr><td>'+escapeHtml(op.name)+'</td><td>'+escapeHtml(pumpCell)+'</td>'
-      +'<td>'+fmtNum(op.Qt)+'</td><td>'+fmtNum(op.Ht)+'</td>'
-      +'<td>'+fmtNum(r.targetRpm)+' RPM</td>'
-      +'<td>'+(r.Pref!=null?fmtNum(r.Pref)+' cv':'—')+'</td><td>'+(r.Padj!=null?fmtNum(r.Padj)+' cv':'—')+'</td>'
-      +'<td>'+(r.savingsCv!=null?fmtNum(r.savingsCv)+' cv ('+fmtNum(r.pct)+'%)':'—')+'</td>'
-      +'<td>'+(op.hoursPerDay!=null?fmtNum(op.hoursPerDay):'—')+'</td><td>'+(op.daysPerYear!=null?fmtNum(op.daysPerYear):'—')+'</td>'
-      +'<td>'+(r.kwhYear!=null?fmtNum(r.kwhYear):'—')+'</td>'
-      +(tariff>0?'<td>'+(costYear!=null?'R$ '+fmtNum(costYear):'—')+'</td>':'')
+      +'<td>'+fmtNum2(op.Qt)+'</td><td>'+fmtNum2(op.Ht)+'</td>'
+      +'<td>'+fmtNum2(r.targetRpm)+' RPM</td>'
+      +'<td>'+(r.Pref!=null?fmtNum2(r.Pref)+' cv':'—')+'</td><td>'+(r.Padj!=null?fmtNum2(r.Padj)+' cv':'—')+'</td>'
+      +'<td>'+(r.savingsCv!=null?fmtNum2(r.savingsCv)+' cv ('+fmtNum2(r.pct)+'%)':'—')+'</td>'
+      +'<td>'+(op.hoursPerDay!=null?fmtNum2(op.hoursPerDay):'—')+'</td><td>'+(op.daysPerYear!=null?fmtNum2(op.daysPerYear):'—')+'</td>'
+      +'<td>'+(r.kwhYear!=null?fmtNum2(r.kwhYear):'—')+'</td>'
+      +(tariff>0?'<td>'+(costYear!=null?'R$ '+fmtNum2(costYear):'—')+'</td>':'')
       +'<td>'+base+'</td>'
       +'</tr>';
   });
   html+='</tbody></table>';
-  html+='<p class="totals"><b>Total estimado (todas as operações):</b> '+fmtNum(totalKwh)+' kWh/ano'+(tariff>0?' — R$ '+fmtNum(totalCost)+'/ano':'')+'</p>';
+  html+='<p class="totals"><b>Total estimado (todas as operações):</b> '+fmtNum2(totalKwh)+' kWh/ano'+(tariff>0?' — R$ '+fmtNum2(totalCost)+'/ano':'')+'</p>';
   html+='<p class="meta">"P antes"/"P depois" são sempre potência MECÂNICA no eixo da bomba (a mesma da curva do fabricante). A coluna "Base do kWh" mostra se a economia em kWh/ano dessa operação já foi convertida pra consumo ELÉTRICO (informando o rendimento motor+inversor da bomba) ou se ainda é a mecânica — mais conservadora, já que o consumo elétrico real é sempre igual ou maior que o mecânico.</p>';
   // Gráfico do Sistema (bombas em série, com todas as Operações empilhadas)
   // logo ANTES dos gráficos de cada Operação — não mais lá em cima, antes da
@@ -2261,7 +2315,13 @@ function buildReportHTML(){
     +'h1{color:#003d5c;font-size:1.4rem} h2{color:#003d5c;font-size:1.05rem}'
     +'.meta{color:#607080;font-size:.85rem;margin-bottom:1.5rem}'
     +'table.report-table{width:100%;border-collapse:collapse;font-size:.78rem;margin-bottom:1rem}'
-    +'table.report-table th,table.report-table td{border:1px solid #d0e4f0;padding:.4rem .5rem;text-align:left}'
+    // v1.29: número e unidade (ex: "1.494,21" e "RPM") quebrando em duas
+    // linhas dentro da mesma célula deixava a tabela irregular e difícil de
+    // ler — nowrap em toda célula, com a única exceção sendo a coluna
+    // "Bomba" (2ª), que pode ter nome de bomba longo + "(2ª bomba
+    // desligada)" e É pra quebrar em duas linhas mesmo, de propósito.
+    +'table.report-table th,table.report-table td{border:1px solid #d0e4f0;padding:.4rem .5rem;text-align:left;white-space:nowrap}'
+    +'table.report-table td:nth-child(2){white-space:normal}'
     +'table.report-table th{background:#caf0f8;color:#003d5c}'
     +'.totals{font-size:1rem;background:#e6f7ed;padding:.6rem .8rem;border-radius:8px;display:inline-block}'
     +'.system-chart-section{page-break-inside:avoid;margin-top:1.1rem;margin-bottom:1.5rem;max-width:760px} .system-chart-section svg{width:100%;height:auto}'
@@ -2973,6 +3033,11 @@ function buildChartItems(seriesArr, L, heroIdx, legendLabels){
   return seriesArr.map((ser,i)=>({ser, curve:L.curves[i], isHero:i===heroIdx, legendLabel:(legendLabels&&legendLabels[i])||ser.name}));
 }
 function buildChartSVG(L,items,meta){
+  // v1.29: `fmt` é opcional — os gráficos interativos da tela continuam com
+  // `fmtNum` (6 dígitos significativos, o padrão de sempre); só quem chama
+  // passando `meta.fmt` (o relatório PDF, via staticSvgFor) troca pra duas
+  // casas decimais fixas, sem afetar a UI normal do app.
+  const fmt=meta.fmt||fmtNum;
   function pathFor(pts){ return pts.map((p,i)=>(i===0?'M':'L')+L.mapX(p.x).toFixed(2)+','+L.mapY(p.y).toFixed(2)).join(' '); }
   const xs=niceValues(L.qlo,L.qhi,'linear',7);
   const ys=niceValues(L.hlo,L.hhi,'linear',7);
@@ -2985,12 +3050,12 @@ function buildChartSVG(L,items,meta){
   xs.forEach(v=>{
     const x=L.mapX(v);
     svg += '<line x1="'+x.toFixed(2)+'" y1="'+M.t+'" x2="'+x.toFixed(2)+'" y2="'+(M.t+ph)+'" stroke="#e7ecf1" stroke-width="1"/>';
-    svg += '<text x="'+x.toFixed(2)+'" y="'+(M.t+ph+22)+'" font-size="11.5" fill="#5c6b7a" text-anchor="middle">'+escapeHtml(fmtNum(v))+'</text>';
+    svg += '<text x="'+x.toFixed(2)+'" y="'+(M.t+ph+22)+'" font-size="11.5" fill="#5c6b7a" text-anchor="middle">'+escapeHtml(fmt(v))+'</text>';
   });
   ys.forEach(v=>{
     const y=L.mapY(v);
     svg += '<line x1="'+M.l+'" y1="'+y.toFixed(2)+'" x2="'+(M.l+pw)+'" y2="'+y.toFixed(2)+'" stroke="#e7ecf1" stroke-width="1"/>';
-    svg += '<text x="'+(M.l-10)+'" y="'+(y+4).toFixed(2)+'" font-size="11.5" fill="#5c6b7a" text-anchor="end">'+escapeHtml(fmtNum(v))+'</text>';
+    svg += '<text x="'+(M.l-10)+'" y="'+(y+4).toFixed(2)+'" font-size="11.5" fill="#5c6b7a" text-anchor="end">'+escapeHtml(fmt(v))+'</text>';
   });
   svg += '<line x1="'+M.l+'" y1="'+M.t+'" x2="'+M.l+'" y2="'+(M.t+ph)+'" stroke="#0a2540" stroke-width="1.6"/>';
   svg += '<line x1="'+M.l+'" y1="'+(M.t+ph)+'" x2="'+(M.l+pw)+'" y2="'+(M.t+ph)+'" stroke="#0a2540" stroke-width="1.6"/>';
@@ -3052,7 +3117,7 @@ function buildChartSVG(L,items,meta){
       +'<circle cx="'+tpx+'" cy="'+tpy+'" r="8" fill="none" stroke="#e07b00" stroke-width="2.6"/>'
       +'<circle cx="'+tpx+'" cy="'+tpy+'" r="2.6" fill="#e07b00"/>'
       +'<text x="'+lx+'" y="'+(tpy-9)+'" font-size="11.5" font-weight="800" fill="#e07b00" text-anchor="'+(labelRight?'start':'end')+'">Ponto de trabalho</text>'
-      +'<text x="'+lx+'" y="'+(tpy+7)+'" font-size="11" fill="#e07b00" text-anchor="'+(labelRight?'start':'end')+'">Q='+escapeHtml(fmtNum(meta.targetPoint.Q))+(L.xUnit?' '+escapeHtml(L.xUnit):'')+'  '+escapeHtml(ySym)+'='+escapeHtml(fmtNum(meta.targetPoint.H))+(L.yUnit?' '+escapeHtml(L.yUnit):'')+'</text>'
+      +'<text x="'+lx+'" y="'+(tpy+7)+'" font-size="11" fill="#e07b00" text-anchor="'+(labelRight?'start':'end')+'">Q='+escapeHtml(fmt(meta.targetPoint.Q))+(L.xUnit?' '+escapeHtml(L.xUnit):'')+'  '+escapeHtml(ySym)+'='+escapeHtml(fmt(meta.targetPoint.H))+(L.yUnit?' '+escapeHtml(L.yUnit):'')+'</text>'
       +(hasExtrapTail? '<text x="'+lx+'" y="'+(tpy+21)+'" font-size="10.5" font-weight="700" fill="#e07b00" text-anchor="'+(labelRight?'start':'end')+'">⚠ além da faixa digitalizada (tracejado)</text>' : '')
       +'</g>';
   }
