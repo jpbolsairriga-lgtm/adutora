@@ -228,7 +228,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
     <div class="hdr-logo">
       <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
       <div class="hdr-brand">
-        <h1>Curva de Bombas <span class="ver-badge">v1.29</span></h1>
+        <h1>Curva de Bombas <span class="ver-badge">v1.30</span></h1>
         <p>Digitalizador de curvas — importe imagem/PDF e extraia os pontos</p>
       </div>
     </div>
@@ -577,7 +577,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
 // ============================================================================
-// Curva de Bombas — Digitalizador  v1.29 (2026-08-28)
+// Curva de Bombas — Digitalizador  v1.30 (2026-08-28)
 // Build inicial (v1.0): importação de imagem/PDF (pdf.js), calibração de eixos
 // (linear/log, 4 pontos estilo WebPlotDigitizer), múltiplas séries,
 // ajuste de curva (polinomial grau 1-3 / potência) por mínimos quadrados,
@@ -1140,6 +1140,23 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.6rem 1.5rem;flex
 //   número) — só o relatório (via `staticSvgFor`) passa `fmtNum2`; os
 //   gráficos da tela (modal/seção fixa/aba nova) continuam com `fmtNum` por
 //   padrão, sem nenhuma mudança visual na UI normal do app.
+// v1.30: usuário pediu poder escolher ONDE salvar cada arquivo exportado
+// (projeto .json, CSV, PNG) — até aqui, `downloadBlob` sempre usava o
+// truque clássico `<a download>`, que o navegador manda direto pra pasta
+// de Downloads padrão sem perguntar nada (a menos que o usuário tenha
+// mexido numa config global do navegador, fora do controle da página).
+// - Nova `saveBlob(filename, blob)`: quando o navegador suporta a File
+//   System Access API (`window.showSaveFilePicker` — Chrome/Edge,
+//   inclusive abrindo o .html direto do disco por file://, testado), abre
+//   o diálogo nativo "Salvar como" do Windows, deixando escolher pasta E
+//   nome do arquivo toda vez. Sem suporte (Firefox/Safari), cai sozinho
+//   pro download clássico de sempre — nenhum navegador quebra. Cancelar o
+//   diálogo (Esc) não salva em lugar nenhum, do jeito que se espera.
+// - `downloadBlob` (conteúdo texto: JSON do projeto, CSV) e os 3 exports de
+//   PNG (imagem digitalizada com overlay, gráfico de série combinada/vfd,
+//   gráfico de cada Operação) — todos os pontos de download do app — agora
+//   passam por `saveBlob`, então a escolha de pasta vale pra qualquer
+//   exportação, não só uma.
 // ============================================================================
 (function(){
 'use strict';
@@ -1286,11 +1303,45 @@ function debounce(fn,ms){ let t; return function(){ clearTimeout(t); const a=arg
 function getActiveSeries(){ return S.series.find(s=>s.id===S.activeSeriesId) || null; }
 function getActiveSource(){ return S.sources.find(s=>s.id===S.activeSourceId) || null; }
 function getSourceOf(ser){ return ser? S.sources.find(s=>s.id===ser.sourceId) : null; }
-function downloadBlob(filename, content, mime){
-  const blob=new Blob([content],{type:mime});
+// v1.30: usuário pediu poder ESCOLHER onde salvar cada arquivo exportado
+// (projeto, CSV, PNG) em vez de sempre cair direto na pasta de Downloads
+// padrão do navegador, sem perguntar nada. `showSaveFilePicker` (File
+// System Access API) abre o diálogo "Salvar como" nativo do Windows quando
+// o navegador suporta (Chrome/Edge — inclusive abrindo o .html direto do
+// disco, sem servidor, testado) — com fallback automático pro download
+// clássico (Firefox/Safari, ou qualquer navegador sem suporte), pra nunca
+// quebrar o export em nenhum navegador. Se o usuário CANCELA o diálogo
+// (Esc/Cancelar), não faz nada — não cai no fallback, que salvaria mesmo
+// assim contra a vontade dele.
+function extDescription(ext){
+  const map={json:'Projeto (JSON)', csv:'Planilha (CSV)', png:'Imagem (PNG)'};
+  return map[ext] || 'Arquivo';
+}
+async function saveBlob(filename, blob){
+  if(window.showSaveFilePicker){
+    try{
+      const ext=(filename.split('.').pop()||'').toLowerCase();
+      const mime=(blob.type||'application/octet-stream').split(';')[0].trim();
+      const handle=await window.showSaveFilePicker({
+        suggestedName:filename,
+        types:[{description:extDescription(ext), accept:{[mime]:['.'+ext]}}]
+      });
+      const writable=await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return;
+    }catch(err){
+      if(err && err.name==='AbortError') return; // usuário cancelou o diálogo — respeita, não salva em lugar nenhum
+      // qualquer outro erro (raro — ex: navegador anuncia suporte mas falha
+      // na prática) cai pro download clássico abaixo, pra nunca travar o export.
+    }
+  }
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click();
   setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); },200);
+}
+function downloadBlob(filename, content, mime){
+  saveBlob(filename, new Blob([content],{type:mime}));
 }
 // Remove acento/espaço/caractere especial de UM pedaço do nome (propriedade,
 // cliente ou data) — cada pedaço isolado, nunca a string final inteira, pra
@@ -3343,11 +3394,7 @@ function exportChartSvgAsPng(container, filenamePrefix){
     const tctx=tmp.getContext('2d');
     tctx.fillStyle='#fff'; tctx.fillRect(0,0,tmp.width,tmp.height);
     tctx.drawImage(img,0,0,tmp.width,tmp.height);
-    tmp.toBlob(blob=>{
-      const url=URL.createObjectURL(blob); const a=document.createElement('a');
-      a.href=url; a.download=filenamePrefix+'-'+Date.now()+'.png'; a.click();
-      setTimeout(()=>URL.revokeObjectURL(url),200);
-    },'image/png');
+    tmp.toBlob(blob=>{ saveBlob(filenamePrefix+'-'+Date.now()+'.png', blob); },'image/png');
   };
   img.onerror=()=>alert('Não foi possível exportar o gráfico como imagem.');
   img.src=svgData;
@@ -4000,7 +4047,7 @@ exportPngBtn.addEventListener('click',()=>{
   drawCalibMarkers(tctx, r*1.1, lw*0.9);
   drawSeriesOverlay(tctx, r, lw);
   const fname=suggestedFileBase()+'-'+(src.name||'digitalizada').replace(/[^\w\-]+/g,'_')+'.png';
-  tmp.toBlob(blob=>{ const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=fname; a.click(); setTimeout(()=>URL.revokeObjectURL(url),200); }, 'image/png');
+  tmp.toBlob(blob=>{ saveBlob(fname, blob); }, 'image/png');
 });
 saveProjectBtn.addEventListener('click',()=>{
   if(S.sources.length===0){ alert('Importe ao menos uma imagem primeiro.'); return; }
