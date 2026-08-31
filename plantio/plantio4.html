@@ -238,7 +238,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.4 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.5 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1010,6 +1010,15 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // RETÂNGULO real (largura/altura independentes, subdivisão da malha proporcional por eixo); (3)
 // legenda de declividade (mesmas cores da aba 2D) some/aparece no canto inferior esquerdo conforme
 // o modo do fundo do terreno.
+// v4.5: a v4.4 não resolveu de vez o "linha piscando/emaranhada com o terreno" reportado numa
+// propriedade real (618 linhas) — o motivo real: GL_LINES (a linha fina de 1px do WebGL) antialiasa
+// mal em muitos drivers/placas, e com centenas de linhas próximas vistas de longe isso pontilha/
+// pisca mesmo sem nenhum z-fighting de verdade. Trocado por uma "fita" plana (2 triângulos por
+// segmento, _3da_buildRibbon) pra linhas de plantio, contorno de talhão e carreadores — triângulo
+// antialiasa muito melhor que linha fina. Também corrigido o sw.js: HTML (plantio3/4.html) virou
+// network-first (cache:'no-store', só cai pro cache salvo se a rede falhar) — a estratégia antiga
+// (cache-first pra todo GET) podia servir uma versão desatualizada da lógica mesmo com Ctrl+F5,
+// porque quem decide a estratégia de cache é o service worker, não o navegador.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -4956,6 +4965,38 @@ function _3da_buildSlopeTex(sampler, toLL, bcx, bcy, halfW, halfH) {
   return tex;
 }
 
+// Constrói uma "fita" plana (dois triângulos por segmento) em vez de uma linha de 1px — WebGL
+// antialiasa MUITO melhor triângulos do que a primitiva GL_LINES (que em vários drivers/placas
+// nem antialiasa direito), e com centenas de linhas de plantio próximas vistas de longe a linha
+// fina pisca/pontilha (parece emaranhada com o terreno) mesmo já sem z-fighting. segList é um array
+// plano [ax,az,rawA, bx,bz,rawB, ...] (x,z = mundo; raw = elevação bruta, sem exagero, por ponta do
+// segmento) — retorna {geo, raw}, com raw 1:1 por vértice pra reaproveitar o mesmo mecanismo de
+// atualizarExagero3DAnalise sem precisar mudar nada lá.
+function _3da_buildRibbon(segList, halfWidthM) {
+  const n = segList.length / 6;
+  const pos = new Float32Array(n * 4 * 3);
+  const raw = new Float32Array(n * 4);
+  const idx = [];
+  for(let i = 0; i < n; i++) {
+    const ax = segList[i * 6], az = segList[i * 6 + 1], ra = segList[i * 6 + 2];
+    const bx = segList[i * 6 + 3], bz = segList[i * 6 + 4], rb = segList[i * 6 + 5];
+    let dx = bx - ax, dz = bz - az;
+    const len = Math.hypot(dx, dz) || 1;
+    dx /= len; dz /= len;
+    const px = -dz * halfWidthM, pz = dx * halfWidthM; // perpendicular no plano XZ
+    const v = i * 4;
+    pos[v * 3] = ax - px; pos[v * 3 + 1] = 0; pos[v * 3 + 2] = az - pz; raw[v] = ra;
+    pos[(v + 1) * 3] = ax + px; pos[(v + 1) * 3 + 1] = 0; pos[(v + 1) * 3 + 2] = az + pz; raw[v + 1] = ra;
+    pos[(v + 2) * 3] = bx - px; pos[(v + 2) * 3 + 1] = 0; pos[(v + 2) * 3 + 2] = bz - pz; raw[v + 2] = rb;
+    pos[(v + 3) * 3] = bx + px; pos[(v + 3) * 3 + 1] = 0; pos[(v + 3) * 3 + 2] = bz + pz; raw[v + 3] = rb;
+    idx.push(v, v + 2, v + 1, v + 1, v + 2, v + 3);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  return { geo, raw };
+}
+
 function fecharVista3DAnalise() {
   $('modal3dAnalise').classList.remove('open');
   if(_3da_raf) { cancelAnimationFrame(_3da_raf); _3da_raf = null; }
@@ -5168,42 +5209,41 @@ async function gerarVista3DAnalise() {
     _3da_slopeTex = _3da_buildSlopeTex(sampler, toLL, bcx, bcy, halfW, halfH);
 
     // ── Linhas de plantio + contorno de cada talhão, coladas no relevo ─────
+    // Fita (triângulos) em vez de linha fina — ver comentário de _3da_buildRibbon.
     const legenda = [];
     fontes.forEach(t => {
-      const segPos = [], segRaw = [];
+      const segList = [];
       t.linhas.forEach(pl => {
         let pts; try { pts = pl.getLatLngs().flat(); } catch(e) { return; }
         for(let i = 0; i < pts.length - 1; i++) {
           const a = toXY(pts[i].lat, pts[i].lng), b = toXY(pts[i + 1].lat, pts[i + 1].lng);
           const ea = sampler(pts[i].lat, pts[i].lng) - elevMin, eb = sampler(pts[i + 1].lat, pts[i + 1].lng) - elevMin;
-          segPos.push(a.x, 0, -a.y, b.x, 0, -b.y); segRaw.push(ea, eb);
+          segList.push(a.x, -a.y, ea, b.x, -b.y, eb);
         }
       });
-      if(segPos.length) {
-        const geo = new THREE.BufferGeometry();
-        geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(segPos), 3));
-        const mat = new THREE.LineBasicMaterial({ color: new THREE.Color(t.corLinha) });
-        scene.add(new THREE.LineSegments(geo, mat));
-        _3da_lineObjs.push({ geo, raw: Float32Array.from(segRaw), eps: 0.6 });
+      if(segList.length) {
+        const { geo, raw } = _3da_buildRibbon(segList, 0.35);
+        const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(t.corLinha), side: THREE.DoubleSide });
+        scene.add(new THREE.Mesh(geo, mat));
+        _3da_lineObjs.push({ geo, raw, eps: 0.6 });
       }
       const ring = [...t.polyPts, t.polyPts[0]];
-      const bPos = [], bRaw = [];
+      const bSegList = [];
       for(let i = 0; i < ring.length - 1; i++) {
         const a = toXY(ring[i].lat, ring[i].lng), b = toXY(ring[i + 1].lat, ring[i + 1].lng);
         const ea = sampler(ring[i].lat, ring[i].lng) - elevMin, eb = sampler(ring[i + 1].lat, ring[i + 1].lng) - elevMin;
-        bPos.push(a.x, 0, -a.y, b.x, 0, -b.y); bRaw.push(ea, eb);
+        bSegList.push(a.x, -a.y, ea, b.x, -b.y, eb);
       }
-      const bGeo = new THREE.BufferGeometry();
-      bGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(bPos), 3));
-      const bMat = new THREE.LineBasicMaterial({ color: new THREE.Color(t.cor), transparent: true, opacity: .85 });
-      scene.add(new THREE.LineSegments(bGeo, bMat));
-      _3da_lineObjs.push({ geo: bGeo, raw: Float32Array.from(bRaw), eps: 0.95 });
+      const { geo: bGeo, raw: bRaw } = _3da_buildRibbon(bSegList, 0.9);
+      const bMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(t.cor), side: THREE.DoubleSide, transparent: true, opacity: .9 });
+      scene.add(new THREE.Mesh(bGeo, bMat));
+      _3da_lineObjs.push({ geo: bGeo, raw: bRaw, eps: 0.95 });
       legenda.push({ label: 'Talhão ' + t.idx, cor: t.corLinha, ha: t.areaHa });
     });
 
     // Carreadores (faixas de afastamento) — cor marrom, colados no relevo
     if(carreadorLayers.length) {
-      const cPos = [], cRaw = [];
+      const cSegList = [];
       carreadorLayers.forEach(l => {
         let pts; try { pts = l.getLatLngs().flat(Infinity); } catch(e) { return; }
         if(pts.length < 2) return;
@@ -5211,14 +5251,13 @@ async function gerarVista3DAnalise() {
         for(let i = 0; i < ring.length - 1; i++) {
           const a = toXY(ring[i].lat, ring[i].lng), b = toXY(ring[i + 1].lat, ring[i + 1].lng);
           const ea = sampler(ring[i].lat, ring[i].lng) - elevMin, eb = sampler(ring[i + 1].lat, ring[i + 1].lng) - elevMin;
-          cPos.push(a.x, 0, -a.y, b.x, 0, -b.y); cRaw.push(ea, eb);
+          cSegList.push(a.x, -a.y, ea, b.x, -b.y, eb);
         }
       });
-      if(cPos.length) {
-        const geo = new THREE.BufferGeometry();
-        geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(cPos), 3));
-        scene.add(new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x795548 })));
-        _3da_lineObjs.push({ geo, raw: Float32Array.from(cRaw), eps: 0.8 });
+      if(cSegList.length) {
+        const { geo, raw } = _3da_buildRibbon(cSegList, 1.2);
+        scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x795548, side: THREE.DoubleSide })));
+        _3da_lineObjs.push({ geo, raw, eps: 0.8 });
         legenda.push({ label: 'Carreadores', cor: '#795548', ha: null });
       }
     }
