@@ -238,7 +238,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.6 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.7 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1029,6 +1029,14 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // MALHA renderizada (mesma triangulação, a,c,b/b,c,d), encaixe exato em qualquer exagero. Testado
 // com relevo sintético bem ondulado (múltiplas frequências, 28m de amplitude), grade grosseira
 // (20×20) e exagero máximo (6×) — linhas acompanham o relevo sem nenhum buraco.
+// v4.7: reportado de novo "escala errada" e mata/entorno sumindo (já em v4.6, então não era mais
+// cache). Verificação numérica independente da fórmula de escala da foto (reproduzindo a conta
+// "crua" de tile padrão slippy-map e comparando com o repeat/offset da textura, em vários pontos
+// espalhados por uma propriedade de ~3,6km) deu erro sub-pixel (<0.02px) — a fórmula está correta.
+// O que estava errado de verdade: a margem ao redor dos talhões (8%) era pequena demais e não
+// alcançava mata/estrada/vizinhos, deixando a vista 3D sem nenhum contexto visual ao redor — o que
+// também reforça a sensação de "escala errada" ao comparar com o mapa 2D (que sempre mostra mais
+// entorno). Margem subida pra 25%.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -5112,7 +5120,10 @@ async function gerarVista3DAnalise() {
 
   let latMin = Math.min(...allPts.map(p => p.lat)), latMax = Math.max(...allPts.map(p => p.lat));
   let lngMin = Math.min(...allPts.map(p => p.lng)), lngMax = Math.max(...allPts.map(p => p.lng));
-  const padLat = Math.max((latMax - latMin) * 0.08, 0.0004), padLng = Math.max((lngMax - lngMin) * 0.08, 0.0004);
+  // Margem generosa (25%, não 8%) — o terreno 3D precisa mostrar um pouco do entorno (mata, estrada,
+  // vizinho) pra servir de referência visual, senão a vista fica "flutuando" sem contexto nenhum ao
+  // redor dos talhões (relatado como mata/entorno sumindo da vista 3D).
+  const padLat = Math.max((latMax - latMin) * 0.25, 0.001), padLng = Math.max((lngMax - lngMin) * 0.25, 0.001);
   latMin -= padLat; latMax += padLat; lngMin -= padLng; lngMax += padLng;
 
   $('modal3dAnalise').classList.add('open');
