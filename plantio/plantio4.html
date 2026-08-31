@@ -165,6 +165,9 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 #m3da-exag input[type=range]{width:120px;}
 #m3da-exagVal{min-width:34px;text-align:right;color:#e2b96e;font-weight:700;}
 #m3da-hint{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);color:#ffffff44;font-size:10px;letter-spacing:.6px;pointer-events:none;}
+#m3da-slopeLegend{display:none;position:absolute;bottom:14px;left:14px;background:rgba(5,10,18,.75);color:#ffffffcc;font-size:11px;line-height:2;padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.18);pointer-events:none;}
+#m3da-slopeLegend b{display:block;font-size:10px;letter-spacing:.08em;color:#cfd8dc;text-transform:uppercase;margin-bottom:3px;}
+#m3da-slopeLegend span.sw{display:inline-block;width:11px;height:11px;border-radius:2px;vertical-align:middle;margin-right:6px;}
 
 /* Legenda do polígono */
 .poly-label{width:168px;background:rgba(10,20,45,.88);border:1.5px solid rgba(66,165,245,.6);border-radius:10px;font-family:'Segoe UI',sans-serif;pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,.6);overflow:hidden;}
@@ -738,6 +741,14 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
     <span id="m3da-exagVal">2.0×</span>
   </div>
   <div id="m3da-hint">Arraste: rotacionar &nbsp;·&nbsp; Scroll: zoom &nbsp;·&nbsp; Botão direito: mover</div>
+  <div id="m3da-slopeLegend">
+    <b>Declividade</b>
+    <span class="sw" style="background:#4CAF50;"></span>0–3% Mecanização total<br>
+    <span class="sw" style="background:#FFEB3B;"></span>3–8% Terraços recomendados<br>
+    <span class="sw" style="background:#FF9800;"></span>8–12% Terraços obrigatórios<br>
+    <span class="sw" style="background:#F44336;"></span>12–20% Mecanização limitada<br>
+    <span class="sw" style="background:#9C27B0;"></span>&gt;20% Preservação
+  </div>
 </div>
 
 <div id="mapWrap">
@@ -4975,6 +4986,7 @@ function ciclarFundo3DAnalise() {
   else if(_3da_bgMode === 'slope' && _3da_slopeTex) { _3da_matTerr.map = _3da_slopeTex; _3da_matTerr.color.set(0xffffff); btn.textContent = '🎨 Declividade'; }
   else { _3da_bgMode = 'solid'; _3da_matTerr.map = null; _3da_matTerr.color.set(0x8fbf6a); btn.textContent = '🟢 Terreno sólido'; }
   _3da_matTerr.needsUpdate = true;
+  $('m3da-slopeLegend').style.display = (_3da_bgMode === 'slope') ? 'block' : 'none';
 }
 
 function capturarImagem3DAnalise() {
@@ -5077,8 +5089,11 @@ async function gerarVista3DAnalise() {
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0d1b2a);
     scene.fog = new THREE.Fog(0x0d1b2a, span * 2.5, span * 6);
-    const camera = new THREE.PerspectiveCamera(38, W3 / H3, 0.5, Math.max(30000, span * 10));
-    const renderer = new THREE.WebGLRenderer({ antialias: true, canvas: cv, preserveDrawingBuffer: true });
+    const camera = new THREE.PerspectiveCamera(38, W3 / H3, Math.max(0.5, span * 0.001), span * 6);
+    // logarithmicDepthBuffer: essencial aqui — near/far cobrem de <1m até vários km (propriedade
+    // inteira), e um z-buffer padrão perde precisão demais nessa faixa, causando as linhas de
+    // plantio "piscarem"/se misturarem com o terreno (z-fighting) mesmo com o offset em Y.
+    const renderer = new THREE.WebGLRenderer({ antialias: true, canvas: cv, preserveDrawingBuffer: true, logarithmicDepthBuffer: true });
     renderer.setSize(W3, H3); renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.1;
@@ -5129,6 +5144,7 @@ async function gerarVista3DAnalise() {
     scene.add(terrMesh);
     _3da_terrGeo = tGeo; _3da_terrRaw = terrRaw; _3da_matTerr = matTerr;
     _3da_bgMode = 'solid'; // até a foto de satélite (assíncrona) chegar
+    $('m3da-slopeLegend').style.display = 'none';
     _3da_slopeTex = _3da_buildSlopeTex(sampler, toLL, bcx, bcy, ext);
 
     // ── Linhas de plantio + contorno de cada talhão, coladas no relevo ─────
@@ -5148,7 +5164,7 @@ async function gerarVista3DAnalise() {
         geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(segPos), 3));
         const mat = new THREE.LineBasicMaterial({ color: new THREE.Color(t.corLinha) });
         scene.add(new THREE.LineSegments(geo, mat));
-        _3da_lineObjs.push({ geo, raw: Float32Array.from(segRaw), eps: 0.35 });
+        _3da_lineObjs.push({ geo, raw: Float32Array.from(segRaw), eps: 0.6 });
       }
       const ring = [...t.polyPts, t.polyPts[0]];
       const bPos = [], bRaw = [];
@@ -5161,7 +5177,7 @@ async function gerarVista3DAnalise() {
       bGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(bPos), 3));
       const bMat = new THREE.LineBasicMaterial({ color: new THREE.Color(t.cor), transparent: true, opacity: .85 });
       scene.add(new THREE.LineSegments(bGeo, bMat));
-      _3da_lineObjs.push({ geo: bGeo, raw: Float32Array.from(bRaw), eps: 0.55 });
+      _3da_lineObjs.push({ geo: bGeo, raw: Float32Array.from(bRaw), eps: 0.95 });
       legenda.push({ label: 'Talhão ' + t.idx, cor: t.corLinha, ha: t.areaHa });
     });
 
@@ -5182,7 +5198,7 @@ async function gerarVista3DAnalise() {
         const geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(cPos), 3));
         scene.add(new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x795548 })));
-        _3da_lineObjs.push({ geo, raw: Float32Array.from(cRaw), eps: 0.45 });
+        _3da_lineObjs.push({ geo, raw: Float32Array.from(cRaw), eps: 0.8 });
         legenda.push({ label: 'Carreadores', cor: '#795548', ha: null });
       }
     }
@@ -5219,15 +5235,29 @@ async function gerarVista3DAnalise() {
     (async () => {
       try {
         const TEX = 1024;
-        const satSW = toLL(bcx - ext, bcy - ext), satNE = toLL(bcx + ext, bcy + ext);
-        const { zoom, cLat: satCLat, cLng: satCLng } = _staticMapParams(satSW, satNE, TEX, TEX);
-        const dataUrl = await _3da_getSatUrl(satCLat, satCLng, Math.max(0, Math.min(18, zoom)), TEX, TEX);
+        const satCLat = cLat + bcy / mLat, satCLng = cLng + bcx / mLng;
+        // Zoom calculado direto da escala desejada (m/pixel), não por "encaixar" um bbox — _staticMapParams
+        // arredonda o zoom PRA BAIXO (dá margem de sobra, ok pros mapas 2D dos relatórios), mas aqui a
+        // textura precisa cobrir EXATAMENTE o quadrado 2×ext do terreno, senão a foto fica em escala
+        // diferente do relevo/linhas por baixo. m/pixel real na Web Mercator: 156543.03392×cos(lat)/2^zoom.
+        const mpp = (2 * ext) / TEX;
+        const zoom = Math.max(0, Math.min(18, Math.round(Math.log2(156543.03392 * Math.cos(satCLat * Math.PI / 180) / mpp))));
+        const dataUrl = await _3da_getSatUrl(satCLat, satCLng, zoom, TEX, TEX);
         if(!dataUrl || !_3da_renderer) return;
         const img = new Image();
         await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataUrl; });
         if(!_3da_renderer) return;
         const tex = new THREE.Texture(img);
         tex.needsUpdate = true; tex.encoding = THREE.sRGBEncoding; tex.anisotropy = 4;
+        // O zoom acima é arredondado pro inteiro mais próximo — a imagem real cobre mppReal×TEX metros,
+        // que quase nunca bate exatamente com 2×ext. Corrige a escala/centro via repeat+offset da própria
+        // textura (mesmo UV 0..1 do terreno), em vez de assumir que a foto cobre exatamente o quadrado.
+        const mppReal = 156543.03392 * Math.cos(satCLat * Math.PI / 180) / Math.pow(2, zoom);
+        const extReal = (mppReal * TEX) / 2;
+        const s = ext / extReal;
+        tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+        tex.repeat.set(s, s);
+        tex.offset.set((1 - s) / 2, (1 - s) / 2);
         _3da_satTex = tex;
         if(_3da_bgMode === 'solid') { _3da_bgMode = 'sat'; matTerr.map = tex; matTerr.color.set(0xffffff); matTerr.needsUpdate = true; $('m3da-btnBg').textContent = '🛰️ Satélite'; }
       } catch(e) { console.error('Satélite 3D plantio:', e); }
