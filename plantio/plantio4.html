@@ -238,7 +238,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.3 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.4 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1000,6 +1000,16 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // Exagero vertical ajustável (relevo de lavoura costuma ser sutil demais pra aparecer em escala
 // real) e captura de imagem PNG da vista atual. Mesma técnica da Vista 3D do app de Reservatório
 // Escavado (terraplenagem.html), adaptada aqui.
+// v4.4: corrige 3 problemas da Vista 3D reportados em propriedade real grande/alongada — (1) linhas
+// de plantio "piscando"/somem dentro do terreno: ativado logarithmicDepthBuffer (o near/far da
+// câmera cobre de <1m a vários km, faixa grande demais pro z-buffer padrão) e aumentado o offset
+// vertical das linhas; (2) foto de satélite fora de escala e distorcida nas bordas: a malha e a foto
+// eram forçadas num QUADRADO do tamanho do lado maior do talhão — numa propriedade alongada isso
+// inflava a área renderizada bem além dos talhões, puxando morro/mata vizinhos sem dado de elevação
+// fino e desperdiçando a resolução da malha/foto numa área irrelevante. Agora as duas usam o
+// RETÂNGULO real (largura/altura independentes, subdivisão da malha proporcional por eixo); (3)
+// legenda de declividade (mesmas cores da aba 2D) some/aparece no canto inferior esquerdo conforme
+// o modo do fundo do terreno.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -4921,19 +4931,19 @@ function _3da_mkSampler(elevGrid, lats, lngs, n) {
   };
 }
 
-// Textura de declividade (mesmas cores da aba Declividade) sobre o mesmo quadrado geográfico do
+// Textura de declividade (mesmas cores da aba Declividade) sobre o mesmo retângulo geográfico do
 // terreno — dá pra ver onde o relevo é mais íngreme direto na vista 3D, sem sair dela.
-function _3da_buildSlopeTex(sampler, toLL, bcx, bcy, ext) {
-  const RES = 128, step = (2 * ext) / RES;
+function _3da_buildSlopeTex(sampler, toLL, bcx, bcy, halfW, halfH) {
+  const RES = 128, stepX = (2 * halfW) / RES, stepY = (2 * halfH) / RES;
   const canvas = document.createElement('canvas'); canvas.width = RES; canvas.height = RES;
   const ctx = canvas.getContext('2d');
   for(let jj = 0; jj < RES; jj++) {
     for(let ii = 0; ii < RES; ii++) {
-      const gx = (bcx - ext) + (ii + 0.5) * step, gy = (bcy - ext) + (jj + 0.5) * step;
-      const llL = toLL(gx - step, gy), llR = toLL(gx + step, gy), llD = toLL(gx, gy - step), llU = toLL(gx, gy + step);
+      const gx = (bcx - halfW) + (ii + 0.5) * stepX, gy = (bcy - halfH) + (jj + 0.5) * stepY;
+      const llL = toLL(gx - stepX, gy), llR = toLL(gx + stepX, gy), llD = toLL(gx, gy - stepY), llU = toLL(gx, gy + stepY);
       const eL = sampler(llL.lat, llL.lng), eR = sampler(llR.lat, llR.lng);
       const eD = sampler(llD.lat, llD.lng), eU = sampler(llU.lat, llU.lng);
-      const dzdx = (eR - eL) / (2 * step), dzdy = (eU - eD) / (2 * step);
+      const dzdx = (eR - eL) / (2 * stepX), dzdy = (eU - eD) / (2 * stepY);
       const slopePct = Math.sqrt(dzdx * dzdx + dzdy * dzdy) * 100;
       ctx.fillStyle = slopeColor(slopePct);
       // canvas cresce pra baixo; jj cresce pra norte (gy) — inverte a linha pra bater com o "norte
@@ -5077,8 +5087,15 @@ async function gerarVista3DAnalise() {
 
   const bx0 = toXY(cLat, lngMin).x, bx1 = toXY(cLat, lngMax).x;
   const by0 = toXY(latMin, cLng).y, by1 = toXY(latMax, cLng).y;
-  const bcx = (bx0 + bx1) / 2, bcy = (by0 + by1) / 2, ext = Math.max(bx1 - bx0, by1 - by0) / 2;
-  const span = 2 * ext;
+  const bcx = (bx0 + bx1) / 2, bcy = (by0 + by1) / 2;
+  // Malha/foto usam o RETÂNGULO real (halfW×halfH), não mais um quadrado com o lado maior dos dois —
+  // numa propriedade alongada (comum em lavoura), forçar quadrado inflava a área renderizada muito
+  // além dos talhões (puxando morro/mata vizinhos sem dado de elevação fino), o que espalhava a
+  // resolução da malha e da foto por uma área bem maior que a necessária — gerando linha "afundada"
+  // no relevo grosseiro e foto fora de escala. "maxHalf" ainda serve só pra enquadrar a câmera.
+  const halfW = Math.max(1, (bx1 - bx0) / 2), halfH = Math.max(1, (by1 - by0) / 2);
+  const maxHalf = Math.max(halfW, halfH);
+  const span = 2 * maxHalf;
 
   $('m3da-loading').style.display = 'none';
 
@@ -5112,25 +5129,28 @@ async function gerarVista3DAnalise() {
     controls.enableDamping = true; controls.dampingFactor = 0.07; controls.minDistance = 5; controls.maxDistance = span * 8; controls.maxPolarAngle = Math.PI * 0.49;
     _3da_controls = controls;
 
-    // ── Malha do terreno (NGT×NGT, elevação interpolada da grade buscada) ──
-    const NGT = _3DA_NGT;
-    const terrRaw = new Float32Array((NGT + 1) * (NGT + 1));
-    const tPos = new Float32Array((NGT + 1) * (NGT + 1) * 3);
-    const tUV = new Float32Array((NGT + 1) * (NGT + 1) * 2);
-    for(let jj = 0; jj <= NGT; jj++) {
-      for(let ii = 0; ii <= NGT; ii++) {
-        const idx = jj * (NGT + 1) + ii;
-        const gx = (bcx - ext) + ii * (2 * ext / NGT), gy = (bcy - ext) + jj * (2 * ext / NGT);
+    // ── Malha do terreno (retângulo real halfW×halfH, elevação interpolada da grade buscada) ──
+    // Subdivisões proporcionais por eixo (célula ~quadrada em metros) — o eixo mais curto usa menos
+    // divisões em vez de desperdiçar a mesma resolução do eixo mais longo numa área irrelevante.
+    const NGTX = Math.max(20, Math.min(160, Math.round(_3DA_NGT * halfW / maxHalf)));
+    const NGTY = Math.max(20, Math.min(160, Math.round(_3DA_NGT * halfH / maxHalf)));
+    const terrRaw = new Float32Array((NGTX + 1) * (NGTY + 1));
+    const tPos = new Float32Array((NGTX + 1) * (NGTY + 1) * 3);
+    const tUV = new Float32Array((NGTX + 1) * (NGTY + 1) * 2);
+    for(let jj = 0; jj <= NGTY; jj++) {
+      for(let ii = 0; ii <= NGTX; ii++) {
+        const idx = jj * (NGTX + 1) + ii;
+        const gx = (bcx - halfW) + ii * (2 * halfW / NGTX), gy = (bcy - halfH) + jj * (2 * halfH / NGTY);
         const ll = toLL(gx, gy);
         const raw = sampler(ll.lat, ll.lng) - elevMin;
         terrRaw[idx] = raw;
         tPos[idx * 3] = gx; tPos[idx * 3 + 1] = raw * _3da_exag; tPos[idx * 3 + 2] = -gy;
-        tUV[idx * 2] = ii / NGT; tUV[idx * 2 + 1] = jj / NGT;
+        tUV[idx * 2] = ii / NGTX; tUV[idx * 2 + 1] = jj / NGTY;
       }
     }
     const tIdx = [];
-    for(let jj = 0; jj < NGT; jj++) for(let ii = 0; ii < NGT; ii++) {
-      const a = jj * (NGT + 1) + ii, b = jj * (NGT + 1) + ii + 1, c = (jj + 1) * (NGT + 1) + ii, d = (jj + 1) * (NGT + 1) + ii + 1;
+    for(let jj = 0; jj < NGTY; jj++) for(let ii = 0; ii < NGTX; ii++) {
+      const a = jj * (NGTX + 1) + ii, b = jj * (NGTX + 1) + ii + 1, c = (jj + 1) * (NGTX + 1) + ii, d = (jj + 1) * (NGTX + 1) + ii + 1;
       tIdx.push(a, c, b, b, c, d);
     }
     const tGeo = new THREE.BufferGeometry();
@@ -5145,7 +5165,7 @@ async function gerarVista3DAnalise() {
     _3da_terrGeo = tGeo; _3da_terrRaw = terrRaw; _3da_matTerr = matTerr;
     _3da_bgMode = 'solid'; // até a foto de satélite (assíncrona) chegar
     $('m3da-slopeLegend').style.display = 'none';
-    _3da_slopeTex = _3da_buildSlopeTex(sampler, toLL, bcx, bcy, ext);
+    _3da_slopeTex = _3da_buildSlopeTex(sampler, toLL, bcx, bcy, halfW, halfH);
 
     // ── Linhas de plantio + contorno de cada talhão, coladas no relevo ─────
     const legenda = [];
@@ -5234,30 +5254,35 @@ async function gerarVista3DAnalise() {
     // verde e a foto "aparece por cima" assim que chegar, sem travar a abertura) ──
     (async () => {
       try {
-        const TEX = 1024;
+        // Imagem proporcional ao retângulo real (halfW×halfH) — não mais um quadrado — senão a foto
+        // cobre uma área maior que a malha num sentido e a resolução fica desperdiçada no eixo curto.
+        const TEXMAX = 1024;
+        const TEXW = Math.max(64, Math.round(TEXMAX * halfW / maxHalf));
+        const TEXH = Math.max(64, Math.round(TEXMAX * halfH / maxHalf));
         const satCLat = cLat + bcy / mLat, satCLng = cLng + bcx / mLng;
         // Zoom calculado direto da escala desejada (m/pixel), não por "encaixar" um bbox — _staticMapParams
         // arredonda o zoom PRA BAIXO (dá margem de sobra, ok pros mapas 2D dos relatórios), mas aqui a
-        // textura precisa cobrir EXATAMENTE o quadrado 2×ext do terreno, senão a foto fica em escala
+        // textura precisa cobrir EXATAMENTE o retângulo do terreno, senão a foto fica em escala
         // diferente do relevo/linhas por baixo. m/pixel real na Web Mercator: 156543.03392×cos(lat)/2^zoom.
-        const mpp = (2 * ext) / TEX;
+        const mpp = (2 * maxHalf) / TEXMAX;
         const zoom = Math.max(0, Math.min(18, Math.round(Math.log2(156543.03392 * Math.cos(satCLat * Math.PI / 180) / mpp))));
-        const dataUrl = await _3da_getSatUrl(satCLat, satCLng, zoom, TEX, TEX);
+        const dataUrl = await _3da_getSatUrl(satCLat, satCLng, zoom, TEXW, TEXH);
         if(!dataUrl || !_3da_renderer) return;
         const img = new Image();
         await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataUrl; });
         if(!_3da_renderer) return;
         const tex = new THREE.Texture(img);
-        tex.needsUpdate = true; tex.encoding = THREE.sRGBEncoding; tex.anisotropy = 4;
-        // O zoom acima é arredondado pro inteiro mais próximo — a imagem real cobre mppReal×TEX metros,
-        // que quase nunca bate exatamente com 2×ext. Corrige a escala/centro via repeat+offset da própria
-        // textura (mesmo UV 0..1 do terreno), em vez de assumir que a foto cobre exatamente o quadrado.
+        tex.needsUpdate = true; tex.encoding = THREE.sRGBEncoding;
+        tex.anisotropy = _3da_renderer.capabilities.getMaxAnisotropy ? _3da_renderer.capabilities.getMaxAnisotropy() : 4;
+        // O zoom acima é arredondado pro inteiro mais próximo — a imagem real cobre mppReal×TEXW/TEXH
+        // metros, que quase nunca bate exatamente com 2×halfW/halfH. Corrige a escala/centro via
+        // repeat+offset da própria textura (mesmo UV 0..1 do terreno), em vez de assumir que a foto
+        // cobre exatamente o retângulo pedido.
         const mppReal = 156543.03392 * Math.cos(satCLat * Math.PI / 180) / Math.pow(2, zoom);
-        const extReal = (mppReal * TEX) / 2;
-        const s = ext / extReal;
+        const sX = halfW / ((mppReal * TEXW) / 2), sY = halfH / ((mppReal * TEXH) / 2);
         tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
-        tex.repeat.set(s, s);
-        tex.offset.set((1 - s) / 2, (1 - s) / 2);
+        tex.repeat.set(sX, sY);
+        tex.offset.set((1 - sX) / 2, (1 - sY) / 2);
         _3da_satTex = tex;
         if(_3da_bgMode === 'solid') { _3da_bgMode = 'sat'; matTerr.map = tex; matTerr.color.set(0xffffff); matTerr.needsUpdate = true; $('m3da-btnBg').textContent = '🛰️ Satélite'; }
       } catch(e) { console.error('Satélite 3D plantio:', e); }
