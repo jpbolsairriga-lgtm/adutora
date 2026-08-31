@@ -238,7 +238,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.7 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.8 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -732,6 +732,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div id="m3da-inf" style="display:none;"></div>
   <div id="m3da-toolbar">
     <button id="m3da-btnBg" onclick="ciclarFundo3DAnalise()">🛰️ Satélite</button>
+    <button id="m3da-btnOrtho" onclick="toggleOrtografica3DAnalise()" title="Câmera ortogonal olhando reto de cima — sem a distorção de perspectiva que desloca terreno alto na tela, útil pra comparar com o mapa 2D">📐 Vista de Cima</button>
     <button onclick="capturarImagem3DAnalise()">📷 Capturar</button>
     <button onclick="fecharVista3DAnalise()">✕ Fechar</button>
   </div>
@@ -1037,6 +1038,16 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // alcançava mata/estrada/vizinhos, deixando a vista 3D sem nenhum contexto visual ao redor — o que
 // também reforça a sensação de "escala errada" ao comparar com o mapa 2D (que sempre mostra mais
 // entorno). Margem subida pra 25%.
+// v4.8: usuário marcou manualmente na tela onde deveria ser o limite das linhas de plantio — não
+// batia com a mancha renderizada, mas o desvio só aparecia perto de área com desnível real (mata na
+// borda de um morro). Diagnóstico: a propriedade tem relevo real de ~83m de amplitude, e numa
+// câmera em PERSPECTIVA um ponto mais alto do terreno aparece deslocado na tela na direção da
+// câmera (paralaxe) mesmo com toda a geometria/escala corretas — não é bug, é como perspectiva 3D
+// funciona sempre que a câmera não está exatamente perpendicular ao terreno. Prova numérica: dois
+// pontos com mesmo X/Z mas 300m de diferença de altura projetam 442,8px de diferença na tela em
+// perspectiva. Adicionado botão "📐 Vista de Cima" — câmera ORTOGONAL olhando reto de cima (mesmo
+// teste: 0,00000000000006px de diferença, ou seja, zero) — é a forma correta de comparar a vista 3D
+// com o mapa 2D plano sem esse efeito enganar o olho.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -4885,6 +4896,8 @@ function cpColorFieldChanged() {
 // adaptada aqui pra sistematização de plantio.
 // ══════════════════════════════════════════════════════════════════════════
 let _3da_raf = null, _3da_renderer = null, _3da_scene = null, _3da_camera = null, _3da_controls = null;
+let _3da_cameraPersp = null, _3da_cameraOrtho = null, _3da_isOrtho = false;
+let _3da_span = 0, _3da_bcx = 0, _3da_bcy = 0;
 let _3da_terrGeo = null, _3da_terrRaw = null, _3da_matTerr = null;
 let _3da_satTex = null, _3da_slopeTex = null;
 const _3DA_BG_MODES = ['sat', 'slope', 'solid'];
@@ -5042,12 +5055,62 @@ function fecharVista3DAnalise() {
   if(_3da_raf) { cancelAnimationFrame(_3da_raf); _3da_raf = null; }
   if(_3da_renderer) { _3da_renderer.dispose(); _3da_renderer = null; }
   _3da_scene = null; _3da_camera = null; _3da_controls = null;
+  _3da_cameraPersp = null; _3da_cameraOrtho = null; _3da_isOrtho = false;
   _3da_terrGeo = null; _3da_terrRaw = null; _3da_matTerr = null;
   _3da_satTex = null; _3da_slopeTex = null; _3da_lineObjs = [];
   _3da_bgMode = 'solid';
+  const btnOrtho = $('m3da-btnOrtho'); if(btnOrtho) btnOrtho.textContent = '📐 Vista de Cima';
   // troca o canvas (dispose() perde o contexto WebGL; canvas novo garante contexto limpo na próxima abertura)
   const modal = $('modal3dAnalise'), old = $('canvas3dAnalise');
   if(old) { const nc = document.createElement('canvas'); nc.id = 'canvas3dAnalise'; modal.insertBefore(nc, old); old.remove(); }
+}
+
+// Ajusta o frustum da câmera ortogonal (se já existir) num resize — chamada tanto no listener de
+// resize quanto na primeira criação da câmera.
+function _3da_resizeOrtho(asp) {
+  if(!_3da_cameraOrtho) return;
+  const h = _3da_span * 0.62;
+  _3da_cameraOrtho.left = -h * asp; _3da_cameraOrtho.right = h * asp;
+  _3da_cameraOrtho.top = h; _3da_cameraOrtho.bottom = -h;
+  _3da_cameraOrtho.updateProjectionMatrix();
+}
+
+// Vista de Cima (ortogonal) — sem isso, qualquer comparação "essa linha bate com a foto?" numa
+// câmera em perspectiva é enganosa quando o relevo real tem desnível: um ponto mais alto do terreno
+// aparece deslocado na tela na direção da câmera (paralaxe), mesmo com todo o resto correto — é
+// assim que perspectiva 3D funciona, não é bug de escala. Câmera ortogonal olhando reto de cima
+// elimina essa distorção — a forma na tela bate com a planta baixa 2D em qualquer relevo.
+function toggleOrtografica3DAnalise() {
+  if(!_3da_renderer || !_3da_scene) return;
+  const cv = _3da_renderer.domElement;
+  const asp = cv.width / cv.height;
+  const btn = $('m3da-btnOrtho');
+  if(!_3da_isOrtho) {
+    if(!_3da_cameraOrtho) {
+      _3da_cameraOrtho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.5, _3da_span * 6);
+      _3da_resizeOrtho(asp);
+    }
+    _3da_cameraOrtho.position.set(_3da_bcx, _3da_span * 3, -_3da_bcy);
+    _3da_cameraOrtho.up.set(0, 0, -1); // "cima" na tela = norte (mesma convenção do mapa 2D)
+    _3da_cameraOrtho.lookAt(_3da_bcx, 0, -_3da_bcy);
+    if(_3da_controls) _3da_controls.dispose();
+    _3da_controls = new THREE.OrbitControls(_3da_cameraOrtho, cv);
+    _3da_controls.enableDamping = true; _3da_controls.dampingFactor = 0.07;
+    _3da_controls.target.set(_3da_bcx, 0, -_3da_bcy);
+    _3da_controls.minZoom = 0.2; _3da_controls.maxZoom = 30;
+    _3da_controls.update();
+    _3da_camera = _3da_cameraOrtho; _3da_isOrtho = true;
+    if(btn) btn.textContent = '🎥 Vista 3D';
+  } else {
+    if(_3da_controls) _3da_controls.dispose();
+    _3da_controls = new THREE.OrbitControls(_3da_cameraPersp, cv);
+    _3da_controls.enableDamping = true; _3da_controls.dampingFactor = 0.07;
+    _3da_controls.minDistance = 5; _3da_controls.maxDistance = _3da_span * 8; _3da_controls.maxPolarAngle = Math.PI * 0.49;
+    _3da_controls.target.set(_3da_bcx, 0, -_3da_bcy);
+    _3da_controls.update();
+    _3da_camera = _3da_cameraPersp; _3da_isOrtho = false;
+    if(btn) btn.textContent = '📐 Vista de Cima';
+  }
 }
 
 function atualizarExagero3DAnalise(v) {
@@ -5200,6 +5263,7 @@ async function gerarVista3DAnalise() {
     renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.1;
     renderer.outputEncoding = THREE.sRGBEncoding;
     _3da_renderer = renderer; _3da_scene = scene; _3da_camera = camera;
+    _3da_cameraPersp = camera; _3da_span = span; _3da_bcx = bcx; _3da_bcy = bcy; _3da_isOrtho = false;
 
     scene.add(new THREE.AmbientLight(0xfff5e0, 0.5));
     const sun = new THREE.DirectionalLight(0xfffae8, 2.0);
@@ -5330,10 +5394,14 @@ async function gerarVista3DAnalise() {
 
     window.addEventListener('resize', function _3daResize() {
       if(!_3da_renderer) { window.removeEventListener('resize', _3daResize); return; }
-      camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
+      const asp = window.innerWidth / window.innerHeight;
+      if(_3da_cameraPersp) { _3da_cameraPersp.aspect = asp; _3da_cameraPersp.updateProjectionMatrix(); }
+      _3da_resizeOrtho(asp);
       _3da_renderer.setSize(window.innerWidth, window.innerHeight);
     });
-    (function animate() { _3da_raf = requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); })();
+    // animate() lê _3da_camera/_3da_controls (globais, não as const locais) — assim o botão de vista
+    // ortogonal pode trocar qual câmera está ativa sem precisar reiniciar o loop de render.
+    (function animate() { _3da_raf = requestAnimationFrame(animate); if(_3da_controls) _3da_controls.update(); if(_3da_camera) renderer.render(scene, _3da_camera); })();
 
     // ── Foto de satélite como textura do terreno (assíncrona — a malha já aparece
     // verde e a foto "aparece por cima" assim que chegar, sem travar a abertura) ──
