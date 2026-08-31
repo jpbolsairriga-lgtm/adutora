@@ -149,6 +149,23 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 .modal a:hover{text-decoration:underline;}
 .modal .step-url{display:block;background:#0f3460;border-radius:5px;padding:6px 10px;font-size:11px;color:#81d4fa;margin-top:4px;word-break:break-all;}
 .modal .note{background:#0f3460;border-left:3px solid #e2b96e;border-radius:4px;padding:8px 10px;font-size:11px;color:#90a4ae;margin-top:12px;}
+
+/* ── Vista 3D — Análise do Terreno ── */
+#modal3dAnalise{display:none;position:fixed;inset:0;background:#0d1b2a;z-index:10000;}
+#modal3dAnalise.open{display:block;}
+#canvas3dAnalise{width:100%;height:100%;display:block;}
+#m3da-loading{position:absolute;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;gap:10px;color:#fff;font-size:14px;background:rgba(13,27,42,.88);text-align:center;padding:20px;}
+#m3da-inf{position:absolute;top:14px;left:14px;background:rgba(5,10,18,.75);color:#ffffffcc;font-size:11.5px;line-height:1.85;padding:10px 14px;border-radius:8px;border:1px solid rgba(66,165,245,.3);pointer-events:none;max-width:260px;}
+#m3da-inf .m3da-legRow{display:flex;align-items:center;gap:6px;margin-top:3px;}
+#m3da-inf .m3da-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
+#m3da-toolbar{position:absolute;top:14px;right:14px;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;max-width:64vw;}
+#m3da-toolbar button{background:rgba(255,255,255,.13);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:7px;padding:7px 14px;font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap;}
+#m3da-toolbar button:hover{background:rgba(255,255,255,.22);}
+#m3da-exag{position:absolute;bottom:14px;right:14px;background:rgba(5,10,18,.75);border-radius:8px;padding:8px 12px;display:flex;align-items:center;gap:8px;color:#fff;font-size:11.5px;}
+#m3da-exag input[type=range]{width:120px;}
+#m3da-exagVal{min-width:34px;text-align:right;color:#e2b96e;font-weight:700;}
+#m3da-hint{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);color:#ffffff44;font-size:10px;letter-spacing:.6px;pointer-events:none;}
+
 /* Legenda do polígono */
 .poly-label{width:168px;background:rgba(10,20,45,.88);border:1.5px solid rgba(66,165,245,.6);border-radius:10px;font-family:'Segoe UI',sans-serif;pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,.6);overflow:hidden;}
 .poly-label-head{background:rgba(21,101,192,.85);padding:6px 10px;font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#e3f2fd;}
@@ -218,7 +235,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.2 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.3 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -234,6 +251,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
     <button class="rtab" data-panel="rp-guia" onclick="ativarRibbon('rp-guia')">Guia &amp; Linhas de Plantio</button>
     <button class="rtab" data-panel="rp-curvas" onclick="ativarRibbon('rp-curvas')">Curvas de Nível</button>
     <button class="rtab" data-panel="rp-decliv" onclick="ativarRibbon('rp-decliv')">Declividade</button>
+    <button class="rtab" data-panel="rp-analise" onclick="ativarRibbon('rp-analise')">Análise</button>
     <button class="rtab" data-panel="rp-relatorio" onclick="ativarRibbon('rp-relatorio')">Exportar &amp; Relatório</button>
   </div>
 
@@ -506,6 +524,30 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
       </div>
     </div>
 
+    <!-- ══ Análise (Vista 3D) ══ -->
+    <div class="rpanel" id="rp-analise">
+      <div class="rgroup">
+        <div class="rgroup-body">
+          <div class="rcol">
+            <label>Resolução da elevação</label>
+            <select id="analiseGrid" class="rfield wide">
+              <option value="20">20 × 20 (rápido)</option>
+              <option value="30" selected>30 × 30 (padrão)</option>
+              <option value="40">40 × 40 (detalhado)</option>
+            </select>
+          </div>
+          <button class="rbtn c-blue" id="btnVista3D" onclick="gerarVista3DAnalise()"><span class="ico">&#9968;</span><span class="lbl">Gerar Vista 3D</span></button>
+        </div>
+        <div class="rgroup-title">Terreno 3D</div>
+      </div>
+      <div class="rgroup">
+        <div class="rgroup-body">
+          <div class="rbox" style="max-width:260px;white-space:normal;">Monta o relevo real da propriedade (todos os talhões travados + carreadores) com as linhas de plantio coladas no terreno. Dentro da vista dá pra alternar satélite / declividade / verde sólido e ajustar o exagero vertical. Usa a mesma chave Google Maps já configurada nas abas Curvas de Nível e Declividade.</div>
+        </div>
+        <div class="rgroup-title">Sobre</div>
+      </div>
+    </div>
+
     <!-- ══ Relatório ══ -->
     <div class="rpanel" id="rp-relatorio">
       <div class="rgroup">
@@ -680,6 +722,24 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   </div>
 </div>
 
+<!-- ── Modal: Vista 3D — Análise do Terreno ── -->
+<div id="modal3dAnalise">
+  <canvas id="canvas3dAnalise"></canvas>
+  <div id="m3da-loading"><div>⏳ Buscando elevação do terreno…</div></div>
+  <div id="m3da-inf" style="display:none;"></div>
+  <div id="m3da-toolbar">
+    <button id="m3da-btnBg" onclick="ciclarFundo3DAnalise()">🛰️ Satélite</button>
+    <button onclick="capturarImagem3DAnalise()">📷 Capturar</button>
+    <button onclick="fecharVista3DAnalise()">✕ Fechar</button>
+  </div>
+  <div id="m3da-exag">
+    <span>Exagero vertical</span>
+    <input type="range" id="m3da-exagRange" min="1" max="6" step="0.5" value="2" oninput="atualizarExagero3DAnalise(this.value)">
+    <span id="m3da-exagVal">2.0×</span>
+  </div>
+  <div id="m3da-hint">Arraste: rotacionar &nbsp;·&nbsp; Scroll: zoom &nbsp;·&nbsp; Botão direito: mover</div>
+</div>
+
 <div id="mapWrap">
   <div id="map"></div>
 
@@ -723,6 +783,8 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@latest/dist/Leaflet.GoogleMutant.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.127.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.127.0/examples/js/controls/OrbitControls.js"></script>
 <script>
 // v2.8: arrastar a linha guia inteira como objeto (translação de todos os pontos, sem
 // distorcer o formato copiado de uma curva de nível) — clique fora dos vértices e arraste.
@@ -919,6 +981,14 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // e numeração automática nos títulos dos grupos; "Exportar" ganhou aba própria ("Exportar &
 // Relatório", primeiro grupo, sem precisar rolar) depois de ter ficado escondido no fim de uma aba
 // larga demais; indicador visual (seta com sombreado) quando uma aba tem mais conteúdo pra rolar.
+// v4.3: nova aba "Análise" com Vista 3D do terreno (Three.js) — monta o relevo real (grade de
+// elevação Google interpolada) com todos os talhões travados + carreadores + linhas de plantio
+// coladas na superfície, cor por talhão. Fundo do terreno alterna entre foto de satélite (Esri sem
+// precisar de chave, ou Google Maps Static se a chave já configurada tiver "Maps Static API"),
+// declividade (mesmas cores da aba Declividade) e verde sólido — um botão cicla entre os três.
+// Exagero vertical ajustável (relevo de lavoura costuma ser sutil demais pra aparecer em escala
+// real) e captura de imagem PNG da vista atual. Mesma técnica da Vista 3D do app de Reservatório
+// Escavado (terraplenagem.html), adaptada aqui.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -4756,6 +4826,413 @@ function cpColorFieldChanged() {
   if(!v.startsWith('#')) v = '#' + v;
   if(!/^#[0-9A-Fa-f]{6}$/.test(v)) { $('cpColorField').value = _cpPending; return; }
   _cpAtualizarPreview(v, true);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Vista 3D — Análise do Terreno (Three.js)
+// Monta o relevo real (grade de elevação Google, interpolada) com a foto de
+// satélite/declividade/verde sólido alternável por baixo e as linhas de
+// plantio + carreadores + contorno de cada talhão "colados" na superfície.
+// Mesma ideia da Vista 3D do app de Reservatório Escavado (terraplenagem),
+// adaptada aqui pra sistematização de plantio.
+// ══════════════════════════════════════════════════════════════════════════
+let _3da_raf = null, _3da_renderer = null, _3da_scene = null, _3da_camera = null, _3da_controls = null;
+let _3da_terrGeo = null, _3da_terrRaw = null, _3da_matTerr = null;
+let _3da_satTex = null, _3da_slopeTex = null;
+const _3DA_BG_MODES = ['sat', 'slope', 'solid'];
+let _3da_bgMode = 'solid';
+let _3da_exag = 2;
+let _3da_lineObjs = []; // {geo, raw:Float32Array (elevação bruta por vértice), eps:number}
+const _3DA_NGT = 90;    // resolução da malha 3D (independente da grade de elevação buscada na API)
+
+// Reaproveita os mesmos tiles World_Imagery (sem precisar de chave) que já alimentam o mapa 2D —
+// monta um quadrado localmente via canvas. Se houver chave Google configurada (mapskey_pl), usa o
+// Maps Static como primeira opção (mais nítido); senão cai direto no Esri.
+async function _3da_stitchEsri(cLat, cLng, zoom, W, H) {
+  try {
+    const tileZ = Math.max(0, Math.min(18, Math.round(zoom)));
+    const scale = 256 * Math.pow(2, tileZ);
+    const wx = lng => (lng + 180) / 360 * scale;
+    const wy = lat => { const s = Math.sin(lat * Math.PI / 180); return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * scale; };
+    const originX = wx(cLng) - W / 2, originY = wy(cLat) - H / 2;
+    const tx0 = Math.floor(originX / 256), ty0 = Math.floor(originY / 256);
+    const tx1 = Math.floor((originX + W) / 256), ty1 = Math.floor((originY + H) / 256);
+    const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    const maxTile = Math.pow(2, tileZ);
+    const loads = [];
+    for(let ty = ty0; ty <= ty1; ty++) {
+      if(ty < 0 || ty >= maxTile) continue;
+      for(let tx = tx0; tx <= tx1; tx++) {
+        const wrapX = ((tx % maxTile) + maxTile) % maxTile;
+        const px = tx * 256 - originX, py = ty * 256 - originY;
+        const url = `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${tileZ}/${ty}/${wrapX}`;
+        loads.push(new Promise(res => {
+          const img = new Image(); img.crossOrigin = 'anonymous';
+          img.onload = () => { try { ctx.drawImage(img, px, py, 256, 256); } catch(e) {} res(); };
+          img.onerror = () => res();
+          img.src = url;
+        }));
+      }
+    }
+    await Promise.all(loads);
+    return canvas.toDataURL('image/jpeg', 0.85);
+  } catch(e) { console.error('Esri 3D:', e); return null; }
+}
+async function _3da_getSatUrl(cLat, cLng, zoom, W, H) {
+  const key = localStorage.getItem('mapskey_pl') || '';
+  if(key) {
+    try {
+      const g = `https://maps.googleapis.com/maps/api/staticmap?center=${cLat},${cLng}&zoom=${zoom}&size=${W}x${H}&scale=2&maptype=satellite&key=${key}`;
+      const resp = await fetch(g);
+      if(resp.ok) {
+        const blob = await resp.blob();
+        if(blob.size > 800) return await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(blob); });
+      }
+    } catch(e) { /* chave sem Maps Static habilitada, CORS ou rede — cai no Esri abaixo */ }
+  }
+  return await _3da_stitchEsri(cLat, cLng, zoom, W, H);
+}
+
+// Interpolação bilinear sobre a grade regular de elevação buscada na API — mais precisa e mais
+// barata que o "vizinho mais próximo" (não precisa varrer todos os pontos a cada consulta).
+function _3da_mkSampler(elevGrid, lats, lngs, n) {
+  const latMin = lats[0], latMax = lats[n - 1], lngMin = lngs[0], lngMax = lngs[n - 1];
+  return function(lat, lng) {
+    let fr = (lat - latMin) / (latMax - latMin) * (n - 1); fr = Math.max(0, Math.min(n - 1.0001, fr));
+    let fc = (lng - lngMin) / (lngMax - lngMin) * (n - 1); fc = Math.max(0, Math.min(n - 1.0001, fc));
+    const r0 = Math.floor(fr), c0 = Math.floor(fc), r1 = Math.min(n - 1, r0 + 1), c1 = Math.min(n - 1, c0 + 1);
+    const tr = fr - r0, tc = fc - c0;
+    const g = (r, c) => elevGrid[r][c];
+    const top = g(r0, c0) * (1 - tc) + g(r0, c1) * tc;
+    const bot = g(r1, c0) * (1 - tc) + g(r1, c1) * tc;
+    return top * (1 - tr) + bot * tr;
+  };
+}
+
+// Textura de declividade (mesmas cores da aba Declividade) sobre o mesmo quadrado geográfico do
+// terreno — dá pra ver onde o relevo é mais íngreme direto na vista 3D, sem sair dela.
+function _3da_buildSlopeTex(sampler, toLL, bcx, bcy, ext) {
+  const RES = 128, step = (2 * ext) / RES;
+  const canvas = document.createElement('canvas'); canvas.width = RES; canvas.height = RES;
+  const ctx = canvas.getContext('2d');
+  for(let jj = 0; jj < RES; jj++) {
+    for(let ii = 0; ii < RES; ii++) {
+      const gx = (bcx - ext) + (ii + 0.5) * step, gy = (bcy - ext) + (jj + 0.5) * step;
+      const llL = toLL(gx - step, gy), llR = toLL(gx + step, gy), llD = toLL(gx, gy - step), llU = toLL(gx, gy + step);
+      const eL = sampler(llL.lat, llL.lng), eR = sampler(llR.lat, llR.lng);
+      const eD = sampler(llD.lat, llD.lng), eU = sampler(llU.lat, llU.lng);
+      const dzdx = (eR - eL) / (2 * step), dzdy = (eU - eD) / (2 * step);
+      const slopePct = Math.sqrt(dzdx * dzdx + dzdy * dzdy) * 100;
+      ctx.fillStyle = slopeColor(slopePct);
+      // canvas cresce pra baixo; jj cresce pra norte (gy) — inverte a linha pra bater com o "norte
+      // no topo" natural da foto de satélite (mesma convenção de UV usada nos dois casos).
+      ctx.fillRect(ii, RES - 1 - jj, 1, 1);
+    }
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter; tex.needsUpdate = true;
+  return tex;
+}
+
+function fecharVista3DAnalise() {
+  $('modal3dAnalise').classList.remove('open');
+  if(_3da_raf) { cancelAnimationFrame(_3da_raf); _3da_raf = null; }
+  if(_3da_renderer) { _3da_renderer.dispose(); _3da_renderer = null; }
+  _3da_scene = null; _3da_camera = null; _3da_controls = null;
+  _3da_terrGeo = null; _3da_terrRaw = null; _3da_matTerr = null;
+  _3da_satTex = null; _3da_slopeTex = null; _3da_lineObjs = [];
+  _3da_bgMode = 'solid';
+  // troca o canvas (dispose() perde o contexto WebGL; canvas novo garante contexto limpo na próxima abertura)
+  const modal = $('modal3dAnalise'), old = $('canvas3dAnalise');
+  if(old) { const nc = document.createElement('canvas'); nc.id = 'canvas3dAnalise'; modal.insertBefore(nc, old); old.remove(); }
+}
+
+function atualizarExagero3DAnalise(v) {
+  _3da_exag = parseFloat(v) || 1;
+  $('m3da-exagVal').textContent = _3da_exag.toFixed(1) + '×';
+  if(_3da_terrGeo && _3da_terrRaw) {
+    const pos = _3da_terrGeo.attributes.position.array;
+    for(let i = 0; i < _3da_terrRaw.length; i++) pos[i * 3 + 1] = _3da_terrRaw[i] * _3da_exag;
+    _3da_terrGeo.attributes.position.needsUpdate = true;
+    _3da_terrGeo.computeVertexNormals();
+  }
+  _3da_lineObjs.forEach(o => {
+    const pos = o.geo.attributes.position.array;
+    for(let i = 0; i < o.raw.length; i++) pos[i * 3 + 1] = o.raw[i] * _3da_exag + o.eps;
+    o.geo.attributes.position.needsUpdate = true;
+  });
+}
+
+function ciclarFundo3DAnalise() {
+  if(!_3da_matTerr) return;
+  const btn = $('m3da-btnBg');
+  const iniIdx = _3DA_BG_MODES.indexOf(_3da_bgMode);
+  let idx = iniIdx;
+  do { idx = (idx + 1) % _3DA_BG_MODES.length; } while(_3DA_BG_MODES[idx] === 'sat' && !_3da_satTex && idx !== iniIdx);
+  _3da_bgMode = _3DA_BG_MODES[idx];
+  if(_3da_bgMode === 'sat' && _3da_satTex) { _3da_matTerr.map = _3da_satTex; _3da_matTerr.color.set(0xffffff); btn.textContent = '🛰️ Satélite'; }
+  else if(_3da_bgMode === 'slope' && _3da_slopeTex) { _3da_matTerr.map = _3da_slopeTex; _3da_matTerr.color.set(0xffffff); btn.textContent = '🎨 Declividade'; }
+  else { _3da_bgMode = 'solid'; _3da_matTerr.map = null; _3da_matTerr.color.set(0x8fbf6a); btn.textContent = '🟢 Terreno sólido'; }
+  _3da_matTerr.needsUpdate = true;
+}
+
+function capturarImagem3DAnalise() {
+  if(!_3da_renderer) return;
+  _3da_renderer.render(_3da_scene, _3da_camera);
+  const url = _3da_renderer.domElement.toDataURL('image/png');
+  const a = document.createElement('a');
+  a.href = url; a.download = 'vista3d-plantio-' + new Date().toISOString().slice(0, 10) + '.png';
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+async function gerarVista3DAnalise() {
+  if(!window.google || !window.google.maps || !google.maps.ElevationService) {
+    setStatus('Ative o Google Maps (chave API) para gerar a Vista 3D — precisa de dados de elevação.', 'err');
+    return;
+  }
+  if(typeof THREE === 'undefined') { setStatus('Three.js não carregou — verifique a conexão com a internet.', 'err'); return; }
+
+  // ── Reúne talhões travados + o talhão ativo (se ainda não travado) ──────────
+  const fontes = talhoesArquivados.map(t => ({
+    idx: t.idx, cor: t.cor || '#42a5f5', corLinha: t.corLinha || '#FFD600',
+    polyPts: t.polyPts, linhas: t.linhas || [], areaHa: t.areaHa,
+    count: t.count != null ? t.count : (t.linhas || []).length, metrosLin: t.metrosLin || 0
+  }));
+  if(turfPoly && polyPts.length >= 3) {
+    let metrosLin = 0;
+    linhas.forEach(pl => { const pts = pl.getLatLngs().flat(); for(let i = 0; i < pts.length - 1; i++) metrosLin += haversineM(pts[i], pts[i + 1]); });
+    fontes.push({
+      idx: 'ativo', cor: '#42a5f5', corLinha: $('corLinha')?.value || '#FFD600',
+      polyPts, linhas, areaHa: turf.area(turfPoly) / 10000,
+      count: linhas.length, metrosLin
+    });
+  }
+  if(!fontes.length) { setStatus('Nenhum talhão desenhado ainda — desenhe e trave ao menos um talhão.', 'err'); return; }
+
+  // ── Bounding box de tudo (talhões + carreadores), com margem ────────────────
+  const allPts = [];
+  fontes.forEach(t => t.polyPts.forEach(p => allPts.push(p)));
+  carreadorLayers.forEach(l => { try { l.getLatLngs().flat(Infinity).forEach(ll => allPts.push({ lat: ll.lat, lng: ll.lng })); } catch(e) {} });
+
+  let latMin = Math.min(...allPts.map(p => p.lat)), latMax = Math.max(...allPts.map(p => p.lat));
+  let lngMin = Math.min(...allPts.map(p => p.lng)), lngMax = Math.max(...allPts.map(p => p.lng));
+  const padLat = Math.max((latMax - latMin) * 0.08, 0.0004), padLng = Math.max((lngMax - lngMin) * 0.08, 0.0004);
+  latMin -= padLat; latMax += padLat; lngMin -= padLng; lngMax += padLng;
+
+  $('modal3dAnalise').classList.add('open');
+  $('m3da-loading').style.display = 'flex';
+  $('m3da-loading').firstElementChild.textContent = '⏳ Buscando elevação do terreno…';
+  $('m3da-inf').style.display = 'none';
+  $('btnVista3D').disabled = true;
+
+  // ── Grade de elevação (Google Elevation API, em lotes de 512) ───────────────
+  const n = parseInt($('analiseGrid').value) || 30;
+  const lats = Array.from({ length: n }, (_, i) => latMin + i * (latMax - latMin) / (n - 1));
+  const lngs = Array.from({ length: n }, (_, j) => lngMin + j * (lngMax - lngMin) / (n - 1));
+  const allLL = []; for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) allLL.push(new google.maps.LatLng(lats[r], lngs[c]));
+  const BATCH = 512, elevFlat = new Array(allLL.length);
+  const elevator = new google.maps.ElevationService();
+  try {
+    let done = 0; const totalBatches = Math.ceil(allLL.length / BATCH);
+    await new Promise((resolve, reject) => {
+      for(let b = 0; b < totalBatches; b++) {
+        const off = b * BATCH, slice = allLL.slice(off, off + BATCH);
+        elevator.getElevationForLocations({ locations: slice }, (res, status) => {
+          if(status !== 'OK') { reject(new Error(status)); return; }
+          res.forEach((r, i) => { elevFlat[off + i] = r.elevation; });
+          if(++done === totalBatches) resolve();
+        });
+      }
+    });
+  } catch(e) {
+    $('m3da-loading').firstElementChild.textContent = '❌ Falha ao buscar elevação (' + e.message + ')';
+    $('btnVista3D').disabled = false;
+    setTimeout(fecharVista3DAnalise, 2400);
+    return;
+  }
+  $('btnVista3D').disabled = false;
+
+  const elevGrid = Array.from({ length: n }, (_, r) => Array.from({ length: n }, (_, c) => elevFlat[r * n + c] ?? 0));
+  let elevMin = Infinity, elevMax = -Infinity;
+  for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) { const e = elevGrid[r][c]; if(e < elevMin) elevMin = e; if(e > elevMax) elevMax = e; }
+  const sampler = _3da_mkSampler(elevGrid, lats, lngs, n);
+
+  const cLat = (latMin + latMax) / 2, cLng = (lngMin + lngMax) / 2;
+  const mLng = Math.cos(cLat * Math.PI / 180) * 111320, mLat = 111320;
+  const toXY = (lat, lng) => ({ x: (lng - cLng) * mLng, y: (lat - cLat) * mLat });
+  const toLL = (gx, gy) => ({ lat: cLat + gy / mLat, lng: cLng + gx / mLng });
+
+  const bx0 = toXY(cLat, lngMin).x, bx1 = toXY(cLat, lngMax).x;
+  const by0 = toXY(latMin, cLng).y, by1 = toXY(latMax, cLng).y;
+  const bcx = (bx0 + bx1) / 2, bcy = (by0 + by1) / 2, ext = Math.max(bx1 - bx0, by1 - by0) / 2;
+  const span = 2 * ext;
+
+  $('m3da-loading').style.display = 'none';
+
+  requestAnimationFrame(() => { if(!$('modal3dAnalise').classList.contains('open')) return; try {
+    // ── Cena, câmera, luzes, controles ─────────────────────────────────────
+    const W3 = window.innerWidth, H3 = window.innerHeight;
+    const cv = $('canvas3dAnalise'); cv.width = W3; cv.height = H3;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0d1b2a);
+    scene.fog = new THREE.Fog(0x0d1b2a, span * 2.5, span * 6);
+    const camera = new THREE.PerspectiveCamera(38, W3 / H3, 0.5, Math.max(30000, span * 10));
+    const renderer = new THREE.WebGLRenderer({ antialias: true, canvas: cv, preserveDrawingBuffer: true });
+    renderer.setSize(W3, H3); renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.1;
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    _3da_renderer = renderer; _3da_scene = scene; _3da_camera = camera;
+
+    scene.add(new THREE.AmbientLight(0xfff5e0, 0.5));
+    const sun = new THREE.DirectionalLight(0xfffae8, 2.0);
+    sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.bias = -0.0012; sun.shadow.normalBias = 0.6;
+    sun.position.set(bcx + span * 0.9, span * 1.3, -bcy + span * 0.5);
+    const sc = sun.shadow.camera; sc.near = 10; sc.far = span * 4; sc.left = sc.bottom = -span * 0.8; sc.right = sc.top = span * 0.8; sc.updateProjectionMatrix();
+    scene.add(sun);
+    const fill = new THREE.DirectionalLight(0x2040a0, 0.22); fill.position.set(-1, 0.4, -1).normalize().multiplyScalar(span); scene.add(fill);
+    const controls = new THREE.OrbitControls(camera, cv);
+    controls.enableDamping = true; controls.dampingFactor = 0.07; controls.minDistance = 5; controls.maxDistance = span * 8; controls.maxPolarAngle = Math.PI * 0.49;
+    _3da_controls = controls;
+
+    // ── Malha do terreno (NGT×NGT, elevação interpolada da grade buscada) ──
+    const NGT = _3DA_NGT;
+    const terrRaw = new Float32Array((NGT + 1) * (NGT + 1));
+    const tPos = new Float32Array((NGT + 1) * (NGT + 1) * 3);
+    const tUV = new Float32Array((NGT + 1) * (NGT + 1) * 2);
+    for(let jj = 0; jj <= NGT; jj++) {
+      for(let ii = 0; ii <= NGT; ii++) {
+        const idx = jj * (NGT + 1) + ii;
+        const gx = (bcx - ext) + ii * (2 * ext / NGT), gy = (bcy - ext) + jj * (2 * ext / NGT);
+        const ll = toLL(gx, gy);
+        const raw = sampler(ll.lat, ll.lng) - elevMin;
+        terrRaw[idx] = raw;
+        tPos[idx * 3] = gx; tPos[idx * 3 + 1] = raw * _3da_exag; tPos[idx * 3 + 2] = -gy;
+        tUV[idx * 2] = ii / NGT; tUV[idx * 2 + 1] = jj / NGT;
+      }
+    }
+    const tIdx = [];
+    for(let jj = 0; jj < NGT; jj++) for(let ii = 0; ii < NGT; ii++) {
+      const a = jj * (NGT + 1) + ii, b = jj * (NGT + 1) + ii + 1, c = (jj + 1) * (NGT + 1) + ii, d = (jj + 1) * (NGT + 1) + ii + 1;
+      tIdx.push(a, c, b, b, c, d);
+    }
+    const tGeo = new THREE.BufferGeometry();
+    tGeo.setAttribute('position', new THREE.BufferAttribute(tPos, 3));
+    tGeo.setAttribute('uv', new THREE.BufferAttribute(tUV, 2));
+    tGeo.setIndex(tIdx);
+    tGeo.computeVertexNormals();
+    const matTerr = new THREE.MeshStandardMaterial({ color: 0x8fbf6a, roughness: 1, metalness: 0, side: THREE.DoubleSide });
+    const terrMesh = new THREE.Mesh(tGeo, matTerr);
+    terrMesh.receiveShadow = true;
+    scene.add(terrMesh);
+    _3da_terrGeo = tGeo; _3da_terrRaw = terrRaw; _3da_matTerr = matTerr;
+    _3da_bgMode = 'solid'; // até a foto de satélite (assíncrona) chegar
+    _3da_slopeTex = _3da_buildSlopeTex(sampler, toLL, bcx, bcy, ext);
+
+    // ── Linhas de plantio + contorno de cada talhão, coladas no relevo ─────
+    const legenda = [];
+    fontes.forEach(t => {
+      const segPos = [], segRaw = [];
+      t.linhas.forEach(pl => {
+        let pts; try { pts = pl.getLatLngs().flat(); } catch(e) { return; }
+        for(let i = 0; i < pts.length - 1; i++) {
+          const a = toXY(pts[i].lat, pts[i].lng), b = toXY(pts[i + 1].lat, pts[i + 1].lng);
+          const ea = sampler(pts[i].lat, pts[i].lng) - elevMin, eb = sampler(pts[i + 1].lat, pts[i + 1].lng) - elevMin;
+          segPos.push(a.x, 0, -a.y, b.x, 0, -b.y); segRaw.push(ea, eb);
+        }
+      });
+      if(segPos.length) {
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(segPos), 3));
+        const mat = new THREE.LineBasicMaterial({ color: new THREE.Color(t.corLinha) });
+        scene.add(new THREE.LineSegments(geo, mat));
+        _3da_lineObjs.push({ geo, raw: Float32Array.from(segRaw), eps: 0.35 });
+      }
+      const ring = [...t.polyPts, t.polyPts[0]];
+      const bPos = [], bRaw = [];
+      for(let i = 0; i < ring.length - 1; i++) {
+        const a = toXY(ring[i].lat, ring[i].lng), b = toXY(ring[i + 1].lat, ring[i + 1].lng);
+        const ea = sampler(ring[i].lat, ring[i].lng) - elevMin, eb = sampler(ring[i + 1].lat, ring[i + 1].lng) - elevMin;
+        bPos.push(a.x, 0, -a.y, b.x, 0, -b.y); bRaw.push(ea, eb);
+      }
+      const bGeo = new THREE.BufferGeometry();
+      bGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(bPos), 3));
+      const bMat = new THREE.LineBasicMaterial({ color: new THREE.Color(t.cor), transparent: true, opacity: .85 });
+      scene.add(new THREE.LineSegments(bGeo, bMat));
+      _3da_lineObjs.push({ geo: bGeo, raw: Float32Array.from(bRaw), eps: 0.55 });
+      legenda.push({ label: 'Talhão ' + t.idx, cor: t.corLinha, ha: t.areaHa });
+    });
+
+    // Carreadores (faixas de afastamento) — cor marrom, colados no relevo
+    if(carreadorLayers.length) {
+      const cPos = [], cRaw = [];
+      carreadorLayers.forEach(l => {
+        let pts; try { pts = l.getLatLngs().flat(Infinity); } catch(e) { return; }
+        if(pts.length < 2) return;
+        const ring = [...pts, pts[0]];
+        for(let i = 0; i < ring.length - 1; i++) {
+          const a = toXY(ring[i].lat, ring[i].lng), b = toXY(ring[i + 1].lat, ring[i + 1].lng);
+          const ea = sampler(ring[i].lat, ring[i].lng) - elevMin, eb = sampler(ring[i + 1].lat, ring[i + 1].lng) - elevMin;
+          cPos.push(a.x, 0, -a.y, b.x, 0, -b.y); cRaw.push(ea, eb);
+        }
+      });
+      if(cPos.length) {
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(cPos), 3));
+        scene.add(new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x795548 })));
+        _3da_lineObjs.push({ geo, raw: Float32Array.from(cRaw), eps: 0.45 });
+        legenda.push({ label: 'Carreadores', cor: '#795548', ha: null });
+      }
+    }
+
+    atualizarExagero3DAnalise($('m3da-exagRange').value);
+
+    // ── Câmera enquadrando tudo ──────────────────────────────────────────
+    camera.position.set(bcx + span * 0.55, span * 0.5, -bcy + span * 0.7);
+    camera.lookAt(bcx, 0, -bcy);
+    controls.target.set(bcx, 0, -bcy);
+    controls.update();
+
+    // ── Painel de informações + legenda por talhão ──────────────────────
+    const totalHa = fontes.reduce((s, t) => s + t.areaHa, 0);
+    const totalLinhas = fontes.reduce((s, t) => s + t.count, 0);
+    const totalMetros = fontes.reduce((s, t) => s + t.metrosLin, 0);
+    const legHtml = legenda.map(l => `<div class="m3da-legRow"><span class="m3da-dot" style="background:${l.cor}"></span>${l.label}${l.ha != null ? ' — ' + l.ha.toFixed(2) + ' ha' : ''}</div>`).join('');
+    $('m3da-inf').innerHTML = `<b style="font-size:12.5px;letter-spacing:.3px">ANÁLISE 3D — TERRENO</b><br>`
+      + `Talhões: <b>${fontes.length}</b> &nbsp; Área total: <b>${totalHa.toFixed(2)} ha</b><br>`
+      + `Linhas: <b>${totalLinhas}</b> &nbsp; Metros lineares: <b>${Math.round(totalMetros).toLocaleString('pt-BR')} m</b><br>`
+      + `Amplitude do relevo: <b>${(elevMax - elevMin).toFixed(1)} m</b> (${elevMin.toFixed(1)}–${elevMax.toFixed(1)} m)`
+      + `<div style="margin-top:6px;border-top:1px solid rgba(255,255,255,.15);padding-top:6px;">${legHtml}</div>`;
+    $('m3da-inf').style.display = 'block';
+
+    window.addEventListener('resize', function _3daResize() {
+      if(!_3da_renderer) { window.removeEventListener('resize', _3daResize); return; }
+      camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
+      _3da_renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+    (function animate() { _3da_raf = requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); })();
+
+    // ── Foto de satélite como textura do terreno (assíncrona — a malha já aparece
+    // verde e a foto "aparece por cima" assim que chegar, sem travar a abertura) ──
+    (async () => {
+      try {
+        const TEX = 1024;
+        const satSW = toLL(bcx - ext, bcy - ext), satNE = toLL(bcx + ext, bcy + ext);
+        const { zoom, cLat: satCLat, cLng: satCLng } = _staticMapParams(satSW, satNE, TEX, TEX);
+        const dataUrl = await _3da_getSatUrl(satCLat, satCLng, Math.max(0, Math.min(18, zoom)), TEX, TEX);
+        if(!dataUrl || !_3da_renderer) return;
+        const img = new Image();
+        await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataUrl; });
+        if(!_3da_renderer) return;
+        const tex = new THREE.Texture(img);
+        tex.needsUpdate = true; tex.encoding = THREE.sRGBEncoding; tex.anisotropy = 4;
+        _3da_satTex = tex;
+        if(_3da_bgMode === 'solid') { _3da_bgMode = 'sat'; matTerr.map = tex; matTerr.color.set(0xffffff); matTerr.needsUpdate = true; $('m3da-btnBg').textContent = '🛰️ Satélite'; }
+      } catch(e) { console.error('Satélite 3D plantio:', e); }
+    })();
+  } catch(e) { console.error('Vista 3D Análise:', e); setStatus('Erro ao gerar a Vista 3D: ' + e.message, 'err'); fecharVista3DAnalise(); } });
 }
 </script>
 </body>
