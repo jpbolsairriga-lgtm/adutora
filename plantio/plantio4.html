@@ -238,7 +238,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.5 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.6 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1019,6 +1019,16 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // network-first (cache:'no-store', só cai pro cache salvo se a rede falhar) — a estratégia antiga
 // (cache-first pra todo GET) podia servir uma versão desatualizada da lógica mesmo com Ctrl+F5,
 // porque quem decide a estratégia de cache é o service worker, não o navegador.
+// v4.6: achada a causa real de "linha desaparece quando aumenta o exagero vertical" — a malha do
+// terreno é uma aproximação PLANA por triângulo entre os pontos da grade de elevação; a altura de
+// cada ponto de linha/contorno/carreador vinha de um campo BILINEAR CONTÍNUO separado (mesma grade,
+// mas interpolado diferente entre os pontos) — as duas superfícies quase coincidem, mas a pequena
+// diferença residual é multiplicada pelo exagero, e em exagero alto ficava grande o bastante pra
+// "afundar" a linha dentro do relevo (mais evidente com grade de elevação mais grosseira ou relevo
+// mais acidentado). Corrigido com _3da_mkMeshSampler: agora a altura de toda linha vem DA PRÓPRIA
+// MALHA renderizada (mesma triangulação, a,c,b/b,c,d), encaixe exato em qualquer exagero. Testado
+// com relevo sintético bem ondulado (múltiplas frequências, 28m de amplitude), grade grosseira
+// (20×20) e exagero máximo (6×) — linhas acompanham o relevo sem nenhum buraco.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -4940,6 +4950,28 @@ function _3da_mkSampler(elevGrid, lats, lngs, n) {
   };
 }
 
+// Amostra a elevação BRUTA (sem exagero) da própria MALHA TRIANGULADA do terreno num ponto (gx,gy) —
+// não do campo bilinear contínuo de _3da_mkSampler. A malha só é exata nos vértices da grade; entre
+// eles ela é plana (2 triângulos por célula), e o campo bilinear contínuo pode "curvar" um pouco
+// diferente disso na mesma célula. Sem isso, qualquer linha/contorno colado no terreno usando o
+// campo contínuo tinha um gap residual em relação à superfície RENDERIZADA, proporcional à
+// curvatura ignorada — e esse gap é multiplicado pelo exagero vertical, então em exagero alto a
+// linha "afundava"/desaparecia dentro do relevo (que é só uma aproximação mais grosseira da mesma
+// grade). Amostrando a própria malha, o encaixe é exato em qualquer exagero.
+function _3da_mkMeshSampler(terrRaw, NGTX, NGTY, bcx, bcy, halfW, halfH) {
+  const stepX = (2 * halfW) / NGTX, stepY = (2 * halfH) / NGTY, W = NGTX + 1;
+  return function(gx, gy) {
+    let fi = (gx - (bcx - halfW)) / stepX; fi = Math.max(0, Math.min(NGTX - 1e-6, fi));
+    let fj = (gy - (bcy - halfH)) / stepY; fj = Math.max(0, Math.min(NGTY - 1e-6, fj));
+    const ii = Math.floor(fi), jj = Math.floor(fj), tx = fi - ii, ty = fj - jj;
+    const ra = terrRaw[jj * W + ii], rb = terrRaw[jj * W + ii + 1];
+    const rc = terrRaw[(jj + 1) * W + ii], rd = terrRaw[(jj + 1) * W + ii + 1];
+    // mesma triangulação da malha (ver tIdx: a,c,b / b,c,d) — {a,c,b} quando tx+ty<=1, senão {b,c,d}
+    if(tx + ty <= 1) return ra + tx * (rb - ra) + ty * (rc - ra);
+    return rd + (1 - tx) * (rc - rd) + (1 - ty) * (rb - rd);
+  };
+}
+
 // Textura de declividade (mesmas cores da aba Declividade) sobre o mesmo retângulo geográfico do
 // terreno — dá pra ver onde o relevo é mais íngreme direto na vista 3D, sem sair dela.
 function _3da_buildSlopeTex(sampler, toLL, bcx, bcy, halfW, halfH) {
@@ -5207,6 +5239,9 @@ async function gerarVista3DAnalise() {
     _3da_bgMode = 'solid'; // até a foto de satélite (assíncrona) chegar
     $('m3da-slopeLegend').style.display = 'none';
     _3da_slopeTex = _3da_buildSlopeTex(sampler, toLL, bcx, bcy, halfW, halfH);
+    // Elevação de linhas/contorno/carreadores vem DA PRÓPRIA MALHA (não do campo bilinear contínuo)
+    // — ver comentário de _3da_mkMeshSampler. É o que garante o encaixe exato em qualquer exagero.
+    const meshSample = _3da_mkMeshSampler(terrRaw, NGTX, NGTY, bcx, bcy, halfW, halfH);
 
     // ── Linhas de plantio + contorno de cada talhão, coladas no relevo ─────
     // Fita (triângulos) em vez de linha fina — ver comentário de _3da_buildRibbon.
@@ -5217,7 +5252,7 @@ async function gerarVista3DAnalise() {
         let pts; try { pts = pl.getLatLngs().flat(); } catch(e) { return; }
         for(let i = 0; i < pts.length - 1; i++) {
           const a = toXY(pts[i].lat, pts[i].lng), b = toXY(pts[i + 1].lat, pts[i + 1].lng);
-          const ea = sampler(pts[i].lat, pts[i].lng) - elevMin, eb = sampler(pts[i + 1].lat, pts[i + 1].lng) - elevMin;
+          const ea = meshSample(a.x, a.y), eb = meshSample(b.x, b.y);
           segList.push(a.x, -a.y, ea, b.x, -b.y, eb);
         }
       });
@@ -5231,7 +5266,7 @@ async function gerarVista3DAnalise() {
       const bSegList = [];
       for(let i = 0; i < ring.length - 1; i++) {
         const a = toXY(ring[i].lat, ring[i].lng), b = toXY(ring[i + 1].lat, ring[i + 1].lng);
-        const ea = sampler(ring[i].lat, ring[i].lng) - elevMin, eb = sampler(ring[i + 1].lat, ring[i + 1].lng) - elevMin;
+        const ea = meshSample(a.x, a.y), eb = meshSample(b.x, b.y);
         bSegList.push(a.x, -a.y, ea, b.x, -b.y, eb);
       }
       const { geo: bGeo, raw: bRaw } = _3da_buildRibbon(bSegList, 0.9);
@@ -5250,7 +5285,7 @@ async function gerarVista3DAnalise() {
         const ring = [...pts, pts[0]];
         for(let i = 0; i < ring.length - 1; i++) {
           const a = toXY(ring[i].lat, ring[i].lng), b = toXY(ring[i + 1].lat, ring[i + 1].lng);
-          const ea = sampler(ring[i].lat, ring[i].lng) - elevMin, eb = sampler(ring[i + 1].lat, ring[i + 1].lng) - elevMin;
+          const ea = meshSample(a.x, a.y), eb = meshSample(b.x, b.y);
           cSegList.push(a.x, -a.y, ea, b.x, -b.y, eb);
         }
       });
