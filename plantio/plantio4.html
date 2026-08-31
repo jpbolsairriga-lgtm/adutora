@@ -238,7 +238,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.8 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.9 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1048,6 +1048,22 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // perspectiva. Adicionado botão "📐 Vista de Cima" — câmera ORTOGONAL olhando reto de cima (mesmo
 // teste: 0,00000000000006px de diferença, ou seja, zero) — é a forma correta de comparar a vista 3D
 // com o mapa 2D plano sem esse efeito enganar o olho.
+// v4.9: bug real e diferente dos anteriores (v4.3-v4.8 eram todos da Vista 3D nova; este é no
+// gerador de linhas do mapa 2D, existente desde muito antes). Um talhão com guia "reta ou suave"
+// (sem curva fechada — confirmado com o usuário) ficou com um vão enorme SEM NENHUMA linha, bem no
+// meio, dentro do próprio contorno do talhão. Confirmado com dados reais (KML exportado): 143
+// linhas com espaçamento uniforme de ~3,6m, EXCETO no fim, onde aparecem saltos de 8,7m e depois
+// três saltos de 30,6m (≈8-9 linhas "faltando" cada) — prova de que um bloco de linhas foi
+// descartado de propósito. Causa: removerAutoCruzamento (corta auto-cruzamentos da curva de offset)
+// tem um guard de 40 tentativas, mas addSplineRow descartava a linha INTEIRA se precisasse de mais
+// de 30 cortes — um teto bem perto do próprio limite do guard, mesmo quando o resultado com 31-39
+// cortes já estava perfeitamente resolvido (zero cruzamento residual). Nas linhas mais distantes da
+// guia (que são justamente as que mais precisam de corte, mesmo com guia só "levemente" curva —
+// offsetar qualquer curva além do seu raio de curvatura local sempre cria uma alça), isso descartava
+// um bloco inteiro de linhas consecutivas, abrindo o vão. Corrigido: guard subiu de 40 para 120
+// tentativas, limiar de descarte de 30 para 100 cortes. Validado extraindo removerAutoCruzamento do
+// próprio arquivo e testando com curvas sintéticas que precisam de 32 a 74 cortes pra resolver por
+// completo (sem NENHUM cruzamento residual) — antes seriam descartadas (bug), agora são desenhadas.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -1311,14 +1327,21 @@ function _bboxOverlap(a, b) {
 }
 // Remove auto-cruzamentos de uma curva de offset (modo Suave): a linha multiplicada "dobra"
 // sobre si mesma quando a distância do offset ultrapassa o raio de curvatura local da guia
-// (típico perto de dobras fechadas, ex: topo de uma curva de nível copiada). Corta a alça pelo
-// ponto de cruzamento; se precisar de muitos cortes a curvatura é extrema demais e a linha é
-// descartada (ver _offsetStats) em vez de renderizar um emaranhado.
+// (típico perto de dobras fechadas, ex: topo de uma curva de nível copiada, ou simplesmente longe
+// o bastante da guia numa curva suave — offsetar QUALQUER curva além do seu raio de curvatura local
+// sempre cria uma alça, mesmo sem nenhuma "quina"). Corta a alça pelo ponto de cruzamento; o guard
+// (120 tentativas) é mais alto que o limiar de descarte (100) de propósito — cada corte ENCOLHE o
+// array (uma alça inteira vira 1 ponto só), então tentativas extras custam cada vez menos, e um guia
+// com curvatura sustentada numa propriedade grande pode legitimamente precisar de várias dezenas de
+// cortes nas linhas mais distantes SEM que o resultado final fique visualmente ruim — descartar a
+// linha inteira nesses casos deixava um vão real e visível perto da borda mais distante da guia
+// (medido com guia sintética ruidosa: 32-74 cortes pra resolver por completo, sem nenhum cruzamento
+// residual, em até ~4s mesmo em casos bem mais extremos que qualquer guia real).
 const _offsetStats = { ajustadas: 0, puladas: 0 };
 function removerAutoCruzamento(pts) {
   let arr = pts.slice();
   let cortes = 0, guard = 0, primeiroIndice = null, maxCutAngle = 0;
-  while(guard++ < 40) {
+  while(guard++ < 120) {
     let achou = false;
     for(let i = 0; i < arr.length - 1 && !achou; i++) {
       for(let j = i + 2; j < arr.length - 1; j++) {
@@ -1963,13 +1986,14 @@ function _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingK
     if(n !== 0) {
       if(!_bboxOverlap(_bboxOfPts(pts), bbox)) return false; // fora do talhão — evita custo O(n²) à toa
       // removerAutoCruzamento já corta e resolve TODOS os auto-cruzamentos que encontra (o loop só
-      // para antes disso se bater no guard=40) — cortes>3 não é sinal de linha ainda quebrada, só
-      // de que precisou de bastante cirurgia perto de uma curva fechada da guia. Descartar a linha
+      // para antes disso se bater no guard=120) — cortes>3 não é sinal de linha ainda quebrada, só
+      // de que precisou de bastante cirurgia perto de uma curva fechada da guia (ou simplesmente
+      // longe da guia numa curva suave — ver comentário de removerAutoCruzamento). Descartar a linha
       // inteira nesse caso deixava um vão sem nenhuma linha bem no meio do talhão (perto da curva
       // mais fechada, onde TODAS as linhas offset precisam de vários cortes). Só desiste perto do
       // teto real do guard — abaixo disso, desenha o resultado corrigido em vez de pular.
       const { pts: ptsOk, cortes } = removerAutoCruzamento(pts);
-      if(cortes > 30) { _offsetStats.puladas++; return false; }
+      if(cortes > 100) { _offsetStats.puladas++; return false; }
       if(cortes > 0) _offsetStats.ajustadas++;
       pts = ptsOk;
     }
@@ -2436,13 +2460,14 @@ function gerarLinhas() {
     if(n !== 0) {
       if(!_bboxOverlap(_bboxOfPts(pts), bbox)) return false; // fora do talhão — evita custo O(n²) à toa
       // removerAutoCruzamento já corta e resolve TODOS os auto-cruzamentos que encontra (o loop só
-      // para antes disso se bater no guard=40) — cortes>3 não é sinal de linha ainda quebrada, só
-      // de que precisou de bastante cirurgia perto de uma curva fechada da guia. Descartar a linha
+      // para antes disso se bater no guard=120) — cortes>3 não é sinal de linha ainda quebrada, só
+      // de que precisou de bastante cirurgia perto de uma curva fechada da guia (ou simplesmente
+      // longe da guia numa curva suave — ver comentário de removerAutoCruzamento). Descartar a linha
       // inteira nesse caso deixava um vão sem nenhuma linha bem no meio do talhão (perto da curva
       // mais fechada, onde TODAS as linhas offset precisam de vários cortes). Só desiste perto do
       // teto real do guard — abaixo disso, desenha o resultado corrigido em vez de pular.
       const { pts: ptsOk, cortes } = removerAutoCruzamento(pts);
-      if(cortes > 30) { _offsetStats.puladas++; return false; }
+      if(cortes > 100) { _offsetStats.puladas++; return false; }
       if(cortes > 0) _offsetStats.ajustadas++;
       pts = ptsOk;
     }
