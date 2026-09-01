@@ -238,7 +238,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.13 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.14 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -733,6 +733,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
   <div id="m3da-toolbar">
     <button id="m3da-btnBg" onclick="ciclarFundo3DAnalise()">🛰️ Satélite</button>
     <button id="m3da-btnOrtho" onclick="toggleOrtografica3DAnalise()" title="Câmera ortogonal olhando reto de cima — sem a distorção de perspectiva que desloca terreno alto na tela, útil pra comparar com o mapa 2D">📐 Vista de Cima</button>
+    <button id="m3da-btnCurvas" onclick="toggleCurvas3DAnalise()" style="display:none;">🗺️ Ocultar Curvas</button>
     <button onclick="capturarImagem3DAnalise()">📷 Capturar</button>
     <button onclick="fecharVista3DAnalise()">✕ Fechar</button>
   </div>
@@ -1102,6 +1103,16 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // _3da_pushResampledSeg: cada segmento de linha/contorno/carreador agora é quebrado em pedaços de
 // no máximo 4m antes de amostrar a malha, e cada ponto novo (não só as pontas originais) usa
 // meshSample de verdade. Erro residual medido: 2,2cm.
+// v4.14: bug de escala/curvatura resolvido (v4.12/v4.13) — pedido de melhoria: mostrar curvas de
+// nível (aba Curvas de Nível) na Vista 3D, e usar a cor de declividade das linhas de plantio quando
+// o talhão já tiver sido classificado (aba Declividade). Curvas de nível: renderiza curvaLayers
+// coladas no relevo (mesma técnica de resampling da v4.13), cor de cada curva = a mesma já usada no
+// mapa 2D (elevColorCurva), curvas "mestras" mais grossas; botão "🗺️ Ocultar/Mostrar Curvas" na
+// barra (só aparece quando existem curvas geradas). Declividade das linhas: se t.linhasDecl não
+// estiver vazio, usa a cor de CADA segmento (mesma paleta slopeColor da aba 2D) em vez da cor única
+// do talhão — _3da_buildRibbon ganhou suporte a cor por segmento (vertex colors), reaproveitado
+// pelas curvas de nível também. Legenda de declividade some/aparece automaticamente conforme o
+// talhão tem ou não linhas classificadas, além do modo de fundo do terreno.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -4967,6 +4978,7 @@ const _3DA_BG_MODES = ['sat', 'slope', 'solid'];
 let _3da_bgMode = 'solid';
 let _3da_exag = 2;
 let _3da_lineObjs = []; // {geo, raw:Float32Array (elevação bruta por vértice), eps:number}
+let _3da_curvaMeshes = [], _3da_showCurvas = true, _3da_hasDeclLines = false;
 const _3DA_NGT = 90;    // resolução da malha 3D (independente da grade de elevação buscada na API)
 
 // Em vez de buscar uma foto de satélite separada (com zoom/projeção calculados por este código,
@@ -5050,7 +5062,10 @@ function _3da_mkMeshSampler(terrRaw, NGTX, NGTY, bcx, bcy, halfW, halfH) {
 // linha reta enquanto o relevo real por baixo pode curvar entre eles — sem essa subdivisão, a linha
 // "corta caminho" por dentro/fora do relevo em vez de acompanhar a curvatura, mesmo com as pontas
 // coladas certinho na malha.
-function _3da_pushResampledSeg(segList, ax, ay, bx, by, maxStepM, meshSample) {
+// colorList/cor opcionais: se passados, empurra a MESMA cor uma vez por sub-segmento gerado (pra
+// usar com o colorList de _3da_buildRibbon — todo sub-segmento de um trecho original herda a cor
+// desse trecho).
+function _3da_pushResampledSeg(segList, ax, ay, bx, by, maxStepM, meshSample, colorList, cor) {
   const dist = Math.hypot(bx - ax, by - ay);
   const n = Math.max(1, Math.ceil(dist / maxStepM));
   let px = ax, py = ay, pe = meshSample(ax, ay);
@@ -5059,6 +5074,7 @@ function _3da_pushResampledSeg(segList, ax, ay, bx, by, maxStepM, meshSample) {
     const qx = ax + (bx - ax) * t, qy = ay + (by - ay) * t;
     const qe = meshSample(qx, qy);
     segList.push(px, -py, pe, qx, -qy, qe);
+    if(colorList) colorList.push(cor);
     px = qx; py = qy; pe = qe;
   }
 }
@@ -5095,10 +5111,14 @@ function _3da_buildSlopeTex(sampler, toLL, bcx, bcy, halfW, halfH) {
 // plano [ax,az,rawA, bx,bz,rawB, ...] (x,z = mundo; raw = elevação bruta, sem exagero, por ponta do
 // segmento) — retorna {geo, raw}, com raw 1:1 por vértice pra reaproveitar o mesmo mecanismo de
 // atualizarExagero3DAnalise sem precisar mudar nada lá.
-function _3da_buildRibbon(segList, halfWidthM) {
+// colorList opcional: um THREE.Color por SEGMENTO (não por vértice) — útil pra desenhar num só
+// mesh/draw-call uma linha cuja cor muda ao longo do trajeto (curvas de nível por cota, linhas de
+// plantio já classificadas por declividade). Sem colorList, a fita usa a cor do material (comum).
+function _3da_buildRibbon(segList, halfWidthM, colorList) {
   const n = segList.length / 6;
   const pos = new Float32Array(n * 4 * 3);
   const raw = new Float32Array(n * 4);
+  const col = colorList ? new Float32Array(n * 4 * 3) : null;
   const idx = [];
   for(let i = 0; i < n; i++) {
     const ax = segList[i * 6], az = segList[i * 6 + 1], ra = segList[i * 6 + 2];
@@ -5113,10 +5133,15 @@ function _3da_buildRibbon(segList, halfWidthM) {
     pos[(v + 2) * 3] = bx - px; pos[(v + 2) * 3 + 1] = 0; pos[(v + 2) * 3 + 2] = bz - pz; raw[v + 2] = rb;
     pos[(v + 3) * 3] = bx + px; pos[(v + 3) * 3 + 1] = 0; pos[(v + 3) * 3 + 2] = bz + pz; raw[v + 3] = rb;
     idx.push(v, v + 2, v + 1, v + 1, v + 2, v + 3);
+    if(col) {
+      const c = colorList[i];
+      for(let k = 0; k < 4; k++) { col[(v + k) * 3] = c.r; col[(v + k) * 3 + 1] = c.g; col[(v + k) * 3 + 2] = c.b; }
+    }
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geo.setIndex(idx);
+  if(col) geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   return { geo, raw };
 }
 
@@ -5128,8 +5153,10 @@ function fecharVista3DAnalise() {
   _3da_cameraPersp = null; _3da_cameraOrtho = null; _3da_isOrtho = false;
   _3da_terrGeo = null; _3da_terrRaw = null; _3da_matTerr = null; _3da_matTerrSat = null; _3da_terrMesh = null;
   _3da_satTex = null; _3da_slopeTex = null; _3da_lineObjs = [];
+  _3da_curvaMeshes = []; _3da_hasDeclLines = false; _3da_showCurvas = true;
   _3da_bgMode = 'solid';
   const btnOrtho = $('m3da-btnOrtho'); if(btnOrtho) btnOrtho.textContent = '📐 Vista de Cima';
+  const btnCurvas = $('m3da-btnCurvas'); if(btnCurvas) { btnCurvas.textContent = '🗺️ Ocultar Curvas'; btnCurvas.style.display = 'none'; }
   // troca o canvas (dispose() perde o contexto WebGL; canvas novo garante contexto limpo na próxima abertura)
   const modal = $('modal3dAnalise'), old = $('canvas3dAnalise');
   if(old) { const nc = document.createElement('canvas'); nc.id = 'canvas3dAnalise'; modal.insertBefore(nc, old); old.remove(); }
@@ -5222,7 +5249,15 @@ function ciclarFundo3DAnalise() {
     if(_3da_terrMesh) _3da_terrMesh.material = _3da_matTerr;
     btn.textContent = '🟢 Terreno sólido';
   }
-  $('m3da-slopeLegend').style.display = (_3da_bgMode === 'slope') ? 'block' : 'none';
+  $('m3da-slopeLegend').style.display = (_3da_bgMode === 'slope' || _3da_hasDeclLines) ? 'block' : 'none';
+}
+
+// Mostra/esconde as curvas de nível na Vista 3D (se existirem — botão só aparece quando existem).
+function toggleCurvas3DAnalise() {
+  _3da_showCurvas = !_3da_showCurvas;
+  _3da_curvaMeshes.forEach(m => { m.visible = _3da_showCurvas; });
+  const btn = $('m3da-btnCurvas');
+  if(btn) btn.textContent = _3da_showCurvas ? '🗺️ Ocultar Curvas' : '🗺️ Mostrar Curvas';
 }
 
 function capturarImagem3DAnalise() {
@@ -5244,7 +5279,7 @@ async function gerarVista3DAnalise() {
   // ── Reúne talhões travados + o talhão ativo (se ainda não travado) ──────────
   const fontes = talhoesArquivados.map(t => ({
     idx: t.idx, cor: t.cor || '#42a5f5', corLinha: t.corLinha || '#FFD600',
-    polyPts: t.polyPts, linhas: t.linhas || [], areaHa: t.areaHa,
+    polyPts: t.polyPts, linhas: t.linhas || [], linhasDecl: t.linhasDecl || [], areaHa: t.areaHa,
     count: t.count != null ? t.count : (t.linhas || []).length, metrosLin: t.metrosLin || 0
   }));
   if(turfPoly && polyPts.length >= 3) {
@@ -5252,7 +5287,7 @@ async function gerarVista3DAnalise() {
     linhas.forEach(pl => { const pts = pl.getLatLngs().flat(); for(let i = 0; i < pts.length - 1; i++) metrosLin += haversineM(pts[i], pts[i + 1]); });
     fontes.push({
       idx: 'ativo', cor: '#42a5f5', corLinha: $('corLinha')?.value || '#FFD600',
-      polyPts, linhas, areaHa: turf.area(turfPoly) / 10000,
+      polyPts, linhas, linhasDecl: linhasDecl || [], areaHa: turf.area(turfPoly) / 10000,
       count: linhas.length, metrosLin
     });
   }
@@ -5415,20 +5450,45 @@ async function gerarVista3DAnalise() {
     // ── Linhas de plantio + contorno de cada talhão, coladas no relevo ─────
     // Fita (triângulos) em vez de linha fina — ver comentário de _3da_buildRibbon.
     const legenda = [];
+    let temDeclLinhas = false;
     fontes.forEach(t => {
       const segList = [];
-      t.linhas.forEach(pl => {
-        let pts; try { pts = pl.getLatLngs().flat(); } catch(e) { return; }
-        for(let i = 0; i < pts.length - 1; i++) {
-          const a = toXY(pts[i].lat, pts[i].lng), b = toXY(pts[i + 1].lat, pts[i + 1].lng);
-          _3da_pushResampledSeg(segList, a.x, a.y, b.x, b.y, 4, meshSample);
+      // Se o talhão já foi classificado por declividade (aba Declividade — t.linhasDecl), usa a cor
+      // de cada segmento (mesma paleta de slopeColor da aba 2D) em vez da cor única corLinha —
+      // "caso eu as tenha colocado", como pedido.
+      const usaDecl = t.linhasDecl && t.linhasDecl.length > 0;
+      if(usaDecl) {
+        temDeclLinhas = true;
+        const colorList = [];
+        t.linhasDecl.forEach(pl => {
+          let pts; try { pts = pl.getLatLngs().flat(); } catch(e) { return; }
+          if(pts.length < 2) return;
+          const cor = new THREE.Color(pl.options.color || '#4CAF50');
+          for(let i = 0; i < pts.length - 1; i++) {
+            const a = toXY(pts[i].lat, pts[i].lng), b = toXY(pts[i + 1].lat, pts[i + 1].lng);
+            _3da_pushResampledSeg(segList, a.x, a.y, b.x, b.y, 4, meshSample, colorList, cor);
+          }
+        });
+        if(segList.length) {
+          const { geo, raw } = _3da_buildRibbon(segList, 0.55, colorList);
+          const mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
+          scene.add(new THREE.Mesh(geo, mat));
+          _3da_lineObjs.push({ geo, raw, eps: 0.6 });
         }
-      });
-      if(segList.length) {
-        const { geo, raw } = _3da_buildRibbon(segList, 0.55);
-        const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(t.corLinha), side: THREE.DoubleSide });
-        scene.add(new THREE.Mesh(geo, mat));
-        _3da_lineObjs.push({ geo, raw, eps: 0.6 });
+      } else {
+        t.linhas.forEach(pl => {
+          let pts; try { pts = pl.getLatLngs().flat(); } catch(e) { return; }
+          for(let i = 0; i < pts.length - 1; i++) {
+            const a = toXY(pts[i].lat, pts[i].lng), b = toXY(pts[i + 1].lat, pts[i + 1].lng);
+            _3da_pushResampledSeg(segList, a.x, a.y, b.x, b.y, 4, meshSample);
+          }
+        });
+        if(segList.length) {
+          const { geo, raw } = _3da_buildRibbon(segList, 0.55);
+          const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(t.corLinha), side: THREE.DoubleSide });
+          scene.add(new THREE.Mesh(geo, mat));
+          _3da_lineObjs.push({ geo, raw, eps: 0.6 });
+        }
       }
       const ring = [...t.polyPts, t.polyPts[0]];
       const bSegList = [];
@@ -5440,7 +5500,7 @@ async function gerarVista3DAnalise() {
       const bMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(t.cor), side: THREE.DoubleSide, transparent: true, opacity: .9 });
       scene.add(new THREE.Mesh(bGeo, bMat));
       _3da_lineObjs.push({ geo: bGeo, raw: bRaw, eps: 0.95 });
-      legenda.push({ label: 'Talhão ' + t.idx, cor: t.corLinha, ha: t.areaHa });
+      legenda.push({ label: 'Talhão ' + t.idx + (usaDecl ? ' (declividade)' : ''), cor: usaDecl ? '#9e9e9e' : t.corLinha, ha: t.areaHa });
     });
 
     // Carreadores (faixas de afastamento) — cor marrom, colados no relevo
@@ -5462,6 +5522,40 @@ async function gerarVista3DAnalise() {
         legenda.push({ label: 'Carreadores', cor: '#795548', ha: null });
       }
     }
+
+    // Curvas de nível (aba Curvas de Nível, curvaLayers) — cor de cada curva vem de elevColorCurva,
+    // a mesma já usada no mapa 2D. Curvas "mestras" (isMaster) ficam um pouco mais grossas.
+    let temCurvas = false;
+    if(typeof curvaLayers !== 'undefined' && curvaLayers.length) {
+      const curvaSegNormal = [], curvaColNormal = [], curvaSegMestra = [], curvaColMestra = [];
+      curvaLayers.forEach(pl => {
+        let pts; try { pts = pl.getLatLngs().flat(); } catch(e) { return; }
+        if(pts.length < 2) return;
+        const cor = new THREE.Color(pl.options.color || '#ffffff');
+        const destino = pl._isMaster ? { seg: curvaSegMestra, col: curvaColMestra } : { seg: curvaSegNormal, col: curvaColNormal };
+        for(let i = 0; i < pts.length - 1; i++) {
+          const a = toXY(pts[i].lat, pts[i].lng), b = toXY(pts[i + 1].lat, pts[i + 1].lng);
+          _3da_pushResampledSeg(destino.seg, a.x, a.y, b.x, b.y, 4, meshSample, destino.col, cor);
+        }
+      });
+      if(curvaSegNormal.length) {
+        const { geo, raw } = _3da_buildRibbon(curvaSegNormal, 0.3, curvaColNormal);
+        const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, transparent: true, opacity: .8 }));
+        m.visible = _3da_showCurvas; scene.add(m); _3da_curvaMeshes.push(m);
+        _3da_lineObjs.push({ geo, raw, eps: 0.4 });
+        temCurvas = true;
+      }
+      if(curvaSegMestra.length) {
+        const { geo, raw } = _3da_buildRibbon(curvaSegMestra, 0.5, curvaColMestra);
+        const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+        m.visible = _3da_showCurvas; scene.add(m); _3da_curvaMeshes.push(m);
+        _3da_lineObjs.push({ geo, raw, eps: 0.42 });
+        temCurvas = true;
+      }
+    }
+    $('m3da-btnCurvas').style.display = temCurvas ? '' : 'none';
+    _3da_hasDeclLines = temDeclLinhas;
+    $('m3da-slopeLegend').style.display = (_3da_bgMode === 'slope' || temDeclLinhas) ? 'block' : 'none';
 
     atualizarExagero3DAnalise($('m3da-exagRange').value);
 
