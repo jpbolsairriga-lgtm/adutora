@@ -161,6 +161,9 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 #m3da-toolbar{position:absolute;top:14px;right:14px;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;max-width:64vw;}
 #m3da-toolbar button{background:rgba(255,255,255,.13);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:7px;padding:7px 14px;font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap;}
 #m3da-toolbar button:hover{background:rgba(255,255,255,.22);}
+#m3da-corSolidoWrap{display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.13);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:7px;padding:6px 10px 6px 12px;font-size:12.5px;font-weight:700;white-space:nowrap;cursor:pointer;}
+#m3da-corSolidoWrap:hover{background:rgba(255,255,255,.22);}
+#m3da-corSolido{width:24px;height:22px;padding:0;border:1px solid rgba(255,255,255,.4);border-radius:4px;cursor:pointer;background:none;}
 #m3da-exag{position:absolute;bottom:14px;right:14px;background:rgba(5,10,18,.75);border-radius:8px;padding:8px 12px;display:flex;align-items:center;gap:8px;color:#fff;font-size:11.5px;}
 #m3da-exag input[type=range]{width:120px;}
 #m3da-exagVal{min-width:34px;text-align:right;color:#e2b96e;font-weight:700;}
@@ -238,7 +241,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.14 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.15 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -734,6 +737,10 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
     <button id="m3da-btnBg" onclick="ciclarFundo3DAnalise()">🛰️ Satélite</button>
     <button id="m3da-btnOrtho" onclick="toggleOrtografica3DAnalise()" title="Câmera ortogonal olhando reto de cima — sem a distorção de perspectiva que desloca terreno alto na tela, útil pra comparar com o mapa 2D">📐 Vista de Cima</button>
     <button id="m3da-btnCurvas" onclick="toggleCurvas3DAnalise()" style="display:none;">🗺️ Ocultar Curvas</button>
+    <label id="m3da-corSolidoWrap" title="Cor do terreno no modo 'Terreno sólido'">
+      <span>Cor do terreno</span>
+      <input type="color" id="m3da-corSolido" value="#8fbf6a" oninput="atualizarCorSolido3DAnalise(this.value)">
+    </label>
     <button onclick="capturarImagem3DAnalise()">📷 Capturar</button>
     <button onclick="fecharVista3DAnalise()">✕ Fechar</button>
   </div>
@@ -1113,6 +1120,9 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // do talhão — _3da_buildRibbon ganhou suporte a cor por segmento (vertex colors), reaproveitado
 // pelas curvas de nível também. Legenda de declividade some/aparece automaticamente conforme o
 // talhão tem ou não linhas classificadas, além do modo de fundo do terreno.
+// v4.15: cor do modo "Terreno sólido" ficava clara demais pra alguns gostos (tonemapping ACES + luz
+// da cena clareiam o verde padrão) — adicionado seletor de cor na barra da Vista 3D ("Cor do
+// terreno"), aplica na hora e fica salvo (localStorage) pra próxima vez que abrir.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -4976,6 +4986,9 @@ let _3da_terrGeo = null, _3da_terrRaw = null, _3da_matTerr = null, _3da_matTerrS
 let _3da_satTex = null, _3da_slopeTex = null;
 const _3DA_BG_MODES = ['sat', 'slope', 'solid'];
 let _3da_bgMode = 'solid';
+// Cor do terreno sólido — lembrada entre sessões (o padrão fica claro demais pra alguns gostos,
+// por causa do tonemapping ACES + luz da cena; deixa o usuário escolher a cor que prefere).
+let _3da_solidColor = localStorage.getItem('plantio3d_corSolido') || '#8fbf6a';
 let _3da_exag = 2;
 let _3da_lineObjs = []; // {geo, raw:Float32Array (elevação bruta por vértice), eps:number}
 let _3da_curvaMeshes = [], _3da_showCurvas = true, _3da_hasDeclLines = false;
@@ -5245,7 +5258,7 @@ function ciclarFundo3DAnalise() {
     if(_3da_terrMesh) _3da_terrMesh.material = _3da_matTerr;
     btn.textContent = '🎨 Declividade';
   } else {
-    _3da_bgMode = 'solid'; _3da_matTerr.map = null; _3da_matTerr.color.set(0x8fbf6a); _3da_matTerr.needsUpdate = true;
+    _3da_bgMode = 'solid'; _3da_matTerr.map = null; _3da_matTerr.color.set(_3da_solidColor); _3da_matTerr.needsUpdate = true;
     if(_3da_terrMesh) _3da_terrMesh.material = _3da_matTerr;
     btn.textContent = '🟢 Terreno sólido';
   }
@@ -5258,6 +5271,14 @@ function toggleCurvas3DAnalise() {
   _3da_curvaMeshes.forEach(m => { m.visible = _3da_showCurvas; });
   const btn = $('m3da-btnCurvas');
   if(btn) btn.textContent = _3da_showCurvas ? '🗺️ Ocultar Curvas' : '🗺️ Mostrar Curvas';
+}
+
+// Cor do modo "Terreno sólido" — o usuário escolhe, fica salva pra próxima vez (padrão fica claro
+// demais pra alguns gostos, por causa do tonemapping ACES + luz da cena).
+function atualizarCorSolido3DAnalise(hex) {
+  _3da_solidColor = hex;
+  localStorage.setItem('plantio3d_corSolido', hex);
+  if(_3da_matTerr && _3da_bgMode === 'solid') { _3da_matTerr.color.set(hex); _3da_matTerr.needsUpdate = true; }
 }
 
 function capturarImagem3DAnalise() {
@@ -5311,6 +5332,7 @@ async function gerarVista3DAnalise() {
   $('m3da-loading').firstElementChild.textContent = '⏳ Buscando elevação do terreno…';
   $('m3da-inf').style.display = 'none';
   $('btnVista3D').disabled = true;
+  $('m3da-corSolido').value = _3da_solidColor; // reflete a cor salva de uma vez anterior
 
   // Captura a imagem do mapa 2D em paralelo com a busca de elevação (não trava a abertura por
   // causa disso) — ver comentário de _3da_captureMapTexture. Falha aqui não é fatal: cai pro
@@ -5434,7 +5456,7 @@ async function gerarVista3DAnalise() {
     // três modos era iluminada pela cena (sol+ambiente+sombra), o que escurecia/alterava a cor da
     // imagem comparado à foto crua do mapa 2D ou do Google Earth (podendo até esconder uma estrada
     // de terra clara num tom mais escuro). A foto de satélite deve aparecer exatamente como é.
-    const matTerr = new THREE.MeshStandardMaterial({ color: 0x8fbf6a, roughness: 1, metalness: 0, side: THREE.DoubleSide });
+    const matTerr = new THREE.MeshStandardMaterial({ color: new THREE.Color(_3da_solidColor), roughness: 1, metalness: 0, side: THREE.DoubleSide });
     const matTerrSat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, toneMapped: false });
     const terrMesh = new THREE.Mesh(tGeo, matTerr);
     terrMesh.receiveShadow = true;
