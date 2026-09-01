@@ -84,6 +84,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 .btn-poly.active{background:#1565c0;box-shadow:0 0 0 2px #90caf9 inset;} .btn-poly.active .ico,.btn-poly.active .lbl{color:#fff;}
 .btn-guide.active{background:#e65100;box-shadow:0 0 0 2px #ffcc02 inset;} .btn-guide.active .ico,.btn-guide.active .lbl{color:#fff;}
 .btn-curva.active{background:#00695c;box-shadow:0 0 0 2px #4db6ac inset;} .btn-curva.active .ico,.btn-curva.active .lbl{color:#fff;}
+.btn-curvaguia.active{background:#00695c;box-shadow:0 0 0 2px #4db6ac inset;color:#fff;}
 
 /* botão pequeno (modo / confirmar / cancelar / lista) */
 .rbtn-sm{display:flex;align-items:center;gap:5px;padding:6px 9px;border-radius:5px;border:1px solid #1e4a7a;background:#16213e;color:#cfd8dc;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;transition:.15s;flex-shrink:0;}
@@ -241,7 +242,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.15 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.16 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -362,6 +363,18 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
             <div class="rcol">
               <button class="rbtn-sm warn" id="btnDeclivTerreno" onclick="classificarDeclividadeTerreno()">&#9650; Declividade do Terreno</button>
               <button class="rbtn-sm clr" id="btnLimparDeclivTerreno" style="display:none;" onclick="limparDeclividadeTerrenoSelecionado()">&#10005; Limpar Declividade</button>
+            </div>
+            <div class="rcol">
+              <label>Escoamento — resolução</label>
+              <select id="escoamentoGrid" class="rfield wide">
+                <option value="30">30 × 30 (rápido)</option>
+                <option value="40" selected>40 × 40 (padrão)</option>
+                <option value="60">60 × 60 (detalhado)</option>
+              </select>
+            </div>
+            <div class="rcol">
+              <button class="rbtn-sm warn" id="btnEscoamento" onclick="gerarMapaEscoamento()" title="Direção e acúmulo de fluxo de água (modelo D8) — mostra onde a água tende a se concentrar dentro do talhão">&#128167; Mapa de Escoamento</button>
+              <button class="rbtn-sm clr" id="btnLimparEscoamento" style="display:none;" onclick="limparMapaEscoamentoSelecionado()">&#10005; Limpar Escoamento</button>
             </div>
             <div class="rcol">
               <button class="rbtn-sm clr" id="btnExcluirTalhao" onclick="excluirTalhaoSelecionado()">&#128465; Excluir Talhão</button>
@@ -510,6 +523,13 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
           </div>
         </div>
         <div class="rgroup-title">Gerar</div>
+      </div>
+      <div class="rgroup">
+        <div class="rgroup-body">
+          <button class="rbtn-sm btn-curvaguia" id="btnUsarCurvaGuia" style="display:none;" onclick="ativarModoEscolherCurvaGuia()" title="Plantio em curva de nível é a técnica mais eficaz contra erosão em terreno com declive">&#8981; Usar Curva como Guia</button>
+          <button class="rbtn-sm clr" id="btnCancelarEscolhaCurva" style="display:none;" onclick="cancelarEscolhaCurvaGuia()">&#10005; Cancelar</button>
+        </div>
+        <div class="rgroup-title">Plantio em Curva de Nível</div>
       </div>
     </div>
 
@@ -791,6 +811,13 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
           <span style="display:inline-block;width:12px;height:12px;background:#FF9800;border-radius:2px;vertical-align:middle;margin-right:5px;"></span>8 – 12% &nbsp; Terraços obrigatórios<br>
           <span style="display:inline-block;width:12px;height:12px;background:#F44336;border-radius:2px;vertical-align:middle;margin-right:5px;"></span>12 – 20% &nbsp; Mecanização limitada<br>
           <span style="display:inline-block;width:12px;height:12px;background:#9C27B0;border-radius:2px;vertical-align:middle;margin-right:5px;"></span>&gt; 20% &nbsp; Preservação
+        </div>
+      </div>
+      <div id="secLegendaEscoamento" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid #1e4a7a;">
+        <div class="sec-title">Legenda — Escoamento</div>
+        <div style="font-size:11px;line-height:1.7;color:#90a4ae;">
+          <span style="display:inline-block;width:12px;height:12px;background:rgba(20,110,220,.75);border-radius:2px;vertical-align:middle;margin-right:5px;"></span>Área de acúmulo de água (mais escuro = mais concentrado)<br>
+          <span style="display:inline-block;width:16px;height:3px;background:#00e5ff;vertical-align:middle;margin-right:5px;"></span>Talvegue (caminho preferencial de escoamento)
         </div>
       </div>
     </div>
@@ -1123,6 +1150,16 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // v4.15: cor do modo "Terreno sólido" ficava clara demais pra alguns gostos (tonemapping ACES + luz
 // da cena clareiam o verde padrão) — adicionado seletor de cor na barra da Vista 3D ("Cor do
 // terreno"), aplica na hora e fica salvo (localStorage) pra próxima vez que abrir.
+// v4.16: análise hidrológica, inspirada no Civil 3D/QGIS mas pensada pro que interessa na
+// sistematização de plantio — não erosão urbana, e sim "onde não alinhar uma linha morro abaixo".
+// (1) Mapa de Escoamento (aba Carreador, com talhão selecionado, igual à Declividade do Terreno):
+// direção + acúmulo de fluxo pelo modelo D8 (mesmo princípio do ArcHydro/TauDEM/r.watershed) sobre
+// a grade de elevação do talhão — desenha um mapa de calor de onde a água se concentra e extrai os
+// talvegues (linhas de escoamento preferencial) como vetor. Validado com relevo sintético em V:
+// talvegues ficaram centrados exatamente no fundo do vale. (2) Usar Curva como Guia (aba Curvas de
+// Nível, depois de gerar curvas): clica numa curva e ela vira a linha guia de plantio direto —
+// plantio em curva de nível é a técnica mais eficaz contra erosão em terreno com declive, e antes
+// isso exigia redesenhar a guia à mão tentando imitar a curva.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -2756,6 +2793,139 @@ function limparDeclividadeTerrenoSelecionado() {
   setStatus(`Declividade do terreno removida — Talhão ${t.idx}.`, 'ok');
 }
 
+// ── Mapa de Escoamento (análise hidrológica simplificada — direção + acúmulo de fluxo, modelo D8,
+// o mesmo princípio usado no Civil 3D/QGIS/ArcHydro) ────────────────────────────────────────────
+// Não tenta ser um modelo hidrológico completo (não preenche depressões/"pits" da grade de elevação
+// antes de calcular — um DEM ruidoso pode fragmentar um pouco o fluxo em sumidouros pequenos), mas
+// já é suficiente pra apontar visualmente pra onde a água tende a se concentrar dentro do talhão —
+// exatamente onde NÃO alinhar uma linha de plantio morro abaixo sem terraço/camalhão.
+const _ESCOAMENTO_DIRS = [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
+async function gerarMapaEscoamento() {
+  if(talhaoSelecionadoUid === null) { setStatus('Selecione um talhão primeiro.', 'err'); return; }
+  if(!window.google || !window.google.maps) { setStatus('Ative o Google Maps (chave API) para o mapa de escoamento.', 'err'); return; }
+  const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
+  if(!t) return;
+
+  const ring = [...t.polyPts.map(p => [p.lng, p.lat]), [t.polyPts[0].lng, t.polyPts[0].lat]];
+  let poly;
+  try { poly = turf.polygon([ring]); turf.rewind(poly, {mutate:true}); }
+  catch(e) { setStatus('Erro ao processar o polígono do talhão.', 'err'); return; }
+
+  limparMapaEscoamento(t);
+  $('btnEscoamento').disabled = true;
+  setStatus('Buscando elevações do terreno para o mapa de escoamento…', 'info');
+
+  const n = parseInt($('escoamentoGrid').value) || 40;
+  // Margem de 15% ao redor do talhão — água que escoa por dentro pode vir de uma área um pouco
+  // maior do que o próprio contorno, e o cálculo de direção precisa de vizinhos além da borda.
+  const [minLng0, minLat0, maxLng0, maxLat0] = turf.bbox(poly);
+  const padLng = (maxLng0 - minLng0) * 0.15 || 0.0005, padLat = (maxLat0 - minLat0) * 0.15 || 0.0005;
+  const minLng = minLng0 - padLng, maxLng = maxLng0 + padLng, minLat = minLat0 - padLat, maxLat = maxLat0 + padLat;
+  const lats = Array.from({ length: n }, (_, i) => minLat + i * (maxLat - minLat) / (n - 1));
+  const lngs = Array.from({ length: n }, (_, j) => minLng + j * (maxLng - minLng) / (n - 1));
+
+  const allPts = [];
+  for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) allPts.push(new google.maps.LatLng(lats[r], lngs[c]));
+  const BATCH = 512, elevFlat = new Array(allPts.length);
+  let done = 0; const totalBatches = Math.ceil(allPts.length / BATCH);
+  const elevator = new google.maps.ElevationService();
+  await new Promise(resolve => {
+    for(let b = 0; b < totalBatches; b++) {
+      const off = b * BATCH, slice = allPts.slice(off, off + BATCH);
+      elevator.getElevationForLocations({ locations: slice }, (res, status) => {
+        if(status === 'OK') res.forEach((r, i) => { elevFlat[off + i] = r.elevation; });
+        if(++done === totalBatches) resolve();
+      });
+    }
+  });
+  const elev = Array.from({ length: n }, (_, r) => Array.from({ length: n }, (_, c) => elevFlat[r * n + c] ?? 0));
+
+  const dxM = haversineM({ lat: minLat, lng: minLng }, { lat: minLat, lng: maxLng }) / Math.max(1, n - 1);
+  const dyM = haversineM({ lat: minLat, lng: minLng }, { lat: maxLat, lng: minLng }) / Math.max(1, n - 1);
+
+  // ── D8: cada célula escoa pro vizinho (dos 8) com maior declive — padrão da indústria pra
+  // direção de fluxo em grade regular (o mesmo usado no ArcHydro/TauDEM/QGIS "r.watershed").
+  const DIRS = _ESCOAMENTO_DIRS;
+  const flowTo = Array.from({ length: n }, () => new Array(n).fill(-1));
+  for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) {
+    let bestSlope = 0, bestDir = -1;
+    for(let k = 0; k < DIRS.length; k++) {
+      const nr = r + DIRS[k][0], nc = c + DIRS[k][1];
+      if(nr < 0 || nr >= n || nc < 0 || nc >= n) continue;
+      const distM = Math.hypot(DIRS[k][0] * dyM, DIRS[k][1] * dxM);
+      const slope = (elev[r][c] - elev[nr][nc]) / distM;
+      if(slope > bestSlope) { bestSlope = slope; bestDir = k; }
+    }
+    flowTo[r][c] = bestDir;
+  }
+
+  // ── Acúmulo de fluxo: processa da célula mais alta pra mais baixa — quando chega a vez de uma
+  // célula, tudo que escoa PRA ela (de vizinhos mais altos) já foi somado, então empurrar o total
+  // dela pra jusante uma única vez, nessa ordem, basta (sem recursão/iteração repetida).
+  const order = [];
+  for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) order.push([r, c]);
+  order.sort((a, b) => elev[b[0]][b[1]] - elev[a[0]][a[1]]);
+  const accum = Array.from({ length: n }, () => new Array(n).fill(1));
+  order.forEach(([r, c]) => {
+    const k = flowTo[r][c];
+    if(k < 0) return;
+    accum[r + DIRS[k][0]][c + DIRS[k][1]] += accum[r][c];
+  });
+
+  // ── Mapa de calor (acúmulo em escala log — a distribuição é MUITO assimétrica: a maioria das
+  // células tem acúmulo baixo, poucos "canais" concentram muito) ──────────────────────────────
+  const canvas = document.createElement('canvas'); canvas.width = n; canvas.height = n;
+  const ctx = canvas.getContext('2d');
+  let maxAccum = 1;
+  for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) if(accum[r][c] > maxAccum) maxAccum = accum[r][c];
+  const logMax = Math.log(maxAccum + 1);
+  let algumaCelula = false;
+  for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) {
+    if(!turf.booleanPointInPolygon(turf.point([lngs[c], lats[r]]), poly)) continue;
+    const intensidade = Math.log(accum[r][c] + 1) / logMax;
+    ctx.fillStyle = `rgba(20,110,220,${Math.min(0.78, intensidade * 0.95).toFixed(3)})`;
+    ctx.fillRect(c, n - 1 - r, 1, 1);
+    algumaCelula = true;
+  }
+  $('btnEscoamento').disabled = false;
+  if(!algumaCelula) { setStatus('Não foi possível gerar o mapa de escoamento — sem dados de elevação suficientes.', 'err'); return; }
+  t.escoamentoOverlay = L.imageOverlay(canvas.toDataURL(), [[minLat, minLng], [maxLat, maxLng]], { opacity: 1, interactive: false }).addTo(map);
+
+  // ── Talvegues (linhas de escoamento concentrado): liga células cujo acúmulo passa de um limiar
+  // — heurística simples (~0,8% do total de células), escala com a resolução da grade escolhida.
+  const limiar = Math.max(5, Math.round(n * n * 0.008));
+  const segs = [];
+  for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) {
+    if(accum[r][c] < limiar) continue;
+    const k = flowTo[r][c];
+    if(k < 0) continue;
+    const nr = r + DIRS[k][0], nc = c + DIRS[k][1];
+    if(accum[nr][nc] < limiar) continue;
+    const dentro = turf.booleanPointInPolygon(turf.point([lngs[c], lats[r]]), poly) || turf.booleanPointInPolygon(turf.point([lngs[nc], lats[nr]]), poly);
+    if(!dentro) continue;
+    segs.push([[lats[r], lngs[c]], [lats[nr], lngs[nc]]]);
+  }
+  t.escoamentoLinhas = segs.length ? L.polyline(segs, { color: '#00e5ff', weight: 2.5, opacity: .95, interactive: false }).addTo(map) : null;
+
+  $('btnLimparEscoamento').style.display = 'flex';
+  $('secLegendaEscoamento').style.display = '';
+  setStatus(`Mapa de escoamento gerado — Talhão ${t.idx}. ${segs.length} trecho(s) de talvegue identificado(s)${segs.length ? ' (evite linha de plantio morro abaixo cruzando essas áreas sem terraço).' : '.'}`, 'ok');
+}
+
+function limparMapaEscoamento(t) {
+  if(t && t.escoamentoOverlay) { t.escoamentoOverlay.remove(); t.escoamentoOverlay = null; }
+  if(t && t.escoamentoLinhas) { t.escoamentoLinhas.remove(); t.escoamentoLinhas = null; }
+}
+function limparMapaEscoamentoSelecionado() {
+  if(talhaoSelecionadoUid === null) return;
+  const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
+  if(!t) return;
+  limparMapaEscoamento(t);
+  $('btnLimparEscoamento').style.display = 'none';
+  $('secLegendaEscoamento').style.display = 'none';
+  setStatus(`Mapa de escoamento removido — Talhão ${t.idx}.`, 'ok');
+}
+
 // Interpola pontos ao longo de uma polilinha com espaçamento fixo
 function resampleLine(latlngs, spacingM) {
   const pts = [latlngs[0]];
@@ -2928,6 +3098,7 @@ function limparDeclivTodos() {
 
 // ── Curvas de Nível ───────────────────────────────────────────────────────────
 let curvaLayers = [], curvaLabels = [];
+let _pickingCurvaGuia = false;
 let curvaMinElev = 0, curvaMaxElev = 0;
 // Polígono independente para área de curvas de nível
 let curvaPolyPts=[], curvaPolyMarkers=[], curvaPolyLayer=null, curvaPolyTempLine=null;
@@ -3140,10 +3311,13 @@ async function gerarCurvas() {
         if(seg.length >= 2) {
           const pl = L.polyline(seg.map(p=>[p.lat,p.lng]), {
             color:cor, weight:isMaster?2.5:1.2, opacity:isMaster?0.95:0.75,
-            interactive:false
+            interactive:true
           }).addTo(map);
           pl._level = lv;
           pl._isMaster = isMaster;
+          pl.on('click', () => _cliqueNaCurvaDeNivel(pl));
+          pl.on('mouseover', () => { if(_pickingCurvaGuia) pl.setStyle({weight:(isMaster?2.5:1.2)+2.5}); });
+          pl.on('mouseout', () => { if(_pickingCurvaGuia) pl.setStyle({weight:isMaster?2.5:1.2}); });
           curvaLayers.push(pl);
           lineCount++;
           // Cotas no início e fim — apenas curvas mestras com segmento suficientemente longo
@@ -3176,6 +3350,7 @@ async function gerarCurvas() {
 
   $('btnCurvas').disabled = false;
   $('btnLimparCurvas').style.display = '';
+  $('btnUsarCurvaGuia').style.display = curvaLayers.length ? '' : 'none';
   $('curvaInfo').style.display = '';
   $('curvaInfo').innerHTML =
     `<span style="color:#e2b96e;font-weight:700;">Alt. mín:</span> ${minElev.toFixed(1)} m &nbsp;
@@ -3190,6 +3365,53 @@ function limparCurvas() {
   curvaLabels.forEach(m=>m.remove()); curvaLabels=[];
   $('btnLimparCurvas').style.display='none';
   $('curvaInfo').style.display='none';
+  $('btnUsarCurvaGuia').style.display='none';
+  if(_pickingCurvaGuia) cancelarEscolhaCurvaGuia();
+}
+
+// ── Usar Curva de Nível como Guia de Plantio ──────────────────────────────────
+// Plantio em curva de nível é a técnica mais eficaz contra erosão em terreno com declive — em vez
+// de tentar imitar a curva à mão redesenhando a guia ponto a ponto, deixa escolher uma curva já
+// calculada (precisa) e usar ela direto.
+function ativarModoEscolherCurvaGuia() {
+  if(!curvaLayers.length) { setStatus('Gere as curvas de nível primeiro.', 'err'); return; }
+  _pickingCurvaGuia = true;
+  map.getContainer().style.cursor = 'crosshair';
+  $('btnUsarCurvaGuia').classList.add('active');
+  $('btnCancelarEscolhaCurva').style.display = 'flex';
+  setStatus('Clique numa curva de nível pra usar como guia de plantio.', 'info');
+}
+function cancelarEscolhaCurvaGuia() {
+  _pickingCurvaGuia = false;
+  map.getContainer().style.cursor = '';
+  $('btnUsarCurvaGuia').classList.remove('active');
+  $('btnCancelarEscolhaCurva').style.display = 'none';
+}
+function _cliqueNaCurvaDeNivel(pl) {
+  if(!_pickingCurvaGuia) return;
+  cancelarEscolhaCurvaGuia();
+  usarCurvaComoGuia(pl);
+}
+function usarCurvaComoGuia(pl) {
+  let pts; try { pts = pl.getLatLngs().flat(); } catch(e) { return; }
+  if(pts.length < 2) { setStatus('Curva inválida.', 'err'); return; }
+  // Ativa/garante um talhão ativo pra guia poder ser usada (mesma checagem de iniciarGuia()).
+  if(talhaoSelecionadoUid !== null && polyPts.length < 3) ativarTalhaoParaEdicao();
+  if(!turfPoly) { setStatus('Desenhe o contorno primeiro ou selecione um talhão antes de usar a curva como guia.', 'err'); return; }
+
+  // Reamostra pra um número razoável de pontos (a curva "crua" tem centenas, viraria uma guia com
+  // marcador arrastável em cada um) — modo Suave (catmullRom) já reconstrói uma curva orgânica a
+  // partir de poucos pontos-chave, então não perde fidelidade visual.
+  const alvo = Math.max(6, Math.min(30, Math.round(pts.length / 8)));
+  const simples = resampleCurve(pts.map(p => ({ lat: p.lat, lng: p.lng })), alvo);
+
+  limparGuia();
+  setModoGuia('spline');
+  simples.forEach(p => addGuidePt(L.latLng(p.lat, p.lng)));
+  finalizarGuia();
+  ativarRibbon('rp-guia');
+  const nivelTxt = pl._level != null ? pl._level.toFixed(0) + ' m' : '?';
+  setStatus(`Guia definida a partir da curva de nível ${nivelTxt} (${simples.length} pontos). Configure o espaçamento e gere as linhas.`, 'ok');
 }
 
 // ── Importar Polígono do Google Earth ─────────────────────────────────────────
