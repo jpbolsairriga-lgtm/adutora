@@ -238,7 +238,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.12 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.13 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1090,6 +1090,18 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // Se o Google Maps (GoogleMutant) estiver ativo, troca pro Esri só durante a captura (GoogleMutant
 // não é capturável por html2canvas de forma confiável). Também aumentada a largura das faixas das
 // linhas de plantio (0,35→0,55m de meia-largura) — mais margem contra sumir em zoom bem distante.
+// v4.13: v4.12 corrigiu a escala (confirmado pelo usuário) — mas as linhas ainda apareciam em
+// blocos/manchas alternando visível/invisível, formando um padrão que parecia acompanhar a
+// topografia real. Causa: _3da_mkMeshSampler (v4.6) garante altura EXATA da malha só nos pontos que
+// recebe — mas a fita entre dois pontos ORIGINAIS de uma linha (que podem estar bem espaçados, ex.
+// linha reta com só 2 vértices numa fileira de 200m) desenha um segmento reto em linha reta,
+// enquanto o relevo real por baixo pode curvar entre eles. Medido com relevo sintético ondulado:
+// erro de até 9,6m entre a altura da linha e o relevo real NO MEIO de um segmento de 200m (mesmo
+// com as pontas coladas perfeitamente na malha) — o suficiente pra linha cortar por dentro/fora do
+// terreno de forma bem visível, especialmente com exagero vertical. Corrigido com
+// _3da_pushResampledSeg: cada segmento de linha/contorno/carreador agora é quebrado em pedaços de
+// no máximo 4m antes de amostrar a malha, e cada ponto novo (não só as pontas originais) usa
+// meshSample de verdade. Erro residual medido: 2,2cm.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -5031,6 +5043,26 @@ function _3da_mkMeshSampler(terrRaw, NGTX, NGTY, bcx, bcy, halfW, halfH) {
   };
 }
 
+// Empurra num segList (formato [ax,az,rawA, bx,bz,rawB, ...] de _3da_buildRibbon) o trecho ax,ay→bx,by
+// já QUEBRADO em pedaços de no máximo maxStepM metros, amostrando meshSample em cada ponto novo —
+// não só nas duas pontas. meshSample já garante altura exata NOS PONTOS que ele recebe, mas entre
+// dois pontos originais de uma linha (que podem estar bem espaçados) a fita desenha uma reta em
+// linha reta enquanto o relevo real por baixo pode curvar entre eles — sem essa subdivisão, a linha
+// "corta caminho" por dentro/fora do relevo em vez de acompanhar a curvatura, mesmo com as pontas
+// coladas certinho na malha.
+function _3da_pushResampledSeg(segList, ax, ay, bx, by, maxStepM, meshSample) {
+  const dist = Math.hypot(bx - ax, by - ay);
+  const n = Math.max(1, Math.ceil(dist / maxStepM));
+  let px = ax, py = ay, pe = meshSample(ax, ay);
+  for(let k = 1; k <= n; k++) {
+    const t = k / n;
+    const qx = ax + (bx - ax) * t, qy = ay + (by - ay) * t;
+    const qe = meshSample(qx, qy);
+    segList.push(px, -py, pe, qx, -qy, qe);
+    px = qx; py = qy; pe = qe;
+  }
+}
+
 // Textura de declividade (mesmas cores da aba Declividade) sobre o mesmo retângulo geográfico do
 // terreno — dá pra ver onde o relevo é mais íngreme direto na vista 3D, sem sair dela.
 function _3da_buildSlopeTex(sampler, toLL, bcx, bcy, halfW, halfH) {
@@ -5389,8 +5421,7 @@ async function gerarVista3DAnalise() {
         let pts; try { pts = pl.getLatLngs().flat(); } catch(e) { return; }
         for(let i = 0; i < pts.length - 1; i++) {
           const a = toXY(pts[i].lat, pts[i].lng), b = toXY(pts[i + 1].lat, pts[i + 1].lng);
-          const ea = meshSample(a.x, a.y), eb = meshSample(b.x, b.y);
-          segList.push(a.x, -a.y, ea, b.x, -b.y, eb);
+          _3da_pushResampledSeg(segList, a.x, a.y, b.x, b.y, 4, meshSample);
         }
       });
       if(segList.length) {
@@ -5403,8 +5434,7 @@ async function gerarVista3DAnalise() {
       const bSegList = [];
       for(let i = 0; i < ring.length - 1; i++) {
         const a = toXY(ring[i].lat, ring[i].lng), b = toXY(ring[i + 1].lat, ring[i + 1].lng);
-        const ea = meshSample(a.x, a.y), eb = meshSample(b.x, b.y);
-        bSegList.push(a.x, -a.y, ea, b.x, -b.y, eb);
+        _3da_pushResampledSeg(bSegList, a.x, a.y, b.x, b.y, 4, meshSample);
       }
       const { geo: bGeo, raw: bRaw } = _3da_buildRibbon(bSegList, 0.9);
       const bMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(t.cor), side: THREE.DoubleSide, transparent: true, opacity: .9 });
@@ -5422,8 +5452,7 @@ async function gerarVista3DAnalise() {
         const ring = [...pts, pts[0]];
         for(let i = 0; i < ring.length - 1; i++) {
           const a = toXY(ring[i].lat, ring[i].lng), b = toXY(ring[i + 1].lat, ring[i + 1].lng);
-          const ea = meshSample(a.x, a.y), eb = meshSample(b.x, b.y);
-          cSegList.push(a.x, -a.y, ea, b.x, -b.y, eb);
+          _3da_pushResampledSeg(cSegList, a.x, a.y, b.x, b.y, 4, meshSample);
         }
       });
       if(cSegList.length) {
