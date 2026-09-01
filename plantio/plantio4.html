@@ -238,7 +238,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.11 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.12 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1079,6 +1079,17 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // imagem. Verde sólido/declividade continuam com material iluminado (mostram relevo por sombra,
 // onde isso é desejado). Validado com dois talhões reais (KML exportados pelo usuário): Vista 3D
 // batendo perfeitamente com o mapa 2D — mesma estrada, mesmas árvores, mesma posição, cores iguais.
+// v4.12: mesmo com v4.11 confirmado (cabeçalho v4.11, teste em aba anônima pra descartar cache de
+// vez), o usuário continuou vendo os dois problemas. Mudança de arquitetura sugerida pelo próprio
+// usuário: em vez de buscar uma foto de satélite separada (com zoom/projeção calculados de forma
+// independente por este código — mesmo já provado matematicamente correto com dados reais em v4.11,
+// era mais uma peça própria pra manter em sincronia com o resto do app), a Vista 3D agora CAPTURA A
+// IMAGEM QUE O PRÓPRIO MAPA 2D (Leaflet, sempre a fonte confiável) ESTÁ MOSTRANDO, com html2canvas,
+// e usa ela direto como textura — _3da_captureMapTexture. O mapeamento UV usa os limites REAIS
+// devolvidos por map.getBounds() após o fitBounds, sem nenhuma conta de zoom/m-por-pixel envolvida.
+// Se o Google Maps (GoogleMutant) estiver ativo, troca pro Esri só durante a captura (GoogleMutant
+// não é capturável por html2canvas de forma confiável). Também aumentada a largura das faixas das
+// linhas de plantio (0,35→0,55m de meia-largura) — mais margem contra sumir em zoom bem distante.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -4946,53 +4957,40 @@ let _3da_exag = 2;
 let _3da_lineObjs = []; // {geo, raw:Float32Array (elevação bruta por vértice), eps:number}
 const _3DA_NGT = 90;    // resolução da malha 3D (independente da grade de elevação buscada na API)
 
-// Reaproveita os mesmos tiles World_Imagery (sem precisar de chave) que já alimentam o mapa 2D —
-// monta um quadrado localmente via canvas. Se houver chave Google configurada (mapskey_pl), usa o
-// Maps Static como primeira opção (mais nítido); senão cai direto no Esri.
-async function _3da_stitchEsri(cLat, cLng, zoom, W, H) {
+// Em vez de buscar uma foto de satélite separada (com zoom/projeção calculados por este código,
+// independente do resto do app), captura a imagem que o PRÓPRIO MAPA 2D (Leaflet — já correto,
+// testado e é o que o usuário está olhando o tempo todo) está mostrando pra essa área. Elimina de
+// vez qualquer chance de divergência entre "o que o 2D mostra" e "o que a Vista 3D mostra": as duas
+// passam a ser literalmente a mesma imagem, obtida com html2canvas. Os limites REAIS exibidos
+// (map.getBounds() após o fitBounds) são devolvidos junto — o mapeamento de UV usa esses limites
+// exatos, sem nenhuma conta de zoom/m-por-pixel/arredondamento envolvida.
+async function _3da_captureMapTexture(latMin, latMax, lngMin, lngMax) {
+  const originalCenter = map.getCenter(), originalZoom = map.getZoom();
+  const overlayPane = map.getPane('overlayPane'), markerPane = map.getPane('markerPane');
+  const prevOverlay = overlayPane ? overlayPane.style.display : '';
+  const prevMarker = markerPane ? markerPane.style.display : '';
+  // Se o Google Maps (GoogleMutant) estiver ativo, troca pro Esri só durante a captura — o
+  // GoogleMutant renderiza os tiles por dentro da API do Google (não são <img> simples), e
+  // html2canvas normalmente não consegue capturar isso direito (sai cinza/em branco). Esri é
+  // sempre <img> comum, captura de forma confiável.
+  const usandoGoogle = !!(googleLayer && map.hasLayer(googleLayer));
   try {
-    const tileZ = Math.max(0, Math.min(18, Math.round(zoom)));
-    const scale = 256 * Math.pow(2, tileZ);
-    const wx = lng => (lng + 180) / 360 * scale;
-    const wy = lat => { const s = Math.sin(lat * Math.PI / 180); return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * scale; };
-    const originX = wx(cLng) - W / 2, originY = wy(cLat) - H / 2;
-    const tx0 = Math.floor(originX / 256), ty0 = Math.floor(originY / 256);
-    const tx1 = Math.floor((originX + W) / 256), ty1 = Math.floor((originY + H) / 256);
-    const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
-    const ctx = canvas.getContext('2d');
-    const maxTile = Math.pow(2, tileZ);
-    const loads = [];
-    for(let ty = ty0; ty <= ty1; ty++) {
-      if(ty < 0 || ty >= maxTile) continue;
-      for(let tx = tx0; tx <= tx1; tx++) {
-        const wrapX = ((tx % maxTile) + maxTile) % maxTile;
-        const px = tx * 256 - originX, py = ty * 256 - originY;
-        const url = `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${tileZ}/${ty}/${wrapX}`;
-        loads.push(new Promise(res => {
-          const img = new Image(); img.crossOrigin = 'anonymous';
-          img.onload = () => { try { ctx.drawImage(img, px, py, 256, 256); } catch(e) {} res(); };
-          img.onerror = () => res();
-          img.src = url;
-        }));
-      }
-    }
-    await Promise.all(loads);
-    return canvas.toDataURL('image/jpeg', 0.85);
-  } catch(e) { console.error('Esri 3D:', e); return null; }
-}
-async function _3da_getSatUrl(cLat, cLng, zoom, W, H) {
-  const key = localStorage.getItem('mapskey_pl') || '';
-  if(key) {
-    try {
-      const g = `https://maps.googleapis.com/maps/api/staticmap?center=${cLat},${cLng}&zoom=${zoom}&size=${W}x${H}&scale=2&maptype=satellite&key=${key}`;
-      const resp = await fetch(g);
-      if(resp.ok) {
-        const blob = await resp.blob();
-        if(blob.size > 800) return await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(blob); });
-      }
-    } catch(e) { /* chave sem Maps Static habilitada, CORS ou rede — cai no Esri abaixo */ }
+    if(usandoGoogle) { googleLayer.remove(); esriLayer.addTo(map); }
+    // Esconde os overlays do próprio app (contorno, linhas, carreadores, labels) durante a captura —
+    // senão eles ficam "gravados" na textura, duplicados por baixo das linhas 3D desenhadas por cima.
+    if(overlayPane) overlayPane.style.display = 'none';
+    if(markerPane) markerPane.style.display = 'none';
+    map.fitBounds([[latMin, lngMin], [latMax, lngMax]], { animate: false, padding: [0, 0] });
+    await new Promise(res => setTimeout(res, 900)); // tempo dos tiles carregarem (maioria já em cache)
+    const canvas = await html2canvas(document.getElementById('map'), { useCORS: true, logging: false, scale: 1 });
+    const b = map.getBounds();
+    return { canvas, north: b.getNorth(), south: b.getSouth(), east: b.getEast(), west: b.getWest() };
+  } finally {
+    if(overlayPane) overlayPane.style.display = prevOverlay;
+    if(markerPane) markerPane.style.display = prevMarker;
+    if(usandoGoogle) { esriLayer.remove(); googleLayer.addTo(map); }
+    map.setView(originalCenter, originalZoom, { animate: false });
   }
-  return await _3da_stitchEsri(cLat, cLng, zoom, W, H);
 }
 
 // Interpolação bilinear sobre a grade regular de elevação buscada na API — mais precisa e mais
@@ -5247,6 +5245,12 @@ async function gerarVista3DAnalise() {
   $('m3da-inf').style.display = 'none';
   $('btnVista3D').disabled = true;
 
+  // Captura a imagem do mapa 2D em paralelo com a busca de elevação (não trava a abertura por
+  // causa disso) — ver comentário de _3da_captureMapTexture. Falha aqui não é fatal: cai pro
+  // terreno sólido, igual a quando a foto de satélite não carregava antes.
+  const mapTexPromise = _3da_captureMapTexture(latMin, latMax, lngMin, lngMax)
+    .catch(e => { console.error('Captura do mapa 2D falhou:', e); return null; });
+
   // ── Grade de elevação (Google Elevation API, em lotes de 512) ───────────────
   const n = parseInt($('analiseGrid').value) || 30;
   const lats = Array.from({ length: n }, (_, i) => latMin + i * (latMax - latMin) / (n - 1));
@@ -5390,7 +5394,7 @@ async function gerarVista3DAnalise() {
         }
       });
       if(segList.length) {
-        const { geo, raw } = _3da_buildRibbon(segList, 0.35);
+        const { geo, raw } = _3da_buildRibbon(segList, 0.55);
         const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(t.corLinha), side: THREE.DoubleSide });
         scene.add(new THREE.Mesh(geo, mat));
         _3da_lineObjs.push({ geo, raw, eps: 0.6 });
@@ -5469,42 +5473,29 @@ async function gerarVista3DAnalise() {
     // ortogonal pode trocar qual câmera está ativa sem precisar reiniciar o loop de render.
     (function animate() { _3da_raf = requestAnimationFrame(animate); if(_3da_controls) _3da_controls.update(); if(_3da_camera) renderer.render(scene, _3da_camera); })();
 
-    // ── Foto de satélite como textura do terreno (assíncrona — a malha já aparece
-    // verde e a foto "aparece por cima" assim que chegar, sem travar a abertura) ──
+    // ── Foto de satélite = a imagem capturada do próprio mapa 2D (mapTexPromise, disparada em
+    // paralelo com a busca de elevação — ver _3da_captureMapTexture). A malha já aparece verde e a
+    // foto "aparece por cima" assim que a captura terminar, sem travar a abertura da Vista 3D. ──
     (async () => {
       try {
-        // Imagem proporcional ao retângulo real (halfW×halfH) — não mais um quadrado — senão a foto
-        // cobre uma área maior que a malha num sentido e a resolução fica desperdiçada no eixo curto.
-        const TEXMAX = 1024;
-        const TEXW = Math.max(64, Math.round(TEXMAX * halfW / maxHalf));
-        const TEXH = Math.max(64, Math.round(TEXMAX * halfH / maxHalf));
-        const satCLat = cLat + bcy / mLat, satCLng = cLng + bcx / mLng;
-        // Zoom calculado direto da escala desejada (m/pixel), não por "encaixar" um bbox — _staticMapParams
-        // arredonda o zoom PRA BAIXO (dá margem de sobra, ok pros mapas 2D dos relatórios), mas aqui a
-        // textura precisa cobrir EXATAMENTE o retângulo do terreno, senão a foto fica em escala
-        // diferente do relevo/linhas por baixo. m/pixel real na Web Mercator: 156543.03392×cos(lat)/2^zoom.
-        const mpp = (2 * maxHalf) / TEXMAX;
-        const zoom = Math.max(0, Math.min(18, Math.round(Math.log2(156543.03392 * Math.cos(satCLat * Math.PI / 180) / mpp))));
-        const dataUrl = await _3da_getSatUrl(satCLat, satCLng, zoom, TEXW, TEXH);
-        if(!dataUrl || !_3da_renderer) return;
-        const img = new Image();
-        await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataUrl; });
-        if(!_3da_renderer) return;
-        const tex = new THREE.Texture(img);
+        const mapTex = await mapTexPromise;
+        if(!mapTex || !_3da_renderer) return;
+        const tex = new THREE.CanvasTexture(mapTex.canvas);
         tex.needsUpdate = true; tex.encoding = THREE.sRGBEncoding;
         tex.anisotropy = _3da_renderer.capabilities.getMaxAnisotropy ? _3da_renderer.capabilities.getMaxAnisotropy() : 4;
-        // O zoom acima é arredondado pro inteiro mais próximo — a imagem real cobre mppReal×TEXW/TEXH
-        // metros, que quase nunca bate exatamente com 2×halfW/halfH. Corrige a escala/centro via
-        // repeat+offset da própria textura (mesmo UV 0..1 do terreno), em vez de assumir que a foto
-        // cobre exatamente o retângulo pedido.
-        const mppReal = 156543.03392 * Math.cos(satCLat * Math.PI / 180) / Math.pow(2, zoom);
-        const sX = halfW / ((mppReal * TEXW) / 2), sY = halfH / ((mppReal * TEXH) / 2);
+        // UV exato a partir dos limites REAIS que o mapa 2D mostrou (map.getBounds(), devolvido por
+        // _3da_captureMapTexture) — sem zoom/m-por-pixel/arredondamento nenhum envolvido, só a mesma
+        // conversão local (toXY) que a malha e as linhas já usam.
+        const ix0 = toXY(cLat, mapTex.west).x, ix1 = toXY(cLat, mapTex.east).x;
+        const iy0 = toXY(mapTex.south, cLng).y, iy1 = toXY(mapTex.north, cLng).y;
+        const sX = (2 * halfW) / (ix1 - ix0), offX = (bcx - halfW - ix0) / (ix1 - ix0);
+        const sY = (2 * halfH) / (iy1 - iy0), offY = (bcy - halfH - iy0) / (iy1 - iy0);
         tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
         tex.repeat.set(sX, sY);
-        tex.offset.set((1 - sX) / 2, (1 - sY) / 2);
+        tex.offset.set(offX, offY);
         _3da_satTex = tex;
         if(_3da_bgMode === 'solid') { _3da_bgMode = 'sat'; matTerrSat.map = tex; matTerrSat.needsUpdate = true; terrMesh.material = matTerrSat; $('m3da-btnBg').textContent = '🛰️ Satélite'; }
-      } catch(e) { console.error('Satélite 3D plantio:', e); }
+      } catch(e) { console.error('Textura do mapa 2D na Vista 3D:', e); }
     })();
   } catch(e) { console.error('Vista 3D Análise:', e); setStatus('Erro ao gerar a Vista 3D: ' + e.message, 'err'); fecharVista3DAnalise(); } });
 }
