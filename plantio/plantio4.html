@@ -238,7 +238,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.10 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.11 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1069,6 +1069,16 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // comparada à foto (isso é óptica normal, não bug), e é fácil nem notar que existe um botão pra
 // trocar. A Vista 3D agora abre DIRETO na Vista de Cima (sem distorção) — clique em "🎥 Vista 3D"
 // pra ver a perspectiva angulada (bonita, mas sujeita a paralaxe em relevo acentuado).
+// v4.11: achado um SEGUNDO bug real na foto de satélite, junto da paralaxe — o terreno usava um
+// material COM LUZ (MeshStandardMaterial) pra mostrar a foto, então a cor final na tela = cor da
+// foto × resposta à luz da cena (sol+ambiente+sombra+tonemapping ACES). Isso escurecia/alterava a
+// cor da imagem comparado à foto crua do mapa 2D ou do Google Earth — dava pra confundir com "foto
+// errada" mesmo com a foto certa por baixo (chegava a esconder uma estrada de terra clara, que
+// ficava com tom parecido da vegetação ao redor). Corrigido: a foto de satélite agora usa um
+// material SEM LUZ (MeshBasicMaterial, toneMapped:false) — mostra a cor exatamente como veio da
+// imagem. Verde sólido/declividade continuam com material iluminado (mostram relevo por sombra,
+// onde isso é desejado). Validado com dois talhões reais (KML exportados pelo usuário): Vista 3D
+// batendo perfeitamente com o mapa 2D — mesma estrada, mesmas árvores, mesma posição, cores iguais.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -4928,7 +4938,7 @@ function cpColorFieldChanged() {
 let _3da_raf = null, _3da_renderer = null, _3da_scene = null, _3da_camera = null, _3da_controls = null;
 let _3da_cameraPersp = null, _3da_cameraOrtho = null, _3da_isOrtho = false;
 let _3da_span = 0, _3da_bcx = 0, _3da_bcy = 0;
-let _3da_terrGeo = null, _3da_terrRaw = null, _3da_matTerr = null;
+let _3da_terrGeo = null, _3da_terrRaw = null, _3da_matTerr = null, _3da_matTerrSat = null, _3da_terrMesh = null;
 let _3da_satTex = null, _3da_slopeTex = null;
 const _3DA_BG_MODES = ['sat', 'slope', 'solid'];
 let _3da_bgMode = 'solid';
@@ -5086,7 +5096,7 @@ function fecharVista3DAnalise() {
   if(_3da_renderer) { _3da_renderer.dispose(); _3da_renderer = null; }
   _3da_scene = null; _3da_camera = null; _3da_controls = null;
   _3da_cameraPersp = null; _3da_cameraOrtho = null; _3da_isOrtho = false;
-  _3da_terrGeo = null; _3da_terrRaw = null; _3da_matTerr = null;
+  _3da_terrGeo = null; _3da_terrRaw = null; _3da_matTerr = null; _3da_matTerrSat = null; _3da_terrMesh = null;
   _3da_satTex = null; _3da_slopeTex = null; _3da_lineObjs = [];
   _3da_bgMode = 'solid';
   const btnOrtho = $('m3da-btnOrtho'); if(btnOrtho) btnOrtho.textContent = '📐 Vista de Cima';
@@ -5166,10 +5176,22 @@ function ciclarFundo3DAnalise() {
   let idx = iniIdx;
   do { idx = (idx + 1) % _3DA_BG_MODES.length; } while(_3DA_BG_MODES[idx] === 'sat' && !_3da_satTex && idx !== iniIdx);
   _3da_bgMode = _3DA_BG_MODES[idx];
-  if(_3da_bgMode === 'sat' && _3da_satTex) { _3da_matTerr.map = _3da_satTex; _3da_matTerr.color.set(0xffffff); btn.textContent = '🛰️ Satélite'; }
-  else if(_3da_bgMode === 'slope' && _3da_slopeTex) { _3da_matTerr.map = _3da_slopeTex; _3da_matTerr.color.set(0xffffff); btn.textContent = '🎨 Declividade'; }
-  else { _3da_bgMode = 'solid'; _3da_matTerr.map = null; _3da_matTerr.color.set(0x8fbf6a); btn.textContent = '🟢 Terreno sólido'; }
-  _3da_matTerr.needsUpdate = true;
+  // Satélite usa o material SEM luz (matTerrSat) — mostra a foto exatamente como é, sem sombra/
+  // iluminação da cena alterando a cor (ver comentário na criação dos materiais). Declividade/verde
+  // sólido usam o material COM luz (matTerr), que mostra o relevo por sombreado.
+  if(_3da_bgMode === 'sat' && _3da_satTex) {
+    _3da_matTerrSat.map = _3da_satTex; _3da_matTerrSat.needsUpdate = true;
+    if(_3da_terrMesh) _3da_terrMesh.material = _3da_matTerrSat;
+    btn.textContent = '🛰️ Satélite';
+  } else if(_3da_bgMode === 'slope' && _3da_slopeTex) {
+    _3da_matTerr.map = _3da_slopeTex; _3da_matTerr.color.set(0xffffff); _3da_matTerr.needsUpdate = true;
+    if(_3da_terrMesh) _3da_terrMesh.material = _3da_matTerr;
+    btn.textContent = '🎨 Declividade';
+  } else {
+    _3da_bgMode = 'solid'; _3da_matTerr.map = null; _3da_matTerr.color.set(0x8fbf6a); _3da_matTerr.needsUpdate = true;
+    if(_3da_terrMesh) _3da_terrMesh.material = _3da_matTerr;
+    btn.textContent = '🟢 Terreno sólido';
+  }
   $('m3da-slopeLegend').style.display = (_3da_bgMode === 'slope') ? 'block' : 'none';
 }
 
@@ -5336,11 +5358,17 @@ async function gerarVista3DAnalise() {
     tGeo.setAttribute('uv', new THREE.BufferAttribute(tUV, 2));
     tGeo.setIndex(tIdx);
     tGeo.computeVertexNormals();
+    // Dois materiais: o terreno sólido/declividade usa material COM luz (mostra relevo por sombra),
+    // mas a FOTO DE SATÉLITE usa material SEM luz (MeshBasicMaterial) — antes a mesma foto usada nos
+    // três modos era iluminada pela cena (sol+ambiente+sombra), o que escurecia/alterava a cor da
+    // imagem comparado à foto crua do mapa 2D ou do Google Earth (podendo até esconder uma estrada
+    // de terra clara num tom mais escuro). A foto de satélite deve aparecer exatamente como é.
     const matTerr = new THREE.MeshStandardMaterial({ color: 0x8fbf6a, roughness: 1, metalness: 0, side: THREE.DoubleSide });
+    const matTerrSat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, toneMapped: false });
     const terrMesh = new THREE.Mesh(tGeo, matTerr);
     terrMesh.receiveShadow = true;
     scene.add(terrMesh);
-    _3da_terrGeo = tGeo; _3da_terrRaw = terrRaw; _3da_matTerr = matTerr;
+    _3da_terrGeo = tGeo; _3da_terrRaw = terrRaw; _3da_matTerr = matTerr; _3da_matTerrSat = matTerrSat; _3da_terrMesh = terrMesh;
     _3da_bgMode = 'solid'; // até a foto de satélite (assíncrona) chegar
     $('m3da-slopeLegend').style.display = 'none';
     _3da_slopeTex = _3da_buildSlopeTex(sampler, toLL, bcx, bcy, halfW, halfH);
@@ -5475,7 +5503,7 @@ async function gerarVista3DAnalise() {
         tex.repeat.set(sX, sY);
         tex.offset.set((1 - sX) / 2, (1 - sY) / 2);
         _3da_satTex = tex;
-        if(_3da_bgMode === 'solid') { _3da_bgMode = 'sat'; matTerr.map = tex; matTerr.color.set(0xffffff); matTerr.needsUpdate = true; $('m3da-btnBg').textContent = '🛰️ Satélite'; }
+        if(_3da_bgMode === 'solid') { _3da_bgMode = 'sat'; matTerrSat.map = tex; matTerrSat.needsUpdate = true; terrMesh.material = matTerrSat; $('m3da-btnBg').textContent = '🛰️ Satélite'; }
       } catch(e) { console.error('Satélite 3D plantio:', e); }
     })();
   } catch(e) { console.error('Vista 3D Análise:', e); setStatus('Erro ao gerar a Vista 3D: ' + e.message, 'err'); fecharVista3DAnalise(); } });
