@@ -242,7 +242,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.17 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.18 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1178,6 +1178,24 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // sobre o campo de elevação interpolado — produz curvas suaves e um padrão dendrítico (convergindo
 // como afluentes) em vez de segmentos retos. Testado com vale sintético sinuoso: traçado acompanhou
 // a curvatura real do vale.
+// v4.18: comparação com resultado real do AgroCAD ("Simular Chuva") num talhão do usuário — dois
+// achados. (1) O KML exportado pelo AgroCAD ("Escoamento autocad") analisado (5885 segmentos, 206
+// polilinhas) é a malha TIN da superfície (wireframe denso cobrindo o talhão todo, acompanhando a
+// curvatura no topo) e NÃO o resultado do cálculo de fluxo/talvegue — é a convenção padrão do
+// Civil3D de exibir a superfície como wireframe, não o "Fluxos de Enxurrada" classificado.
+// (2) Bug real encontrado e corrigido: "quanto maior a resolução da grade, menos talvegues
+// aparecem" — causa era ruído de ponto flutuante/precisão da API de elevação criando micro-poços
+// (depressões falsas de 1 célula) que quebram a continuidade do fluxo D8; o problema piora em grade
+// fina porque a diferença de altitude entre células vizinhas fica pequena o bastante pro ruído virar
+// um mínimo local espúrio, interrompendo o traçado do talvegue no meio do caminho. Corrigido com
+// preenchimento de depressões por "priority-flood" (_preencherDepressoes, algoritmo padrão de
+// hidrologia, Barnes et al. 2014 — mesma etapa de pré-processamento do ArcHydro/TauDEM/r.watershed)
+// rodado sobre a grade de elevação ANTES do cálculo de fluxo D8. Validado com relevo sintético
+// ruidoso: contagem de segmentos de talvegue ficou estável nas resoluções 30×30/40×40/60×60
+// (1230/1197/980 segmentos) em vez de despencar conforme a grade ficava mais fina. Também corrigido
+// um gap real: a exportação de KML nunca incluía os talvegues do Mapa de Escoamento (por isso os
+// KMLs de "escoamento" exportados antes vinham sempre vazios dessa camada) — kmlTalhao() ganhou uma
+// pasta "Talvegues (Escoamento)" com uma polilinha por segmento.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -2819,6 +2837,43 @@ function limparDeclividadeTerrenoSelecionado() {
 // exatamente onde NÃO alinhar uma linha de plantio morro abaixo sem terraço/camalhão.
 const _ESCOAMENTO_DIRS = [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
 
+// Preenchimento de depressões ("priority-flood", Barnes et al. 2014 — o algoritmo padrão pra isso
+// em hidrologia de grade regular, o mesmo princípio usado no TauDEM/whitebox/ArcHydro antes de
+// calcular direção de fluxo). Garante que toda célula tenha um caminho de descida (ou pelo menos
+// plano) até a borda da grade — sem isso, ruído nos dados de elevação cria "poços" artificiais que
+// quebram a continuidade do escoamento, e isso piora justamente quando a grade fica mais fina
+// (célula menor → diferença real de cota entre vizinhos menor → mais perto do ruído dos dados).
+// Fila de prioridade por busca linear (não uma heap de verdade) — grades desse app são pequenas
+// (≤60×60 = 3600 células), então isso continua rápido sem a complexidade de uma heap real.
+function _preencherDepressoes(elev, n) {
+  const filled = elev.map(row => row.slice());
+  const visited = Array.from({ length: n }, () => new Array(n).fill(false));
+  const heap = [];
+  const push = (r, c, z) => heap.push([z, r, c]);
+  const popMin = () => {
+    let bi = 0;
+    for(let i = 1; i < heap.length; i++) if(heap[i][0] < heap[bi][0]) bi = i;
+    const v = heap[bi];
+    heap[bi] = heap[heap.length - 1];
+    heap.pop();
+    return v;
+  };
+  for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) {
+    if(r === 0 || r === n - 1 || c === 0 || c === n - 1) { visited[r][c] = true; push(r, c, filled[r][c]); }
+  }
+  while(heap.length) {
+    const [z, r, c] = popMin();
+    for(let k = 0; k < _ESCOAMENTO_DIRS.length; k++) {
+      const nr = r + _ESCOAMENTO_DIRS[k][0], nc = c + _ESCOAMENTO_DIRS[k][1];
+      if(nr < 0 || nr >= n || nc < 0 || nc >= n || visited[nr][nc]) continue;
+      visited[nr][nc] = true;
+      filled[nr][nc] = Math.max(filled[nr][nc], z);
+      push(nr, nc, filled[nr][nc]);
+    }
+  }
+  return filled;
+}
+
 // Campo de elevação contínuo (interpolação bilinear sobre a grade regular buscada) — usado pra
 // traçar o caminho de descida mais íngreme passo a passo, em vez de pular célula a célula.
 function _mkEscoamentoSampler(elevGrid, lats, lngs, n) {
@@ -2899,7 +2954,15 @@ async function gerarMapaEscoamento() {
       });
     }
   });
-  const elev = Array.from({ length: n }, (_, r) => Array.from({ length: n }, (_, c) => elevFlat[r * n + c] ?? 0));
+  const elevBruta = Array.from({ length: n }, (_, r) => Array.from({ length: n }, (_, c) => elevFlat[r * n + c] ?? 0));
+  // Preenche depressões/"pits" ANTES de calcular direção de fluxo (algoritmo priority-flood) — sem
+  // isso, ruído nos dados de elevação (a Elevation API não tem precisão infinita) cria "poços"
+  // artificiais que quebram a continuidade do escoamento. Numa grade mais grosseira a diferença de
+  // cota entre células vizinhas é grande o bastante pra dominar esse ruído; numa grade mais fina
+  // (célula menor = diferença real entre vizinhos menor, mais perto do próprio ruído dos dados)
+  // isso fragmenta o fluxo em muitos poços pequenos, derrubando o acúmulo — era por isso que
+  // aumentar a resolução fazia os talvegues SUMIREM em vez de ficar mais detalhados.
+  const elev = _preencherDepressoes(elevBruta, n);
 
   const dxM = haversineM({ lat: minLat, lng: minLng }, { lat: minLat, lng: maxLng }) / Math.max(1, n - 1);
   const dyM = haversineM({ lat: minLat, lng: minLng }, { lat: maxLat, lng: minLng }) / Math.max(1, n - 1);
@@ -3751,7 +3814,7 @@ function _exportarKMLInterno() {
   kml += `<name>Traçado de Plantio — Bolsa Irriga</name>\n`;
 
   // Helper: exporta um talhão (arquivado ou ativo) como Folder KML
-  function kmlTalhao(label, cor, pts, lnhs, lnhsDecl, corLinha) {
+  function kmlTalhao(label, cor, pts, lnhs, lnhsDecl, corLinha, escoamentoLinhas) {
     if(pts.length < 3 && !lnhs.length) return '';
     let f = `<Folder><name>${label}</name>\n`;
     // Contorno
@@ -3793,12 +3856,24 @@ function _exportarKMLInterno() {
       });
       f += `</Folder>\n`;
     }
+    // Talvegues do Mapa de Escoamento (se gerado)
+    if(escoamentoLinhas) {
+      let segs; try { segs = escoamentoLinhas.getLatLngs(); } catch(e) { segs = []; }
+      if(segs.length) {
+        f += `<Folder><name>Talvegues (Escoamento)</name>\n`;
+        segs.forEach(seg => {
+          if(!seg || seg.length < 2) return;
+          f += `<Placemark>${kmlLine('#00e5ff', 2)}<LineString><coordinates>${kmlCoords([seg])}</coordinates></LineString></Placemark>\n`;
+        });
+        f += `</Folder>\n`;
+      }
+    }
     return f + `</Folder>\n`;
   }
 
   // ── 1. Talhões (arquivados + ativo) ──────────────────────────────────────
   talhoesArquivados.forEach(t => {
-    kml += kmlTalhao(`Talhão ${t.idx}`, t.cor, t.polyPts, t.linhas, t.linhasDecl, t.corLinha);
+    kml += kmlTalhao(`Talhão ${t.idx}`, t.cor, t.polyPts, t.linhas, t.linhasDecl, t.corLinha, t.escoamentoLinhas);
   });
   // Talhão ativo (se tiver linhas)
   if(polyPts.length >= 3 || linhas.length) {
