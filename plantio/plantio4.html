@@ -242,7 +242,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.20 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.21 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -558,6 +558,31 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
       <div class="rgroup">
         <div class="rgroup-body">
           <div class="rcol">
+            <label>Solo (fator K)</label>
+            <select id="erosaoK" class="rfield wide">
+              <option value="arenoso">Arenoso (Neossolo Quartzarênico)</option>
+              <option value="franco">Franco-arenoso</option>
+              <option value="latossolo" selected>Latossolo argiloso (Cerrado)</option>
+              <option value="argissolo">Argissolo (textura abrupta)</option>
+            </select>
+          </div>
+          <div class="rcol">
+            <label>Cobertura (fator C)</label>
+            <select id="erosaoC" class="rfield wide">
+              <option value="1" selected>Solo exposto / em preparo</option>
+              <option value="0.4">Cultura recém-implantada</option>
+              <option value="0.1">Cultura estabelecida / densa</option>
+              <option value="0.02">Pastagem / cobertura permanente</option>
+            </select>
+          </div>
+          <button class="rbtn-sm warn" id="btnRiscoErosao" onclick="gerarRiscoErosao()" title="Estima onde a perda de solo tende a ser mais grave (RUSLE), cruzando relevo + chuva real do local (NASA POWER) + solo + cobertura">&#9889; Risco de Erosão</button>
+          <button class="rbtn-sm clr" id="btnLimparRiscoErosao" style="display:none;" onclick="limparRiscoErosaoSelecionado()">&#10005; Limpar Risco</button>
+        </div>
+        <div class="rgroup-title">Risco de Erosão — RUSLE (talhão selecionado)</div>
+      </div>
+      <div class="rgroup">
+        <div class="rgroup-body">
+          <div class="rcol">
             <label>Espaçamento da análise (m)</label>
             <input type="number" id="espacDecliv" class="rfield" value="25" min="5" max="200" step="5">
           </div>
@@ -820,6 +845,16 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
         <div style="font-size:11px;line-height:1.7;color:#90a4ae;">
           <span style="display:inline-block;width:12px;height:12px;background:rgba(20,110,220,.75);border-radius:2px;vertical-align:middle;margin-right:5px;"></span>Área de acúmulo de água (mais escuro = mais concentrado)<br>
           <span style="display:inline-block;width:16px;height:3px;background:#00e5ff;vertical-align:middle;margin-right:5px;"></span>Talvegue (caminho preferencial de escoamento)
+        </div>
+      </div>
+      <div id="secLegendaErosao" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid #1e4a7a;">
+        <div class="sec-title">Legenda — Risco de Erosão (RUSLE)</div>
+        <div style="font-size:11px;line-height:2;">
+          <span style="display:inline-block;width:12px;height:12px;background:#4CAF50;border-radius:2px;vertical-align:middle;margin-right:5px;"></span>&lt; 10 t/ha/ano &nbsp; Tolerável<br>
+          <span style="display:inline-block;width:12px;height:12px;background:#FFEB3B;border-radius:2px;vertical-align:middle;margin-right:5px;"></span>10 – 20 &nbsp; Moderado<br>
+          <span style="display:inline-block;width:12px;height:12px;background:#FF9800;border-radius:2px;vertical-align:middle;margin-right:5px;"></span>20 – 50 &nbsp; Alto<br>
+          <span style="display:inline-block;width:12px;height:12px;background:#F44336;border-radius:2px;vertical-align:middle;margin-right:5px;"></span>&gt; 50 &nbsp; Muito alto<br>
+          <span style="font-size:10px;color:#78909c;">Cenário de pior caso: solo exposto, sem terraço.</span>
         </div>
       </div>
     </div>
@@ -1229,6 +1264,25 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // AgroCAD anexado pelo usuário. Suíte completa sem regressões (contagens de segmento mudaram — eram
 // esperadas mudar, já que a estratégia de sementes é outra — mas continuam estáveis/não-zero em
 // todas as resoluções testadas).
+// v4.21: nova ferramenta complementar ao Mapa de Escoamento, pedida explicitamente — "simular
+// intensidade da chuva" igual o AgroCAD faz, na aba Análise: "Risco de Erosão". Em vez de só
+// mostrar POR ONDE a água passa (o que o Mapa de Escoamento já faz), estima ONDE a perda de solo
+// tende a ser mais grave, usando o modelo internacional padrão de conservação de solo (USLE/RUSLE
+// — Wischmeier & Smith 1978 / Renard et al. 1997): A = R·K·LS·C·P (t/ha/ano). R (erosividade da
+// chuva) é calculado com dado climático REAL do local (NASA POWER, mesma fonte já usada no Balanço
+// Climático) pela equação de Lombardi Neto & Moldenhauer (1992), padrão no Brasil pra estimar
+// erosividade só com precipitação mensal. LS (fator topográfico) reaproveita a mesma grade de
+// elevação/acúmulo de fluxo do Mapa de Escoamento (fórmula de Moore & Burch 1986, GIS-padrão,
+// limitada a um teto pra não extrapolar perto de canais concentrados — ali já é erosão em
+// sulco/voçoroca, fora do escopo da USLE). K (solo) e C (cobertura) o usuário escolhe num seletor
+// (valores típicos de Bertoni & Lombardi Neto); P fica fixo em 1 de propósito — o resultado é o
+// cenário de "pior caso, sem terraço", útil pra decidir SE precisa de terraço. Mapa de calor com 4
+// faixas de risco (tolerável/moderado/alto/muito alto, limiares padrão da literatura brasileira de
+// conservação de solo). Refatorado _calcularHidrologiaTalhao() como função compartilhada (busca de
+// elevação + D8 + acúmulo) entre o Mapa de Escoamento e o Risco de Erosão, evitando buscar a mesma
+// elevação duas vezes. Validado: fator R conferido bit a bit contra o cálculo manual da fórmula;
+// escala linear do resultado com o fator K confirmada (proporção exata 3,000 = 0,045/0,015 ao
+// trocar solo arenoso↔latossolo); caminho de erro (chuva indisponível) tratado sem travar a UI.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -2963,22 +3017,16 @@ function _traceFlowPath(sampler, lat0, lng0, mLat, mLng, stepM, maxSteps, bounds
   }
   return path;
 }
-async function gerarMapaEscoamento() {
-  if(talhaoSelecionadoUid === null) { setStatus('Selecione um talhão primeiro.', 'err'); return; }
-  if(!window.google || !window.google.maps) { setStatus('Ative o Google Maps (chave API) para o mapa de escoamento.', 'err'); return; }
-  const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
-  if(!t) return;
-
+// Busca a elevação e calcula toda a hidrologia de grade regular (D8 + acúmulo de fluxo) de um
+// talhão — usado tanto pelo Mapa de Escoamento quanto pelo Risco de Erosão (RUSLE), pra não repetir
+// a mesma busca de elevação/cálculo duas vezes. Devolve null se algo faltar (sem API, contorno
+// inválido etc.) — quem chamar já cuida da mensagem de erro apropriada pro contexto.
+async function _calcularHidrologiaTalhao(t, n) {
   const ring = [...t.polyPts.map(p => [p.lng, p.lat]), [t.polyPts[0].lng, t.polyPts[0].lat]];
   let poly;
   try { poly = turf.polygon([ring]); turf.rewind(poly, {mutate:true}); }
-  catch(e) { setStatus('Erro ao processar o polígono do talhão.', 'err'); return; }
+  catch(e) { return null; }
 
-  limparMapaEscoamento(t);
-  $('btnEscoamento').disabled = true;
-  setStatus('Buscando elevações do terreno para o mapa de escoamento…', 'info');
-
-  const n = parseInt($('escoamentoGrid').value) || 40;
   // Margem de 15% ao redor do talhão — água que escoa por dentro pode vir de uma área um pouco
   // maior do que o próprio contorno, e o cálculo de direção precisa de vizinhos além da borda.
   const [minLng0, minLat0, maxLng0, maxLat0] = turf.bbox(poly);
@@ -3016,9 +3064,12 @@ async function gerarMapaEscoamento() {
   const mLat = 111320, mLngLocal = Math.cos((minLat + maxLat) / 2 * Math.PI / 180) * 111320;
 
   // ── D8: cada célula escoa pro vizinho (dos 8) com maior declive — padrão da indústria pra
-  // direção de fluxo em grade regular (o mesmo usado no ArcHydro/TauDEM/QGIS "r.watershed").
+  // direção de fluxo em grade regular (o mesmo usado no ArcHydro/TauDEM/QGIS "r.watershed"). De
+  // quebra, guarda a própria declividade (tangente) de cada célula (slopeArr) — reaproveitada pelo
+  // fator LS do Risco de Erosão, sem precisar recalcular.
   const DIRS = _ESCOAMENTO_DIRS;
   const flowTo = Array.from({ length: n }, () => new Array(n).fill(-1));
+  const slopeArr = Array.from({ length: n }, () => new Array(n).fill(0));
   for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) {
     let bestSlope = 0, bestDir = -1;
     for(let k = 0; k < DIRS.length; k++) {
@@ -3029,6 +3080,7 @@ async function gerarMapaEscoamento() {
       if(slope > bestSlope) { bestSlope = slope; bestDir = k; }
     }
     flowTo[r][c] = bestDir;
+    slopeArr[r][c] = bestSlope;
   }
 
   // ── Acúmulo de fluxo: processa da célula mais alta pra mais baixa — quando chega a vez de uma
@@ -3043,6 +3095,24 @@ async function gerarMapaEscoamento() {
     if(k < 0) return;
     accum[r + DIRS[k][0]][c + DIRS[k][1]] += accum[r][c];
   });
+
+  return { poly, minLat, maxLat, minLng, maxLng, lats, lngs, elev, dxM, dyM, mLat, mLngLocal, flowTo, accum, slopeArr, n };
+}
+
+async function gerarMapaEscoamento() {
+  if(talhaoSelecionadoUid === null) { setStatus('Selecione um talhão primeiro.', 'err'); return; }
+  if(!window.google || !window.google.maps) { setStatus('Ative o Google Maps (chave API) para o mapa de escoamento.', 'err'); return; }
+  const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
+  if(!t) return;
+
+  limparMapaEscoamento(t);
+  $('btnEscoamento').disabled = true;
+  setStatus('Buscando elevações do terreno para o mapa de escoamento…', 'info');
+
+  const n = parseInt($('escoamentoGrid').value) || 40;
+  const hid = await _calcularHidrologiaTalhao(t, n);
+  if(!hid) { $('btnEscoamento').disabled = false; setStatus('Erro ao processar o polígono do talhão.', 'err'); return; }
+  const { poly, minLat, maxLat, minLng, maxLng, lats, lngs, elev, dxM, dyM, mLat, mLngLocal, accum } = hid;
 
   // ── Mapa de calor (acúmulo em escala log — a distribuição é MUITO assimétrica: a maioria das
   // células tem acúmulo baixo, poucos "canais" concentram muito) ──────────────────────────────
@@ -3123,6 +3193,165 @@ function limparMapaEscoamentoSelecionado() {
   $('btnLimparEscoamento').style.display = 'none';
   $('secLegendaEscoamento').style.display = 'none';
   setStatus(`Mapa de escoamento removido — Talhão ${t.idx}.`, 'ok');
+}
+
+// ══ Risco de Erosão (RUSLE) ═══════════════════════════════════════════════════════════════════
+// Complementa o Mapa de Escoamento: em vez de só mostrar POR ONDE a água passa, estima ONDE o
+// risco de perda de solo é mais grave, cruzando o relevo (já calculado pra o escoamento) com a
+// chuva real do local — a "intensidade de chuva" que foi pedida, no mesmo espírito do "Simular
+// Chuva" do AgroCAD, mas aqui usando o modelo internacional padrão da conservação de solo (USLE/
+// RUSLE — Wischmeier & Smith 1978 / Renard et al. 1997), o mesmo por trás de qualquer estudo de
+// erosão em Civil3D/QGIS: A = R · K · LS · C · P (perda de solo, t/ha/ano).
+//   R  — erosividade da chuva (o quanto a chuva LOCAL é agressiva). Calculado de verdade a partir
+//        de dados climáticos reais (NASA POWER, mesma fonte já usada no Balanço Climático) pela
+//        equação de Lombardi Neto & Moldenhauer (1992), padrão no Brasil pra estimar erosividade
+//        só com precipitação mensal (não exige pluviograma de alta resolução, que não temos).
+//   K  — erodibilidade do solo (o quanto ESSE solo resiste à chuva). Não temos levantamento
+//        pedológico, então o usuário escolhe a classe textural mais próxima (valores típicos de
+//        Bertoni & Lombardi Neto, "Conservação do Solo").
+//   LS — fator topográfico (comprimento de rampa × declividade). Calculado direto da mesma grade
+//        de elevação/acúmulo de fluxo do Mapa de Escoamento (fórmula de Moore & Burch 1986, a
+//        versão de LS adaptada pra grade regular/GIS, equivalente ao que ArcHydro/SAGA/QGIS usam).
+//   C, P — cobertura do solo e prática de suporte. C o usuário escolhe (estado da lavoura); P fica
+//        fixo em 1 (sem prática) DE PROPÓSITO — o resultado é o cenário de "pior caso, sem
+//        terraço", que é justamente o que ajuda a decidir SE precisa de terraço.
+// Resolução da grade fixa (não usa o seletor do Mapa de Escoamento): LS depende do número de
+// células acumuladas rio acima, então mudar a resolução mudaria os números só por causa da conta,
+// não porque o risco real mudou — fixar evita reintroduzir o mesmo tipo de instabilidade corrigida
+// no Mapa de Escoamento.
+const _EROSAO_GRID_N = 40;
+
+// Fonte: NASA POWER, climatologia mensal de precipitação (mm/dia médio por mês) — mesmo serviço
+// gratuito e sem chave usado no Balanço Climático, aqui só pro fator R.
+async function _buscarClimatologiaChuva(lat, lng) {
+  const url = `https://power.larc.nasa.gov/api/temporal/climatology/point?parameters=PRECTOTCORR&community=AG&longitude=${lng.toFixed(4)}&latitude=${lat.toFixed(4)}&format=JSON`;
+  const resp = await fetch(url);
+  if(!resp.ok) throw new Error('HTTP ' + resp.status);
+  const data = await resp.json();
+  const p = data && data.properties && data.properties.parameter && data.properties.parameter.PRECTOTCORR;
+  if(!p) throw new Error('resposta sem dados de precipitação');
+  const MESES = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+  const DIAS_MES = [31, 28.25, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const monthlyMM = MESES.map((m, i) => (p[m] ?? 0) * DIAS_MES[i]);
+  const annualMM = monthlyMM.reduce((a, b) => a + b, 0);
+  return { monthlyMM, annualMM };
+}
+
+// Equação de Lombardi Neto & Moldenhauer (1992): EI30_mês = 67,355·(p²/P)^0,85, R = Σ EI30_mês.
+function _calcularFatorR(monthlyMM, annualMM) {
+  if(!(annualMM > 0)) return 0;
+  let R = 0;
+  monthlyMM.forEach(p => { if(p > 0) R += 67.355 * Math.pow((p * p) / annualMM, 0.85); });
+  return R;
+}
+
+// Moore & Burch (1986): LS = (As/22,13)^0,4 · (senβ/0,0896)^1,3 — As = área de contribuição
+// específica (acúmulo de células × tamanho de célula, m²/m), β = ângulo de declividade da célula
+// (a partir da tangente já calculada no D8, slopeArr). Limitado a um teto (LS_MAX) porque a fórmula
+// não vale pra extrapolar indefinidamente perto de canais concentrados (ali já é erosão em sulco/
+// voçoroca, outro fenômeno — não mais "em lençol", que é o que a USLE/RUSLE modela).
+const _EROSAO_LS_MAX = 25;
+function _calcularLS(accumCell, cellSizeM, tanSlope) {
+  const As = accumCell * cellSizeM;
+  const sinBeta = tanSlope / Math.sqrt(1 + tanSlope * tanSlope);
+  const LS = Math.pow(As / 22.13, 0.4) * Math.pow(Math.max(sinBeta, 0.001) / 0.0896, 1.3);
+  return Math.min(_EROSAO_LS_MAX, LS);
+}
+
+const _EROSAO_K_POR_CLASSE = {
+  arenoso: 0.045,      // areia / Neossolo Quartzarênico — mais erodível
+  franco: 0.030,       // franco-arenoso
+  latossolo: 0.015,    // Latossolo argiloso (Cerrado) — bem agregado, menos erodível
+  argissolo: 0.025     // Argissolo / mudança textural abrupta
+};
+
+function _corRiscoErosao(A) {
+  if(A < 10) return [76, 175, 80];    // tolerável
+  if(A < 20) return [255, 235, 59];   // moderado
+  if(A < 50) return [255, 152, 0];    // alto
+  return [244, 67, 54];               // muito alto
+}
+
+async function gerarRiscoErosao() {
+  if(talhaoSelecionadoUid === null) { setStatus('Selecione um talhão primeiro.', 'err'); return; }
+  if(!window.google || !window.google.maps) { setStatus('Ative o Google Maps (chave API) para o risco de erosão.', 'err'); return; }
+  const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
+  if(!t) return;
+
+  limparRiscoErosao(t);
+  $('btnRiscoErosao').disabled = true;
+  setStatus('Buscando dados de chuva (NASA POWER) e elevação do terreno…', 'info');
+
+  const hid = await _calcularHidrologiaTalhao(t, _EROSAO_GRID_N);
+  if(!hid) { $('btnRiscoErosao').disabled = false; setStatus('Erro ao processar o polígono do talhão.', 'err'); return; }
+  const { poly, minLat, maxLat, minLng, maxLng, lats, lngs, dxM, dyM, accum, slopeArr, n } = hid;
+
+  const centro = turf.center(poly).geometry.coordinates; // [lng, lat]
+  let R, chuvaAnualMM;
+  try {
+    const clima = await _buscarClimatologiaChuva(centro[1], centro[0]);
+    R = _calcularFatorR(clima.monthlyMM, clima.annualMM);
+    chuvaAnualMM = clima.annualMM;
+  } catch(e) {
+    $('btnRiscoErosao').disabled = false;
+    setStatus('Erro ao buscar dados de chuva (NASA POWER) — verifique a conexão e tente novamente.', 'err');
+    return;
+  }
+  if(!(R > 0)) {
+    $('btnRiscoErosao').disabled = false;
+    setStatus('Não foi possível estimar a erosividade da chuva (fator R) para essa localização.', 'err');
+    return;
+  }
+
+  const K = _EROSAO_K_POR_CLASSE[$('erosaoK').value] ?? 0.02;
+  const C = parseFloat($('erosaoC').value) || 1;
+  const P = 1; // cenário de "sem prática de conservação" — de propósito, ver comentário acima
+  const cellSizeM = (dxM + dyM) / 2;
+
+  const canvas = document.createElement('canvas'); canvas.width = n; canvas.height = n;
+  const ctx = canvas.getContext('2d');
+  let maxA = 0, somaA = 0, nCel = 0, nAlto = 0;
+  const perdaGrid = Array.from({ length: n }, () => new Array(n).fill(0));
+  for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) {
+    if(!turf.booleanPointInPolygon(turf.point([lngs[c], lats[r]]), poly)) continue;
+    const LS = _calcularLS(accum[r][c], cellSizeM, slopeArr[r][c]);
+    const A = R * K * LS * C * P;
+    perdaGrid[r][c] = A;
+    if(A > maxA) maxA = A;
+    somaA += A; nCel++;
+    if(A >= 20) nAlto++;
+  }
+  if(nCel === 0) { $('btnRiscoErosao').disabled = false; setStatus('Sem células dentro do talhão para calcular.', 'err'); return; }
+
+  for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) {
+    if(!turf.booleanPointInPolygon(turf.point([lngs[c], lats[r]]), poly)) continue;
+    const [cr, cg, cb] = _corRiscoErosao(perdaGrid[r][c]);
+    const alpha = Math.min(0.82, 0.35 + Math.min(1, perdaGrid[r][c] / Math.max(1, maxA)) * 0.5);
+    ctx.fillStyle = `rgba(${cr},${cg},${cb},${alpha.toFixed(3)})`;
+    ctx.fillRect(c, n - 1 - r, 1, 1);
+  }
+
+  $('btnRiscoErosao').disabled = false;
+  t.erosaoOverlay = L.imageOverlay(canvas.toDataURL(), [[minLat, minLng], [maxLat, maxLng]], { opacity: 1, interactive: false }).addTo(map);
+  t._erosaoResumo = { R, K, C, chuvaAnualMM, mediaTHaAno: somaA / nCel, maxTHaAno: maxA, pctAlto: (nAlto / nCel) * 100 };
+  $('btnLimparRiscoErosao').style.display = 'flex';
+  $('secLegendaErosao').style.display = '';
+
+  const pctAlto = ((nAlto / nCel) * 100).toFixed(0);
+  setStatus(`Risco de erosão (RUSLE) — Talhão ${t.idx}. Chuva ~${Math.round(chuvaAnualMM)}mm/ano (R=${R.toFixed(0)} MJ.mm/ha.h.ano) · perda potencial média ${(somaA / nCel).toFixed(1)} t/ha/ano, máx ${maxA.toFixed(1)} · ${pctAlto}% da área em risco alto/muito alto — cenário de solo exposto e sem terraço.`, 'ok');
+}
+
+function limparRiscoErosao(t) {
+  if(t && t.erosaoOverlay) { t.erosaoOverlay.remove(); t.erosaoOverlay = null; }
+}
+function limparRiscoErosaoSelecionado() {
+  if(talhaoSelecionadoUid === null) return;
+  const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
+  if(!t) return;
+  limparRiscoErosao(t);
+  $('btnLimparRiscoErosao').style.display = 'none';
+  $('secLegendaErosao').style.display = 'none';
+  setStatus(`Risco de erosão removido — Talhão ${t.idx}.`, 'ok');
 }
 
 // Interpola pontos ao longo de uma polilinha com espaçamento fixo
