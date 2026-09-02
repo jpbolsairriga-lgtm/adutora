@@ -242,7 +242,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.19 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.20 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1213,6 +1213,22 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // grosseira da fonte por trás da Elevation API) numa grade 60x60 — 0 talvegues antes do fix, 92
 // depois, com as demais 4 suítes de teste (Vista 3D, curvas+declividade, curva-como-guia, vale
 // sintético limpo/ruidoso em 3 resoluções) confirmando nenhuma regressão.
+// v4.20: usuário conseguiu exportar o resultado REAL do AgroCAD ("Simular Chuva") sem misturar
+// curvas de nível — comparação direta lado a lado com o mesmo talhão revelou que meu algoritmo
+// (baseado em "cabeças de canal": só traça a partir dos pontos de maior acúmulo de fluxo) cobria
+// só uma fração pequena do talhão, deixando a maior parte do relevo sem nenhuma linha — enquanto o
+// AgroCAD cobre a encosta INTEIRA com uma "gota" por ponto de uma malha regular (a mesma lógica do
+// "Water Drop" do Civil3D: não filtra por acúmulo, solta água em cada ponto e traça pra onde ela
+// desce). Faz mais sentido pro que interessa aqui — saber, em QUALQUER parte do talhão, se uma
+// linha de plantio vai cruzar o sentido da água, não só nos poucos canais mais concentrados.
+// Reescrito: sementes agora cobrem o talhão inteiro numa malha regular (espaçamento real em metros,
+// calibrado pela ÁREA do talhão — mais gotas num talhão grande, menos num pequeno — em vez de
+// depender da resolução da grade de elevação). O mapa de calor de acúmulo continua igual (ainda útil
+// pra destacar onde o volume se concentra mais). Validado visualmente com talhão sintético irregular
+// inclinado: cobertura em leque por toda a encosta, comparável em padrão ao resultado real do
+// AgroCAD anexado pelo usuário. Suíte completa sem regressões (contagens de segmento mudaram — eram
+// esperadas mudar, já que a estratégia de sementes é outra — mas continuam estáveis/não-zero em
+// todas as resoluções testadas).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -3047,35 +3063,37 @@ async function gerarMapaEscoamento() {
   if(!algumaCelula) { setStatus('Não foi possível gerar o mapa de escoamento — sem dados de elevação suficientes.', 'err'); return; }
   t.escoamentoOverlay = L.imageOverlay(canvas.toDataURL(), [[minLat, minLng], [maxLat, maxLng]], { opacity: 1, interactive: false }).addTo(map);
 
-  // ── Talvegues (linhas de escoamento concentrado) ────────────────────────────────────────────
-  // v1 conectava só os CENTROS das células vizinhas da grade — em relevo suave (a maioria dos
-  // casos reais) a direção D8 muda pouco de uma célula pra outra, então o resultado saía com cara
-  // de grade/reta demais, sem o jeito "orgânico" de rio de verdade (Civil3D/QGIS traçam sobre a
-  // superfície interpolada, não célula a célula). Corrigido: identifica só as "cabeças de canal"
-  // (células acima do limiar SEM nenhuma vizinha montante também acima do limiar — um ponto de
-  // partida por canal distinto, não um por célula) e traça o caminho de descida mais íngreme em
-  // passos curtos sobre o campo de elevação interpolado (bilinear), até sair da área ou achatar.
-  const limiar = Math.max(5, Math.round(n * n * 0.008));
+  // ── Talvegues (linhas de escoamento) ────────────────────────────────────────────────────────
+  // v1 conectava só os CENTROS das células vizinhas da grade (resultado quadriculado demais).
+  // v1.1 corrigiu isso traçando o caminho sobre o campo interpolado, mas só a partir das "cabeças
+  // de canal" (poucas sementes, só nos pontos de maior acúmulo) — comparei com o resultado real do
+  // AgroCAD ("Simular Chuva") no mesmo talhão e o AgroCAD cobre a encosta INTEIRA com uma "gota"
+  // por ponto de uma malha regular (a mesma lógica do "Water Drop" do Civil3D: não filtra por
+  // acúmulo, simplesmente solta água em cada ponto e traça pra onde ela desce) — é isso que dá
+  // aquele efeito de "sombreado" mostrando o sentido do escoamento em QUALQUER parte do talhão, não
+  // só nos poucos canais mais concentrados. Faz mais sentido pra decidir alinhamento de linha de
+  // plantio (querendo saber, em qualquer ponto do talhão, se a linha vai cruzar o sentido da água),
+  // então trocado pra essa mesma lógica: uma gota por ponto de uma malha regular cobrindo todo o
+  // talhão, sem depender do limiar de acúmulo. Densidade acompanha a resolução escolhida acima.
   const sampler = _mkEscoamentoSampler(elev, lats, lngs, n);
+  // Espaçamento real (metros) entre gotas, não célula da grade de elevação — assim a densidade
+  // acompanha o TAMANHO do talhão (mais gotas num talhão grande, menos num pequeno), do jeito que
+  // uma chuva de verdade cairia, em vez de depender da resolução escolhida acima. Calibrado pra
+  // ficar na mesma ordem de grandeza do resultado real do AgroCAD comparado (~130 gotas num
+  // talhão de 36 ha ≈ 1 gota a cada ~50m — aqui miramos ~150 gotas como alvo nesse tamanho).
+  const areaM2 = turf.area(poly);
+  const spacingM = Math.max(10, Math.min(60, Math.sqrt(areaM2 / 150)));
   const seeds = [];
-  for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) {
-    if(accum[r][c] < limiar) continue;
-    let temMontanteCanal = false;
-    for(let k = 0; k < DIRS.length; k++) {
-      const pr = r - DIRS[k][0], pc = c - DIRS[k][1];
-      if(pr < 0 || pr >= n || pc < 0 || pc >= n) continue;
-      if(flowTo[pr][pc] === k && accum[pr][pc] >= limiar) { temMontanteCanal = true; break; }
+  for(let lat = minLat + spacingM / mLat / 2; lat < maxLat; lat += spacingM / mLat) {
+    for(let lng = minLng + spacingM / mLngLocal / 2; lng < maxLng; lng += spacingM / mLngLocal) {
+      if(!turf.booleanPointInPolygon(turf.point([lng, lat]), poly)) continue;
+      seeds.push([lat, lng]);
     }
-    if(!temMontanteCanal) seeds.push([r, c, accum[r][c]]);
   }
-  // Se tiver muitas cabeças de canal (relevo bem recortado), prioriza as de maior acúmulo — foca
-  // nos canais mais significativos em vez de poluir o mapa com dezenas de riachos minúsculos.
-  seeds.sort((a, b) => b[2] - a[2]);
-  const seedsUsados = seeds.slice(0, 60);
 
   const bounds = { latMin: minLat, latMax: maxLat, lngMin: minLng, lngMax: maxLng };
   const stepM = Math.max(2, Math.min(dxM, dyM) * 0.6);
-  const paths = seedsUsados.map(([r, c]) => _traceFlowPath(sampler, lats[r], lngs[c], mLat, mLngLocal, stepM, 400, bounds));
+  const paths = seeds.map(([lat, lng]) => _traceFlowPath(sampler, lat, lng, mLat, mLngLocal, stepM, 400, bounds));
 
   const segs = [];
   paths.forEach(path => {
