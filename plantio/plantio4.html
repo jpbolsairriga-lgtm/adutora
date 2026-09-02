@@ -242,7 +242,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.22 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.23 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -807,6 +807,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
     <button id="m3da-btnBg" onclick="ciclarFundo3DAnalise()">🛰️ Satélite</button>
     <button id="m3da-btnOrtho" onclick="toggleOrtografica3DAnalise()" title="Câmera ortogonal olhando reto de cima — sem a distorção de perspectiva que desloca terreno alto na tela, útil pra comparar com o mapa 2D">📐 Vista de Cima</button>
     <button id="m3da-btnCurvas" onclick="toggleCurvas3DAnalise()" style="display:none;">🗺️ Ocultar Curvas</button>
+    <button id="m3da-btnTalvegues" onclick="toggleTalvegues3DAnalise()" style="display:none;">🌊 Ocultar Talvegues</button>
     <label id="m3da-corSolidoWrap" title="Cor do terreno no modo 'Terreno sólido'">
       <span>Cor do terreno</span>
       <input type="color" id="m3da-corSolido" value="#8fbf6a" oninput="atualizarCorSolido3DAnalise(this.value)">
@@ -827,6 +828,13 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
     <span class="sw" style="background:#FF9800;"></span>8–12% Terraços obrigatórios<br>
     <span class="sw" style="background:#F44336;"></span>12–20% Mecanização limitada<br>
     <span class="sw" style="background:#9C27B0;"></span>&gt;20% Preservação
+  </div>
+  <div id="m3da-erosaoLegend" style="display:none;position:absolute;bottom:14px;left:14px;background:rgba(5,10,18,.75);color:#ffffffcc;font-size:11px;line-height:2;padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.18);pointer-events:none;">
+    <b style="display:block;font-size:10px;letter-spacing:.08em;color:#cfd8dc;text-transform:uppercase;margin-bottom:3px;">Risco de Erosão (RUSLE)</b>
+    <span class="sw" style="display:inline-block;width:11px;height:11px;border-radius:2px;vertical-align:middle;margin-right:6px;background:#4CAF50;"></span>&lt; 10 t/ha/ano Tolerável<br>
+    <span class="sw" style="display:inline-block;width:11px;height:11px;border-radius:2px;vertical-align:middle;margin-right:6px;background:#FFEB3B;"></span>10–20 Moderado<br>
+    <span class="sw" style="display:inline-block;width:11px;height:11px;border-radius:2px;vertical-align:middle;margin-right:6px;background:#FF9800;"></span>20–50 Alto<br>
+    <span class="sw" style="display:inline-block;width:11px;height:11px;border-radius:2px;vertical-align:middle;margin-right:6px;background:#F44336;"></span>&gt; 50 Muito alto
   </div>
 </div>
 
@@ -1325,6 +1333,23 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // por isso a faixa de opções, não um valor único). Validado: 16 opções de solo (4+12) e 7 de
 // cobertura confirmadas na tela; opacidade mínima observada nos pixels do mapa gerado bate com o
 // piso fixo da faixa mais fraca (deixou de ficar pálido). Suíte completa sem regressões.
+// v4.23: leva os resultados de Mapa de Escoamento e Risco de Erosão pra Vista 3D, como pedido —
+// "quero jogar esses resultados na vista 3d". (1) Talvegues: renderizados colados no relevo, mesma
+// técnica de resampling+amostragem exata da malha já usada nas curvas de nível/linhas de plantio,
+// cor ciano igual ao 2D — botão próprio "🌊 Ocultar/Mostrar Talvegues" (só aparece se algum talhão
+// tiver o Mapa de Escoamento gerado). (2) Risco de Erosão: virou um novo modo de fundo do terreno
+// (botão "🛰️ Satélite", cicla agora sat→declividade→risco de erosão→sólido) — em vez de só colar a
+// imagem pequena que o Risco de Erosão 2D gera (que cobre só um talhão, numa área menor que o
+// retângulo inteiro renderizado na Vista 3D), reaproveita a PRÓPRIA grade de elevação já buscada
+// pra Vista 3D e roda o mesmo pipeline (_preencherDepressoes + D8, fatorado como função
+// compartilhada nova _calcularD8Acumulo, sem precisar de nenhuma consulta extra à API de elevação)
+// — resultado: risco de erosão cobrindo TODOS os talhões da vista de uma vez, com o fator K/C que
+// cada talhão já tiver configurado no Risco de Erosão 2D (ou o padrão, se ainda não rodou lá). A
+// chuva real do local (fator R, NASA POWER) é buscada em paralelo com o resto, sem travar a
+// abertura — mesmo princípio já usado pra foto de satélite, só entra no ciclo de fundos quando fica
+// pronta. Validado: talvegues aparecem na Vista 3D com a mesma contagem do 2D, modo "Risco de
+// Erosão" aparece corretamente no ciclo de fundos com a legenda própria, toggle de talvegues
+// funciona. Suíte completa sem regressões.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -3105,10 +3130,17 @@ async function _calcularHidrologiaTalhao(t, n) {
   const dyM = haversineM({ lat: minLat, lng: minLng }, { lat: maxLat, lng: minLng }) / Math.max(1, n - 1);
   const mLat = 111320, mLngLocal = Math.cos((minLat + maxLat) / 2 * Math.PI / 180) * 111320;
 
-  // ── D8: cada célula escoa pro vizinho (dos 8) com maior declive — padrão da indústria pra
-  // direção de fluxo em grade regular (o mesmo usado no ArcHydro/TauDEM/QGIS "r.watershed"). De
-  // quebra, guarda a própria declividade (tangente) de cada célula (slopeArr) — reaproveitada pelo
-  // fator LS do Risco de Erosão, sem precisar recalcular.
+  const { flowTo, accum, slopeArr } = _calcularD8Acumulo(elev, n, dxM, dyM);
+
+  return { poly, minLat, maxLat, minLng, maxLng, lats, lngs, elev, dxM, dyM, mLat, mLngLocal, flowTo, accum, slopeArr, n };
+}
+
+// D8 (direção de fluxo pro vizinho — dos 8 — de maior declive, padrão ArcHydro/TauDEM/r.watershed)
+// + acúmulo de fluxo (quantas células rio acima escoam pra cada célula) sobre uma grade de elevação
+// JÁ preenchida (sem pits/platôs). Extraído de _calcularHidrologiaTalhao pra ser reaproveitado
+// também pela Vista 3D (que já tem sua PRÓPRIA grade de elevação, mais ampla que um talhão só —
+// sem isso precisaria buscar elevação de novo só pra desenhar o Risco de Erosão ali).
+function _calcularD8Acumulo(elev, n, dxM, dyM) {
   const DIRS = _ESCOAMENTO_DIRS;
   const flowTo = Array.from({ length: n }, () => new Array(n).fill(-1));
   const slopeArr = Array.from({ length: n }, () => new Array(n).fill(0));
@@ -3124,10 +3156,6 @@ async function _calcularHidrologiaTalhao(t, n) {
     flowTo[r][c] = bestDir;
     slopeArr[r][c] = bestSlope;
   }
-
-  // ── Acúmulo de fluxo: processa da célula mais alta pra mais baixa — quando chega a vez de uma
-  // célula, tudo que escoa PRA ela (de vizinhos mais altos) já foi somado, então empurrar o total
-  // dela pra jusante uma única vez, nessa ordem, basta (sem recursão/iteração repetida).
   const order = [];
   for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) order.push([r, c]);
   order.sort((a, b) => elev[b[0]][b[1]] - elev[a[0]][a[1]]);
@@ -3137,8 +3165,7 @@ async function _calcularHidrologiaTalhao(t, n) {
     if(k < 0) return;
     accum[r + DIRS[k][0]][c + DIRS[k][1]] += accum[r][c];
   });
-
-  return { poly, minLat, maxLat, minLng, maxLng, lats, lngs, elev, dxM, dyM, mLat, mLngLocal, flowTo, accum, slopeArr, n };
+  return { flowTo, accum, slopeArr };
 }
 
 async function gerarMapaEscoamento() {
@@ -5723,8 +5750,8 @@ let _3da_raf = null, _3da_renderer = null, _3da_scene = null, _3da_camera = null
 let _3da_cameraPersp = null, _3da_cameraOrtho = null, _3da_isOrtho = false;
 let _3da_span = 0, _3da_bcx = 0, _3da_bcy = 0;
 let _3da_terrGeo = null, _3da_terrRaw = null, _3da_matTerr = null, _3da_matTerrSat = null, _3da_terrMesh = null;
-let _3da_satTex = null, _3da_slopeTex = null;
-const _3DA_BG_MODES = ['sat', 'slope', 'solid'];
+let _3da_satTex = null, _3da_slopeTex = null, _3da_erosaoTex = null;
+const _3DA_BG_MODES = ['sat', 'slope', 'erosao', 'solid'];
 let _3da_bgMode = 'solid';
 // Cor do terreno sólido — lembrada entre sessões (o padrão fica claro demais pra alguns gostos,
 // por causa do tonemapping ACES + luz da cena; deixa o usuário escolher a cor que prefere).
@@ -5732,6 +5759,7 @@ let _3da_solidColor = localStorage.getItem('plantio3d_corSolido') || '#8fbf6a';
 let _3da_exag = 2;
 let _3da_lineObjs = []; // {geo, raw:Float32Array (elevação bruta por vértice), eps:number}
 let _3da_curvaMeshes = [], _3da_showCurvas = true, _3da_hasDeclLines = false;
+let _3da_talvegueMeshes = [], _3da_showTalvegues = true;
 const _3DA_NGT = 90;    // resolução da malha 3D (independente da grade de elevação buscada na API)
 
 // Em vez de buscar uma foto de satélite separada (com zoom/projeção calculados por este código,
@@ -5857,6 +5885,54 @@ function _3da_buildSlopeTex(sampler, toLL, bcx, bcy, halfW, halfH) {
   return tex;
 }
 
+// Textura de Risco de Erosão (RUSLE) sobre o mesmo retângulo geográfico do terreno — reaproveita a
+// PRÓPRIA grade de elevação já buscada pra Vista 3D (elevGrid/lats/lngs/n), sem nova consulta à API:
+// roda o mesmo pipeline de hidrologia (preenchimento de depressões + D8 + acúmulo, ver
+// _preencherDepressoes/_calcularD8Acumulo) direto nessa grade, e para cada célula usa o fator K/C que
+// o talhão correspondente já tiver configurado no Risco de Erosão 2D (ou o padrão, se o usuário nunca
+// rodou o cálculo lá) — mesmas fórmulas (_calcularLS/_corRiscoErosao), resultado idêntico ao do mapa
+// 2D, só que "colado" no relevo real. Fora do contorno de qualquer talhão fica transparente (o índice
+// de erosão só faz sentido dentro da área analisada). Resolução = a própria grade de elevação (n×n) —
+// de propósito, não uma malha mais fina: recalcular acúmulo de fluxo numa resolução diferente da que
+// os números "oficiais" do Risco de Erosão 2D usam reintroduziria a mesma instabilidade por resolução
+// já corrigida ali (ver changelog v4.19).
+function _3da_buildErosaoTex(elevGrid, lats, lngs, n, fontes, R) {
+  const dxM = haversineM({ lat: lats[0], lng: lngs[0] }, { lat: lats[0], lng: lngs[n - 1] }) / Math.max(1, n - 1);
+  const dyM = haversineM({ lat: lats[0], lng: lngs[0] }, { lat: lats[n - 1], lng: lngs[0] }) / Math.max(1, n - 1);
+  const elev = _preencherDepressoes(elevGrid, n);
+  const { accum, slopeArr } = _calcularD8Acumulo(elev, n, dxM, dyM);
+  const cellSizeM = (dxM + dyM) / 2;
+
+  const polys = fontes.map(t => {
+    try {
+      const ring = [...t.polyPts.map(p => [p.lng, p.lat]), [t.polyPts[0].lng, t.polyPts[0].lat]];
+      const poly = turf.polygon([ring]); turf.rewind(poly, { mutate: true });
+      return { poly, K: (t.erosaoResumo && t.erosaoResumo.K) || 0.015, C: (t.erosaoResumo && t.erosaoResumo.C) != null ? t.erosaoResumo.C : 1 };
+    } catch(e) { return null; }
+  }).filter(Boolean);
+  if(!polys.length) return null;
+
+  const canvas = document.createElement('canvas'); canvas.width = n; canvas.height = n;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, n, n);
+  let algumaCelula = false;
+  for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) {
+    const pt = turf.point([lngs[c], lats[r]]);
+    const alvo = polys.find(p => turf.booleanPointInPolygon(pt, p.poly));
+    if(!alvo) continue;
+    const LS = _calcularLS(accum[r][c], cellSizeM, slopeArr[r][c]);
+    const A = R * alvo.K * LS * alvo.C * 1;
+    const { rgb: [cr, cg, cb], alpha } = _corRiscoErosao(A);
+    ctx.fillStyle = `rgba(${cr},${cg},${cb},${alpha})`;
+    ctx.fillRect(c, n - 1 - r, 1, 1);
+    algumaCelula = true;
+  }
+  if(!algumaCelula) return null;
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter; tex.needsUpdate = true;
+  return tex;
+}
+
 // Constrói uma "fita" plana (dois triângulos por segmento) em vez de uma linha de 1px — WebGL
 // antialiasa MUITO melhor triângulos do que a primitiva GL_LINES (que em vários drivers/placas
 // nem antialiasa direito), e com centenas de linhas de plantio próximas vistas de longe a linha
@@ -5905,11 +5981,14 @@ function fecharVista3DAnalise() {
   _3da_scene = null; _3da_camera = null; _3da_controls = null;
   _3da_cameraPersp = null; _3da_cameraOrtho = null; _3da_isOrtho = false;
   _3da_terrGeo = null; _3da_terrRaw = null; _3da_matTerr = null; _3da_matTerrSat = null; _3da_terrMesh = null;
-  _3da_satTex = null; _3da_slopeTex = null; _3da_lineObjs = [];
+  _3da_satTex = null; _3da_slopeTex = null; _3da_erosaoTex = null; _3da_lineObjs = [];
   _3da_curvaMeshes = []; _3da_hasDeclLines = false; _3da_showCurvas = true;
+  _3da_talvegueMeshes = []; _3da_showTalvegues = true;
   _3da_bgMode = 'solid';
   const btnOrtho = $('m3da-btnOrtho'); if(btnOrtho) btnOrtho.textContent = '📐 Vista de Cima';
   const btnCurvas = $('m3da-btnCurvas'); if(btnCurvas) { btnCurvas.textContent = '🗺️ Ocultar Curvas'; btnCurvas.style.display = 'none'; }
+  const btnTalvegues = $('m3da-btnTalvegues'); if(btnTalvegues) { btnTalvegues.textContent = '🌊 Ocultar Talvegues'; btnTalvegues.style.display = 'none'; }
+  const erosaoLeg = $('m3da-erosaoLegend'); if(erosaoLeg) erosaoLeg.style.display = 'none';
   // troca o canvas (dispose() perde o contexto WebGL; canvas novo garante contexto limpo na próxima abertura)
   const modal = $('modal3dAnalise'), old = $('canvas3dAnalise');
   if(old) { const nc = document.createElement('canvas'); nc.id = 'canvas3dAnalise'; modal.insertBefore(nc, old); old.remove(); }
@@ -5984,11 +6063,16 @@ function ciclarFundo3DAnalise() {
   const btn = $('m3da-btnBg');
   const iniIdx = _3DA_BG_MODES.indexOf(_3da_bgMode);
   let idx = iniIdx;
-  do { idx = (idx + 1) % _3DA_BG_MODES.length; } while(_3DA_BG_MODES[idx] === 'sat' && !_3da_satTex && idx !== iniIdx);
+  // Pula 'sat'/'erosao' enquanto a textura correspondente ainda não chegou (busca assíncrona) —
+  // mesmo princípio dos dois: não trava o ciclo esperando, só entra na roda quando estiver pronta.
+  do { idx = (idx + 1) % _3DA_BG_MODES.length; } while(
+    ((_3DA_BG_MODES[idx] === 'sat' && !_3da_satTex) || (_3DA_BG_MODES[idx] === 'erosao' && !_3da_erosaoTex))
+    && idx !== iniIdx
+  );
   _3da_bgMode = _3DA_BG_MODES[idx];
   // Satélite usa o material SEM luz (matTerrSat) — mostra a foto exatamente como é, sem sombra/
-  // iluminação da cena alterando a cor (ver comentário na criação dos materiais). Declividade/verde
-  // sólido usam o material COM luz (matTerr), que mostra o relevo por sombreado.
+  // iluminação da cena alterando a cor (ver comentário na criação dos materiais). Declividade/Risco
+  // de Erosão/verde sólido usam o material COM luz (matTerr), que mostra o relevo por sombreado.
   if(_3da_bgMode === 'sat' && _3da_satTex) {
     _3da_matTerrSat.map = _3da_satTex; _3da_matTerrSat.needsUpdate = true;
     if(_3da_terrMesh) _3da_terrMesh.material = _3da_matTerrSat;
@@ -5997,12 +6081,17 @@ function ciclarFundo3DAnalise() {
     _3da_matTerr.map = _3da_slopeTex; _3da_matTerr.color.set(0xffffff); _3da_matTerr.needsUpdate = true;
     if(_3da_terrMesh) _3da_terrMesh.material = _3da_matTerr;
     btn.textContent = '🎨 Declividade';
+  } else if(_3da_bgMode === 'erosao' && _3da_erosaoTex) {
+    _3da_matTerr.map = _3da_erosaoTex; _3da_matTerr.color.set(0xffffff); _3da_matTerr.needsUpdate = true;
+    if(_3da_terrMesh) _3da_terrMesh.material = _3da_matTerr;
+    btn.textContent = '⚡ Risco de Erosão';
   } else {
     _3da_bgMode = 'solid'; _3da_matTerr.map = null; _3da_matTerr.color.set(_3da_solidColor); _3da_matTerr.needsUpdate = true;
     if(_3da_terrMesh) _3da_terrMesh.material = _3da_matTerr;
     btn.textContent = '🟢 Terreno sólido';
   }
   $('m3da-slopeLegend').style.display = (_3da_bgMode === 'slope' || _3da_hasDeclLines) ? 'block' : 'none';
+  $('m3da-erosaoLegend').style.display = (_3da_bgMode === 'erosao') ? 'block' : 'none';
 }
 
 // Mostra/esconde as curvas de nível na Vista 3D (se existirem — botão só aparece quando existem).
@@ -6011,6 +6100,14 @@ function toggleCurvas3DAnalise() {
   _3da_curvaMeshes.forEach(m => { m.visible = _3da_showCurvas; });
   const btn = $('m3da-btnCurvas');
   if(btn) btn.textContent = _3da_showCurvas ? '🗺️ Ocultar Curvas' : '🗺️ Mostrar Curvas';
+}
+
+// Mostra/esconde os talvegues do Mapa de Escoamento na Vista 3D (se existirem).
+function toggleTalvegues3DAnalise() {
+  _3da_showTalvegues = !_3da_showTalvegues;
+  _3da_talvegueMeshes.forEach(m => { m.visible = _3da_showTalvegues; });
+  const btn = $('m3da-btnTalvegues');
+  if(btn) btn.textContent = _3da_showTalvegues ? '🌊 Ocultar Talvegues' : '🌊 Mostrar Talvegues';
 }
 
 // Cor do modo "Terreno sólido" — o usuário escolhe, fica salva pra próxima vez (padrão fica claro
@@ -6041,7 +6138,8 @@ async function gerarVista3DAnalise() {
   const fontes = talhoesArquivados.map(t => ({
     idx: t.idx, cor: t.cor || '#42a5f5', corLinha: t.corLinha || '#FFD600',
     polyPts: t.polyPts, linhas: t.linhas || [], linhasDecl: t.linhasDecl || [], areaHa: t.areaHa,
-    count: t.count != null ? t.count : (t.linhas || []).length, metrosLin: t.metrosLin || 0
+    count: t.count != null ? t.count : (t.linhas || []).length, metrosLin: t.metrosLin || 0,
+    escoamentoLinhas: t.escoamentoLinhas || null, erosaoResumo: t._erosaoResumo || null
   }));
   if(turfPoly && polyPts.length >= 3) {
     let metrosLin = 0;
@@ -6319,6 +6417,31 @@ async function gerarVista3DAnalise() {
     _3da_hasDeclLines = temDeclLinhas;
     $('m3da-slopeLegend').style.display = (_3da_bgMode === 'slope' || temDeclLinhas) ? 'block' : 'none';
 
+    // Talvegues do Mapa de Escoamento (aba Análise, por talhão) — mesma cor ciano do mapa 2D,
+    // colados no relevo igual às curvas de nível/linhas de plantio.
+    let temTalvegues = false;
+    const talvSegList = [];
+    fontes.forEach(t => {
+      if(!t.escoamentoLinhas) return;
+      let segs; try { segs = t.escoamentoLinhas.getLatLngs(); } catch(e) { segs = []; }
+      segs.forEach(seg => {
+        if(!seg || seg.length < 2) return;
+        for(let i = 0; i < seg.length - 1; i++) {
+          const a = toXY(seg[i].lat, seg[i].lng), b = toXY(seg[i + 1].lat, seg[i + 1].lng);
+          _3da_pushResampledSeg(talvSegList, a.x, a.y, b.x, b.y, 4, meshSample);
+        }
+      });
+    });
+    if(talvSegList.length) {
+      const { geo, raw } = _3da_buildRibbon(talvSegList, 0.35);
+      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x00e5ff, side: THREE.DoubleSide }));
+      m.visible = _3da_showTalvegues; scene.add(m); _3da_talvegueMeshes.push(m);
+      _3da_lineObjs.push({ geo, raw, eps: 0.5 });
+      temTalvegues = true;
+      legenda.push({ label: 'Talvegues (Escoamento)', cor: '#00e5ff', ha: null });
+    }
+    $('m3da-btnTalvegues').style.display = temTalvegues ? '' : 'none';
+
     atualizarExagero3DAnalise($('m3da-exagRange').value);
 
     // ── Câmera enquadrando tudo ──────────────────────────────────────────
@@ -6381,6 +6504,22 @@ async function gerarVista3DAnalise() {
         _3da_satTex = tex;
         if(_3da_bgMode === 'solid') { _3da_bgMode = 'sat'; matTerrSat.map = tex; matTerrSat.needsUpdate = true; terrMesh.material = matTerrSat; $('m3da-btnBg').textContent = '🛰️ Satélite'; }
       } catch(e) { console.error('Textura do mapa 2D na Vista 3D:', e); }
+    })();
+
+    // ── Risco de Erosão (RUSLE) sobre o mesmo relevo — busca a chuva real do local (NASA POWER,
+    // fator R) em paralelo com o resto, sem travar a abertura da Vista 3D, e monta a textura
+    // reaproveitando a MESMA grade de elevação já buscada acima (ver _3da_buildErosaoTex — nenhuma
+    // consulta extra à API de elevação). Só entra no ciclo de fundos (botão "🛰️ Satélite") quando
+    // ficar pronta, igual à foto de satélite — até lá o ciclo simplesmente pula esse modo.
+    (async () => {
+      try {
+        const clima = await _buscarClimatologiaChuva(cLat, cLng);
+        const R = _calcularFatorR(clima.monthlyMM, clima.annualMM);
+        if(!(R > 0) || !_3da_renderer) return;
+        const tex = _3da_buildErosaoTex(elevGrid, lats, lngs, n, fontes, R);
+        if(!tex) return;
+        _3da_erosaoTex = tex;
+      } catch(e) { console.error('Textura de Risco de Erosão na Vista 3D:', e); }
     })();
   } catch(e) { console.error('Vista 3D Análise:', e); setStatus('Erro ao gerar a Vista 3D: ' + e.message, 'err'); fecharVista3DAnalise(); } });
 }
