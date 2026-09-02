@@ -242,7 +242,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.23 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.24 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -602,6 +602,30 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
           <button class="rbtn-sm clr" id="btnLimparRiscoErosao" style="display:none;" onclick="limparRiscoErosaoSelecionado()">&#10005; Limpar Risco</button>
         </div>
         <div class="rgroup-title">Risco de Erosão — RUSLE (talhão selecionado)</div>
+      </div>
+      <div class="rgroup">
+        <div class="rgroup-body">
+          <div class="rcol">
+            <label>Chuva de projeto (mm)</label>
+            <input type="number" id="vazaoChuvaMM" class="rfield" value="60" min="1" max="500" step="5">
+          </div>
+          <div class="rcol">
+            <label>Duração (min)</label>
+            <input type="number" id="vazaoDuracaoMin" class="rfield" value="30" min="1" max="1440" step="5">
+          </div>
+          <div class="rcol">
+            <label>Coeficiente de escoamento (C)</label>
+            <select id="vazaoC" class="rfield wide" title="Coeficiente de escoamento (Método Racional) — quanto da chuva vira enxurrada em vez de infiltrar. Valores aproximados de literatura de drenagem agrícola.">
+              <option value="exposto">Solo exposto / compactado</option>
+              <option value="emCrescimento" selected>Cultura em desenvolvimento</option>
+              <option value="estabelecida">Cultura estabelecida / boa cobertura</option>
+              <option value="pastagem">Pastagem / cobertura permanente</option>
+            </select>
+          </div>
+          <button class="rbtn-sm warn" id="btnVazaoPico" onclick="gerarVazaoPico()" title="Calcula a vazão de pico (Método Racional) nos pontos onde a água SAI do talhão, pra uma chuva de projeto específica (não é média histórica — é o evento que você escolher)">&#128167; Vazão de Pico</button>
+          <button class="rbtn-sm clr" id="btnLimparVazaoPico" style="display:none;" onclick="limparVazaoPicoSelecionado()">&#10005; Limpar Vazão</button>
+        </div>
+        <div class="rgroup-title">Vazão de Pico — Chuva de Projeto (talhão selecionado)</div>
       </div>
       <div class="rgroup">
         <div class="rgroup-body">
@@ -1350,6 +1374,24 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // pronta. Validado: talvegues aparecem na Vista 3D com a mesma contagem do 2D, modo "Risco de
 // Erosão" aparece corretamente no ciclo de fundos com a legenda própria, toggle de talvegues
 // funciona. Suíte completa sem regressões.
+// v4.24: nova ferramenta "Vazão de Pico — Chuva de Projeto", motivada pela pergunta "qual o volume
+// de chuva em cada simulação" — resposta era que nenhuma das duas ferramentas anteriores simulava
+// um EVENTO de chuva específico: o Mapa de Escoamento não usa volume nenhum (só topografia — o
+// caminho da água é o mesmo seja garoa ou tempestade) e o Risco de Erosão usa a MÉDIA HISTÓRICA
+// anual (NASA POWER), não um evento. Essa nova ferramenta sim: o usuário informa uma chuva de
+// projeto de verdade (mm em X minutos, ex: "60mm em 30min") e calcula, pelo Método Racional
+// (Q=C·I·A/360, clássico em drenagem agrícola quando não se tem um hidrograma completo), a vazão de
+// pico (L/s) em cada ponto onde a água efetivamente SAI do talhão — detectados como células cujo
+// destino de fluxo D8 fica fora do polígono, deduplicadas por proximidade (mesma hidrologia
+// compartilhada _calcularHidrologiaTalhao, sem nova busca de elevação). Marcadores no mapa 2D com
+// vazão e área de contribuição no tooltip; coeficiente de escoamento (C) por estado de cobertura
+// (solo exposto/cultura em desenvolvimento/estabelecida/pastagem — valores aproximados de
+// literatura de drenagem, diferente do fator C do RUSLE). De propósito NÃO usa uma curva IDF
+// regional embutida (não temos coeficientes confiáveis pra qualquer local do Brasil) — mais
+// transparente deixar o usuário informar a chuva de projeto direto do que aplicar uma fórmula
+// regional que pode não bater com o município dele. Validado: pontos de saída aparecem no fundo do
+// vale sintético testado; vazão escala exatamente linear com a chuva (2,000× ao dobrar mm) e com o
+// coeficiente C (razão exata 0,286 = 0,10/0,35 ao trocar cobertura). Suíte completa sem regressões.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -3453,6 +3495,116 @@ function limparRiscoErosaoSelecionado() {
   $('btnLimparRiscoErosao').style.display = 'none';
   $('secLegendaErosao').style.display = 'none';
   setStatus(`Risco de erosão removido — Talhão ${t.idx}.`, 'ok');
+}
+
+// ══ Vazão de Pico — Chuva de Projeto (Método Racional) ═══════════════════════════════════════
+// Complementa o Mapa de Escoamento e o Risco de Erosão com um terceiro jeito de olhar a água no
+// terreno — pedido depois da pergunta "qual o volume de chuva em cada simulação": nem o Mapa de
+// Escoamento (não usa volume nenhum, só a topografia — o CAMINHO da água é o mesmo seja garoa ou
+// tempestade) nem o Risco de Erosão (usa a MÉDIA HISTÓRICA anual, não um evento específico)
+// respondiam isso de verdade. Aqui sim: o usuário escolhe uma chuva de projeto de verdade — tantos
+// mm em tantos minutos (ex: "60mm em 30min", o jeito que normalmente se define uma chuva de projeto
+// pra dimensionar terraço/canal de escoamento no Brasil) — e a ferramenta calcula a vazão de pico
+// (L/s) em cada ponto onde a água SAI do talhão, pelo Método Racional (Q = C·I·A/360), o mesmo
+// método clássico usado em drenagem agrícola/urbana quando não se tem um hidrograma completo:
+//   Q (m³/s) = C · I (mm/h) · A (ha) / 360        — 360 é só conversão de unidade
+//   C = coeficiente de escoamento (quanto da chuva vira enxurrada em vez de infiltrar — 0 a 1)
+//   I = intensidade da chuva de projeto (mm da chuva ÷ duração em horas)
+//   A = área de contribuição daquele ponto de saída (do acúmulo de fluxo D8, já calculado)
+// Não usa uma curva IDF regional (não temos coeficientes confiáveis pra qualquer local do Brasil) —
+// o usuário informa a chuva de projeto diretamente, o que é mais transparente que usar uma fórmula
+// regional genérica que pode não bater com a realidade daquele município.
+function _acharPontosDeSaida(hid) {
+  const { poly, accum, flowTo, n } = hid;
+  const DIRS = _ESCOAMENTO_DIRS;
+  const candidatos = [];
+  for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) {
+    if(!turf.booleanPointInPolygon(turf.point([hid.lngs[c], hid.lats[r]]), poly)) continue;
+    const k = flowTo[r][c];
+    // "Saída": célula dentro do talhão cujo destino é fora da grade OU fora do polígono — é por
+    // ali que a água que passou por essa célula (e tudo que ela acumulou rio acima) deixa a área.
+    let saiDaArea = (k < 0);
+    if(!saiDaArea && k >= 0) {
+      const nr = r + DIRS[k][0], nc = c + DIRS[k][1];
+      saiDaArea = nr < 0 || nr >= n || nc < 0 || nc >= n || !turf.booleanPointInPolygon(turf.point([hid.lngs[nc], hid.lats[nr]]), poly);
+    }
+    if(saiDaArea && accum[r][c] > 1) candidatos.push({ r, c, accum: accum[r][c] });
+  }
+  candidatos.sort((a, b) => b.accum - a.accum);
+  // Deduplicação simples: pontos de saída vizinhos na borda representam basicamente o mesmo local
+  // de escoamento — mantém só o de maior acúmulo dentro de um raio mínimo, senão a borda toda
+  // aparece pontilhada de marcadores repetidos.
+  const raioMin = Math.max(2, Math.round(n * 0.08));
+  const escolhidos = [];
+  candidatos.forEach(cand => {
+    const jaTem = escolhidos.some(e => Math.hypot(e.r - cand.r, e.c - cand.c) < raioMin);
+    if(!jaTem) escolhidos.push(cand);
+  });
+  return escolhidos.slice(0, 8); // no máximo 8 pontos — foca nas saídas mais relevantes
+}
+
+const _VAZAO_C_POR_COBERTURA = {
+  exposto: 0.55,     // solo exposto/compactado, em preparo
+  emCrescimento: 0.35, // cultura em desenvolvimento, cobertura parcial
+  estabelecida: 0.20,  // cultura estabelecida, boa cobertura
+  pastagem: 0.10       // pastagem/cobertura permanente
+};
+
+async function gerarVazaoPico() {
+  if(talhaoSelecionadoUid === null) { setStatus('Selecione um talhão primeiro.', 'err'); return; }
+  if(!window.google || !window.google.maps) { setStatus('Ative o Google Maps (chave API) para a vazão de pico.', 'err'); return; }
+  const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
+  if(!t) return;
+
+  const chuvaMM = parseFloat($('vazaoChuvaMM').value) || 60;
+  const duracaoMin = parseFloat($('vazaoDuracaoMin').value) || 30;
+  if(chuvaMM <= 0 || duracaoMin <= 0) { setStatus('Informe uma chuva de projeto e duração válidas.', 'err'); return; }
+  const C = _VAZAO_C_POR_COBERTURA[$('vazaoC').value] ?? 0.35;
+  const I = chuvaMM / (duracaoMin / 60); // mm/h
+
+  limparVazaoPico(t);
+  $('btnVazaoPico').disabled = true;
+  setStatus('Buscando elevação do terreno para a vazão de pico…', 'info');
+
+  const n = parseInt($('escoamentoGrid').value) || 40;
+  const hid = await _calcularHidrologiaTalhao(t, n);
+  $('btnVazaoPico').disabled = false;
+  if(!hid) { setStatus('Erro ao processar o polígono do talhão.', 'err'); return; }
+
+  const cellAreaHa = (hid.dxM * hid.dyM) / 10000;
+  const pontos = _acharPontosDeSaida(hid);
+  if(!pontos.length) { setStatus('Nenhum ponto de saída identificado — relevo muito plano ou grade pequena.', 'err'); return; }
+
+  const markers = [];
+  let qTotal = 0, qMax = 0;
+  pontos.forEach(p => {
+    const areaHa = p.accum * cellAreaHa;
+    const Q_Ls = C * I * areaHa * 2.778; // Q(m³/s)=C·I·A/360 → ×1000 pra L/s = ×2,778
+    qTotal += Q_Ls; if(Q_Ls > qMax) qMax = Q_Ls;
+    const lat = hid.lats[p.r], lng = hid.lngs[p.c];
+    const raio = 6 + Math.min(14, Math.sqrt(Q_Ls));
+    const marker = L.circleMarker([lat, lng], {
+      radius: raio, color: '#fff', weight: 1.5, fillColor: '#ff5252', fillOpacity: 0.85, interactive: true
+    }).addTo(map);
+    marker.bindTooltip(`💧 ${Q_Ls.toFixed(1)} L/s<br>área contrib.: ${areaHa.toFixed(2)} ha`, { permanent: false, direction: 'top' });
+    markers.push(marker);
+  });
+  t.vazaoMarkers = markers;
+
+  $('btnLimparVazaoPico').style.display = 'flex';
+  setStatus(`Vazão de pico calculada — Talhão ${t.idx}. Chuva de projeto: ${chuvaMM}mm em ${duracaoMin}min (intensidade ${I.toFixed(0)}mm/h) · C=${C} · ${pontos.length} ponto(s) de saída · vazão total ≈ ${qTotal.toFixed(1)} L/s (maior ponto: ${qMax.toFixed(1)} L/s).`, 'ok');
+}
+
+function limparVazaoPico(t) {
+  if(t && t.vazaoMarkers) { t.vazaoMarkers.forEach(m => m.remove()); t.vazaoMarkers = null; }
+}
+function limparVazaoPicoSelecionado() {
+  if(talhaoSelecionadoUid === null) return;
+  const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
+  if(!t) return;
+  limparVazaoPico(t);
+  $('btnLimparVazaoPico').style.display = 'none';
+  setStatus(`Vazão de pico removida — Talhão ${t.idx}.`, 'ok');
 }
 
 // Interpola pontos ao longo de uma polilinha com espaçamento fixo
