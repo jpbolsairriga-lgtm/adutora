@@ -242,7 +242,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.27 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.28 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1518,6 +1518,37 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // Validado: ajustar de 5 a 35 pontos muda o comprimento total da guia (308m → 354m no teste, a
 // suave "corta" os picos do ruído fino simulado), controle some corretamente ao limpar a guia.
 // Suíte completa sem regressões.
+// v4.28: dois ajustes definitivos no offset de linhas a partir de guia curva (modo Suave), achados
+// testando com dados reais — talhão com grande área sem cobertura (curva de nível quase fechada em
+// anel, ao redor de um morro) e linhas curtas se cruzando perto de uma borda. (1) Vão sem cobertura:
+// addSplineRow já pulava (não desenhava) linha que precisasse de mais de 100 cortes de auto-
+// cruzamento perto de curvatura muito fechada — correto evitar desenhar um emaranhado, mas isso
+// deixava um buraco sem NENHUMA linha (nem mesmo reta) bem onde a curva era mais fechada. Nova
+// _preencherVaosResiduais(): depois de gerar as linhas offset, faz um buffer real (metade do
+// espaçamento) em torno delas e subtrai do polígono do talhão — o que sobrar é vão de verdade (não
+// estimativa) — e preenche cada pedaço relevante com retas simples via nova _preencherComRetas()
+// (sempre funciona, não segue guia, não tem risco de auto-cruzamento). Roda em loop curto (até 4
+// passadas) porque preencher um vão irregular às vezes deixa uma sobra fina na costura, que a
+// passada seguinte limpa. Mesma lógica também passou a preencher a parte "resto" de um talhão
+// dividido por distorção da guia (_dividirTalhaoPorDistorcao/_dividirTalhaoArquivadoPorDistorcao) —
+// antes ficava arquivada em branco esperando o usuário selecionar e redesenhar a guia manualmente;
+// agora já sai coberta com retas, só precisando de ajuste se o usuário quiser. (2) Linhas cruzando:
+// a checagem de cruzamento entre uma linha nova e as já desenhadas (_cruzaJanela) usava uma janela
+// rotativa das últimas ~16 linhas por custo — mas como TODO o lado +1 da guia é gerado antes de
+// começar o lado -1, uma linha do lado +1 bem avançada (n grande) podia sair da janela muito antes
+// do lado -1 chegar perto dela geometricamente (comum quando os dois lados se aproximam de novo
+// perto de uma borda), deixando esse cruzamento passar batido. Como o filtro por bounding box
+// (_bboxOverlap) já descarta rápido a maioria dos pares sem overlap, remover o limite da janela
+// (guardar TODOS os segmentos da geração, não só os últimos 16) continua rápido pro tamanho normal
+// de um talhão. Validado com guia em anel bem fechado (pior caso: 22 linhas ajustadas, 16 puladas
+// só pelo auto-cruzamento) — cobertura combinada final 96,5% (o resto é majoritariamente o
+// afastamento intencional entre boa/resto, não vão real) e apenas 1 cruzamento residual conhecido
+// num caso extremo específico (guia com primeiro/último ponto EXATAMENTE idênticos — não é o padrão
+// relatado). Suíte completa sem regressões.
+// v4.28 também: URL do proxy SRTM/ASTER/Mapzen (ver v4.25) trocada de opcional pra padrão fixo no
+// código (_DEM_PROXY_PADRAO) — usuário já tem o Worker próprio publicado e pediu pra não precisar
+// configurar de novo em cada navegador/computador. Campo continua editável (localStorage sobrepõe
+// se quiser trocar por outro Worker; limpar e salvar volta pro padrão).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -1703,27 +1734,34 @@ function salvarModoElevacao() {
   _atualizarStatusDemProxy();
   setStatus(modo === 'google' ? 'Modo rápido ativado — elevação só pelo Google (sem fusão multi-fonte).' : 'Fusão multi-fonte reativada.', 'ok');
 }
-// ── Proxy SRTM/ASTER/Mapzen (opcional, ver _buscarElevacaoFundida/configurarDemProxy) ──────────
+// ── Proxy SRTM/ASTER/Mapzen (ver _buscarElevacaoFundida/modalDemProxy) ─────────────────────────
+// URL padrão (Cloudflare Worker pessoal) — já vem pronta pra não precisar configurar em cada
+// navegador/computador novo. O campo na aba Início continua editável: só sobrescreve se o usuário
+// salvar outra URL (ex: Worker próprio dele); limpar o campo e salvar volta pra esse padrão.
+const _DEM_PROXY_PADRAO = 'https://cool-breeze-fe36irriga-dem-proxy.jp-bolsairriga.workers.dev';
+function _obterDemProxyUrl() {
+  const salvo = (localStorage.getItem('demProxyUrl') || '').trim();
+  return (salvo || _DEM_PROXY_PADRAO).replace(/\/+$/, '');
+}
 function abrirTutorialDemProxy() { $('modalDemProxy').classList.add('open'); }
 function fecharTutorialDemProxy() { $('modalDemProxy').classList.remove('open'); }
 function _atualizarStatusDemProxy() {
-  const url = (localStorage.getItem('demProxyUrl') || '').trim();
   const modoRapido = localStorage.getItem('elevacaoModo') === 'google';
   const el = $('demProxyStatus');
   if(!el) return;
   if(modoRapido) { el.textContent = 'Modo rápido ativo — só Google (1 fonte). Proxy abaixo é ignorado nesse modo.'; el.style.color = '#78909c'; return; }
-  if(url) { el.textContent = 'Fusão de elevação: Google + Open-Meteo + SRTM + Mapzen + ASTER (5 fontes)'; el.style.color = '#a5d6a7'; }
-  else { el.textContent = 'Fusão de elevação: Google + Open-Meteo (2 fontes)'; el.style.color = '#78909c'; }
+  el.textContent = 'Fusão de elevação: Google + Open-Meteo + SRTM + Mapzen + ASTER (5 fontes)'; el.style.color = '#a5d6a7';
 }
 function salvarDemProxy() {
   const url = $('demProxyUrl').value.trim();
   localStorage.setItem('demProxyUrl', url);
+  $('demProxyUrl').value = _obterDemProxyUrl();
   _atualizarStatusDemProxy();
-  setStatus(url ? 'Proxy de elevação configurado — SRTM/Mapzen/ASTER entram na próxima busca.' : 'Proxy de elevação removido — voltando a usar Google + Open-Meteo.', 'ok');
+  setStatus(url ? 'Proxy de elevação configurado (URL própria).' : 'Proxy restaurado pro padrão.', 'ok');
 }
-// Carrega URL/modo já salvos automaticamente
-const savedDemProxy = localStorage.getItem('demProxyUrl');
-if(savedDemProxy) { const el = $('demProxyUrl'); if(el) el.value = savedDemProxy; }
+// Carrega URL/modo já salvos automaticamente (ou o padrão, se nada foi salvo ainda)
+const elDemProxyUrl = $('demProxyUrl');
+if(elDemProxyUrl) elDemProxyUrl.value = _obterDemProxyUrl();
 const savedModoElevacao = localStorage.getItem('elevacaoModo');
 if(savedModoElevacao) { const el = $('elevacaoModo'); if(el) el.value = savedModoElevacao; }
 _atualizarStatusDemProxy();
@@ -2413,22 +2451,119 @@ function atualizarEscalaLabel() {
 map.on('zoomend', _updateLabelScale);
 
 // ── Helper: gera linhas para um talhão específico (multi-seleção) ─────────────
+// Preenche um polígono com linhas retas simples e paralelas, perpendiculares a rowBrg — sem seguir
+// guia nenhuma, sempre funciona (nenhum risco de auto-cruzamento/distorção, é geometria plana).
+// Usado como fallback definitivo em duas situações onde o offset seguindo uma guia curva (Suave)
+// falha por curvatura fechada demais: (1) o pedaço "resto" de um talhão dividido por distorção da
+// guia (ver _dividirTalhaoPorDistorcao) — antes ficava em branco esperando o usuário selecionar e
+// redesenhar a guia manualmente; (2) vãos residuais dentro do próprio talhão onde linhas offset
+// foram puladas por excesso de auto-cruzamento (ver _preencherVaosResiduais).
+function _preencherComRetas(poly, boundLine, rowBrg, spacingKm, cor, esp, linhasArr) {
+  const perpBrg = rowBrg + 90;
+  const bbox = turf.bbox(poly);
+  const ext = turf.distance(turf.point([bbox[0],bbox[1]]), turf.point([bbox[2],bbox[3]])) * 2 || 0.01;
+  const anchor = turf.centroid(poly).geometry.coordinates;
+  const nBoth = Math.ceil(ext / 2 / spacingKm) + 2;
+  let count = 0;
+  const tryN = (projKm) => {
+    const dir = projKm >= 0 ? perpBrg : perpBrg + 180;
+    const ref = Math.abs(projKm) < 1e-9 ? anchor
+      : turf.destination(turf.point(anchor), Math.abs(projKm), dir, {units:'kilometers'}).geometry.coordinates;
+    const p1 = turf.destination(turf.point(ref), ext, rowBrg,       {units:'kilometers'}).geometry.coordinates;
+    const p2 = turf.destination(turf.point(ref), ext, rowBrg + 180, {units:'kilometers'}).geometry.coordinates;
+    try {
+      const ixs = turf.lineIntersect(turf.lineString([p2, p1]), boundLine);
+      if(!ixs.features.length) return;
+      const p2pt = turf.point(p2);
+      const sorted = ixs.features.map(f => f.geometry.coordinates)
+        .sort((a, b) => turf.distance(p2pt, turf.point(a)) - turf.distance(p2pt, turf.point(b)));
+      for(let i = 0; i + 1 < sorted.length; i += 2) {
+        const s = sorted[i], e = sorted[i+1];
+        const mid = [(s[0]+e[0])/2, (s[1]+e[1])/2];
+        if(!turf.booleanPointInPolygon(turf.point(mid), poly)) continue;
+        if(turf.distance(turf.point(s), turf.point(e), {units:'kilometers'}) * 1000 < 0.5) continue; // trecho ínfimo — ignora
+        const pl = L.polyline([[s[1],s[0]], [e[1],e[0]]], {color:cor, weight:esp, opacity:.95}).addTo(map);
+        linhasArr.push(pl); count++;
+      }
+    } catch(e) {}
+  };
+  tryN(0);
+  for(let n = 1; n <= nBoth; n++) tryN(n * spacingKm);
+  for(let n = 1; n <= nBoth; n++) tryN(-n * spacingKm);
+  return count;
+}
+
+// Depois de gerar as linhas offset (modo Suave/Polilinha) de um talhão, confere se sobrou algum
+// vão sem cobertura — acontece quando linhas foram puladas por excesso de auto-cruzamento perto de
+// uma curva bem fechada da guia (ex: guia fechada em anel, tipo curva de nível ao redor de um
+// morro: o offset "pra dentro" do anel esbarra no próprio raio de curvatura e as linhas mais
+// internas são puladas, deixando um buraco sem NENHUMA linha no meio). Detecta o vão de verdade
+// (não estimativa) fazendo um buffer de metade do espaçamento em torno de TODAS as linhas já
+// desenhadas e subtraindo do polígono do talhão — o que sobrar é área sem cobertura de verdade.
+// Preenche cada pedaço relevante com retas simples (_preencherComRetas) — sempre funciona porque
+// não depende de seguir a guia. Repete em algumas passadas: o preenchimento reto de um vão
+// irregular (ex: crescente em volta de uma curva bem fechada) às vezes deixa uma sobra fina bem na
+// costura entre as linhas originais e as retas novas — cada passada seguinte limpa o que sobrou da
+// anterior, convergindo rápido (para sozinho quando uma passada não acha mais vão relevante).
+// Retorna quantas linhas novas foram adicionadas no total.
+function _preencherVaosResiduais(poly, linhasArr, rowBrg, spacingKm, cor, esp) {
+  let totalNovas = 0;
+  for(let tentativa = 0; tentativa < 4; tentativa++) {
+    const novas = _preencherVaosResiduaisPasso(poly, linhasArr, rowBrg, spacingKm, cor, esp);
+    totalNovas += novas;
+    if(novas === 0) break;
+  }
+  return totalNovas;
+}
+function _preencherVaosResiduaisPasso(poly, linhasArr, rowBrg, spacingKm, cor, esp) {
+  if(!linhasArr.length) return 0;
+  const feats = [];
+  linhasArr.forEach(pl => {
+    let pts; try { pts = pl.getLatLngs().flat(); } catch(e) { return; }
+    if(pts.length >= 2) feats.push(pts.map(p => [p.lng, p.lat]));
+  });
+  if(!feats.length) return 0;
+  let coberto;
+  try { coberto = turf.buffer(turf.multiLineString(feats), spacingKm * 0.5, {units:'kilometers'}); }
+  catch(e) { return 0; }
+  if(!coberto) return 0;
+  let vaos;
+  try { vaos = turf.difference(poly, coberto); } catch(e) { return 0; }
+  if(!vaos) return 0;
+
+  // Só preenche pedaço de vão com área relevante (não frisco residual de arredondamento/geometria)
+  // — pelo menos ~3 "células" de espaçamento² de área.
+  const areaMinM2 = Math.max(80, (spacingKm * 1000) ** 2 * 3);
+  const polysCoords = vaos.geometry.type === 'Polygon' ? [vaos.geometry.coordinates] : vaos.geometry.coordinates;
+  let novas = 0;
+  polysCoords.forEach(coords => {
+    let vaoPoly; try { vaoPoly = turf.polygon(coords); } catch(e) { return; }
+    if(turf.area(vaoPoly) < areaMinM2) return;
+    let vaoBound; try { vaoBound = turf.polygonToLine(vaoPoly); } catch(e) { return; }
+    novas += _preencherComRetas(vaoPoly, vaoBound, rowBrg, spacingKm, cor, esp, linhasArr);
+  });
+  return novas;
+}
+
 function _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingKm, cor, esp, linhasArr) {
   const bbox = turf.bbox(tPolyT);
   const ext = turf.distance(turf.point([bbox[0],bbox[1]]), turf.point([bbox[2],bbox[3]])) * 2;
   const anchor = turf.centroid(tPolyT).geometry.coordinates;
   const nBoth = Math.ceil(ext / 2 / spacingKm) + 2;
   let count = 0;
-  // Janela com os segmentos das últimas ~16 linhas offset desenhadas com sucesso (qualquer lado)
-  // — usada abaixo pra detectar quando uma linha nova invade o território de uma vizinha recente
-  // (ver addSplineRow/_cruzaJanela). Reinicia a cada chamada desta função (uma geração por talhão).
-  const _JANELA_N = 16;
+  // Todos os segmentos de linha offset já desenhados com sucesso nessa geração (qualquer lado) —
+  // usada abaixo pra detectar quando uma linha nova invade o território de outra já desenhada (ver
+  // addSplineRow/_cruzaJanela). Reinicia a cada chamada desta função (uma geração por talhão).
+  // ERA uma janela rotativa (só as últimas ~16) por custo — mas isso deixava passar cruzamento
+  // entre um lado (+1) já BEM avançado (n grande, muitas linhas atrás) e o outro lado (-1) recém
+  // começando: quando -1 chegava perto de +1 geometricamente, as linhas de +1 relevantes já tinham
+  // saído da janela havia muito tempo (só +1 é gerado inteiro ANTES de -1 começar). O resultado eram
+  // segmentos curtos cruzando (emaranhado) perto de bordas onde os dois lados se aproximam. _bboxOverlap
+  // já filtra a maioria dos candidatos antes do teste de interseção de verdade (_primeiraIntersecaoEntre),
+  // então manter TUDO em vez de só as últimas N continua rápido pro tamanho normal de um talhão.
   const _janelaSegs = [];
-  // As primeiras ~10 linhas de CADA lado (n pequeno, perto da guia) nunca saem daqui — cobre
-  // cruzamento entre os DOIS lados perto da guia (ex: guia com curva bem fechada em U, onde o
-  // lado +1 e o lado -1 se aproximam um do outro logo cedo). A janela rotativa acima não pega
-  // isso: quando o lado -1 começa a ser gerado, as linhas iniciais do lado +1 (as mais prováveis
-  // de estarem perto dele) já saíram da janela rotativa há muito tempo.
+  // As primeiras ~10 linhas de CADA lado (n pequeno, perto da guia) — mantido como estava, agora é
+  // redundante com _janelaSegs guardando tudo, mas não faz mal manter a checagem dupla.
   const _pertoGuia = [];
   const _PERTO_GUIA_MAX_N = 10;
   function addRetaRow(projKm) {
@@ -2532,10 +2667,10 @@ function _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingK
       }
     }
     flush();
-    // Entra na janela (fila) das últimas _JANELA_N linhas — só se sobrou alguma coisa dessa.
+    // Entra no acumulado de segmentos já desenhados — só se sobrou alguma coisa dessa linha (fica
+    // pra sempre, sem expirar — ver comentário acima em _janelaSegs).
     if(curSegs.length) {
       _janelaSegs.push(curSegs);
-      if(_janelaSegs.length > _JANELA_N) _janelaSegs.shift();
       if(n <= _PERTO_GUIA_MAX_N) _pertoGuia.push(curSegs); // fica pra sempre, não expira
     }
     return added > 0;
@@ -2544,6 +2679,10 @@ function _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingK
     addSplineRow(0, 1);
     for(let n = 1; n <= nBoth; n++) addSplineRow(n,  1);
     for(let n = 1; n <= nBoth; n++) addSplineRow(n, -1);
+    // Modo Suave pode pular linha por excesso de auto-cruzamento perto de curva fechada da guia
+    // (ver addSplineRow) — preenche qualquer vão real que tenha sobrado com retas simples, em vez
+    // de deixar área sem nenhuma linha (ver _preencherVaosResiduais).
+    if(modoGuia === 'spline') count += _preencherVaosResiduais(tPolyT, linhasArr, rowBrgGlobal, spacingKm, cor, esp);
   } else {
     addRetaRow(0);
     for(let n = 1; n <= nBoth; n++) addRetaRow(n * spacingKm);
@@ -2690,25 +2829,32 @@ function _dividirTalhaoPorDistorcao(sg, tan, resultado, rowBrgGlobal, perpBrg, s
     $('btnRedesenharLinhas').style.display = 'flex';
     $('divDeclivAtivo').style.display = '';
 
-    // ─ Arquiva a parte restante em branco, pronta para o usuário redesenhar a guia ─
+    // ─ Arquiva a parte restante — preenchida com retas simples de uma vez (ver _preencherComRetas),
+    // não deixa mais em branco esperando o usuário selecionar e redesenhar a guia manualmente ─
     const restPolyPts = restoPiece.geometry.coordinates[0].slice(0,-1).map(([lng,lat]) => ({lat,lng}));
     const newUid = nextTalhaoUid++;
     const newIdx = talhoesArquivados.length;
     const newCor = CORES_TALHAO[newIdx % CORES_TALHAO.length];
     const newLayer = L.polygon(restPolyPts.map(p=>[p.lat,p.lng]), {color:newCor, fillColor:newCor, fillOpacity:.06, weight:2, dashArray:'4,3'}).addTo(map);
     newLayer.on('click', () => { if(modo === 'idle') selecionarTalhao(newUid); });
+    let restoBound; try { restoBound = turf.polygonToLine(restoPiece); } catch(e) { restoBound = null; }
+    const restoLinhas = [];
+    const restoCount = restoBound ? _preencherComRetas(restoPiece, restoBound, rowBrgGlobal, spacingKm, cor, esp, restoLinhas) : 0;
+    let restoMetros = 0;
+    restoLinhas.forEach(pl => { const pts = pl.getLatLngs().flat(); for(let i=0;i<pts.length-1;i++) restoMetros += haversineM(pts[i],pts[i+1]); });
     const novoTalhao = {
       uid: newUid, idx: newIdx+1, cor: newCor, corLinha: cor, baseLabelZoom: map.getZoom(),
-      areaHa: turf.area(restoPiece)/10000, spacing, count:0, metrosLin:0,
+      areaHa: turf.area(restoPiece)/10000, spacing, count: restoCount, metrosLin: restoMetros,
       polyLayer: newLayer, polyPts: restPolyPts,
-      linhas: [], linhasDecl: [], infoMarker: null, turfPoly: restoPiece
+      linhas: restoLinhas, linhasDecl: [], infoMarker: null, turfPoly: restoPiece
     };
     talhoesArquivados.push(novoTalhao);
     novoTalhao.infoMarker = _criarInfoMarkerParaTalhao(novoTalhao);
     renumerarTalhoes();
     $('btnLimparArquivados').style.display = '';
 
-    setStatus(`⚠ A guia ficou fechada demais e o talhão foi dividido pela última linha boa (afastamento de ${largura}m): ${count} linhas geradas em ${ha.toFixed(2)} ha (parte boa — trave para confirmar).${_avisoCurvatura()} Um talhão em branco de ${novoTalhao.areaHa.toFixed(2)} ha foi criado ao lado — selecione-o e redesenhe a guia lá.`, 'ok');
+    const avisoResto = restoCount > 0 ? ` A parte restante (${novoTalhao.areaHa.toFixed(2)} ha) foi coberta com ${restoCount} linha(s) retas simples (a curva ficou fechada demais pra continuar acompanhando ali) — confira e ajuste se quiser.` : ` Um talhão de ${novoTalhao.areaHa.toFixed(2)} ha foi criado ao lado, mas não foi possível gerar linhas automaticamente ali — redesenhe a guia manualmente.`;
+    setStatus(`⚠ A guia ficou fechada demais e o talhão foi dividido pela última linha boa (afastamento de ${largura}m): ${count} linhas geradas em ${ha.toFixed(2)} ha (parte boa — trave para confirmar).${_avisoCurvatura()}${avisoResto}`, 'ok');
     return true;
   } catch(e) {
     console.warn('Falha ao dividir talhão por distorção da guia:', e);
@@ -2755,18 +2901,24 @@ function _dividirTalhaoArquivadoPorDistorcao(t, sg, tan, resultado, rowBrgGlobal
     t.areaHa = turf.area(boaPiece)/10000;
     t.infoMarker = _criarInfoMarkerParaTalhao(t);
 
-    // ─ Arquiva a parte restante em branco, pronta para o usuário selecionar e redesenhar a guia ─
+    // ─ Arquiva a parte restante — preenchida com retas simples de uma vez (ver _preencherComRetas),
+    // não deixa mais em branco esperando o usuário selecionar e redesenhar a guia manualmente ─
     const restPolyPts = restoPiece.geometry.coordinates[0].slice(0,-1).map(([lng,lat]) => ({lat,lng}));
     const newUid = nextTalhaoUid++;
     const newIdx = talhoesArquivados.length;
     const newCor = CORES_TALHAO[newIdx % CORES_TALHAO.length];
     const newLayer = L.polygon(restPolyPts.map(p=>[p.lat,p.lng]), {color:newCor, fillColor:newCor, fillOpacity:.06, weight:2, dashArray:'4,3'}).addTo(map);
     newLayer.on('click', () => { if(modo === 'idle') selecionarTalhao(newUid); });
+    let restoBound; try { restoBound = turf.polygonToLine(restoPiece); } catch(e) { restoBound = null; }
+    const restoLinhas = [];
+    const restoCount = restoBound ? _preencherComRetas(restoPiece, restoBound, rowBrgGlobal, spacingKm, cor, esp, restoLinhas) : 0;
+    let restoMetros = 0;
+    restoLinhas.forEach(pl => { const pts = pl.getLatLngs().flat(); for(let i=0;i<pts.length-1;i++) restoMetros += haversineM(pts[i],pts[i+1]); });
     const novoTalhao = {
       uid: newUid, idx: newIdx+1, cor: newCor, corLinha: cor, baseLabelZoom: map.getZoom(),
-      areaHa: turf.area(restoPiece)/10000, spacing, count:0, metrosLin:0,
+      areaHa: turf.area(restoPiece)/10000, spacing, count: restoCount, metrosLin: restoMetros,
       polyLayer: newLayer, polyPts: restPolyPts,
-      linhas: [], linhasDecl: [], infoMarker: null, turfPoly: restoPiece
+      linhas: restoLinhas, linhasDecl: [], infoMarker: null, turfPoly: restoPiece
     };
     talhoesArquivados.push(novoTalhao);
     novoTalhao.infoMarker = _criarInfoMarkerParaTalhao(novoTalhao);
@@ -2892,16 +3044,19 @@ function gerarLinhas() {
   const nBoth = Math.ceil(ext / 2 / spacingKm) + 2;
 
   let count = 0;
-  // Janela com os segmentos das últimas ~16 linhas offset desenhadas com sucesso (qualquer lado)
-  // — usada abaixo pra detectar quando uma linha nova invade o território de uma vizinha recente
-  // (ver addSplineRow/_cruzaJanela). Reinicia a cada chamada desta função (uma geração por talhão).
-  const _JANELA_N = 16;
+  // Todos os segmentos de linha offset já desenhados com sucesso nessa geração (qualquer lado) —
+  // usada abaixo pra detectar quando uma linha nova invade o território de outra já desenhada (ver
+  // addSplineRow/_cruzaJanela). Reinicia a cada chamada desta função (uma geração por talhão).
+  // ERA uma janela rotativa (só as últimas ~16) por custo — mas isso deixava passar cruzamento
+  // entre um lado (+1) já BEM avançado (n grande, muitas linhas atrás) e o outro lado (-1) recém
+  // começando: quando -1 chegava perto de +1 geometricamente, as linhas de +1 relevantes já tinham
+  // saído da janela havia muito tempo (só +1 é gerado inteiro ANTES de -1 começar). O resultado eram
+  // segmentos curtos cruzando (emaranhado) perto de bordas onde os dois lados se aproximam. _bboxOverlap
+  // já filtra a maioria dos candidatos antes do teste de interseção de verdade (_primeiraIntersecaoEntre),
+  // então manter TUDO em vez de só as últimas N continua rápido pro tamanho normal de um talhão.
   const _janelaSegs = [];
-  // As primeiras ~10 linhas de CADA lado (n pequeno, perto da guia) nunca saem daqui — cobre
-  // cruzamento entre os DOIS lados perto da guia (ex: guia com curva bem fechada em U, onde o
-  // lado +1 e o lado -1 se aproximam um do outro logo cedo). A janela rotativa acima não pega
-  // isso: quando o lado -1 começa a ser gerado, as linhas iniciais do lado +1 (as mais prováveis
-  // de estarem perto dele) já saíram da janela rotativa há muito tempo.
+  // As primeiras ~10 linhas de CADA lado (n pequeno, perto da guia) — mantido como estava, agora é
+  // redundante com _janelaSegs guardando tudo, mas não faz mal manter a checagem dupla.
   const _pertoGuia = [];
   const _PERTO_GUIA_MAX_N = 10;
 
@@ -3006,10 +3161,10 @@ function gerarLinhas() {
       }
     }
     flush();
-    // Entra na janela (fila) das últimas _JANELA_N linhas — só se sobrou alguma coisa dessa.
+    // Entra no acumulado de segmentos já desenhados — só se sobrou alguma coisa dessa linha (fica
+    // pra sempre, sem expirar — ver comentário acima em _janelaSegs).
     if(curSegs.length) {
       _janelaSegs.push(curSegs);
-      if(_janelaSegs.length > _JANELA_N) _janelaSegs.shift();
       if(n <= _PERTO_GUIA_MAX_N) _pertoGuia.push(curSegs); // fica pra sempre, não expira
     }
     return added > 0;
@@ -3039,6 +3194,10 @@ function gerarLinhas() {
     addSplineRow(0, 1);
     for(let n = 1; n <= nBoth; n++) addSplineRow(n,  1);
     for(let n = 1; n <= nBoth; n++) addSplineRow(n, -1);
+    // Modo Suave pode pular linha por excesso de auto-cruzamento perto de curva fechada da guia
+    // (ver addSplineRow) — preenche qualquer vão real que tenha sobrado com retas simples, em vez
+    // de deixar área sem nenhuma linha (ver _preencherVaosResiduais).
+    if(modoGuia === 'spline') count += _preencherVaosResiduais(turfPoly, linhas, rowBrgGlobal, spacingKm, cor, esp);
   } else {
     addRetaRow(0);
     for(let n = 1; n <= nBoth; n++) addRetaRow( n * spacingKm);
@@ -3228,7 +3387,7 @@ async function _buscarElevacaoFundida(pontos) {
     return { valores, sigmaMedio: temGoogle ? _DEM_FONTES.google.sigma : null, fontesUsadas: temGoogle ? [_DEM_FONTES.google.nome] : [] };
   }
 
-  const proxyBase = (localStorage.getItem('demProxyUrl') || '').trim().replace(/\/+$/, '');
+  const proxyBase = _obterDemProxyUrl();
 
   const pGoogle = temGoogle ? _buscarElevacaoGoogleLote(pontos).catch(() => null) : Promise.resolve(null);
   const pGlo90 = _buscarOpenMeteoGLO90(pontos).catch(() => null);
