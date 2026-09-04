@@ -117,6 +117,33 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 #searchWrap{position:relative;}
 #searchResults{display:none;position:absolute;top:100%;left:0;margin-top:4px;width:220px;background:#0f3460;border:1px solid #1e4a7a;border-radius:5px;max-height:160px;overflow-y:auto;z-index:1200;}
 
+/* ── Layout experimental: ribbon na lateral esquerda (v4.30) ──────────────────
+   Tudo aqui é aditivo sob body.layout-lateral — o layout padrão (topo) acima fica
+   intocado. Vira um CSS Grid (título no topo indo full-width, ribbon vira coluna
+   esquerda rolável, mapa ocupa o resto, status full-width embaixo). */
+body.layout-lateral{display:grid;grid-template-columns:270px 1fr;grid-template-rows:auto 1fr auto;grid-template-areas:"title title" "ribbon map" "status status";height:100vh;}
+body.layout-lateral #titlebar{grid-area:title;}
+body.layout-lateral #ribbon{grid-area:ribbon;display:flex;flex-direction:column;min-height:0;border-bottom:none;border-right:1px solid #0f3460;overflow:hidden;}
+body.layout-lateral #ribbonTabs{flex-direction:column;overflow-x:visible;overflow-y:auto;gap:1px;padding:6px;flex-shrink:0;max-height:42vh;}
+body.layout-lateral .rtab{text-align:left;border-bottom:none;border-left:3px solid transparent;border-radius:4px;padding:8px 10px;}
+body.layout-lateral .rtab.active{background:rgba(226,185,110,.1);border-left-color:#e2b96e;}
+body.layout-lateral #ribbonPanels{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;border-top:1px solid #1e4a7a;}
+body.layout-lateral #ribbonMoreHint{display:none;} /* dica de "role" só fazia sentido na rolagem horizontal do modo topo */
+body.layout-lateral .rpanel{flex-direction:column;height:auto;align-items:stretch;padding:8px 8px 14px;overflow:visible;}
+body.layout-lateral .rgroup{flex-direction:column;border-right:none;border-bottom:1px solid #1e4a7a;padding:8px 2px 10px;}
+body.layout-lateral .rgroup:last-child{border-bottom:none;}
+body.layout-lateral .rgroup:not(:last-child)::after{content:none;} /* seta de separação era pensada pra sequência horizontal */
+body.layout-lateral .rgroup-body{flex-wrap:wrap;row-gap:8px;}
+/* Divs de campo (rcol e afins) ocupam a linha inteira — a coluna estreita truncava inputs largos
+   (ex: chave, URL do proxy). Botões (.rbtn/.rbtn-sm são <button>, não <div>) continuam livres pra
+   ficar lado a lado em grade compacta, como no modo topo. */
+body.layout-lateral .rgroup-body > div{flex:1 1 100%;width:auto;}
+body.layout-lateral .rfield,body.layout-lateral .rfield.wide{width:100%;box-sizing:border-box;}
+body.layout-lateral #mapWrap{grid-area:map;}
+body.layout-lateral #status{grid-area:status;}
+#btnLayoutRibbon{background:none;border:1px solid #37474f;color:#90a4ae;border-radius:5px;padding:5px 10px;font-size:11px;cursor:pointer;white-space:nowrap;transition:.15s;}
+#btnLayoutRibbon:hover{border-color:#42a5f5;color:#42a5f5;}
+
 /* ── Mapa + painel flutuante de informações ── */
 #mapWrap{flex:1;position:relative;min-height:0;}
 #map{position:absolute;inset:0;}
@@ -242,10 +269,11 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.29 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.30 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
+  <button id="btnLayoutRibbon" onclick="alternarLayoutRibbon()" title="Experimental: move a barra de ferramentas pra lateral esquerda (mais altura útil de mapa)">&#8622; Ribbon Lateral</button>
   <button id="btnInstalarApp" onclick="instalarApp()" style="display:none;">&#11015; Instalar App</button>
   <a class="back-link" href="../index.html">&#8592; Menu</a>
 </div>
@@ -671,6 +699,19 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
       </div>
       <div class="rgroup">
         <div class="rgroup-body">
+          <div class="rcol">
+            <label>Nº de faixas (1-12)</label>
+            <input type="number" id="comprimentoFaixas" class="rfield" value="5" min="1" max="12" step="1">
+          </div>
+          <button class="rbtn c-purple" id="btnComprimentoTodos" onclick="classificarComprimentoTodos()" disabled><span class="ico">&#128207;</span><span class="lbl">Classificar por Comprimento</span></button>
+          <div class="rcol">
+            <button class="rbtn-sm clr" id="btnLimparComprimento" style="display:none;" onclick="limparComprimentoTodos()">&#10005; Limpar Classificação</button>
+          </div>
+        </div>
+        <div class="rgroup-title">Comprimento das Linhas (todos os talhões)</div>
+      </div>
+      <div class="rgroup">
+        <div class="rgroup-body">
           <div class="rbox" style="max-width:260px;white-space:normal;">Monta o relevo real da propriedade (todos os talhões travados + carreadores) com as linhas de plantio coladas no terreno. Dentro da vista dá pra alternar satélite / declividade / verde sólido e ajustar o exagero vertical. Usa a mesma chave Google Maps já configurada nas abas Curvas de Nível e Declividade do Terreno.</div>
         </div>
         <div class="rgroup-title">Sobre</div>
@@ -985,6 +1026,10 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
           <span style="display:inline-block;width:12px;height:12px;background:#F44336;border-radius:2px;vertical-align:middle;margin-right:5px;"></span>&gt; 50 &nbsp; Muito alto<br>
           <span style="font-size:10px;color:#78909c;">Cenário de pior caso: solo exposto, sem terraço.</span>
         </div>
+      </div>
+      <div id="secLegendaComprimento" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid #1e4a7a;">
+        <div class="sec-title">Legenda — Comprimento das Linhas</div>
+        <div id="legendaComprimentoBody" style="font-size:11px;line-height:2;"></div>
       </div>
     </div>
   </div>
@@ -1569,8 +1614,21 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // 53 ajustadas (mais cortes, mesma forma da guia) e 99% de cobertura — tudo seguindo a curva, sem
 // nenhuma linha reta. Tempo de geração continua rápido (~1-2s mesmo nesses casos extremos). Suíte
 // completa sem regressões.
+// v4.30: nova ferramenta "Classificação por Comprimento" (aba Análise) — pinta cada linha de
+// plantio com uma cor conforme seu comprimento total caia numa de N faixas de largura igual
+// (N escolhido pelo usuário, 1 a 12), gradiente azul(curta)→vermelho(longa) gerado em HSL, com
+// legenda dinâmica. Ao contrário da declividade (varia ao longo da linha), o comprimento é uma
+// propriedade da linha inteira, então repinta a própria polyline em vez de duplicar geometria —
+// mais leve, e "Limpar" apenas devolve a cor original (t.corLinha) de cada talhão.
+// v4.30 também: experimento de layout — botão "Ribbon Lateral" no título alterna (via classe
+// body.layout-lateral, persistida em localStorage) entre a ribbon horizontal no topo (padrão) e
+// uma versão vertical na lateral esquerda, pra dar mais altura útil ao mapa. Puramente aditivo
+// via CSS (nenhuma regra do modo padrão foi alterada); reversível a qualquer momento pelo botão.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
+// Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
+// tamanho de container correto (evita precisar de invalidateSize() na carga inicial).
+if(localStorage.getItem('layoutRibbon') === 'lateral') document.body.classList.add('layout-lateral');
 
 // ── Licenciamento (ativação por dispositivo, offline, ECDSA P-256) ──────────────
 const LIC_PUBLIC_JWK = {kty:"EC",crv:"P-256",x:"F30RnKL9rxyFVxp-5LRRkebdZi3RgW7me5HNmSpb6Yw",y:"l1n1yBHT8vqMz1Sb4zx5ZYjRz3vFud60334jzcnL4IU",ext:true,key_ops:["verify"]};
@@ -1687,6 +1745,15 @@ function setStatus(msg, tipo = '') {
 
 // ── Mapa ──────────────────────────────────────────────────────────────────────
 const map = L.map('map', {zoomControl: true, doubleClickZoom: false, preferCanvas: true}).setView([-21, -52], 13);
+
+// ── Layout experimental: ribbon lateral (v4.30) ────────────────────────────────
+if(document.body.classList.contains('layout-lateral')) $('btnLayoutRibbon').innerHTML = '&#8622; Ribbon no Topo';
+function alternarLayoutRibbon() {
+  const ativo = document.body.classList.toggle('layout-lateral');
+  localStorage.setItem('layoutRibbon', ativo ? 'lateral' : 'topo');
+  $('btnLayoutRibbon').innerHTML = ativo ? '&#8622; Ribbon no Topo' : '&#8622; Ribbon Lateral';
+  setTimeout(() => map.invalidateSize(), 50); // container do mapa mudou de tamanho/posição no grid
+}
 
 // Camada base ESRI (fallback sem API key)
 const esriLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
@@ -2366,6 +2433,7 @@ function arquivarTalhaoAtual() {
   // Atualiza contador e habilita classificação global
   $('btnLimparArquivados').style.display = '';
   $('btnDeclivTodos').disabled = false;
+  $('btnComprimentoTodos').disabled = false;
   if(!turfCurvaPoly) $('btnCurvas').disabled = true;
 
   renumerarTalhoes();
@@ -2404,6 +2472,8 @@ function limparTalhoesArquivados() {
   $('iTalhoes').textContent = '0';
   $('btnLimparArquivados').style.display = 'none';
   $('btnDeclivTodos').disabled = true;
+  $('btnComprimentoTodos').disabled = true;
+  limparComprimentoTodos();
   $('secLegenda').style.display = 'none';
   $('btnLimparDecliv').style.display = 'none';
   if(!linhas.length) { $('btnKml').style.display = 'none'; $('btnDxf').style.display = 'none'; }
@@ -4141,6 +4211,85 @@ function limparDeclivTodos() {
   $('btnLimparDecliv').style.display = 'none';
 }
 
+// ── Classificação de Comprimento das Linhas (todos os talhões) ────────────────
+// Cada linha de plantio é pintada com UMA cor conforme seu comprimento total caia numa de N
+// faixas (1 a 12, escolhidas pelo usuário) — faixas de largura igual, do menor ao maior
+// comprimento encontrado. Ao contrário da declividade (que varia AO LONGO da linha), o
+// comprimento é uma propriedade da linha inteira, então aqui não duplicamos geometria: apenas
+// repintamos as próprias polylines de t.linhas (mais leve) e voltamos à cor original ao limpar.
+let _comprimentoClassificado = null; // {min,max,nFaixas,paleta} da última classificação, p/ legenda
+
+// Gera N cores (1 a 12) num gradiente azul (curta) → vermelho (longa) em HSL, sempre bem
+// distinguíveis entre si mesmo com poucas faixas.
+function _paletaComprimento(n) {
+  if(n <= 1) return ['#1565c0'];
+  const cores = [];
+  for(let i = 0; i < n; i++) {
+    const hue = 220 - (i / (n - 1)) * 220; // 220°(azul) → 0°(vermelho)
+    cores.push(_hslParaHex(hue, 75, 50));
+  }
+  return cores;
+}
+function _hslParaHex(h, s, l) {
+  s /= 100; l /= 100;
+  const a = s * Math.min(l, 1 - l);
+  const f = (i) => { const k = (i + h / 30) % 12; return l - a * Math.max(-1, Math.min(k - 3, Math.min(9 - k, 1))); };
+  const hex = (x) => Math.round(x * 255).toString(16).padStart(2, '0');
+  return `#${hex(f(0))}${hex(f(8))}${hex(f(4))}`;
+}
+
+function classificarComprimentoTodos() {
+  if(!talhoesArquivados.length) { setStatus('Gere pelo menos um talhão primeiro.', 'err'); return; }
+  let nInformado = parseInt($('comprimentoFaixas').value);
+  if(Number.isNaN(nInformado)) nInformado = 5; // só usa o padrão se o campo estiver vazio/inválido — "0" é um valor válido que deve ser grampeado pra 1, não trocado pelo padrão
+  const nFaixas = Math.max(1, Math.min(12, nInformado));
+
+  const infos = [];
+  talhoesArquivados.forEach(t => {
+    t.linhas.forEach(pl => {
+      const pts = pl.getLatLngs().flat();
+      if(pts.length < 2) return;
+      let len = 0;
+      for(let i = 0; i < pts.length - 1; i++) len += haversineM(pts[i], pts[i+1]);
+      infos.push({ pl, len, t });
+    });
+  });
+  if(!infos.length) { setStatus('Nenhuma linha de plantio encontrada nos talhões.', 'err'); return; }
+
+  const lens = infos.map(o => o.len);
+  const min = Math.min(...lens), max = Math.max(...lens);
+  const paleta = _paletaComprimento(nFaixas);
+  const faixaDe = (len) => max === min ? 0 : Math.min(nFaixas - 1, Math.floor((len - min) / (max - min) * nFaixas));
+
+  infos.forEach(o => o.pl.setStyle({ color: paleta[faixaDe(o.len)], opacity: 0.95 }));
+
+  _comprimentoClassificado = { min, max, nFaixas, paleta };
+  _atualizarLegendaComprimento();
+  $('btnLimparComprimento').style.display = '';
+  setStatus(`${infos.length} linha(s) classificadas por comprimento em ${nFaixas} faixa(s) (${min.toFixed(0)}–${max.toFixed(0)} m).`, 'ok');
+}
+
+function _atualizarLegendaComprimento() {
+  if(!_comprimentoClassificado) return;
+  const { min, max, nFaixas, paleta } = _comprimentoClassificado;
+  let html = '';
+  for(let i = 0; i < nFaixas; i++) {
+    const a = min + (max - min) * i / nFaixas, b = min + (max - min) * (i + 1) / nFaixas;
+    html += `<span style="display:inline-block;width:12px;height:12px;background:${paleta[i]};border-radius:2px;vertical-align:middle;margin-right:5px;"></span>${a.toFixed(0)} – ${b.toFixed(0)} m<br>`;
+  }
+  $('legendaComprimentoBody').innerHTML = html;
+  $('secLegendaComprimento').style.display = '';
+}
+
+function limparComprimentoTodos() {
+  talhoesArquivados.forEach(t => {
+    t.linhas.forEach(pl => pl.setStyle({ color: t.corLinha || '#FFD600', opacity: 0.95 }));
+  });
+  _comprimentoClassificado = null;
+  $('btnLimparComprimento').style.display = 'none';
+  $('secLegendaComprimento').style.display = 'none';
+}
+
 // ── Curvas de Nível ───────────────────────────────────────────────────────────
 let curvaLayers = [], curvaLabels = [];
 let _pickingCurvaGuia = false;
@@ -4694,6 +4843,7 @@ function _processarKMLImportado(text) {
     _updateLabelScale();
     $('btnLimparArquivados').style.display = '';
     $('btnDeclivTodos').disabled = false;
+    $('btnComprimentoTodos').disabled = false;
     $('btnKml').style.display = 'flex';
     $('btnDxf').style.display = 'flex';
 
@@ -5386,6 +5536,7 @@ function limparPoligono() {
 }
 function limparTudo() {
   limparDeclivTodos();
+  limparComprimentoTodos();
   limparLinhas(); limparGuia(); limparPoligono(); limparPoligonoCurva();
   limparTalhoesArquivados();
   if(multiSelectMode) cancelarMultiSelect();
@@ -5395,6 +5546,7 @@ function limparTudo() {
   $('btnFechar').style.display='none';
   $('btnFinGuia').style.display='none';
   $('btnDeclivTodos').disabled = true;
+  $('btnComprimentoTodos').disabled = true;
   $('secLegenda').style.display = 'none';
   setStatus('Desenhe o contorno do talhão para começar.','');
 }
