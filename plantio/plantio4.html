@@ -242,7 +242,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.28 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.29 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1549,6 +1549,26 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // código (_DEM_PROXY_PADRAO) — usuário já tem o Worker próprio publicado e pediu pra não precisar
 // configurar de novo em cada navegador/computador. Campo continua editável (localStorage sobrepõe
 // se quiser trocar por outro Worker; limpar e salvar volta pro padrão).
+// v4.29: CORRIGE de vez o item (1) da v4.28 — o feedback foi direto: preencher o vão com retas
+// estava ERRADO, porque mistura um trecho reto no meio de linhas que seguem uma guia em curva de
+// nível, o que não faz sentido nenhum pro propósito da ferramenta (plantio em contorno). Revertido
+// por completo: removidas _preencherComRetas()/_preencherVaosResiduais() e o preenchimento reto da
+// parte "resto" de um talhão dividido por distorção (volta a ficar em branco, como era antes da
+// v4.28, esperando o usuário redesenhar a guia manualmente ali). Em vez de substituir a linha que
+// falha, ataca a causa raiz: removerAutoCruzamento cortava a alça de auto-cruzamento normalmente,
+// mas desistia (linha inteira descartada) acima de 100 cortes — um limite baixo demais. Perto de
+// curvatura muito fechada, mais cortes é o comportamento GEOMETRICAMENTE CORRETO (a linha vai
+// encolhendo a cada offset mais interno, exatamente como um anel de contorno de verdade encolheria
+// perto do topo de um morro) — não um sinal de que algo quebrou. Limite de descarte subido de 100
+// para 600 cortes (guard interno de 120 para 650, mesma proporção). Testado com dois cenários bem
+// diferentes: guia em ANEL perfeitamente fechado (caso extremo, praticamente nunca acontece numa
+// guia real — mesmo assim melhora bastante, mas ainda tem um vão residual real perto do colapso
+// geométrico do anel, que agora fica em branco por padrão, do jeito correto) e guia ABERTA com uma
+// dobra em U bem apertada NO MEIO (cenário realista — contorno de uma cabeceira de drenagem, por
+// exemplo): esse segundo caso, que antes teria linhas puladas ali, agora sai com 0 linhas puladas,
+// 53 ajustadas (mais cortes, mesma forma da guia) e 99% de cobertura — tudo seguindo a curva, sem
+// nenhuma linha reta. Tempo de geração continua rápido (~1-2s mesmo nesses casos extremos). Suíte
+// completa sem regressões.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -1858,18 +1878,21 @@ function _bboxOverlap(a, b) {
 // (típico perto de dobras fechadas, ex: topo de uma curva de nível copiada, ou simplesmente longe
 // o bastante da guia numa curva suave — offsetar QUALQUER curva além do seu raio de curvatura local
 // sempre cria uma alça, mesmo sem nenhuma "quina"). Corta a alça pelo ponto de cruzamento; o guard
-// (120 tentativas) é mais alto que o limiar de descarte (100) de propósito — cada corte ENCOLHE o
-// array (uma alça inteira vira 1 ponto só), então tentativas extras custam cada vez menos, e um guia
-// com curvatura sustentada numa propriedade grande pode legitimamente precisar de várias dezenas de
-// cortes nas linhas mais distantes SEM que o resultado final fique visualmente ruim — descartar a
-// linha inteira nesses casos deixava um vão real e visível perto da borda mais distante da guia
-// (medido com guia sintética ruidosa: 32-74 cortes pra resolver por completo, sem nenhum cruzamento
-// residual, em até ~4s mesmo em casos bem mais extremos que qualquer guia real).
+// é mais alto que o limiar de descarte de propósito — cada corte ENCOLHE o array (uma alça inteira
+// vira 1 ponto só), então tentativas extras custam cada vez menos, e perto de uma curva MUITO
+// fechada (ex: guia em anel ao redor de um morro, offsetando pra dentro além do raio da curvatura)
+// o comportamento geometricamente CORRETO é a linha ir encolhendo progressivamente a cada offset
+// mais interno, até sumir sozinha perto do centro — não "desistir" de repente e deixar um vão vazio
+// no meio de linhas que continuam curvas dos dois lados. Por isso o limite é bem alto: perder tempo
+// cortando até a linha praticamente desaparecer é o comportamento certo aqui, não um desperdício.
+// Descartar a linha (não desenhar nada) só deveria acontecer no caso realmente patológico (guard
+// esgotado sem resolver) — NUNCA trocar por uma linha reta fora do padrão da guia, que quebraria o
+// sentido de plantio em curva de nível que é o objetivo inteiro dessa ferramenta.
 const _offsetStats = { ajustadas: 0, puladas: 0 };
 function removerAutoCruzamento(pts) {
   let arr = pts.slice();
   let cortes = 0, guard = 0, primeiroIndice = null, maxCutAngle = 0;
-  while(guard++ < 120) {
+  while(guard++ < 650) {
     let achou = false;
     for(let i = 0; i < arr.length - 1 && !achou; i++) {
       for(let j = i + 2; j < arr.length - 1; j++) {
@@ -2451,100 +2474,6 @@ function atualizarEscalaLabel() {
 map.on('zoomend', _updateLabelScale);
 
 // ── Helper: gera linhas para um talhão específico (multi-seleção) ─────────────
-// Preenche um polígono com linhas retas simples e paralelas, perpendiculares a rowBrg — sem seguir
-// guia nenhuma, sempre funciona (nenhum risco de auto-cruzamento/distorção, é geometria plana).
-// Usado como fallback definitivo em duas situações onde o offset seguindo uma guia curva (Suave)
-// falha por curvatura fechada demais: (1) o pedaço "resto" de um talhão dividido por distorção da
-// guia (ver _dividirTalhaoPorDistorcao) — antes ficava em branco esperando o usuário selecionar e
-// redesenhar a guia manualmente; (2) vãos residuais dentro do próprio talhão onde linhas offset
-// foram puladas por excesso de auto-cruzamento (ver _preencherVaosResiduais).
-function _preencherComRetas(poly, boundLine, rowBrg, spacingKm, cor, esp, linhasArr) {
-  const perpBrg = rowBrg + 90;
-  const bbox = turf.bbox(poly);
-  const ext = turf.distance(turf.point([bbox[0],bbox[1]]), turf.point([bbox[2],bbox[3]])) * 2 || 0.01;
-  const anchor = turf.centroid(poly).geometry.coordinates;
-  const nBoth = Math.ceil(ext / 2 / spacingKm) + 2;
-  let count = 0;
-  const tryN = (projKm) => {
-    const dir = projKm >= 0 ? perpBrg : perpBrg + 180;
-    const ref = Math.abs(projKm) < 1e-9 ? anchor
-      : turf.destination(turf.point(anchor), Math.abs(projKm), dir, {units:'kilometers'}).geometry.coordinates;
-    const p1 = turf.destination(turf.point(ref), ext, rowBrg,       {units:'kilometers'}).geometry.coordinates;
-    const p2 = turf.destination(turf.point(ref), ext, rowBrg + 180, {units:'kilometers'}).geometry.coordinates;
-    try {
-      const ixs = turf.lineIntersect(turf.lineString([p2, p1]), boundLine);
-      if(!ixs.features.length) return;
-      const p2pt = turf.point(p2);
-      const sorted = ixs.features.map(f => f.geometry.coordinates)
-        .sort((a, b) => turf.distance(p2pt, turf.point(a)) - turf.distance(p2pt, turf.point(b)));
-      for(let i = 0; i + 1 < sorted.length; i += 2) {
-        const s = sorted[i], e = sorted[i+1];
-        const mid = [(s[0]+e[0])/2, (s[1]+e[1])/2];
-        if(!turf.booleanPointInPolygon(turf.point(mid), poly)) continue;
-        if(turf.distance(turf.point(s), turf.point(e), {units:'kilometers'}) * 1000 < 0.5) continue; // trecho ínfimo — ignora
-        const pl = L.polyline([[s[1],s[0]], [e[1],e[0]]], {color:cor, weight:esp, opacity:.95}).addTo(map);
-        linhasArr.push(pl); count++;
-      }
-    } catch(e) {}
-  };
-  tryN(0);
-  for(let n = 1; n <= nBoth; n++) tryN(n * spacingKm);
-  for(let n = 1; n <= nBoth; n++) tryN(-n * spacingKm);
-  return count;
-}
-
-// Depois de gerar as linhas offset (modo Suave/Polilinha) de um talhão, confere se sobrou algum
-// vão sem cobertura — acontece quando linhas foram puladas por excesso de auto-cruzamento perto de
-// uma curva bem fechada da guia (ex: guia fechada em anel, tipo curva de nível ao redor de um
-// morro: o offset "pra dentro" do anel esbarra no próprio raio de curvatura e as linhas mais
-// internas são puladas, deixando um buraco sem NENHUMA linha no meio). Detecta o vão de verdade
-// (não estimativa) fazendo um buffer de metade do espaçamento em torno de TODAS as linhas já
-// desenhadas e subtraindo do polígono do talhão — o que sobrar é área sem cobertura de verdade.
-// Preenche cada pedaço relevante com retas simples (_preencherComRetas) — sempre funciona porque
-// não depende de seguir a guia. Repete em algumas passadas: o preenchimento reto de um vão
-// irregular (ex: crescente em volta de uma curva bem fechada) às vezes deixa uma sobra fina bem na
-// costura entre as linhas originais e as retas novas — cada passada seguinte limpa o que sobrou da
-// anterior, convergindo rápido (para sozinho quando uma passada não acha mais vão relevante).
-// Retorna quantas linhas novas foram adicionadas no total.
-function _preencherVaosResiduais(poly, linhasArr, rowBrg, spacingKm, cor, esp) {
-  let totalNovas = 0;
-  for(let tentativa = 0; tentativa < 4; tentativa++) {
-    const novas = _preencherVaosResiduaisPasso(poly, linhasArr, rowBrg, spacingKm, cor, esp);
-    totalNovas += novas;
-    if(novas === 0) break;
-  }
-  return totalNovas;
-}
-function _preencherVaosResiduaisPasso(poly, linhasArr, rowBrg, spacingKm, cor, esp) {
-  if(!linhasArr.length) return 0;
-  const feats = [];
-  linhasArr.forEach(pl => {
-    let pts; try { pts = pl.getLatLngs().flat(); } catch(e) { return; }
-    if(pts.length >= 2) feats.push(pts.map(p => [p.lng, p.lat]));
-  });
-  if(!feats.length) return 0;
-  let coberto;
-  try { coberto = turf.buffer(turf.multiLineString(feats), spacingKm * 0.5, {units:'kilometers'}); }
-  catch(e) { return 0; }
-  if(!coberto) return 0;
-  let vaos;
-  try { vaos = turf.difference(poly, coberto); } catch(e) { return 0; }
-  if(!vaos) return 0;
-
-  // Só preenche pedaço de vão com área relevante (não frisco residual de arredondamento/geometria)
-  // — pelo menos ~3 "células" de espaçamento² de área.
-  const areaMinM2 = Math.max(80, (spacingKm * 1000) ** 2 * 3);
-  const polysCoords = vaos.geometry.type === 'Polygon' ? [vaos.geometry.coordinates] : vaos.geometry.coordinates;
-  let novas = 0;
-  polysCoords.forEach(coords => {
-    let vaoPoly; try { vaoPoly = turf.polygon(coords); } catch(e) { return; }
-    if(turf.area(vaoPoly) < areaMinM2) return;
-    let vaoBound; try { vaoBound = turf.polygonToLine(vaoPoly); } catch(e) { return; }
-    novas += _preencherComRetas(vaoPoly, vaoBound, rowBrg, spacingKm, cor, esp, linhasArr);
-  });
-  return novas;
-}
-
 function _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingKm, cor, esp, linhasArr) {
   const bbox = turf.bbox(tPolyT);
   const ext = turf.distance(turf.point([bbox[0],bbox[1]]), turf.point([bbox[2],bbox[3]])) * 2;
@@ -2610,15 +2539,16 @@ function _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingK
     });
     if(n !== 0) {
       if(!_bboxOverlap(_bboxOfPts(pts), bbox)) return false; // fora do talhão — evita custo O(n²) à toa
-      // removerAutoCruzamento já corta e resolve TODOS os auto-cruzamentos que encontra (o loop só
-      // para antes disso se bater no guard=120) — cortes>3 não é sinal de linha ainda quebrada, só
-      // de que precisou de bastante cirurgia perto de uma curva fechada da guia (ou simplesmente
-      // longe da guia numa curva suave — ver comentário de removerAutoCruzamento). Descartar a linha
-      // inteira nesse caso deixava um vão sem nenhuma linha bem no meio do talhão (perto da curva
-      // mais fechada, onde TODAS as linhas offset precisam de vários cortes). Só desiste perto do
-      // teto real do guard — abaixo disso, desenha o resultado corrigido em vez de pular.
+      // removerAutoCruzamento corta e resolve os auto-cruzamentos que encontra, ENCOLHENDO a linha
+      // conforme necessário — perto de uma curva bem fechada da guia isso é o comportamento certo
+      // (a linha vai ficando menor/mais simples a cada corte, igual um anel de contorno realmente
+      // encolheria perto do topo de um morro), não um sinal de quebra. Descartar a linha inteira
+      // nesse caso deixava um vão sem nenhuma linha bem no meio do talhão — e trocar por outra coisa
+      // (ex. reta) quebraria o sentido de seguir a guia, que é o objetivo da ferramenta. Só desiste
+      // perto do teto real do guard (caso realmente patológico) — abaixo disso, desenha o resultado
+      // corrigido (mesmo que bem menor/mais simples) em vez de pular.
       const { pts: ptsOk, cortes } = removerAutoCruzamento(pts);
-      if(cortes > 100) { _offsetStats.puladas++; return false; }
+      if(cortes > 600) { _offsetStats.puladas++; return false; }
       if(cortes > 0) _offsetStats.ajustadas++;
       pts = ptsOk;
     }
@@ -2679,10 +2609,6 @@ function _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingK
     addSplineRow(0, 1);
     for(let n = 1; n <= nBoth; n++) addSplineRow(n,  1);
     for(let n = 1; n <= nBoth; n++) addSplineRow(n, -1);
-    // Modo Suave pode pular linha por excesso de auto-cruzamento perto de curva fechada da guia
-    // (ver addSplineRow) — preenche qualquer vão real que tenha sobrado com retas simples, em vez
-    // de deixar área sem nenhuma linha (ver _preencherVaosResiduais).
-    if(modoGuia === 'spline') count += _preencherVaosResiduais(tPolyT, linhasArr, rowBrgGlobal, spacingKm, cor, esp);
   } else {
     addRetaRow(0);
     for(let n = 1; n <= nBoth; n++) addRetaRow(n * spacingKm);
@@ -2829,32 +2755,25 @@ function _dividirTalhaoPorDistorcao(sg, tan, resultado, rowBrgGlobal, perpBrg, s
     $('btnRedesenharLinhas').style.display = 'flex';
     $('divDeclivAtivo').style.display = '';
 
-    // ─ Arquiva a parte restante — preenchida com retas simples de uma vez (ver _preencherComRetas),
-    // não deixa mais em branco esperando o usuário selecionar e redesenhar a guia manualmente ─
+    // ─ Arquiva a parte restante em branco, pronta para o usuário redesenhar a guia ─
     const restPolyPts = restoPiece.geometry.coordinates[0].slice(0,-1).map(([lng,lat]) => ({lat,lng}));
     const newUid = nextTalhaoUid++;
     const newIdx = talhoesArquivados.length;
     const newCor = CORES_TALHAO[newIdx % CORES_TALHAO.length];
     const newLayer = L.polygon(restPolyPts.map(p=>[p.lat,p.lng]), {color:newCor, fillColor:newCor, fillOpacity:.06, weight:2, dashArray:'4,3'}).addTo(map);
     newLayer.on('click', () => { if(modo === 'idle') selecionarTalhao(newUid); });
-    let restoBound; try { restoBound = turf.polygonToLine(restoPiece); } catch(e) { restoBound = null; }
-    const restoLinhas = [];
-    const restoCount = restoBound ? _preencherComRetas(restoPiece, restoBound, rowBrgGlobal, spacingKm, cor, esp, restoLinhas) : 0;
-    let restoMetros = 0;
-    restoLinhas.forEach(pl => { const pts = pl.getLatLngs().flat(); for(let i=0;i<pts.length-1;i++) restoMetros += haversineM(pts[i],pts[i+1]); });
     const novoTalhao = {
       uid: newUid, idx: newIdx+1, cor: newCor, corLinha: cor, baseLabelZoom: map.getZoom(),
-      areaHa: turf.area(restoPiece)/10000, spacing, count: restoCount, metrosLin: restoMetros,
+      areaHa: turf.area(restoPiece)/10000, spacing, count:0, metrosLin:0,
       polyLayer: newLayer, polyPts: restPolyPts,
-      linhas: restoLinhas, linhasDecl: [], infoMarker: null, turfPoly: restoPiece
+      linhas: [], linhasDecl: [], infoMarker: null, turfPoly: restoPiece
     };
     talhoesArquivados.push(novoTalhao);
     novoTalhao.infoMarker = _criarInfoMarkerParaTalhao(novoTalhao);
     renumerarTalhoes();
     $('btnLimparArquivados').style.display = '';
 
-    const avisoResto = restoCount > 0 ? ` A parte restante (${novoTalhao.areaHa.toFixed(2)} ha) foi coberta com ${restoCount} linha(s) retas simples (a curva ficou fechada demais pra continuar acompanhando ali) — confira e ajuste se quiser.` : ` Um talhão de ${novoTalhao.areaHa.toFixed(2)} ha foi criado ao lado, mas não foi possível gerar linhas automaticamente ali — redesenhe a guia manualmente.`;
-    setStatus(`⚠ A guia ficou fechada demais e o talhão foi dividido pela última linha boa (afastamento de ${largura}m): ${count} linhas geradas em ${ha.toFixed(2)} ha (parte boa — trave para confirmar).${_avisoCurvatura()}${avisoResto}`, 'ok');
+    setStatus(`⚠ A guia ficou fechada demais e o talhão foi dividido pela última linha boa (afastamento de ${largura}m): ${count} linhas geradas em ${ha.toFixed(2)} ha (parte boa — trave para confirmar).${_avisoCurvatura()} Um talhão em branco de ${novoTalhao.areaHa.toFixed(2)} ha foi criado ao lado — selecione-o e redesenhe a guia lá.`, 'ok');
     return true;
   } catch(e) {
     console.warn('Falha ao dividir talhão por distorção da guia:', e);
@@ -2901,24 +2820,18 @@ function _dividirTalhaoArquivadoPorDistorcao(t, sg, tan, resultado, rowBrgGlobal
     t.areaHa = turf.area(boaPiece)/10000;
     t.infoMarker = _criarInfoMarkerParaTalhao(t);
 
-    // ─ Arquiva a parte restante — preenchida com retas simples de uma vez (ver _preencherComRetas),
-    // não deixa mais em branco esperando o usuário selecionar e redesenhar a guia manualmente ─
+    // ─ Arquiva a parte restante em branco, pronta para o usuário selecionar e redesenhar a guia ─
     const restPolyPts = restoPiece.geometry.coordinates[0].slice(0,-1).map(([lng,lat]) => ({lat,lng}));
     const newUid = nextTalhaoUid++;
     const newIdx = talhoesArquivados.length;
     const newCor = CORES_TALHAO[newIdx % CORES_TALHAO.length];
     const newLayer = L.polygon(restPolyPts.map(p=>[p.lat,p.lng]), {color:newCor, fillColor:newCor, fillOpacity:.06, weight:2, dashArray:'4,3'}).addTo(map);
     newLayer.on('click', () => { if(modo === 'idle') selecionarTalhao(newUid); });
-    let restoBound; try { restoBound = turf.polygonToLine(restoPiece); } catch(e) { restoBound = null; }
-    const restoLinhas = [];
-    const restoCount = restoBound ? _preencherComRetas(restoPiece, restoBound, rowBrgGlobal, spacingKm, cor, esp, restoLinhas) : 0;
-    let restoMetros = 0;
-    restoLinhas.forEach(pl => { const pts = pl.getLatLngs().flat(); for(let i=0;i<pts.length-1;i++) restoMetros += haversineM(pts[i],pts[i+1]); });
     const novoTalhao = {
       uid: newUid, idx: newIdx+1, cor: newCor, corLinha: cor, baseLabelZoom: map.getZoom(),
-      areaHa: turf.area(restoPiece)/10000, spacing, count: restoCount, metrosLin: restoMetros,
+      areaHa: turf.area(restoPiece)/10000, spacing, count:0, metrosLin:0,
       polyLayer: newLayer, polyPts: restPolyPts,
-      linhas: restoLinhas, linhasDecl: [], infoMarker: null, turfPoly: restoPiece
+      linhas: [], linhasDecl: [], infoMarker: null, turfPoly: restoPiece
     };
     talhoesArquivados.push(novoTalhao);
     novoTalhao.infoMarker = _criarInfoMarkerParaTalhao(novoTalhao);
@@ -3104,15 +3017,16 @@ function gerarLinhas() {
     });
     if(n !== 0) {
       if(!_bboxOverlap(_bboxOfPts(pts), bbox)) return false; // fora do talhão — evita custo O(n²) à toa
-      // removerAutoCruzamento já corta e resolve TODOS os auto-cruzamentos que encontra (o loop só
-      // para antes disso se bater no guard=120) — cortes>3 não é sinal de linha ainda quebrada, só
-      // de que precisou de bastante cirurgia perto de uma curva fechada da guia (ou simplesmente
-      // longe da guia numa curva suave — ver comentário de removerAutoCruzamento). Descartar a linha
-      // inteira nesse caso deixava um vão sem nenhuma linha bem no meio do talhão (perto da curva
-      // mais fechada, onde TODAS as linhas offset precisam de vários cortes). Só desiste perto do
-      // teto real do guard — abaixo disso, desenha o resultado corrigido em vez de pular.
+      // removerAutoCruzamento corta e resolve os auto-cruzamentos que encontra, ENCOLHENDO a linha
+      // conforme necessário — perto de uma curva bem fechada da guia isso é o comportamento certo
+      // (a linha vai ficando menor/mais simples a cada corte, igual um anel de contorno realmente
+      // encolheria perto do topo de um morro), não um sinal de quebra. Descartar a linha inteira
+      // nesse caso deixava um vão sem nenhuma linha bem no meio do talhão — e trocar por outra coisa
+      // (ex. reta) quebraria o sentido de seguir a guia, que é o objetivo da ferramenta. Só desiste
+      // perto do teto real do guard (caso realmente patológico) — abaixo disso, desenha o resultado
+      // corrigido (mesmo que bem menor/mais simples) em vez de pular.
       const { pts: ptsOk, cortes } = removerAutoCruzamento(pts);
-      if(cortes > 100) { _offsetStats.puladas++; return false; }
+      if(cortes > 600) { _offsetStats.puladas++; return false; }
       if(cortes > 0) _offsetStats.ajustadas++;
       pts = ptsOk;
     }
@@ -3194,10 +3108,6 @@ function gerarLinhas() {
     addSplineRow(0, 1);
     for(let n = 1; n <= nBoth; n++) addSplineRow(n,  1);
     for(let n = 1; n <= nBoth; n++) addSplineRow(n, -1);
-    // Modo Suave pode pular linha por excesso de auto-cruzamento perto de curva fechada da guia
-    // (ver addSplineRow) — preenche qualquer vão real que tenha sobrado com retas simples, em vez
-    // de deixar área sem nenhuma linha (ver _preencherVaosResiduais).
-    if(modoGuia === 'spline') count += _preencherVaosResiduais(turfPoly, linhas, rowBrgGlobal, spacingKm, cor, esp);
   } else {
     addRetaRow(0);
     for(let n = 1; n <= nBoth; n++) addRetaRow( n * spacingKm);
