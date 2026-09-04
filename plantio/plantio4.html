@@ -242,7 +242,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.26 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.27 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -420,6 +420,13 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
         <div class="rgroup-body">
           <button class="rbtn-sm btn-curvaguia" id="btnUsarCurvaGuia" style="display:none;" onclick="ativarModoEscolherCurvaGuia()" title="Plantio em curva de nível é a técnica mais eficaz contra erosão em terreno com declive — clique numa curva de nível (gerada na aba Curvas de Nível) pra usar ela como guia">&#8981; Usar Curva como Guia</button>
           <button class="rbtn-sm clr" id="btnCancelarEscolhaCurva" style="display:none;" onclick="cancelarEscolhaCurvaGuia()">&#10005; Cancelar</button>
+          <div class="rcol" id="grpSuavizacaoGuia" style="display:none;">
+            <label>Suavização da guia</label>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <input type="range" id="suavizacaoGuia" min="4" max="40" value="20" step="1" oninput="_ajustarSuavizacaoCurvaGuia()" style="width:120px;" title="Menos pontos = guia mais suave/simplificada. Mais pontos = segue mais de perto o traçado original da curva.">
+              <span id="suavizacaoGuiaVal" style="font-size:11px;color:#cfd8dc;white-space:nowrap;">20 pontos</span>
+            </div>
+          </div>
         </div>
         <div class="rgroup-title">A partir de Curva de Nível</div>
       </div>
@@ -1498,6 +1505,19 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // antes da v4.25). Persistido em localStorage, mesmo padrão dos outros ajustes salvos. Validado:
 // 0 chamadas ao Open-Meteo no modo rápido (antes eram 9 lotes numa grade 30×30), 1 fonte listada
 // (era 2), preferência sobrevive a recarregar a página. Suíte completa sem regressões.
+// v4.27: suavização ajustável na guia "Usar Curva como Guia" (aba Guia & Linhas de Plantio, grupo
+// "A partir de Curva de Nível") — pedido explícito. A curva de nível "crua" (centenas de pontos,
+// serrilhada pelo grid de elevação) já era reamostrada pra poucos pontos de controle antes de virar
+// guia (modo Suave/catmullRom reconstrói uma curva orgânica a partir deles — menos pontos = passa
+// "por cima" das pequenas ondulações = mais suave; mais pontos = segue de perto o traçado original),
+// mas a quantidade de pontos era uma fórmula fixa sem controle nenhum. Agora fica um controle
+// deslizante ("Suavização da guia") que reaplica a reamostragem ao vivo, sem precisar clicar na
+// curva de novo — _curvaGuiaOriginal guarda a curva crua da última curva escolhida, e
+// _ajustarSuavizacaoCurvaGuia() reconstrói guidePts/guideMarkers a cada mudança do controle. Some
+// junto com o resto da guia (limparGuia()) — só faz sentido enquanto a guia atual veio de uma curva.
+// Validado: ajustar de 5 a 35 pontos muda o comprimento total da guia (308m → 354m no teste, a
+// suave "corta" os picos do ruído fino simulado), controle some corretamente ao limpar a guia.
+// Suíte completa sem regressões.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -4339,6 +4359,11 @@ function _cliqueNaCurvaDeNivel(pl) {
   cancelarEscolhaCurvaGuia();
   usarCurvaComoGuia(pl);
 }
+// Curva "crua" (todos os pontos originais, antes de qualquer reamostragem) da última curva de
+// nível usada como guia — guardada pra poder reajustar a suavização depois sem precisar clicar na
+// curva de novo (ver _ajustarSuavizacaoCurvaGuia).
+let _curvaGuiaOriginal = null;
+
 function usarCurvaComoGuia(pl) {
   let pts; try { pts = pl.getLatLngs().flat(); } catch(e) { return; }
   if(pts.length < 2) { setStatus('Curva inválida.', 'err'); return; }
@@ -4349,20 +4374,50 @@ function usarCurvaComoGuia(pl) {
   // Área de Curvas independente, sem nenhum talhão selecionado no momento.
   if(talhaoSelecionadoUid !== null && polyPts.length < 3) ativarTalhaoParaEdicao();
 
+  const curvaOriginal = pts.map(p => ({ lat: p.lat, lng: p.lng }));
+
   // Reamostra pra um número razoável de pontos (a curva "crua" tem centenas, viraria uma guia com
   // marcador arrastável em cada um) — modo Suave (catmullRom) já reconstrói uma curva orgânica a
-  // partir de poucos pontos-chave, então não perde fidelidade visual.
+  // partir de poucos pontos-chave, então não perde fidelidade visual. Esse número é só o ponto de
+  // partida — o controle de "Suavização da guia" deixa ajustar depois (menos pontos = mais suave).
   const alvo = Math.max(6, Math.min(30, Math.round(pts.length / 8)));
-  const simples = resampleCurve(pts.map(p => ({ lat: p.lat, lng: p.lng })), alvo);
+  const simples = resampleCurve(curvaOriginal, alvo);
 
-  limparGuia();
+  limparGuia(); // (isso zera _curvaGuiaOriginal e esconde o controle — reconfigurados abaixo)
   setModoGuia('spline');
   simples.forEach(p => addGuidePt(L.latLng(p.lat, p.lng)));
   finalizarGuia();
   ativarRibbon('rp-guia');
+
+  _curvaGuiaOriginal = curvaOriginal;
+  const maxSlider = Math.max(alvo, Math.min(40, pts.length));
+  const sliderEl = $('suavizacaoGuia');
+  if(sliderEl) { sliderEl.max = maxSlider; sliderEl.value = alvo; }
+  $('grpSuavizacaoGuia').style.display = '';
+  $('suavizacaoGuiaVal').textContent = alvo + ' pontos';
+
   const nivelTxt = pl._level != null ? pl._level.toFixed(0) + ' m' : '?';
   const avisoContorno = !turfPoly ? ' Selecione ou desenhe o talhão antes de gerar as linhas.' : '';
-  setStatus(`Guia definida a partir da curva de nível ${nivelTxt} (${simples.length} pontos). Configure o espaçamento e gere as linhas.${avisoContorno}`, 'ok');
+  setStatus(`Guia definida a partir da curva de nível ${nivelTxt} (${simples.length} pontos). Ajuste a suavização se quiser, configure o espaçamento e gere as linhas.${avisoContorno}`, 'ok');
+}
+
+// Reaplica a reamostragem da curva original com uma densidade de pontos diferente — menos pontos
+// de controle = catmullRom interpola por menos "cotovelos", saindo uma guia mais suave/simplificada;
+// mais pontos = segue mais de perto o traçado original da curva de nível (mais fiel, menos suave).
+function _ajustarSuavizacaoCurvaGuia() {
+  if(!_curvaGuiaOriginal) return;
+  const n = Math.max(4, parseInt($('suavizacaoGuia').value) || 20);
+  $('suavizacaoGuiaVal').textContent = n + ' pontos';
+  const simples = resampleCurve(_curvaGuiaOriginal, n);
+  guideMarkers.forEach(m => m.remove());
+  guideMarkers = [];
+  guidePts = [];
+  if(guideLayer) { guideLayer.remove(); guideLayer = null; }
+  simples.forEach(p => addGuidePt(L.latLng(p.lat, p.lng)));
+  guidePts = guideMarkers.map(m => m.getLatLng());
+  updateGuiaDisplay();
+  $('btnGerar').disabled = false;
+  $('btnPerfilGuia').style.display = 'flex';
 }
 
 // ── Importar Polígono do Google Earth ─────────────────────────────────────────
@@ -5242,6 +5297,11 @@ function limparGuia() {
   $('btnGerar').disabled=true;
   $('rowGuiaLen').style.display='none';
   $('btnPerfilGuia').style.display='none';
+  // Some junto o controle de suavização — só faz sentido enquanto a guia atual veio de uma curva de
+  // nível (usarCurvaComoGuia reabre ele); qualquer outra forma de limpar/redesenhar a guia invalida
+  // a referência à curva original.
+  _curvaGuiaOriginal = null;
+  const grpSuav = $('grpSuavizacaoGuia'); if(grpSuav) grpSuav.style.display = 'none';
 }
 function limparPoligono() {
   polyMarkers.forEach(m=>m.remove()); polyMarkers=[];
