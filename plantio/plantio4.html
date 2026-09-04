@@ -242,7 +242,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.24 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.25 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -278,6 +278,19 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
           </div>
         </div>
         <div class="rgroup-title">Chave Google Maps</div>
+      </div>
+      <div class="rgroup">
+        <div class="rgroup-body">
+          <div style="display:flex;flex-direction:column;gap:4px;">
+            <div style="display:flex;gap:5px;">
+              <input type="text" id="demProxyUrl" class="rfield wide" placeholder="https://seu-worker.workers.dev" onkeydown="if(event.key==='Enter') salvarDemProxy()">
+              <button class="btn-go" onclick="salvarDemProxy()">&#10003;</button>
+              <button class="btn-help" onclick="abrirTutorialDemProxy()" title="O que é isso?">?</button>
+            </div>
+            <div id="demProxyStatus" style="font-size:10px;color:#78909c;">Fusão de elevação: Google + Open-Meteo (2 fontes)</div>
+          </div>
+        </div>
+        <div class="rgroup-title">Proxy SRTM/ASTER/Mapzen (opcional)</div>
       </div>
       <div class="rgroup">
         <div class="rgroup-body">
@@ -728,6 +741,51 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
       <code style="color:#81d4fa;">https://jpbolsairriga-lgtm.github.io/*</code>
     </div>
     <button onclick="fecharTutorialChave()" style="margin-top:16px;width:100%;background:#1565c0;color:#fff;border:none;border-radius:6px;padding:9px;font-size:13px;font-weight:700;cursor:pointer;">Entendi</button>
+  </div>
+</div>
+
+<!-- ── Modal: Tutorial do Proxy SRTM/ASTER/Mapzen ── -->
+<div class="modal-bg" id="modalDemProxy" onclick="if(event.target===this) fecharTutorialDemProxy()">
+  <div class="modal">
+    <button class="modal-close" onclick="fecharTutorialDemProxy()">&#10005;</button>
+    <h2>&#128225; Proxy SRTM/ASTER/Mapzen (opcional)</h2>
+    <p style="color:#90a4ae;font-size:12px;margin-bottom:12px;">O app já cruza duas fontes de elevação gratuitas automaticamente (Google + Open-Meteo/Copernicus). Esse proxy é OPCIONAL — adiciona mais 3 fontes gratuitas (SRTM, Mapzen e ASTER) pra uma fusão mais precisa, do jeito descrito no vídeo de referência. Sem ele, o app continua funcionando normalmente, só com menos fontes.</p>
+    <p style="color:#90a4ae;font-size:12px;margin-bottom:12px;">Por que precisa disso: o serviço que fornece SRTM/Mapzen/ASTER (OpenTopoData) não permite chamada direta do navegador (bloqueio de CORS) — precisa de uma pontezinha simples entre o app e ele. Um Cloudflare Worker gratuito resolve isso em ~2 minutos, sem cartão de crédito.</p>
+    <ol>
+      <li>Acesse <a class="step-url" href="https://dash.cloudflare.com/" target="_blank">dash.cloudflare.com</a> e crie uma conta grátis (só email) se não tiver.</li>
+      <li>No menu lateral: <strong>Workers &amp; Pages → Create → Create Worker</strong>.</li>
+      <li>Dê um nome (ex: <code style="color:#e2b96e;">irriga-dem-proxy</code>) e clique em <strong>Deploy</strong>.</li>
+      <li>Clique em <strong>Edit code</strong>, apague tudo e cole o código abaixo, depois <strong>Save and Deploy</strong>.</li>
+    </ol>
+    <pre style="background:#0f3460;border-radius:6px;padding:10px;font-size:10.5px;color:#cfd8dc;overflow-x:auto;white-space:pre;">export default {
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Max-Age': '86400'
+      }});
+    }
+    if (!url.pathname.startsWith('/v1/')) {
+      return new Response('Use /v1/&lt;dataset&gt;?locations=lat,lng', { status: 400 });
+    }
+    const destino = 'https://api.opentopodata.org' + url.pathname + url.search;
+    const resp = await fetch(destino, { cf: { cacheTtl: 604800, cacheEverything: true } });
+    const corpo = await resp.text();
+    return new Response(corpo, { status: resp.status, headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+      'Cache-Control': 'public, max-age=604800'
+    }});
+  }
+};</pre>
+    <ol start="5">
+      <li>Vai aparecer uma URL tipo <code style="color:#81d4fa;">https://irriga-dem-proxy.SEU-SUBDOMINIO.workers.dev</code> — cole ela no campo "Proxy SRTM/ASTER/Mapzen" da aba Início.</li>
+    </ol>
+    <div class="note">&#9888; O plano gratuito do Cloudflare Workers cobre até 100.000 requisições por dia — muito acima do uso normal deste app.</div>
+    <button onclick="fecharTutorialDemProxy()" style="margin-top:16px;width:100%;background:#1565c0;color:#fff;border:none;border-radius:6px;padding:9px;font-size:13px;font-weight:700;cursor:pointer;">Entendi</button>
   </div>
 </div>
 
@@ -1392,6 +1450,30 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // regional que pode não bater com o município dele. Validado: pontos de saída aparecem no fundo do
 // vale sintético testado; vazão escala exatamente linear com a chuva (2,000× ao dobrar mm) e com o
 // coeficiente C (razão exata 0,286 = 0,10/0,35 ao trocar cobertura). Suíte completa sem regressões.
+// v4.25: fusão multi-fonte de elevação — inspirado num vídeo (IrrigaModel) que cruza 4 modelos
+// digitais de elevação (SRTM, Mapzen, Copernicus GLO-90, ASTER) em vez de confiar numa fonte só,
+// descartando outlier (>2σ da mediana) e fundindo o resto numa média ponderada pelo inverso da
+// variância (estimador BLUE). Testado: o OpenTopoData (serve SRTM/ASTER/Mapzen) não libera CORS pra
+// chamada direta do navegador (nem a resposta real nem o preflight OPTIONS trazem access-control-
+// allow-origin) — como o app é HTML estático sem backend, precisa de uma ponte. Implementado como
+// proxy OPCIONAL (Cloudflare Worker gratuito, instruções no botão "?" ao lado do campo "Proxy
+// SRTM/ASTER/Mapzen" na aba Início): sem ele, a fusão usa Google (já integrado) + Open-Meteo/
+// Copernicus GLO-90 (grátis, CORS liberado, confirmado) — 2 fontes, já uma melhoria sobre uma fonte
+// só; com ele, mais SRTM v3, Mapzen (composto SRTM+ASTER+NED) e ASTER GDEM — 5 fontes.
+// _buscarElevacaoFundida() virou o ponto de entrada único, substituindo a busca "só Google" que
+// existia repetida em 7 lugares diferentes do app (Curvas de Nível, Vista 3D, Declividade do
+// Terreno, Declividade das Linhas — ativo e todos os talhões, Perfil de Elevação da Guia, e a
+// hidrologia compartilhada do Mapa de Escoamento/Risco de Erosão/Vazão de Pico). Dois bugs reais
+// encontrados e corrigidos durante o desenvolvimento: (1) com só 2 leituras disponíveis, testar
+// cada uma contra a mediana das duas usando o PRÓPRIO σ como limiar tende a descartar exatamente a
+// fonte mais precisa (limiar mais apertado = estoura primeiro) — corrigido pra só aplicar rejeição
+// de outlier com 3+ leituras; (2) uma fonte que falha silenciosamente (todos os pontos null) ainda
+// aparecia como "usada" na lista de precisão, já que o array de retorno nunca é null mesmo quando
+// nenhum valor veio — corrigido pra checar se tem pelo menos 1 valor real antes de listar. Validado
+// com 9 casos de fusão isolados (matemática pura) + teste de integração (2 fontes vs 5 fontes,
+// melhora de precisão de ±6,2m pra ±3,0m com o proxy mockado; resiliência a fonte fora do ar sem
+// travar o app). Curvas de Nível e Vista 3D agora mostram a precisão estimada da elevação na
+// mensagem de status/painel. Suíte completa (todos os 11 testes do app) sem regressões.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -1565,6 +1647,27 @@ if(savedKey) {
   $('keyStatus').style.color = '#81d4fa';
   ativarGoogleMaps(savedKey);
 }
+
+// ── Proxy SRTM/ASTER/Mapzen (opcional, ver _buscarElevacaoFundida/configurarDemProxy) ──────────
+function abrirTutorialDemProxy() { $('modalDemProxy').classList.add('open'); }
+function fecharTutorialDemProxy() { $('modalDemProxy').classList.remove('open'); }
+function _atualizarStatusDemProxy() {
+  const url = (localStorage.getItem('demProxyUrl') || '').trim();
+  const el = $('demProxyStatus');
+  if(!el) return;
+  if(url) { el.textContent = 'Fusão de elevação: Google + Open-Meteo + SRTM + Mapzen + ASTER (5 fontes)'; el.style.color = '#a5d6a7'; }
+  else { el.textContent = 'Fusão de elevação: Google + Open-Meteo (2 fontes)'; el.style.color = '#78909c'; }
+}
+function salvarDemProxy() {
+  const url = $('demProxyUrl').value.trim();
+  localStorage.setItem('demProxyUrl', url);
+  _atualizarStatusDemProxy();
+  setStatus(url ? 'Proxy de elevação configurado — SRTM/Mapzen/ASTER entram na próxima busca.' : 'Proxy de elevação removido — voltando a usar Google + Open-Meteo.', 'ok');
+}
+// Carrega URL já salva automaticamente
+const savedDemProxy = localStorage.getItem('demProxyUrl');
+if(savedDemProxy) { const el = $('demProxyUrl'); if(el) el.value = savedDemProxy; }
+_atualizarStatusDemProxy();
 
 // ── Estado ───────────────────────────────────────────────────────────────────
 let modo = 'idle'; // 'poly' | 'guide' | 'idle' | 'curvapoly'
@@ -2929,6 +3032,172 @@ function slopeColor(pct) {
   return '#9C27B0';
 }
 
+// ══ Fusão multi-fonte de elevação ═══════════════════════════════════════════════════════════
+// Inspirado num método visto num vídeo (IrrigaModel): consultar VÁRIOS modelos digitais de
+// elevação pro mesmo ponto (cada um com erro vertical conhecido/documentado) em vez de confiar
+// numa fonte só — descarta leituras que fogem da mediana além de 2× o desvio da própria fonte, e
+// funde o que sobra numa média ponderada pelo inverso da variância (estimador BLUE — Best Linear
+// Unbiased Estimator — peso = 1/σ², fonte mais precisa pesa mais). O Google Elevation (que o app já
+// usa e já paga) entra como uma das fontes, junto com 4 fontes GRATUITAS: Open-Meteo (Copernicus
+// GLO-90, funciona direto do navegador — CORS liberado) e, se configurado um proxy (ver
+// configurarDemProxy), SRTM v3, Mapzen (composto SRTM+ASTER+NED) e ASTER GDEM via OpenTopoData —
+// esse serviço não libera CORS pra chamada direta do navegador, por isso precisa de um Cloudflare
+// Worker gratuito como ponte (instruções na conversa/README). Sem o proxy configurado, a fusão
+// continua funcionando com Google+Open-Meteo (2 fontes) — já uma melhoria sobre usar só uma fonte,
+// só que mais modesta. σ de cada fonte: valores documentados quando existem (SRTM/Mapzen ±5m,
+// Copernicus GLO-90 ±10m — os mesmos citados no vídeo de referência) ou estimativas de literatura
+// de validação quando não há spec oficial (Google ~±8m, ASTER GDEM v3 ~±17m, Tachikawa et al. 2011)
+// — deixado explícito no código pra quem for conferir/ajustar.
+const _DEM_FONTES = {
+  google: { sigma: 8,  nome: 'Google Elevation' },
+  glo90:  { sigma: 10, nome: 'Copernicus GLO-90 (Open-Meteo)' },
+  srtm:   { sigma: 5,  nome: 'SRTM v3 30m' },
+  mapzen: { sigma: 5,  nome: 'Mapzen (composto SRTM+ASTER+NED)' },
+  aster:  { sigma: 17, nome: 'ASTER GDEM v3' }
+};
+
+// Fusão de leituras de um único ponto: [{valor, sigma}, ...] → {valor, sigma, nFontes} fundido.
+// (1) Rejeita outlier: leitura que foge da mediana das leituras além de 2×σ da PRÓPRIA fonte —
+// nunca fica sem dado por rejeitar tudo (se rejeitar todas, usa todas mesmo assim, sem outlier).
+// (2) Média ponderada pelo inverso da variância (peso = 1/σ²) sobre o que sobrou.
+// (3) σ combinado = 1/√(Σ 1/σᵢ²) — fórmula padrão de combinação de medidas independentes.
+function _fundirElevacao(leituras) {
+  const validas = leituras.filter(l => l.valor != null && isFinite(l.valor) && l.sigma > 0);
+  if(!validas.length) return null;
+  if(validas.length === 1) return { valor: validas[0].valor, sigma: validas[0].sigma, nFontes: 1 };
+
+  // Rejeição de outlier só entra com pelo menos 3 leituras — com só 2, a mediana não tem robustez
+  // nenhuma (é só a média das duas, não dá pra saber qual das duas está "errada"), e testar cada
+  // uma contra a própria mediana nesse caso tende a descartar exatamente a fonte MAIS precisa (o
+  // limiar dela, 2×σ, é o mais apertado, então qualquer leitura que discorde relativamente pouco já
+  // estoura o limiar dela primeiro — o oposto do que se quer). Com só 2 fontes, pula direto pra
+  // ponderação, que já naturalmente dá menos peso à fonte menos precisa sem precisar descartar nada.
+  let usar = validas;
+  if(validas.length >= 3) {
+    const ordenados = validas.map(l => l.valor).slice().sort((a, b) => a - b);
+    const meio = ordenados.length / 2;
+    const mediana = ordenados.length % 2 ? ordenados[Math.floor(meio)] : (ordenados[meio - 1] + ordenados[meio]) / 2;
+    const semOutliers = validas.filter(l => Math.abs(l.valor - mediana) <= 2 * l.sigma);
+    if(semOutliers.length) usar = semOutliers;
+  }
+
+  let somaPeso = 0, somaPesoValor = 0;
+  usar.forEach(l => { const w = 1 / (l.sigma * l.sigma); somaPeso += w; somaPesoValor += w * l.valor; });
+  return { valor: somaPesoValor / somaPeso, sigma: Math.sqrt(1 / somaPeso), nFontes: usar.length };
+}
+
+// Busca elevação em lote no Google — o mesmo padrão repetido em vários lugares do app antes,
+// agora extraído numa função só (usada pela fusão E continua sendo a única fonte se o resto falhar).
+async function _buscarElevacaoGoogleLote(pontos) {
+  if(!pontos.length) return [];
+  const allPts = pontos.map(p => new google.maps.LatLng(p.lat, p.lng));
+  const BATCH = 512, elevFlat = new Array(allPts.length).fill(null);
+  const totalBatches = Math.ceil(allPts.length / BATCH);
+  const elevator = new google.maps.ElevationService();
+  let done = 0;
+  await new Promise(resolve => {
+    for(let b = 0; b < totalBatches; b++) {
+      const off = b * BATCH, slice = allPts.slice(off, off + BATCH);
+      elevator.getElevationForLocations({ locations: slice }, (res, status) => {
+        if(status === 'OK') res.forEach((r, i) => { elevFlat[off + i] = r.elevation; });
+        if(++done === totalBatches) resolve();
+      });
+    }
+  });
+  return elevFlat;
+}
+
+// Busca elevação em lote no Open-Meteo (Copernicus GLO-90) — gratuito, sem chave, CORS liberado
+// (testado e confirmado: access-control-allow-origin: *).
+async function _buscarOpenMeteoGLO90(pontos) {
+  const BATCH = 100, resultado = new Array(pontos.length).fill(null);
+  for(let i = 0; i < pontos.length; i += BATCH) {
+    const lote = pontos.slice(i, i + BATCH);
+    const lats = lote.map(p => p.lat.toFixed(6)).join(',');
+    const lngs = lote.map(p => p.lng.toFixed(6)).join(',');
+    try {
+      const resp = await fetch(`https://api.open-meteo.com/v1/elevation?latitude=${lats}&longitude=${lngs}`);
+      if(!resp.ok) continue;
+      const data = await resp.json();
+      if(Array.isArray(data.elevation)) data.elevation.forEach((e, j) => { resultado[i + j] = e; });
+    } catch(e) { console.error('Open-Meteo elevação:', e); }
+  }
+  return resultado;
+}
+
+// Busca elevação em lote no OpenTopoData (SRTM/Mapzen/ASTER), através do proxy Cloudflare Worker
+// do usuário (ver configurarDemProxy) — o OpenTopoData em si não libera CORS pra chamada direta do
+// navegador (testado: nem a resposta real nem o preflight OPTIONS trazem access-control-allow-
+// origin), por isso a ponte é obrigatória pra essas 3 fontes.
+async function _buscarOpenTopoData(pontos, dataset, proxyBase) {
+  const BATCH = 100, resultado = new Array(pontos.length).fill(null);
+  for(let i = 0; i < pontos.length; i += BATCH) {
+    const lote = pontos.slice(i, i + BATCH);
+    const locs = lote.map(p => `${p.lat.toFixed(6)},${p.lng.toFixed(6)}`).join('|');
+    try {
+      const resp = await fetch(`${proxyBase}/v1/${dataset}?locations=${locs}`);
+      if(!resp.ok) continue;
+      const data = await resp.json();
+      if(data.status === 'OK' && Array.isArray(data.results)) {
+        data.results.forEach((r, j) => { resultado[i + j] = r.elevation; });
+      }
+    } catch(e) { console.error(`OpenTopoData (${dataset}):`, e); }
+    // Respeita o limite de taxa do plano público do OpenTopoData (~1 req/s) quando há mais de um
+    // lote — só entra em jogo em grades grandes (>100 pontos).
+    if(i + BATCH < pontos.length) await new Promise(r => setTimeout(r, 1100));
+  }
+  return resultado;
+}
+
+// Ponto de entrada único: busca elevação de TODAS as fontes disponíveis (Google se tiver chave
+// ativa, Open-Meteo sempre, SRTM/Mapzen/ASTER se o proxy estiver configurado) e devolve já fundida
+// — substitui a busca "só Google" que existia antes em cada função separadamente. As 3 consultas ao
+// OpenTopoData rodam em SEQUÊNCIA entre si (mesmo destino final, evita estourar limite de taxa),
+// mas em PARALELO com Google e Open-Meteo (destinos diferentes, sem esse risco).
+async function _buscarElevacaoFundida(pontos) {
+  if(!pontos.length) return { valores: [], sigmaMedio: null, fontesUsadas: [] };
+  const temGoogle = !!(window.google && window.google.maps && google.maps.ElevationService);
+  const proxyBase = (localStorage.getItem('demProxyUrl') || '').trim().replace(/\/+$/, '');
+
+  const pGoogle = temGoogle ? _buscarElevacaoGoogleLote(pontos).catch(() => null) : Promise.resolve(null);
+  const pGlo90 = _buscarOpenMeteoGLO90(pontos).catch(() => null);
+  const pOpenTopo = proxyBase ? (async () => {
+    const srtm = await _buscarOpenTopoData(pontos, 'srtm30m', proxyBase).catch(() => null);
+    const mapzen = await _buscarOpenTopoData(pontos, 'mapzen', proxyBase).catch(() => null);
+    const aster = await _buscarOpenTopoData(pontos, 'aster30m', proxyBase).catch(() => null);
+    return { srtm, mapzen, aster };
+  })() : Promise.resolve({ srtm: null, mapzen: null, aster: null });
+
+  const [google_, glo90, openTopo] = await Promise.all([pGoogle, pGlo90, pOpenTopo]);
+  const { srtm, mapzen, aster } = openTopo;
+
+  const fontesUsadas = [];
+  // Cada busca engole o próprio erro internamente e sempre devolve um array (nunca rejeita) — se
+  // TODOS os pontos vierem null (fonte fora do ar, por exemplo), o array ainda é "verdadeiro" (não
+  // é null), então checar só a existência do array marcaria a fonte como "usada" mesmo sem ter
+  // contribuído em nenhum ponto. Confere se tem PELO MENOS UM valor real antes de listar.
+  const _temAlgumValor = arr => Array.isArray(arr) && arr.some(v => v != null);
+  if(_temAlgumValor(google_)) fontesUsadas.push(_DEM_FONTES.google.nome);
+  if(_temAlgumValor(glo90)) fontesUsadas.push(_DEM_FONTES.glo90.nome);
+  if(_temAlgumValor(srtm)) fontesUsadas.push(_DEM_FONTES.srtm.nome);
+  if(_temAlgumValor(mapzen)) fontesUsadas.push(_DEM_FONTES.mapzen.nome);
+  if(_temAlgumValor(aster)) fontesUsadas.push(_DEM_FONTES.aster.nome);
+
+  const valores = new Array(pontos.length).fill(null);
+  let somaSigma = 0, nSigma = 0;
+  for(let i = 0; i < pontos.length; i++) {
+    const leituras = [];
+    if(google_ && google_[i] != null) leituras.push({ valor: google_[i], sigma: _DEM_FONTES.google.sigma });
+    if(glo90 && glo90[i] != null) leituras.push({ valor: glo90[i], sigma: _DEM_FONTES.glo90.sigma });
+    if(srtm && srtm[i] != null) leituras.push({ valor: srtm[i], sigma: _DEM_FONTES.srtm.sigma });
+    if(mapzen && mapzen[i] != null) leituras.push({ valor: mapzen[i], sigma: _DEM_FONTES.mapzen.sigma });
+    if(aster && aster[i] != null) leituras.push({ valor: aster[i], sigma: _DEM_FONTES.aster.sigma });
+    const fundido = _fundirElevacao(leituras);
+    if(fundido) { valores[i] = fundido.valor; somaSigma += fundido.sigma; nSigma++; }
+  }
+  return { valores, sigmaMedio: nSigma ? somaSigma / nSigma : null, fontesUsadas };
+}
+
 // ── Declividade do TERRENO (superfície do talhão inteiro, tipo Civil 3D) ──────
 // Diferente da declividade "ao longo das linhas de plantio" acima, isto classifica a área toda
 // do talhão selecionado por declive real do relevo (gradiente da grade de elevação), pintando
@@ -2955,21 +3224,8 @@ async function classificarDeclividadeTerreno() {
   const lngs = Array.from({length:n}, (_,j) => minLng + j*(maxLng-minLng)/(n-1));
 
   const allPts = [];
-  for(let r=0;r<n;r++) for(let c=0;c<n;c++) allPts.push(new google.maps.LatLng(lats[r], lngs[c]));
-
-  const BATCH=512, elevFlat=new Array(allPts.length);
-  let done=0;
-  const totalBatches=Math.ceil(allPts.length/BATCH);
-  const elevator=new google.maps.ElevationService();
-  await new Promise(resolve => {
-    for(let b=0;b<totalBatches;b++){
-      const off=b*BATCH, slice=allPts.slice(off,off+BATCH);
-      elevator.getElevationForLocations({locations:slice},(res,status)=>{
-        if(status==='OK') res.forEach((r,i)=>{ elevFlat[off+i]=r.elevation; });
-        if(++done===totalBatches) resolve();
-      });
-    }
-  });
+  for(let r=0;r<n;r++) for(let c=0;c<n;c++) allPts.push({ lat: lats[r], lng: lngs[c] });
+  const { valores: elevFlat } = await _buscarElevacaoFundida(allPts);
 
   const elevGrid = Array.from({length:n}, (_,r) => Array.from({length:n}, (_,c) => elevFlat[r*n+c] ?? null));
 
@@ -3145,19 +3401,8 @@ async function _calcularHidrologiaTalhao(t, n) {
   const lngs = Array.from({ length: n }, (_, j) => minLng + j * (maxLng - minLng) / (n - 1));
 
   const allPts = [];
-  for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) allPts.push(new google.maps.LatLng(lats[r], lngs[c]));
-  const BATCH = 512, elevFlat = new Array(allPts.length);
-  let done = 0; const totalBatches = Math.ceil(allPts.length / BATCH);
-  const elevator = new google.maps.ElevationService();
-  await new Promise(resolve => {
-    for(let b = 0; b < totalBatches; b++) {
-      const off = b * BATCH, slice = allPts.slice(off, off + BATCH);
-      elevator.getElevationForLocations({ locations: slice }, (res, status) => {
-        if(status === 'OK') res.forEach((r, i) => { elevFlat[off + i] = r.elevation; });
-        if(++done === totalBatches) resolve();
-      });
-    }
-  });
+  for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) allPts.push({ lat: lats[r], lng: lngs[c] });
+  const { valores: elevFlat } = await _buscarElevacaoFundida(allPts);
   const elevBruta = Array.from({ length: n }, (_, r) => Array.from({ length: n }, (_, c) => elevFlat[r * n + c] ?? 0));
   // Preenche depressões/"pits" ANTES de calcular direção de fluxo (algoritmo priority-flood) — sem
   // isso, ruído nos dados de elevação (a Elevation API não tem precisão infinita) cria "poços"
@@ -3631,7 +3876,7 @@ function resampleLine(latlngs, spacingM) {
 }
 
 // ── Declividade do talhão ATIVO (antes de travar) ────────────────────────────
-function classificarDeclivAtivo() {
+async function classificarDeclivAtivo() {
   if(!linhas.length) { setStatus('Gere as linhas primeiro.', 'err'); return; }
   if(!window.google || !window.google.maps) {
     setStatus('Ative o Google Maps (chave API) para classificação.', 'err'); return;
@@ -3650,21 +3895,12 @@ function classificarDeclivAtivo() {
     if(raw.length < 2) return;
     const samples = resampleLine(raw, spacingM);
     lineInfo.push({samples, inicio: allPts.length});
-    samples.forEach(p => allPts.push(new google.maps.LatLng(p.lat, p.lng)));
+    samples.forEach(p => allPts.push({ lat: p.lat, lng: p.lng }));
   });
   if(!allPts.length) { $('btnDeclivAtivo').disabled = false; return; }
 
-  const elevator = new google.maps.ElevationService();
-  const BATCH = 512, elevs = new Array(allPts.length);
-  let done = 0;
-  const totalBatches = Math.ceil(allPts.length / BATCH);
-  for(let b = 0; b < totalBatches; b++) {
-    const off = b * BATCH, slice = allPts.slice(off, off + BATCH);
-    elevator.getElevationForLocations({locations: slice}, (res, status) => {
-      if(status === 'OK') res.forEach((r, i) => { elevs[off + i] = r.elevation; });
-      if(++done === totalBatches) _aplicarDeclivAtivo(lineInfo, elevs);
-    });
-  }
+  const { valores: elevs } = await _buscarElevacaoFundida(allPts);
+  _aplicarDeclivAtivo(lineInfo, elevs);
 }
 function _aplicarDeclivAtivo(lineInfo, elevs) {
   let totalSegs = 0;
@@ -3693,7 +3929,7 @@ function limparDeclivAtivo() {
   $('btnLimparDeclivAtivo').style.display = 'none';
 }
 
-function classificarTodosDeclividade() {
+async function classificarTodosDeclividade() {
   if(!talhoesArquivados.length) { setStatus('Gere pelo menos um talhão primeiro.', 'err'); return; }
   if(!window.google || !window.google.maps) {
     setStatus('Ative o Google Maps (chave API) para classificação de declividade.', 'err'); return;
@@ -3719,26 +3955,14 @@ function classificarTodosDeclividade() {
       if(raw.length < 2) return;
       const samples = resampleLine(raw, spacingM);
       lineInfo.push({talhao, samples, inicio: allPts.length});
-      samples.forEach(p => allPts.push(new google.maps.LatLng(p.lat, p.lng)));
+      samples.forEach(p => allPts.push({ lat: p.lat, lng: p.lng }));
     });
   });
 
   if(!allPts.length) { $('btnDeclivTodos').disabled = false; return; }
 
-  const elevator = new google.maps.ElevationService();
-  const BATCH = 512;
-  const elevs = new Array(allPts.length);
-  let done = 0;
-  const totalBatches = Math.ceil(allPts.length / BATCH);
-
-  for(let b = 0; b < totalBatches; b++) {
-    const offset = b * BATCH;
-    const slice  = allPts.slice(offset, offset + BATCH);
-    elevator.getElevationForLocations({locations: slice}, (res, status) => {
-      if(status === 'OK') res.forEach((r, i) => { elevs[offset + i] = r.elevation; });
-      if(++done === totalBatches) aplicarCoresDeclivTodos(lineInfo, elevs);
-    });
-  }
+  const { valores: elevs } = await _buscarElevacaoFundida(allPts);
+  aplicarCoresDeclivTodos(lineInfo, elevs);
 }
 
 function aplicarCoresDeclivTodos(lineInfo, elevs) {
@@ -3781,6 +4005,7 @@ function limparDeclivTodos() {
 let curvaLayers = [], curvaLabels = [];
 let _pickingCurvaGuia = false;
 let curvaMinElev = 0, curvaMaxElev = 0;
+let _curvaUltimaPrecisao = null; // {sigmaMedio, fontesUsadas} da última geração — ver _buscarElevacaoFundida
 // Polígono independente para área de curvas de nível
 let curvaPolyPts=[], curvaPolyMarkers=[], curvaPolyLayer=null, curvaPolyTempLine=null;
 let turfCurvaPoly=null, turfCurvaBound=null;
@@ -3941,23 +4166,12 @@ async function gerarCurvas() {
 
   const allPts = [];
   for(let r=0;r<n;r++) for(let c=0;c<n;c++)
-    allPts.push(new google.maps.LatLng(lats[r], lngs[c]));
+    allPts.push({ lat: lats[r], lng: lngs[c] });
 
-  // Busca elevações em batches de 512
-  const BATCH=512, elevFlat=new Array(allPts.length);
-  let done=0;
-  const totalBatches=Math.ceil(allPts.length/BATCH);
-  const elevator=new google.maps.ElevationService();
-
-  await new Promise(resolve => {
-    for(let b=0;b<totalBatches;b++){
-      const off=b*BATCH, slice=allPts.slice(off,off+BATCH);
-      elevator.getElevationForLocations({locations:slice},(res,status)=>{
-        if(status==='OK') res.forEach((r,i)=>{ elevFlat[off+i]=r.elevation; });
-        if(++done===totalBatches) resolve();
-      });
-    }
-  });
+  // Busca elevação com fusão multi-fonte (ver _buscarElevacaoFundida) — Google + Open-Meteo sempre,
+  // +SRTM/Mapzen/ASTER se o proxy estiver configurado (ver configurarDemProxy).
+  const { valores: elevFlat, sigmaMedio, fontesUsadas } = await _buscarElevacaoFundida(allPts);
+  _curvaUltimaPrecisao = { sigmaMedio, fontesUsadas };
 
   // Reorganiza em grade 2D: elevGrid[r][c]
   const elevGrid = Array.from({length:n}, (_,r) =>
@@ -4038,7 +4252,8 @@ async function gerarCurvas() {
      <span style="color:#e2b96e;font-weight:700;">Alt. máx:</span> ${maxElev.toFixed(1)} m<br>
      <span style="color:#e2b96e;font-weight:700;">Amplitude:</span> ${(maxElev-minElev).toFixed(1)} m &nbsp;
      <span style="color:#e2b96e;font-weight:700;">Curvas:</span> ${lineCount}`;
-  setStatus(`${lineCount} curvas de nível geradas (${minElev.toFixed(1)}–${maxElev.toFixed(1)} m).`, 'ok');
+  const precisaoTxt = sigmaMedio != null ? ` · precisão estimada ±${sigmaMedio.toFixed(1)}m (${fontesUsadas.length} fonte${fontesUsadas.length !== 1 ? 's' : ''})` : '';
+  setStatus(`${lineCount} curvas de nível geradas (${minElev.toFixed(1)}–${maxElev.toFixed(1)} m)${precisaoTxt}.`, 'ok');
 }
 
 function limparCurvas() {
@@ -5581,7 +5796,7 @@ function fecharTutorialChave() {
 }
 
 // ── Perfil de Elevação da Linha Guia ──────────────────────────────────────────
-function mostrarPerfilGuia() {
+async function mostrarPerfilGuia() {
   if(guidePts.length < 2) { setStatus('Defina a linha guia primeiro.', 'err'); return; }
   if(!window.google?.maps?.ElevationService) {
     alert('Perfil de elevação requer a chave Google Maps API. Ative-a nas configurações.');
@@ -5599,17 +5814,8 @@ function mostrarPerfilGuia() {
   $('perfilContent').innerHTML = '<p style="color:#90a4ae;text-align:center;padding:24px 0">Carregando eleva&#231;&#245;es...</p>';
   $('modalPerfil').classList.add('open');
 
-  const elevator = new google.maps.ElevationService();
-  const elevs = new Array(samples.length);
-  let done = 0, totalBatches = Math.ceil(samples.length / 512);
-  for(let b = 0; b < totalBatches; b++) {
-    const off = b * 512;
-    const slice = samples.slice(off, off + 512).map(p => new google.maps.LatLng(p.lat, p.lng));
-    elevator.getElevationForLocations({locations: slice}, (res, status) => {
-      if(status === 'OK') res.forEach((r, i) => { elevs[off + i] = r.elevation; });
-      if(++done === totalBatches) _renderPerfilGuia(samples, elevs);
-    });
-  }
+  const { valores: elevs } = await _buscarElevacaoFundida(samples.map(p => ({ lat: p.lat, lng: p.lng })));
+  _renderPerfilGuia(samples, elevs);
 }
 
 function _renderPerfilGuia(samples, elevs) {
@@ -6330,25 +6536,17 @@ async function gerarVista3DAnalise() {
   const mapTexPromise = _3da_captureMapTexture(latMin, latMax, lngMin, lngMax)
     .catch(e => { console.error('Captura do mapa 2D falhou:', e); return null; });
 
-  // ── Grade de elevação (Google Elevation API, em lotes de 512) ───────────────
+  // ── Grade de elevação: fusão multi-fonte (ver _buscarElevacaoFundida) — Google + Open-Meteo
+  // sempre, +SRTM/Mapzen/ASTER se o proxy estiver configurado (ver configurarDemProxy). ──────────
   const n = parseInt($('analiseGrid').value) || 30;
   const lats = Array.from({ length: n }, (_, i) => latMin + i * (latMax - latMin) / (n - 1));
   const lngs = Array.from({ length: n }, (_, j) => lngMin + j * (lngMax - lngMin) / (n - 1));
-  const allLL = []; for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) allLL.push(new google.maps.LatLng(lats[r], lngs[c]));
-  const BATCH = 512, elevFlat = new Array(allLL.length);
-  const elevator = new google.maps.ElevationService();
+  const allLL = []; for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) allLL.push({ lat: lats[r], lng: lngs[c] });
+  let elevFlat, precisao3D;
   try {
-    let done = 0; const totalBatches = Math.ceil(allLL.length / BATCH);
-    await new Promise((resolve, reject) => {
-      for(let b = 0; b < totalBatches; b++) {
-        const off = b * BATCH, slice = allLL.slice(off, off + BATCH);
-        elevator.getElevationForLocations({ locations: slice }, (res, status) => {
-          if(status !== 'OK') { reject(new Error(status)); return; }
-          res.forEach((r, i) => { elevFlat[off + i] = r.elevation; });
-          if(++done === totalBatches) resolve();
-        });
-      }
-    });
+    const fundido = await _buscarElevacaoFundida(allLL);
+    elevFlat = fundido.valores; precisao3D = { sigmaMedio: fundido.sigmaMedio, fontesUsadas: fundido.fontesUsadas };
+    if(!elevFlat.some(v => v != null)) throw new Error('nenhuma fonte de elevação respondeu');
   } catch(e) {
     $('m3da-loading').firstElementChild.textContent = '❌ Falha ao buscar elevação (' + e.message + ')';
     $('btnVista3D').disabled = false;
@@ -6619,6 +6817,7 @@ async function gerarVista3DAnalise() {
       + `Talhões: <b>${fontes.length}</b> &nbsp; Área total: <b>${totalHa.toFixed(2)} ha</b><br>`
       + `Linhas: <b>${totalLinhas}</b> &nbsp; Metros lineares: <b>${Math.round(totalMetros).toLocaleString('pt-BR')} m</b><br>`
       + `Amplitude do relevo: <b>${(elevMax - elevMin).toFixed(1)} m</b> (${elevMin.toFixed(1)}–${elevMax.toFixed(1)} m)`
+      + (precisao3D && precisao3D.sigmaMedio != null ? `<br>Precisão da elevação: <b>±${precisao3D.sigmaMedio.toFixed(1)} m</b> (${precisao3D.fontesUsadas.length} fonte${precisao3D.fontesUsadas.length !== 1 ? 's' : ''})` : '')
       + `<div style="margin-top:6px;border-top:1px solid rgba(255,255,255,.15);padding-top:6px;">${legHtml}</div>`;
     $('m3da-inf').style.display = 'block';
 
