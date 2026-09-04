@@ -242,7 +242,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.25 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.26 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -281,6 +281,15 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
       </div>
       <div class="rgroup">
         <div class="rgroup-body">
+          <select id="elevacaoModo" class="rfield wide" onchange="salvarModoElevacao()" title="Fusão multi-fonte: mais precisa (cruza várias fontes, rejeita outlier), mas mais lenta — cada busca de elevação vira várias rodadas de rede. Só Google: mais rápida (uma rodada só), precisão de uma fonte única.">
+            <option value="fusao" selected>Fusão multi-fonte (mais precisa, mais lenta)</option>
+            <option value="google">Só Google (mais rápida)</option>
+          </select>
+        </div>
+        <div class="rgroup-title">Fonte de Elevação</div>
+      </div>
+      <div class="rgroup">
+        <div class="rgroup-body">
           <div style="display:flex;flex-direction:column;gap:4px;">
             <div style="display:flex;gap:5px;">
               <input type="text" id="demProxyUrl" class="rfield wide" placeholder="https://seu-worker.workers.dev" onkeydown="if(event.key==='Enter') salvarDemProxy()">
@@ -290,7 +299,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
             <div id="demProxyStatus" style="font-size:10px;color:#78909c;">Fusão de elevação: Google + Open-Meteo (2 fontes)</div>
           </div>
         </div>
-        <div class="rgroup-title">Proxy SRTM/ASTER/Mapzen (opcional)</div>
+        <div class="rgroup-title">Proxy SRTM/ASTER/Mapzen (opcional, só no modo Fusão)</div>
       </div>
       <div class="rgroup">
         <div class="rgroup-body">
@@ -1474,6 +1483,21 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#42a5f5;bo
 // melhora de precisão de ±6,2m pra ±3,0m com o proxy mockado; resiliência a fonte fora do ar sem
 // travar o app). Curvas de Nível e Vista 3D agora mostram a precisão estimada da elevação na
 // mensagem de status/painel. Suíte completa (todos os 11 testes do app) sem regressões.
+// v4.26: análise real (topógrafo/drone + AgroCAD + nosso app, mesma propriedade) mostrou que a
+// fusão da v4.25 acerta a FORMA do relevo (desvio residual ~1,1–1,7m, igual ou melhor que o
+// AgroCAD/Google Earth comparado lado a lado) mas fica sistematicamente ~5–6m abaixo da cota
+// absoluta do levantamento em campo — provavelmente diferença de referencial vertical (GPS de
+// campo mede altitude elipsoidal, satélite mede ortométrica; a diferença nessa região do interior
+// de SP costuma ficar nessa faixa) e não um problema da fusão em si (o AgroCAD, ferramenta
+// independente, tem o MESMO deslocamento). Como a fusão multi-fonte deixou o app perceptivelmente
+// mais lento (Open-Meteo + eventualmente SRTM/Mapzen/ASTER em sequência, com espera pra respeitar
+// limite de taxa), pedido explícito: poder escolher velocidade em vez de precisão quando não
+// precisa do ganho de exatidão. Adicionado seletor "Fonte de Elevação" na aba Início (Fusão multi-
+// fonte / Só Google) — no modo "Só Google", _buscarElevacaoFundida() pula Open-Meteo e o proxy
+// inteiramente e devolve só a leitura do Google (uma rodada de rede só, mesmo comportamento de
+// antes da v4.25). Persistido em localStorage, mesmo padrão dos outros ajustes salvos. Validado:
+// 0 chamadas ao Open-Meteo no modo rápido (antes eram 9 lotes numa grade 30×30), 1 fonte listada
+// (era 2), preferência sobrevive a recarregar a página. Suíte completa sem regressões.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -1648,13 +1672,26 @@ if(savedKey) {
   ativarGoogleMaps(savedKey);
 }
 
+// ── Modo de elevação: Fusão multi-fonte vs só Google (mais rápido) ─────────────────────────────
+// A fusão multi-fonte melhora a precisão relativa (forma do relevo), mas cada busca de elevação
+// vira várias rodadas de rede em sequência (Open-Meteo + SRTM + Mapzen + ASTER, com espera pra
+// respeitar limite de taxa) — perceptível em grades grandes. "Só Google" volta ao comportamento de
+// antes: uma rodada só, mais rápido, sem o ganho de precisão da fusão.
+function salvarModoElevacao() {
+  const modo = $('elevacaoModo').value;
+  localStorage.setItem('elevacaoModo', modo);
+  _atualizarStatusDemProxy();
+  setStatus(modo === 'google' ? 'Modo rápido ativado — elevação só pelo Google (sem fusão multi-fonte).' : 'Fusão multi-fonte reativada.', 'ok');
+}
 // ── Proxy SRTM/ASTER/Mapzen (opcional, ver _buscarElevacaoFundida/configurarDemProxy) ──────────
 function abrirTutorialDemProxy() { $('modalDemProxy').classList.add('open'); }
 function fecharTutorialDemProxy() { $('modalDemProxy').classList.remove('open'); }
 function _atualizarStatusDemProxy() {
   const url = (localStorage.getItem('demProxyUrl') || '').trim();
+  const modoRapido = localStorage.getItem('elevacaoModo') === 'google';
   const el = $('demProxyStatus');
   if(!el) return;
+  if(modoRapido) { el.textContent = 'Modo rápido ativo — só Google (1 fonte). Proxy abaixo é ignorado nesse modo.'; el.style.color = '#78909c'; return; }
   if(url) { el.textContent = 'Fusão de elevação: Google + Open-Meteo + SRTM + Mapzen + ASTER (5 fontes)'; el.style.color = '#a5d6a7'; }
   else { el.textContent = 'Fusão de elevação: Google + Open-Meteo (2 fontes)'; el.style.color = '#78909c'; }
 }
@@ -1664,9 +1701,11 @@ function salvarDemProxy() {
   _atualizarStatusDemProxy();
   setStatus(url ? 'Proxy de elevação configurado — SRTM/Mapzen/ASTER entram na próxima busca.' : 'Proxy de elevação removido — voltando a usar Google + Open-Meteo.', 'ok');
 }
-// Carrega URL já salva automaticamente
+// Carrega URL/modo já salvos automaticamente
 const savedDemProxy = localStorage.getItem('demProxyUrl');
 if(savedDemProxy) { const el = $('demProxyUrl'); if(el) el.value = savedDemProxy; }
+const savedModoElevacao = localStorage.getItem('elevacaoModo');
+if(savedModoElevacao) { const el = $('elevacaoModo'); if(el) el.value = savedModoElevacao; }
 _atualizarStatusDemProxy();
 
 // ── Estado ───────────────────────────────────────────────────────────────────
@@ -3157,6 +3196,18 @@ async function _buscarOpenTopoData(pontos, dataset, proxyBase) {
 async function _buscarElevacaoFundida(pontos) {
   if(!pontos.length) return { valores: [], sigmaMedio: null, fontesUsadas: [] };
   const temGoogle = !!(window.google && window.google.maps && google.maps.ElevationService);
+
+  // Modo rápido: só Google, sem Open-Meteo/proxy — a fusão multi-fonte deixa o app bem mais lento
+  // (Open-Meteo já soma uma rodada de lotes extra; com o proxy configurado, mais 3 rodadas
+  // sequenciais de SRTM/Mapzen/ASTER, com espera de ~1,1s entre lotes pra respeitar o limite de
+  // taxa do OpenTopoData — numa grade grande isso pode levar bem mais tempo que só o Google
+  // sozinho). Pedido explícito pra poder escolher velocidade em vez de precisão quando não precisa
+  // do ganho de exatidão (ex: rascunho rápido, área já conhecida, terreno bem plano).
+  if(localStorage.getItem('elevacaoModo') === 'google') {
+    const valores = temGoogle ? await _buscarElevacaoGoogleLote(pontos) : new Array(pontos.length).fill(null);
+    return { valores, sigmaMedio: temGoogle ? _DEM_FONTES.google.sigma : null, fontesUsadas: temGoogle ? [_DEM_FONTES.google.nome] : [] };
+  }
+
   const proxyBase = (localStorage.getItem('demProxyUrl') || '').trim().replace(/\/+$/, '');
 
   const pGoogle = temGoogle ? _buscarElevacaoGoogleLote(pontos).catch(() => null) : Promise.resolve(null);
