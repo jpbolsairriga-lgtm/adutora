@@ -282,7 +282,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.33 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.34 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1705,6 +1705,26 @@ body.layout-lateral #status{grid-area:status;}
 // linhas de plantio deles — como cada talhão unificado pode ter sido plantado com guias/espaça-
 // mentos diferentes, não faz sentido "somar" as linhas; a área unificada nasce em branco pra uma
 // guia nova, do mesmo jeito que o "resto" de uma divisão por distorção já faz.
+// v4.34: 3 correções de feedback real de campo nas ferramentas da v4.33.
+// (1) Unificar Talhões: a união estava só apagando as linhas SEM fundir os polígonos (turf.union
+// exige topologia quase exata — qualquer fresta/vértice desalinhado entre vizinhos, comum quando
+// vêm de import/desenho/divisão diferentes, faz ele devolver os pedaços separados). Nova
+// _unirPoligonosRobusto(): tenta a união exata primeiro (preserva a borda original se já bastar);
+// se sair em pedaços, tenta de novo inflando 1m cada polígono antes de unir e encolhendo o
+// resultado de volta pela mesma distância (fechamento morfológico — funde vizinhos com
+// fresta/desalinhamento pequeno sem distorcer a forma visivelmente).
+// (2) Perfil de Linha / Carreador a partir de Linha: na prática só dava pra selecionar o talhão, não
+// a linha — o preenchimento do contorno (mesmo quase transparente) cobre a área inteira e cobria a
+// linha fina por baixo. selecionarTalhao() agora ignora cliques enquanto _modoPickLinha estiver
+// ativo, e as duas ferramentas aumentam temporariamente o weight (= tolerância de clique do
+// Leaflet) de todas as linhas de plantio visíveis enquanto escolhem, devolvendo ao normal depois.
+// (3) Carreador a partir de Linha estava apagando linhas de plantio que caíssem dentro da faixa do
+// carreador (mesma lógica da Divisão manual, onde faz sentido — a linha de corte ali é livre).
+// Pedido explícito: essa ferramenta não deve apagar NENHUMA linha de nenhum lado. _executarDivisao-
+// Talhao() ganhou a opção {clipLinhas:false} — em vez de recortar, decide de que lado (parte) cada
+// linha INTEIRA fica pelo ponto médio dela (com fallback pras pontas em caso raro do meio cair bem
+// em cima da faixa), sem cortar nada. Divisão manual continua recortando (não era o que foi
+// reportado como problema).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -5748,6 +5768,35 @@ function toggleTalhaoMultiSel(uid) {
 // sido plantado com guias/espaçamentos diferentes, não faz sentido tentar "somar" as linhas de
 // plantio — a área unificada nasce em branco, esperando uma guia nova, do mesmo jeito que o pedaço
 // "resto" de uma divisão por distorção já faz.
+// União sequencial "robusta" de vários polígonos turf. Talhões vizinhos raramente compartilham a
+// borda com precisão bit-a-bit (um veio de desenho à mão, outro de import KML/DXF, outro de uma
+// divisão por carreador anterior cujo corte dos dois lados foi calculado independentemente) —
+// turf.union exige topologia praticamente exata pra fundir 2 anéis num só; qualquer fresta ou
+// vértice desalinhado (mesmo de poucos centímetros) faz ele devolver os pedaços separados
+// (MultiPolygon) em vez de 1 polígono. Tenta a união exata primeiro (preserva a borda original se
+// já funcionar); se sair em pedaços, tenta de novo "inflando" cada polígono um pouco antes de unir
+// e "encolhendo" o resultado de volta pela mesma distância (fechamento morfológico clássico pra
+// fundir vizinhos com fresta/desalinhamento pequeno, sem distorcer a forma final de forma visível).
+function _unirPoligonosRobusto(polys) {
+  const _unirPar = (a, b) => { try { return turf.union(a, b); } catch(e) { return a; } };
+
+  let exata = polys.reduce((acc, p) => acc ? _unirPar(acc, p) : p, null);
+  if(exata && exata.geometry.type === 'Polygon') return exata; // fundiu limpo, sem gambiarra nenhuma
+
+  const FOLGA_KM = 0.001; // 1m — cobre desalinhamento de vértice/fresta física pequena entre vizinhos
+  let uniaoInflada = polys.reduce((acc, p) => {
+    let pInflado; try { pInflado = turf.buffer(p, FOLGA_KM, {units:'kilometers'}); } catch(e) { pInflado = p; }
+    return acc ? _unirPar(acc, pInflado) : pInflado;
+  }, null);
+  if(!uniaoInflada) return exata; // nem isso deu certo — devolve o que tiver (pode ser Multi)
+
+  try {
+    const encolhida = turf.buffer(uniaoInflada, -FOLGA_KM, {units:'kilometers'});
+    if(encolhida) return encolhida;
+  } catch(e) {}
+  return uniaoInflada; // encolher falhou — ainda assim é 1 polígono só (só que ~1m maior que o real)
+}
+
 function unificarTalhoesSelecionados() {
   if(talhoesMultiSel.size < 2) { setStatus('Selecione ao menos 2 talhões pra unificar.', 'err'); return; }
   const uids = [...talhoesMultiSel];
@@ -5755,14 +5804,12 @@ function unificarTalhoesSelecionados() {
   if(alvos.length < 2) { setStatus('Talhões selecionados não encontrados.', 'err'); return; }
   if(!confirm(`Unificar ${alvos.length} talhões num só? As linhas de plantio deles serão apagadas — a área unificada fica em branco pra você redesenhar a guia.`)) return;
 
-  // União sequencial dos polígonos (turf.union pega 2 de cada vez)
-  let uniao = null;
-  for(const t of alvos) {
+  const polys = [];
+  alvos.forEach(t => {
     const ring = [...t.polyPts.map(p => [p.lng, p.lat]), [t.polyPts[0].lng, t.polyPts[0].lat]];
-    let poly;
-    try { poly = turf.polygon([ring]); turf.rewind(poly, {mutate:true}); } catch(e) { continue; }
-    try { uniao = uniao ? turf.union(uniao, poly) : poly; } catch(e) { uniao = uniao || poly; }
-  }
+    try { const poly = turf.polygon([ring]); turf.rewind(poly, {mutate:true}); polys.push(poly); } catch(e) {}
+  });
+  const uniao = _unirPoligonosRobusto(polys);
   if(!uniao) { setStatus('Erro ao unir os polígonos selecionados.', 'err'); return; }
 
   // Remove os talhões antigos (mapa + array) — inclui qualquer overlay/classificação associada
@@ -5823,6 +5870,11 @@ function travarTodosMulti() {
 
 // ── Seleção de Talhão ─────────────────────────────────────────────────────────
 function selecionarTalhao(uid) {
+  // Enquanto o Perfil de Linha ou o Carreador-a-partir-de-Linha estiverem "escolhendo" (ver
+  // _modoPickLinha), o clique deve ir pra linha de plantio, não pro talhão por baixo dela — o
+  // preenchimento do polígono (mesmo quase transparente) cobre a área inteira e captura o clique
+  // sempre que o usuário erra o traço fino da linha por alguns pixels.
+  if(_modoPickLinha) return;
   if(multiSelectMode) { toggleTalhaoMultiSel(uid); return; }
   // Deselect any previous
   if(talhaoSelecionadoUid !== null) {
@@ -6125,7 +6177,8 @@ function _clipLinhaForaDoCarreador(coordsLngLat, carreadorBuf) {
 // _criarCarreadorDeLinhaPlantio() (linha construída a partir do offset de uma linha de plantio já
 // existente) — devolve {ok:true, numPartes} ou {ok:false, erro}, sem mexer em UI (quem chama trata
 // status/limpeza de tela conforme o próprio fluxo).
-function _executarDivisaoTalhao(uid, lineCoordsLngLat, largura) {
+function _executarDivisaoTalhao(uid, lineCoordsLngLat, largura, opts) {
+  const clipLinhas = !opts || opts.clipLinhas !== false; // padrão true (comportamento antigo, usado pela Divisão manual)
   const idx = talhoesArquivados.findIndex(t => t.uid === uid);
   if(idx < 0) return { ok: false, erro: 'Talhão não encontrado.' };
   const t = talhoesArquivados[idx];
@@ -6157,19 +6210,38 @@ function _executarDivisaoTalhao(uid, lineCoordsLngLat, largura) {
   if(partes.length < 2) return { ok: false, erro: 'A linha não gerou 2 partes — certifique-se que ela atravessa o talhão de lado a lado.' };
 
   // Recorta as linhas de plantio já existentes em vez de apagá-las: tira só o pedaço que cai dentro
-  // da faixa do carreador e distribui o restante para o novo talhão (parte) correspondente.
+  // da faixa do carreador e distribui o restante para o novo talhão (parte) correspondente. Usado
+  // pela Divisão manual (Traçar Divisão) — a linha de corte é livre, então pode mesmo atravessar
+  // linhas de plantio no meio do caminho.
   const linhasPorParte = partes.map(() => []);
-  t.linhas.forEach(pl => {
-    const coords = pl.getLatLngs().flat().map(ll => [ll.lng, ll.lat]);
-    if(coords.length < 2) return;
-    const pedacos = _clipLinhaForaDoCarreador(coords, carreadorBuf);
-    pedacos.forEach(pc => {
-      if(pc.length < 2) return;
-      const mid = turf.point(pc[Math.floor(pc.length/2)]);
-      const destino = partes.findIndex(parte => { try { return turf.booleanPointInPolygon(mid, parte); } catch(e) { return false; } });
-      if(destino >= 0) linhasPorParte[destino].push({coords: pc, color: pl.options.color, weight: pl.options.weight});
+  const _achaDestino = (pt) => partes.findIndex(parte => { try { return turf.booleanPointInPolygon(pt, parte); } catch(e) { return false; } });
+  if(clipLinhas) {
+    t.linhas.forEach(pl => {
+      const coords = pl.getLatLngs().flat().map(ll => [ll.lng, ll.lat]);
+      if(coords.length < 2) return;
+      const pedacos = _clipLinhaForaDoCarreador(coords, carreadorBuf);
+      pedacos.forEach(pc => {
+        if(pc.length < 2) return;
+        const destino = _achaDestino(turf.point(pc[Math.floor(pc.length/2)]));
+        if(destino >= 0) linhasPorParte[destino].push({coords: pc, color: pl.options.color, weight: pl.options.weight});
+      });
     });
-  });
+  } else {
+    // Carreador a partir de uma Linha de Plantio: a linha de corte já nasce com 1m de afastamento
+    // da linha escolhida (ver _criarCarreadorDeLinhaPlantio), então nenhuma linha de plantio
+    // deveria realmente cair dentro da faixa do carreador — não corta NENHUMA linha, só decide de
+    // que lado (parte) cada uma inteira fica, pelo ponto médio dela. Se o meio cair bem em cima do
+    // carreador por algum motivo (linha atravessando a faixa), tenta as pontas antes de desistir.
+    t.linhas.forEach(pl => {
+      const coords = pl.getLatLngs().flat().map(ll => [ll.lng, ll.lat]);
+      if(coords.length < 2) return;
+      let destino = _achaDestino(turf.point(coords[Math.floor(coords.length/2)]));
+      if(destino < 0) destino = _achaDestino(turf.point(coords[0]));
+      if(destino < 0) destino = _achaDestino(turf.point(coords[coords.length-1]));
+      if(destino < 0) destino = 0; // não achou lado nenhum (bem raro) — mantém a linha em vez de perdê-la
+      linhasPorParte[destino].push({coords, color: pl.options.color, weight: pl.options.weight});
+    });
+  }
 
   // Remove talhão original do mapa e do array
   if(t.polyLayer) t.polyLayer.remove();
@@ -6263,12 +6335,14 @@ function confirmarDivisao() {
 function iniciarCarreadorDeLinha() {
   if(talhaoSelecionadoUid === null) { setStatus('Selecione um talhão primeiro.', 'err'); return; }
   _modoPickLinha = 'carreador';
+  _aumentarClicabilidadeLinhas();
   map.getContainer().style.cursor = 'crosshair';
   $('btnCancelarCarreadorLinha').style.display = 'flex';
   setStatus('Clique numa linha de plantio do talhão selecionado — ela vira o contorno do lado bom, com 1m de afastamento até o carreador.', 'info');
 }
 function cancelarCarreadorDeLinha() {
   if(_modoPickLinha === 'carreador') _modoPickLinha = null;
+  _restaurarClicabilidadeLinhas();
   map.getContainer().style.cursor = '';
   $('btnCancelarCarreadorLinha').style.display = 'none';
   setStatus('', '');
@@ -6323,7 +6397,7 @@ function _criarCarreadorDeLinhaPlantio(pl) {
   const offsetDistKm = (afastamento + largura / 2) / 1000;
   const offsetCoords = pts.map(p => turf.destination(turf.point([p.lng, p.lat]), offsetDistKm, lado, {units:'kilometers'}).geometry.coordinates);
 
-  const r = _executarDivisaoTalhao(uid, offsetCoords, largura);
+  const r = _executarDivisaoTalhao(uid, offsetCoords, largura, { clipLinhas: false });
   if(!r.ok) { setStatus(r.erro, 'err'); return; }
 
   talhaoSelecionadoUid = null;
@@ -6445,15 +6519,40 @@ async function mostrarPerfilGuia() {
 // perfil (aqui) ou pra criação de carreador (ver _cliqueParaCarreadorDeLinha), conforme o modo
 // ativo em _modoPickLinha — evita duplicar a infraestrutura de "escolher uma linha no mapa".
 let _modoPickLinha = null; // null | 'perfil' | 'carreador'
+let _linhasComPesoAumentado = []; // polylines com o weight temporariamente aumentado durante o picking
+
+// O preenchimento do contorno do talhão (mesmo quase transparente) cobre a área inteira e captura
+// qualquer clique que erre por poucos pixels a linha de plantio, fina por baixo dele — sem contar
+// que selecionarTalhao() já ignora cliques durante o picking (ver lá), então sem isso o clique
+// simplesmente não faria nada na maioria das tentativas. Aumenta temporariamente o weight (peso
+// visual = também a tolerância de clique do Leaflet) de todas as linhas de plantio visíveis
+// enquanto o modo estiver ativo, e devolve ao normal ao escolher ou cancelar.
+function _aumentarClicabilidadeLinhas() {
+  const todas = [...linhas, ...talhoesArquivados.flatMap(t => t.linhas)];
+  todas.forEach(pl => {
+    if(pl._pesoOriginalPicking != null) return; // já aumentado
+    pl._pesoOriginalPicking = pl.options.weight;
+    pl.setStyle({ weight: Math.max(pl.options.weight, 6) });
+  });
+  _linhasComPesoAumentado = todas;
+}
+function _restaurarClicabilidadeLinhas() {
+  _linhasComPesoAumentado.forEach(pl => {
+    if(pl._pesoOriginalPicking != null) { pl.setStyle({ weight: pl._pesoOriginalPicking }); delete pl._pesoOriginalPicking; }
+  });
+  _linhasComPesoAumentado = [];
+}
 
 function ativarPerfilLinhaPlantio() {
   _modoPickLinha = 'perfil';
+  _aumentarClicabilidadeLinhas();
   map.getContainer().style.cursor = 'crosshair';
   $('btnCancelarPerfilLinha').style.display = 'flex';
   setStatus('Clique numa linha de plantio (ativa ou travada) pra ver o perfil de elevação dela.', 'info');
 }
 function cancelarPerfilLinhaPlantio() {
   if(_modoPickLinha === 'perfil') _modoPickLinha = null;
+  _restaurarClicabilidadeLinhas();
   map.getContainer().style.cursor = '';
   $('btnCancelarPerfilLinha').style.display = 'none';
   setStatus('', '');
@@ -6464,11 +6563,13 @@ function cancelarPerfilLinhaPlantio() {
 function _cliqueEmLinhaPlantio(pl) {
   if(_modoPickLinha === 'perfil') {
     _modoPickLinha = null;
+    _restaurarClicabilidadeLinhas();
     map.getContainer().style.cursor = '';
     $('btnCancelarPerfilLinha').style.display = 'none';
     mostrarPerfilLinhaPlantio(pl);
   } else if(_modoPickLinha === 'carreador') {
     _modoPickLinha = null;
+    _restaurarClicabilidadeLinhas();
     map.getContainer().style.cursor = '';
     $('btnCancelarCarreadorLinha').style.display = 'none';
     _criarCarreadorDeLinhaPlantio(pl);
