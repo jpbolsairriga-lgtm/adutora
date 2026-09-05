@@ -282,7 +282,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.36 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.37 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1757,6 +1757,16 @@ body.layout-lateral #status{grid-area:status;}
 // auto-interseção residual — passava despercebido só checando geometry.type). Corrigido também:
 // botões de Exportar KML/DXF sumiam depois de Unificar (a função nunca os reexibia explicitamente,
 // diferente de Travar Talhão/Divisão/Importar KML, que sempre fazem isso).
+// v4.37: mais 2 ajustes de acabamento na Unificação, a partir de feedback real (a fenda longa da
+// v4.36 já fechou certo). (1) Se os talhões sendo unificados vieram de uma divisão anterior (própria
+// do app ou não), pode sobrar uma faixa de carreador (marrom) bem no meio da área agora unificada —
+// não fazia sentido continuar mostrando isso. Nova _removerCarreadoresDentroDe(): depois de unir,
+// remove qualquer carreadorLayers cujo centro caia dentro do polígono novo. (2) O remendo (interseção
+// dos 2 contornos inflados, ver v4.36) crescia em TODAS as direções, não só de lado a lado da
+// fresta — sobrava um "calo" arredondado bem nas pontas do trecho, onde a fresta encontra o resto do
+// contorno original (relatado com print ampliado). Corrigido recortando o remendo pelo casco convexo
+// de A+B antes de fundir — mantém só a parte que já fazia sentido "entre" os dois talhões, cortando
+// o calo sem afetar o resto da borda.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -5843,6 +5853,10 @@ function _unirComPonte(polyA, polyB) {
   // dois estão a menos de 2d um do outro (não só o ponto mais próximo), e como funde A e B com o
   // remendo sem encolher nada de volta, a borda original de cada um fica intacta em todo o resto —
   // só cola exatamente onde tinha fresta, em qualquer extensão que ela tiver.
+  // Casco convexo de A+B — usado abaixo pra aparar o remendo. Calculado uma vez só (não muda com d).
+  let casco = null;
+  try { casco = turf.convex(turf.featureCollection([polyA, polyB])); } catch(e) {}
+
   let melhor = null;
   for(const d of [0.001, 0.003, 0.008, 0.02, 0.05]) { // meio-fator de busca: 1, 3, 8, 20, 50 metros
     let remendo = null;
@@ -5850,6 +5864,12 @@ function _unirComPonte(polyA, polyB) {
       const bufA = turf.buffer(polyA, d, { units: 'kilometers' });
       const bufB = turf.buffer(polyB, d, { units: 'kilometers' });
       remendo = turf.intersect(bufA, bufB);
+      // O remendo (interseção das duas infladas) tende a "estufar" além da borda original bem nas
+      // pontas do trecho de fresta (onde ela encontra o resto do contorno) — inflar cresce em TODAS
+      // as direções, não só de lado a lado da fresta, o que sobrava como um "calo"/bico arredondado
+      // ali (relatado pelo usuário). Recorta pelo casco convexo de A+B: mantém o remendo só na
+      // região que já fazia sentido "entre" os dois talhões, cortando o calo sem afetar o resto.
+      if(remendo && casco) { const recortado = turf.intersect(remendo, casco); if(recortado) remendo = recortado; }
     } catch(e) { continue; }
     if(!remendo) continue; // ainda longe demais nessa distância — tenta a próxima maior
 
@@ -5866,6 +5886,25 @@ function _unirComPonte(polyA, polyB) {
 function _unirPoligonosRobusto(polys) {
   if(!polys.length) return null;
   return polys.slice(1).reduce((acc, p) => acc ? _unirComPonte(acc, p) : p, polys[0]);
+}
+
+// Remove carreadores (faixas marrom) que ficam "engolidos" dentro da área recém-unificada — sobra
+// de uma divisão anterior entre exatamente esses talhões (ver _executarDivisaoTalhao). Não faz mais
+// sentido mostrar uma faixa de carreador no meio de um talhão que agora voltou a ser um só.
+function _removerCarreadoresDentroDe(poly) {
+  for(let i = carreadorLayers.length - 1; i >= 0; i--) {
+    const layer = carreadorLayers[i];
+    try {
+      const latlngs = layer.getLatLngs()[0];
+      const coords = latlngs.map(ll => [ll.lng, ll.lat]);
+      coords.push(coords[0]);
+      const centro = turf.centerOfMass(turf.polygon([coords])).geometry.coordinates;
+      if(turf.booleanPointInPolygon(turf.point(centro), poly)) {
+        layer.remove();
+        carreadorLayers.splice(i, 1);
+      }
+    } catch(e) {}
+  }
 }
 
 function unificarTalhoesSelecionados() {
@@ -5929,6 +5968,8 @@ function unificarTalhoesSelecionados() {
     novoTalhao.infoMarker = _criarInfoMarkerParaTalhao(novoTalhao);
     novoUidRef = newUid;
   });
+
+  _removerCarreadoresDentroDe(uniao); // limpa qualquer faixa de carreador que sobrou engolida no meio
 
   cancelarMultiSelect();
   renumerarTalhoes();
