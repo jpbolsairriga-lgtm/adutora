@@ -282,7 +282,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.35 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.36 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1743,6 +1743,20 @@ body.layout-lateral #status{grid-area:status;}
 // metros, sem inflar o resto do contorno. Talhões a mais de 100m um do outro são tratados como "não
 // são vizinhos de verdade" e a operação agora ABORTA sem mexer em nada (nem apaga linha) em vez de
 // silenciosamente apagar tudo sem entregar a fusão prometida.
+// v4.36: a v4.35 ainda deixava uma "linha dupla" fina (fenda residual) na borda antiga entre os
+// talhões unificados — a ponte ponto-a-ponto só fechava a fresta bem naquele ponto; se a borda
+// compartilhada corre por um trecho LONGO quase paralelo (não é só um ponto de maior aproximação),
+// o resto do trecho continuava com a fresta aberta, visível como linha dupla ao longo de quase toda
+// a antiga fronteira (mesmo a área e a geração de linhas funcionando normal, já que a fenda tem
+// área ~zero — por isso passava despercebida nos testes anteriores, que usavam frestas curtas/
+// pontuais). Trocado _unirComPonte() pra usar remendo = interseção dos 2 contornos "inflados" por
+// uma distância d — acompanha automaticamente TODO o trecho onde os dois estão a menos de 2d um do
+// outro (não só o ponto mais próximo), tenta d crescente (1/3/8/20/50m) até fechar limpo. Também
+// adicionado turf.buffer(poligono,0) + turf.kinks() como limpeza/validação de topologia em cada
+// tentativa de união (turf.union pode devolver um "Polygon" tecnicamente válido mas com um bico/
+// auto-interseção residual — passava despercebido só checando geometry.type). Corrigido também:
+// botões de Exportar KML/DXF sumiam depois de Unificar (a função nunca os reexibia explicitamente,
+// diferente de Travar Talhão/Divisão/Importar KML, que sempre fazem isso).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -5797,35 +5811,55 @@ function toggleTalhaoMultiSel(uid) {
 // mais cirúrgico que inflar o contorno inteiro: só mexe onde realmente precisa, então funciona tanto
 // pra um desalinhamento de poucos centímetros quanto pra um carreador/estrada real de vários metros
 // entre os dois talhões, sem distorcer o resto da borda.
+// turf.union às vezes devolve um Polygon tecnicamente válido (passa despercebido só checando o
+// tipo) mas com um "bico"/fenda fina — vértices quase coincidentes tracejando um V estreito bem
+// onde a topologia dos dois contornos quase bateu mas não exatamente. Isso desenha uma linha dupla
+// feia no meio do talhão "unificado" (relatado pelo usuário) mesmo a área e a geração de linhas
+// funcionando normalmente (a fenda tem área ~zero). turf.buffer com distância 0 é o truque clássico
+// (JSTS/turf) pra forçar o motor topológico a resolver/fundir esses bicos.
+function _limparPoligono(poly) {
+  if(!poly) return poly;
+  try { const limpo = turf.buffer(poly, 0, { units: 'kilometers' }); if(limpo) return limpo; } catch(e) {}
+  return poly;
+}
+// Só considera "limpo" um Polygon único sem nenhuma auto-interseção residual (turf.kinks).
+function _poligonoLimpo(poly) {
+  if(!poly || poly.geometry.type !== 'Polygon') return false;
+  try { return turf.kinks(poly).features.length === 0; } catch(e) { return true; } // kinks falhando não trava a operação
+}
+
 function _unirComPonte(polyA, polyB) {
   let direta = null;
   try { direta = turf.union(polyA, polyB); } catch(e) {}
-  if(direta && direta.geometry.type === 'Polygon') return direta;
+  direta = _limparPoligono(direta);
+  if(_poligonoLimpo(direta)) return direta;
 
-  let ponte = null;
-  try {
-    const boundA = turf.polygonToLine(polyA), boundB = turf.polygonToLine(polyB);
-    const coordsA = (boundA.geometry.type === 'MultiLineString' ? boundA.geometry.coordinates.flat() : boundA.geometry.coordinates)
-      .map(([lng, lat]) => ({ lat, lng }));
-    const densA = resampleLine(coordsA, 2); // a cada 2m — denso o bastante pra achar o ponto real de aproximação
-    let melhorA = null, melhorB = null, melhorDistKm = Infinity;
-    densA.forEach(pa => {
-      let near; try { near = turf.nearestPointOnLine(boundB, turf.point([pa.lng, pa.lat]), { units: 'kilometers' }); } catch(e) { return; }
-      if(near.properties.dist < melhorDistKm) { melhorDistKm = near.properties.dist; melhorA = [pa.lng, pa.lat]; melhorB = near.geometry.coordinates; }
-    });
-    // Só constrói ponte pra frestas de até 100m — mais que isso não são realmente "vizinhos" e
-    // provavelmente foi seleção errada do usuário, não um desalinhamento de borda pra corrigir.
-    if(melhorA && melhorB && melhorDistKm < 0.1 && melhorDistKm > 0) {
-      const largPonteM = Math.max(1, melhorDistKm * 1000 * 0.3 + 1); // meia-largura cresce um pouco com a distância
-      ponte = turf.buffer(turf.lineString([melhorA, melhorB]), largPonteM, { units: 'meters' });
-    }
-  } catch(e) {}
+  // Fresta real entre vizinhos: a primeira versão disso conectava só o PAR DE PONTOS mais próximos
+  // dos dois contornos — fechava a fresta bem naquele ponto, mas se a borda compartilhada for longa
+  // (não um único ponto de aproximação, e sim um trecho inteiro correndo quase paralelo), o resto
+  // do trecho continuava com a fresta aberta — exatamente a "linha dupla fina" relatada, cobrindo
+  // quase toda a extensão da antiga fronteira. Troca pro remendo = interseção dos dois contornos
+  // "inflados" por uma distância d: esse remendo acompanha automaticamente TODO o trecho onde os
+  // dois estão a menos de 2d um do outro (não só o ponto mais próximo), e como funde A e B com o
+  // remendo sem encolher nada de volta, a borda original de cada um fica intacta em todo o resto —
+  // só cola exatamente onde tinha fresta, em qualquer extensão que ela tiver.
+  let melhor = null;
+  for(const d of [0.001, 0.003, 0.008, 0.02, 0.05]) { // meio-fator de busca: 1, 3, 8, 20, 50 metros
+    let remendo = null;
+    try {
+      const bufA = turf.buffer(polyA, d, { units: 'kilometers' });
+      const bufB = turf.buffer(polyB, d, { units: 'kilometers' });
+      remendo = turf.intersect(bufA, bufB);
+    } catch(e) { continue; }
+    if(!remendo) continue; // ainda longe demais nessa distância — tenta a próxima maior
 
-  if(!ponte) return direta; // não achou como conectar (ou já eram idênticos/sobrepostos) — devolve o que a união direta deu
+    let comRemendo = null;
+    try { comRemendo = turf.union(polyA, remendo); comRemendo = turf.union(comRemendo, polyB); } catch(e) { continue; }
+    comRemendo = _limparPoligono(comRemendo);
+    if(_poligonoLimpo(comRemendo)) { melhor = comRemendo; break; } // achou a menor distância que fecha limpo
+  }
 
-  let comPonte = null;
-  try { comPonte = turf.union(polyA, ponte); comPonte = turf.union(comPonte, polyB); } catch(e) {}
-  return comPonte || direta;
+  return melhor || direta; // nada funcionou até 50m — devolve a união direta (provavelmente ainda Multi/suja; quem chama decide o que fazer)
 }
 
 // União sequencial "robusta" de vários polígonos turf, encadeando _unirComPonte par a par.
@@ -5852,8 +5886,8 @@ function unificarTalhoesSelecionados() {
   // longe demais um do outro pra serem "vizinhos" de verdade — aborta SEM mexer em nada, em vez de
   // apagar as linhas de plantio e não conseguir entregar o que foi prometido (era exatamente o bug
   // relatado: linhas sumiam mas os talhões continuavam separados).
-  if(uniao.geometry.type !== 'Polygon') {
-    setStatus('Não foi possível unificar — esses talhões estão longe demais um do outro (mais de 100m de distância). Nada foi alterado.', 'err');
+  if(!_poligonoLimpo(uniao)) {
+    setStatus('Não foi possível unificar — esses talhões estão longe demais um do outro, ou a borda entre eles é irregular demais pra fundir automaticamente. Nada foi alterado.', 'err');
     return;
   }
 
@@ -5900,6 +5934,8 @@ function unificarTalhoesSelecionados() {
   renumerarTalhoes();
   _updateLabelScale();
   $('btnLimparArquivados').style.display = '';
+  $('btnKml').style.display = 'flex'; // continuam existindo talhões travados — exportação tem que continuar disponível
+  $('btnDxf').style.display = 'flex';
   setStatus(`${alvos.length} talhões unificados em ${geoms.length} novo(s) talhão(ões) — linhas de plantio apagadas, redesenhe a guia.`, 'ok');
 }
 
