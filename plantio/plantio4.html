@@ -282,7 +282,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.32 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.33 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -384,6 +384,7 @@ body.layout-lateral #status{grid-area:status;}
         <div class="rgroup-body">
           <button class="rbtn-sm" id="btnMultiSelect" onclick="toggleMultiSelect()">&#9635; Selecionar Múltiplos</button>
           <div id="divMultiSelInfo" style="display:none;" class="rreadout"><span class="l">Selecionados:</span><span class="v" id="iMultiSelCount">0</span></div>
+          <button class="rbtn-sm warn" id="btnUnificarMulti" style="display:none;" onclick="unificarTalhoesSelecionados()" title="Junta os talhões selecionados num único polígono. As linhas de plantio deles são apagadas (área unificada fica em branco pra você redesenhar a guia).">&#8677; Unificar Selecionados</button>
           <button class="rbtn-sm clr" id="btnCancelarMulti" style="display:none;" onclick="cancelarMultiSelect()">&#10005; Cancelar Multi-seleção</button>
         </div>
         <div class="rgroup-title">Seleção</div>
@@ -410,6 +411,10 @@ body.layout-lateral #status{grid-area:status;}
             </div>
             <div class="rcol">
               <button class="rbtn c-orange" id="btnIniciarDivisao" onclick="iniciarDivisao()"><span class="ico">&#9986;</span><span class="lbl">Traçar Divisão</span></button>
+            </div>
+            <div class="rcol">
+              <button class="rbtn-sm" id="btnCarreadorDeLinha" onclick="iniciarCarreadorDeLinha()" title="Clique numa linha de plantio já gerada do talhão selecionado — ela vira o contorno do lado bom, com 1m de afastamento até o carreador (largura configurada ao lado)">&#128207; Carreador a partir de Linha</button>
+              <button class="rbtn-sm clr" id="btnCancelarCarreadorLinha" style="display:none;" onclick="cancelarCarreadorDeLinha()">&#10005; Cancelar</button>
             </div>
             <div class="rcol">
               <button class="rbtn-sm warn" id="btnCortarAngulo" style="display:none;" onclick="cortarNoAnguloDaGuia()">&#8961; Cortar no Ângulo da Guia</button>
@@ -520,6 +525,13 @@ body.layout-lateral #status{grid-area:status;}
           </div>
         </div>
         <div class="rgroup-title">Gerar</div>
+      </div>
+      <div class="rgroup">
+        <div class="rgroup-body">
+          <button class="rbtn c-teal" id="btnPerfilLinha" onclick="ativarPerfilLinhaPlantio()" title="Clique numa linha de plantio já gerada (ativa ou travada) pra ver o perfil de elevação dela"><span class="ico">&#128200;</span><span class="lbl">Perfil de uma Linha</span></button>
+          <button class="rbtn-sm clr" id="btnCancelarPerfilLinha" style="display:none;" onclick="cancelarPerfilLinhaPlantio()">&#10005; Cancelar</button>
+        </div>
+        <div class="rgroup-title">Perfil de Elevação de uma Linha</div>
       </div>
       <div class="rgroup" id="divDeclivAtivo" style="display:none;">
         <div class="rgroup-body">
@@ -780,7 +792,7 @@ body.layout-lateral #status{grid-area:status;}
 <div class="modal-bg" id="modalPerfil" onclick="if(event.target===this)fecharPerfil()">
   <div class="modal" style="max-width:660px;width:95%">
     <button class="modal-close" onclick="fecharPerfil()">&#10005;</button>
-    <h2>&#128200; Perfil de Eleva&#231;&#227;o &mdash; Linha Guia</h2>
+    <h2 id="perfilTitulo">&#128200; Perfil de Eleva&#231;&#227;o &mdash; Linha Guia</h2>
     <div id="perfilContent" style="margin-top:12px;"></div>
   </div>
 </div>
@@ -1680,6 +1692,19 @@ body.layout-lateral #status{grid-area:status;}
 // (é geometria de verdade, não dá pra reescalar depois sem reconstruir a malha, ao contrário do
 // exagero vertical); padrão mudou de "Normal" pra "Grossa" — já fica melhor sem precisar mexer em
 // nada.
+// v4.33: (1) aba Guia & Linhas de Plantio — novo botão "Perfil de uma Linha": clique numa linha de
+// plantio já gerada (ativa ou travada) pra ver o perfil de elevação dela, reaproveitando o mesmo
+// gráfico/modal do Perfil da Guia (_renderPerfilGuia agora é genérico — recebe samples+elevs de
+// qualquer origem). (2) aba Carreador — novo botão "Carreador a partir de Linha": em vez de traçar
+// a linha de corte à mão, clique numa linha de plantio do talhão selecionado — ela vira o contorno
+// do lado bom, com 1m de afastamento até o carreador (não fica em cima da linha), do lado que
+// sobra menos área do talhão (decidido automaticamente). confirmarDivisao() foi refatorada — o
+// núcleo (buffer+corte+recorte de linhas existentes) virou _executarDivisaoTalhao(), reusado pelos
+// dois fluxos. (3) aba Talhão — "Selecionar Múltiplos" ganhou um botão "Unificar Selecionados"
+// (aparece com 2+ talhões marcados): funde os polígonos num só (turf.union sequencial) e apaga as
+// linhas de plantio deles — como cada talhão unificado pode ter sido plantado com guias/espaça-
+// mentos diferentes, não faz sentido "somar" as linhas; a área unificada nasce em branco pra uma
+// guia nova, do mesmo jeito que o "resto" de uma divisão por distorção já faz.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -2710,6 +2735,7 @@ function _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingK
         // em cima da outra (emaranhado). Descarta só ESSE trecho (não a linha inteira) quando cruza.
         if(!_cruzaJanela(seg, _janelaSegs) && !_cruzaJanela(seg, _pertoGuia)) {
           const pl = L.polyline(seg.map(p => [p[1],p[0]]), {color:cor, weight:esp, opacity:.95}).addTo(map);
+          pl.on('click', () => { if(_modoPickLinha) _cliqueEmLinhaPlantio(pl); });
           linhasArr.push(pl); count++; added++;
           curSegs.push({pts: seg, bbox: _bboxOfPts(seg)});
         } else {
@@ -3188,6 +3214,7 @@ function gerarLinhas() {
         // em cima da outra (emaranhado). Descarta só ESSE trecho (não a linha inteira) quando cruza.
         if(!_cruzaJanela(seg, _janelaSegs) && !_cruzaJanela(seg, _pertoGuia)) {
           const pl = L.polyline(seg.map(p => [p[1],p[0]]), {color:cor, weight:esp, opacity:.95}).addTo(map);
+          pl.on('click', () => { if(_modoPickLinha) _cliqueEmLinhaPlantio(pl); });
           linhas.push(pl); count++; added++;
           curSegs.push({pts: seg, bbox: _bboxOfPts(seg)});
         } else {
@@ -5649,6 +5676,7 @@ function limparTudo() {
   limparLinhas(); limparGuia(); limparPoligono(); limparPoligonoCurva();
   limparTalhoesArquivados();
   if(multiSelectMode) cancelarMultiSelect();
+  _modoPickLinha = null; // sem isso o cursor ficava travado em crosshair se Perfil/Carreador de Linha estivesse ativo
   modo='idle'; map.getContainer().style.cursor='';
   $('btnPoly').classList.remove('active');
   $('btnGuia').classList.remove('active');
@@ -5656,6 +5684,8 @@ function limparTudo() {
   $('btnFinGuia').style.display='none';
   $('btnDeclivTodos').disabled = true;
   $('btnComprimentoTodos').disabled = true;
+  $('btnCancelarPerfilLinha').style.display = 'none';
+  $('btnCancelarCarreadorLinha').style.display = 'none';
   $('secLegenda').style.display = 'none';
   setStatus('Desenhe o contorno do talhão para começar.','');
 }
@@ -5692,6 +5722,7 @@ function cancelarMultiSelect() {
   $('btnCancelarMulti').style.display = 'none';
   $('iMultiSelCount').textContent = '0';
   $('btnTravarTodos').style.display = 'none';
+  $('btnUnificarMulti').style.display = 'none';
   setStatus('', '');
 }
 
@@ -5707,7 +5738,77 @@ function toggleTalhaoMultiSel(uid) {
   }
   $('iMultiSelCount').textContent = talhoesMultiSel.size;
   const n = talhoesMultiSel.size;
-  setStatus(n > 0 ? `${n} talhão(ões) selecionado(s) — desenhe a linha guia e gere as linhas.` : 'Nenhum talhão selecionado.', 'info');
+  $('btnUnificarMulti').style.display = n >= 2 ? 'flex' : 'none';
+  setStatus(n > 0 ? `${n} talhão(ões) selecionado(s) — desenhe a linha guia e gere as linhas, ou unifique-os.` : 'Nenhum talhão selecionado.', 'info');
+}
+
+// ── Unificar Talhões Selecionados (multi-seleção) ────────────────────────────
+// Junta os polígonos dos talhões marcados num único talhão novo. Diferente da Divisão (que separa
+// em 2), aqui a operação é "irreversível" pro conteúdo antigo: como cada talhão unificado pode ter
+// sido plantado com guias/espaçamentos diferentes, não faz sentido tentar "somar" as linhas de
+// plantio — a área unificada nasce em branco, esperando uma guia nova, do mesmo jeito que o pedaço
+// "resto" de uma divisão por distorção já faz.
+function unificarTalhoesSelecionados() {
+  if(talhoesMultiSel.size < 2) { setStatus('Selecione ao menos 2 talhões pra unificar.', 'err'); return; }
+  const uids = [...talhoesMultiSel];
+  const alvos = uids.map(uid => talhoesArquivados.find(t => t.uid === uid)).filter(Boolean);
+  if(alvos.length < 2) { setStatus('Talhões selecionados não encontrados.', 'err'); return; }
+  if(!confirm(`Unificar ${alvos.length} talhões num só? As linhas de plantio deles serão apagadas — a área unificada fica em branco pra você redesenhar a guia.`)) return;
+
+  // União sequencial dos polígonos (turf.union pega 2 de cada vez)
+  let uniao = null;
+  for(const t of alvos) {
+    const ring = [...t.polyPts.map(p => [p.lng, p.lat]), [t.polyPts[0].lng, t.polyPts[0].lat]];
+    let poly;
+    try { poly = turf.polygon([ring]); turf.rewind(poly, {mutate:true}); } catch(e) { continue; }
+    try { uniao = uniao ? turf.union(uniao, poly) : poly; } catch(e) { uniao = uniao || poly; }
+  }
+  if(!uniao) { setStatus('Erro ao unir os polígonos selecionados.', 'err'); return; }
+
+  // Remove os talhões antigos (mapa + array) — inclui qualquer overlay/classificação associada
+  alvos.forEach(t => {
+    if(t.polyLayer) t.polyLayer.remove();
+    t.linhas.forEach(l => l.remove());
+    t.linhasDecl.forEach(l => l.remove());
+    if(t.infoMarker) t.infoMarker.remove();
+    limparDeclividadeTerreno(t);
+    limparMapaEscoamento(t);
+    limparRiscoErosao(t);
+    if(t.vazaoMarkers) t.vazaoMarkers.forEach(m => m.remove());
+    const idx = talhoesArquivados.indexOf(t);
+    if(idx >= 0) talhoesArquivados.splice(idx, 1);
+  });
+
+  // Normalmente vira 1 polígono só — mas se os talhões não eram contíguos entre si, a união pode
+  // sair como MultiPolygon (partes que não se tocam); nesse caso cria um talhão novo por parte.
+  const geoms = uniao.geometry.type === 'MultiPolygon' ? uniao.geometry.coordinates : [uniao.geometry.coordinates];
+  let novoUidRef = null;
+  geoms.forEach(polyCoords => {
+    const newPolyPts = polyCoords[0].slice(0, -1).map(([lng, lat]) => ({ lat, lng }));
+    const newIdx = talhoesArquivados.length;
+    const newCor = CORES_TALHAO[newIdx % CORES_TALHAO.length];
+    const newUid = nextTalhaoUid++;
+    const capturedNewUid = newUid;
+    const newLayer = L.polygon(newPolyPts.map(p => [p.lat, p.lng]), { color: newCor, fillColor: newCor, fillOpacity: .06, weight: 2 }).addTo(map);
+    newLayer.on('click', () => { if(modo === 'idle') selecionarTalhao(capturedNewUid); });
+    let areaHa = 0;
+    try { areaHa = turf.area(turf.polygon(polyCoords)) / 10000; } catch(e) {}
+    const novoTalhao = {
+      uid: newUid, idx: newIdx + 1, cor: newCor, corLinha: alvos[0].corLinha || '#FFD600',
+      areaHa, spacing: null, count: 0, metrosLin: 0,
+      polyLayer: newLayer, polyPts: newPolyPts,
+      linhas: [], linhasDecl: [], infoMarker: null, turfPoly: null
+    };
+    talhoesArquivados.push(novoTalhao);
+    novoTalhao.infoMarker = _criarInfoMarkerParaTalhao(novoTalhao);
+    novoUidRef = newUid;
+  });
+
+  cancelarMultiSelect();
+  renumerarTalhoes();
+  _updateLabelScale();
+  $('btnLimparArquivados').style.display = '';
+  setStatus(`${alvos.length} talhões unificados em ${geoms.length} novo(s) talhão(ões) — linhas de plantio apagadas, redesenhe a guia.`, 'ok');
 }
 
 function travarTodosMulti() {
@@ -6016,67 +6117,47 @@ function _clipLinhaForaDoCarreador(coordsLngLat, carreadorBuf) {
 }
 
 // ── Confirmar e Executar Divisão ─────────────────────────────────────────────
-function confirmarDivisao() {
-  const uid = talhaoSelecionadoUid;
-  if(uid === null || divisaoPts.length < 2) {
-    setStatus('Selecione um talhão e trace a linha de divisão.','err'); return;
-  }
+// Núcleo compartilhado da divisão de talhão por carreador — dado um talhão (uid) e uma linha de
+// corte (lineCoordsLngLat, [[lng,lat],...], SEM extensão — a extensão além do talhão é feita aqui
+// dentro), gera a faixa de carreador (largura em metros), divide o talhão em até 2 novos e recorta
+// (preservando, em vez de apagar) as linhas de plantio já existentes pro talhão correspondente.
+// Usado tanto por confirmarDivisao() (linha traçada manualmente) quanto por
+// _criarCarreadorDeLinhaPlantio() (linha construída a partir do offset de uma linha de plantio já
+// existente) — devolve {ok:true, numPartes} ou {ok:false, erro}, sem mexer em UI (quem chama trata
+// status/limpeza de tela conforme o próprio fluxo).
+function _executarDivisaoTalhao(uid, lineCoordsLngLat, largura) {
   const idx = talhoesArquivados.findIndex(t => t.uid === uid);
-  if(idx < 0) return;
+  if(idx < 0) return { ok: false, erro: 'Talhão não encontrado.' };
   const t = talhoesArquivados[idx];
-  const largura = parseFloat($('larguraCarreador').value) || 6;
 
-  // Build turf polygon for the target talhão
   const ring = [...t.polyPts.map(p => [p.lng, p.lat]), [t.polyPts[0].lng, t.polyPts[0].lat]];
   let talhaoTurf;
-  try {
-    talhaoTurf = turf.polygon([ring]);
-    turf.rewind(talhaoTurf, {mutate:true});
-  } catch(e) { setStatus('Erro ao processar o polígono.','err'); return; }
+  try { talhaoTurf = turf.polygon([ring]); turf.rewind(talhaoTurf, {mutate:true}); }
+  catch(e) { return { ok: false, erro: 'Erro ao processar o polígono.' }; }
 
-  // Build division line (apply spline if needed)
-  const rawPts   = (divisaoModoGuia === 'spline' && divisaoPts.length >= 2)
-                    ? catmullRom(divisaoPts, 40) : divisaoPts;
-  const lineCoords = rawPts.map(p => [p.lng, p.lat]);
+  const extCoords = _extenderLinha(lineCoordsLngLat, turf.bbox(talhaoTurf));
+  const divLine = turf.lineString(extCoords);
 
-  // Extend line well beyond polygon bounds so the buffer cuts all the way through
-  const extCoords = _extenderLinha(lineCoords, turf.bbox(talhaoTurf));
-  const divLine   = turf.lineString(extCoords);
-
-  // Buffer half-width → carreador strip
   let carreadorBuf;
   try { carreadorBuf = turf.buffer(divLine, largura / 2, {units:'meters'}); }
-  catch(e) { setStatus('Erro ao criar buffer do carreador: ' + e.message,'err'); return; }
+  catch(e) { return { ok: false, erro: 'Erro ao criar buffer do carreador: ' + e.message }; }
 
-  // Visible carreador = intersection of strip with talhão
   let carreadorGeom = null;
   try { carreadorGeom = turf.intersect(carreadorBuf, talhaoTurf); } catch(e) {}
 
-  // Two halves = talhão minus the carreador strip
   let resto;
   try { resto = turf.difference(talhaoTurf, carreadorBuf); }
-  catch(e) { setStatus('Erro ao dividir: ' + e.message,'err'); return; }
-
-  if(!resto) { setStatus('Divisão falhou — a linha não cruza o talhão completamente.','err'); return; }
+  catch(e) { return { ok: false, erro: 'Erro ao dividir: ' + e.message }; }
+  if(!resto) return { ok: false, erro: 'Divisão falhou — a linha não cruza o talhão completamente.' };
 
   let partes = [];
-  if(resto.geometry.type === 'MultiPolygon') {
-    resto.geometry.coordinates.forEach(c => partes.push(turf.polygon(c)));
-  } else { partes.push(resto); }
+  if(resto.geometry.type === 'MultiPolygon') resto.geometry.coordinates.forEach(c => partes.push(turf.polygon(c)));
+  else partes.push(resto);
+  partes = partes.filter(p => turf.area(p) > 10).sort((a, b) => turf.area(b) - turf.area(a)).slice(0, 2);
+  if(partes.length < 2) return { ok: false, erro: 'A linha não gerou 2 partes — certifique-se que ela atravessa o talhão de lado a lado.' };
 
-  // Filtra fragmentos minúsculos gerados pelo buffer (< 10 m²) e mantém os 2 maiores
-  partes = partes
-    .filter(p => turf.area(p) > 10)
-    .sort((a, b) => turf.area(b) - turf.area(a))
-    .slice(0, 2);
-
-  if(partes.length < 2) {
-    setStatus('A linha não gerou 2 partes — certifique-se que ela atravessa o talhão de lado a lado.','err');
-    return;
-  }
-
-  // ─ Recorta as linhas de plantio já existentes em vez de apagá-las: tira só o pedaço que cai
-  // dentro da faixa do carreador e distribui o restante para o novo talhão (parte) correspondente.
+  // Recorta as linhas de plantio já existentes em vez de apagá-las: tira só o pedaço que cai dentro
+  // da faixa do carreador e distribui o restante para o novo talhão (parte) correspondente.
   const linhasPorParte = partes.map(() => []);
   t.linhas.forEach(pl => {
     const coords = pl.getLatLngs().flat().map(ll => [ll.lng, ll.lat]);
@@ -6090,7 +6171,7 @@ function confirmarDivisao() {
     });
   });
 
-  // ─ Remove talhão original do mapa e do array ─
+  // Remove talhão original do mapa e do array
   if(t.polyLayer) t.polyLayer.remove();
   t.linhas.forEach(l => l.remove());
   t.linhasDecl.forEach(l => l.remove());
@@ -6098,7 +6179,7 @@ function confirmarDivisao() {
   limparDeclividadeTerreno(t); // limites do talhão mudaram — a classificação antiga não vale mais
   talhoesArquivados.splice(idx, 1);
 
-  // ─ Desenhar carreador visível ─
+  // Desenha carreador visível
   if(carreadorGeom) {
     const geoms = carreadorGeom.geometry.type === 'MultiPolygon'
       ? carreadorGeom.geometry.coordinates
@@ -6111,7 +6192,7 @@ function confirmarDivisao() {
     });
   }
 
-  // ─ Criar 2 novos talhões arquivados, com as linhas de plantio recortadas já dentro ─
+  // Cria os novos talhões arquivados, com as linhas de plantio recortadas já dentro
   partes.forEach((parte, pIdx) => {
     const polyCoords = parte.geometry.coordinates[0];
     const newPolyPts = polyCoords.slice(0,-1).map(([lng,lat]) => ({lat, lng}));
@@ -6125,9 +6206,11 @@ function confirmarDivisao() {
 
     newLayer.on('click', () => { if(modo==='idle') selecionarTalhao(capturedNewUid); });
 
-    const newLinhas = linhasPorParte[pIdx].map(l =>
-      L.polyline(l.coords.map(([lng,lat]) => [lat,lng]), {color:l.color, weight:l.weight, opacity:.95}).addTo(map)
-    );
+    const newLinhas = linhasPorParte[pIdx].map(l => {
+      const pl = L.polyline(l.coords.map(([lng,lat]) => [lat,lng]), {color:l.color, weight:l.weight, opacity:.95}).addTo(map);
+      pl.on('click', () => { if(_modoPickLinha) _cliqueEmLinhaPlantio(pl); });
+      return pl;
+    });
     let metrosLin = 0;
     newLinhas.forEach(pl => { const pts = pl.getLatLngs().flat(); for(let i=0;i<pts.length-1;i++) metrosLin += haversineM(pts[i],pts[i+1]); });
 
@@ -6145,6 +6228,22 @@ function confirmarDivisao() {
     novoTalhao.infoMarker = _criarInfoMarkerParaTalhao(novoTalhao);
   });
 
+  return { ok: true, numPartes: partes.length };
+}
+
+function confirmarDivisao() {
+  const uid = talhaoSelecionadoUid;
+  if(uid === null || divisaoPts.length < 2) {
+    setStatus('Selecione um talhão e trace a linha de divisão.','err'); return;
+  }
+  const largura = parseFloat($('larguraCarreador').value) || 6;
+  const rawPts   = (divisaoModoGuia === 'spline' && divisaoPts.length >= 2)
+                    ? catmullRom(divisaoPts, 40) : divisaoPts;
+  const lineCoords = rawPts.map(p => [p.lng, p.lat]);
+
+  const r = _executarDivisaoTalhao(uid, lineCoords, largura);
+  if(!r.ok) { setStatus(r.erro, 'err'); return; }
+
   // ─ Limpar estado da divisão e seleção ─
   _limparDivisaoLine();
   talhaoSelecionadoUid = null;
@@ -6153,7 +6252,87 @@ function confirmarDivisao() {
   $('btnLimparArquivados').style.display = '';
   renumerarTalhoes();       // reordena idx e atualiza cabeçalhos das legendas
   _updateLabelScale();      // aplica escala inicial às novas legendas
-  setStatus(`✓ Talhão dividido em ${partes.length} novos talhões — carreador de ${largura}m criado.`, 'ok');
+  setStatus(`✓ Talhão dividido em ${r.numPartes} novos talhões — carreador de ${largura}m criado.`, 'ok');
+}
+
+// ── Carreador a partir de uma Linha de Plantio Existente ─────────────────────────────────────
+// Em vez de traçar a linha de corte à mão (Traçar Divisão), usa uma linha de plantio JÁ GERADA
+// como referência: ela some da lista de picking (modo 'carreador' em _modoPickLinha, despachado por
+// _cliqueEmLinhaPlantio — ver comentário da seção de Perfil), e vira o contorno do lado "bom", com
+// 1m de afastamento até o carreador (não fica em cima da linha, pedido explícito do usuário).
+function iniciarCarreadorDeLinha() {
+  if(talhaoSelecionadoUid === null) { setStatus('Selecione um talhão primeiro.', 'err'); return; }
+  _modoPickLinha = 'carreador';
+  map.getContainer().style.cursor = 'crosshair';
+  $('btnCancelarCarreadorLinha').style.display = 'flex';
+  setStatus('Clique numa linha de plantio do talhão selecionado — ela vira o contorno do lado bom, com 1m de afastamento até o carreador.', 'info');
+}
+function cancelarCarreadorDeLinha() {
+  if(_modoPickLinha === 'carreador') _modoPickLinha = null;
+  map.getContainer().style.cursor = '';
+  $('btnCancelarCarreadorLinha').style.display = 'none';
+  setStatus('', '');
+}
+
+// Acha o rumo perpendicular à linha que aponta pro lado com MENOS área dentro do talhão — decide de
+// que lado abrir o carreador (o lado "sobrando", tipicamente mais estreito/perto de uma borda) sem
+// depender do usuário escolher manualmente. Corta o talhão com um buffer BEM fino (5cm) só pra
+// comparar as duas metades por área — não é o corte de verdade (esse vem depois, já com o offset).
+function _ladoMenorAreaDaLinha(pts, talhaoTurf) {
+  const brg = turf.bearing(turf.point([pts[0].lng, pts[0].lat]), turf.point([pts[pts.length-1].lng, pts[pts.length-1].lat]));
+  const perp = brg + 90;
+  let partes;
+  try {
+    const extCoords = _extenderLinha(pts.map(p => [p.lng, p.lat]), turf.bbox(talhaoTurf));
+    const testBuf = turf.buffer(turf.lineString(extCoords), 0.05, {units:'meters'});
+    const resto = turf.difference(talhaoTurf, testBuf);
+    if(!resto) return perp;
+    partes = resto.geometry.type === 'MultiPolygon' ? resto.geometry.coordinates.map(c => turf.polygon(c)) : [resto];
+  } catch(e) { return perp; }
+  partes = partes.filter(p => turf.area(p) > 1).sort((a,b) => turf.area(a) - turf.area(b));
+  if(partes.length < 2) return perp; // não separou em 2 metades — segue com o padrão
+
+  const menor = partes[0];
+  const meio = pts[Math.floor(pts.length / 2)];
+  const prova = turf.destination(turf.point([meio.lng, meio.lat]), 0.005, perp, {units:'kilometers'}).geometry.coordinates;
+  let dentroDoMenor = false;
+  try { dentroDoMenor = turf.booleanPointInPolygon(turf.point(prova), menor); } catch(e) {}
+  return dentroDoMenor ? perp : perp + 180;
+}
+
+function _criarCarreadorDeLinhaPlantio(pl) {
+  const uid = talhaoSelecionadoUid;
+  if(uid === null) { setStatus('Selecione um talhão primeiro.', 'err'); return; }
+  const t = talhoesArquivados.find(x => x.uid === uid);
+  if(!t || !t.linhas.includes(pl)) {
+    setStatus('Essa linha não pertence ao talhão selecionado — selecione o talhão certo e tente de novo.', 'err');
+    return;
+  }
+  const pts = pl.getLatLngs().flat().map(p => ({ lat: p.lat, lng: p.lng }));
+  if(pts.length < 2) { setStatus('Linha inválida.', 'err'); return; }
+
+  const largura = parseFloat($('larguraCarreador').value) || 6;
+  const afastamento = 1; // metros — a linha escolhida vira o contorno, com esse afastamento até o carreador (pedido do usuário)
+
+  const ring = [...t.polyPts.map(p => [p.lng, p.lat]), [t.polyPts[0].lng, t.polyPts[0].lat]];
+  let talhaoTurf;
+  try { talhaoTurf = turf.polygon([ring]); turf.rewind(talhaoTurf, {mutate:true}); }
+  catch(e) { setStatus('Erro ao processar o polígono do talhão.', 'err'); return; }
+
+  const lado = _ladoMenorAreaDaLinha(pts, talhaoTurf);
+  const offsetDistKm = (afastamento + largura / 2) / 1000;
+  const offsetCoords = pts.map(p => turf.destination(turf.point([p.lng, p.lat]), offsetDistKm, lado, {units:'kilometers'}).geometry.coordinates);
+
+  const r = _executarDivisaoTalhao(uid, offsetCoords, largura);
+  if(!r.ok) { setStatus(r.erro, 'err'); return; }
+
+  talhaoSelecionadoUid = null;
+  $('divSelInfo').innerHTML = 'Clique em um talh&#227;o travado para selecionar';
+  $('divCarreadorOps').style.display = 'none';
+  $('btnLimparArquivados').style.display = '';
+  renumerarTalhoes();
+  _updateLabelScale();
+  setStatus(`✓ Talhão dividido em ${r.numPartes} novos talhões — carreador de ${largura}m criado a ${afastamento}m da linha escolhida.`, 'ok');
 }
 
 // ── Excluir Talhão Selecionado ───────────────────────────────────────────────
@@ -6252,6 +6431,64 @@ async function mostrarPerfilGuia() {
   const step = Math.max(totalRaw / 99, 2);
   const samples = resampleLine(rawPts, step);
 
+  $('perfilTitulo').innerHTML = '&#128200; Perfil de Eleva&#231;&#227;o &mdash; Linha Guia';
+  $('perfilContent').innerHTML = '<p style="color:#90a4ae;text-align:center;padding:24px 0">Carregando eleva&#231;&#245;es...</p>';
+  $('modalPerfil').classList.add('open');
+
+  const { valores: elevs } = await _buscarElevacaoFundida(samples.map(p => ({ lat: p.lat, lng: p.lng })));
+  _renderPerfilGuia(samples, elevs);
+}
+
+// ── Perfil de Elevação de uma Linha de Plantio já gerada (ativa ou travada) ──────────────────
+// Modo "picking": clique numa linha qualquer (ver handler de clique anexado em addSplineRow, nas
+// duas cópias — geração modo-simples e por-talhão) chama _cliqueEmLinhaPlantio, que despacha pro
+// perfil (aqui) ou pra criação de carreador (ver _cliqueParaCarreadorDeLinha), conforme o modo
+// ativo em _modoPickLinha — evita duplicar a infraestrutura de "escolher uma linha no mapa".
+let _modoPickLinha = null; // null | 'perfil' | 'carreador'
+
+function ativarPerfilLinhaPlantio() {
+  _modoPickLinha = 'perfil';
+  map.getContainer().style.cursor = 'crosshair';
+  $('btnCancelarPerfilLinha').style.display = 'flex';
+  setStatus('Clique numa linha de plantio (ativa ou travada) pra ver o perfil de elevação dela.', 'info');
+}
+function cancelarPerfilLinhaPlantio() {
+  if(_modoPickLinha === 'perfil') _modoPickLinha = null;
+  map.getContainer().style.cursor = '';
+  $('btnCancelarPerfilLinha').style.display = 'none';
+  setStatus('', '');
+}
+
+// Despachante único do clique numa linha de plantio — usado tanto pelo Perfil quanto pela criação
+// de Carreador a partir de uma linha (aba Carreador).
+function _cliqueEmLinhaPlantio(pl) {
+  if(_modoPickLinha === 'perfil') {
+    _modoPickLinha = null;
+    map.getContainer().style.cursor = '';
+    $('btnCancelarPerfilLinha').style.display = 'none';
+    mostrarPerfilLinhaPlantio(pl);
+  } else if(_modoPickLinha === 'carreador') {
+    _modoPickLinha = null;
+    map.getContainer().style.cursor = '';
+    $('btnCancelarCarreadorLinha').style.display = 'none';
+    _criarCarreadorDeLinhaPlantio(pl);
+  }
+}
+
+async function mostrarPerfilLinhaPlantio(pl) {
+  if(!window.google?.maps?.ElevationService) {
+    alert('Perfil de elevação requer a chave Google Maps API. Ative-a nas configurações.');
+    return;
+  }
+  const rawPts = pl.getLatLngs().flat().map(p => ({ lat: p.lat, lng: p.lng }));
+  if(rawPts.length < 2) { setStatus('Linha inválida — sem pontos suficientes.', 'err'); return; }
+
+  let totalRaw = 0;
+  for(let i = 0; i < rawPts.length - 1; i++) totalRaw += haversineM(rawPts[i], rawPts[i+1]);
+  const step = Math.max(totalRaw / 99, 2);
+  const samples = resampleLine(rawPts, step);
+
+  $('perfilTitulo').innerHTML = '&#128200; Perfil de Eleva&#231;&#227;o &mdash; Linha de Plantio';
   $('perfilContent').innerHTML = '<p style="color:#90a4ae;text-align:center;padding:24px 0">Carregando eleva&#231;&#245;es...</p>';
   $('modalPerfil').classList.add('open');
 
