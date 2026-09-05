@@ -282,7 +282,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.31 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.32 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -597,6 +597,14 @@ body.layout-lateral #status{grid-area:status;}
               <option value="20">20 × 20 (rápido)</option>
               <option value="30" selected>30 × 30 (padrão)</option>
               <option value="40">40 × 40 (detalhado)</option>
+            </select>
+          </div>
+          <div class="rcol">
+            <label>Espessura das linhas</label>
+            <select id="analiseEspessura3D" class="rfield wide" title="As linhas de plantio/contorno/curvas na Vista 3D são fitas com largura real em metros — num talhão grande, uma fita fina fica quase invisível vista de longe. Escolha antes de gerar (muda a geometria).">
+              <option value="1">Normal</option>
+              <option value="2" selected>Grossa (padrão)</option>
+              <option value="3">Muito grossa</option>
             </select>
           </div>
           <button class="rbtn c-blue" id="btnVista3D" onclick="gerarVista3DAnalise()"><span class="ico">&#9968;</span><span class="lbl">Gerar Vista 3D</span></button>
@@ -1659,6 +1667,19 @@ body.layout-lateral #status{grid-area:status;}
 // reconciliação roda no fim de setStatus() — chamado ao fim de praticamente toda ação do app — pra
 // uma camada nova criada com o toggle desligado já nascer escondida de novo, sem precisar caçar
 // cada ponto do código que adiciona layer no mapa.
+// v4.32: (1) controle de zoom do Leaflet movido pra baixo-esquerda (position:'bottomleft') — no
+// canto tradicional (topo-esquerda) ele ficava embaixo do novo painel "Camadas" (v4.31), sobrepondo
+// os dois. (2) A camada "Curvas de Nível" foi dividida em duas categorias independentes no painel
+// de Camadas — "Curvas de Nível (mestras)" (as mais grossas, com cota escrita) e "Curvas de Nível
+// (menores)" — reaproveitando o flag _isMaster que já existia na geração das curvas, só não estava
+// exposto como toggle separado. (3) Vista 3D: as linhas de plantio/contorno/curvas/carreadores são
+// "fitas" (triângulos) com largura real em METROS, não linhas GL de 1px — bom pra evitar o
+// serrilhado/piscar do THREE.Line, mas numa propriedade grande a largura padrão antiga (ex: 0,55m
+// pras linhas de plantio) ficava quase invisível vista de longe. Novo seletor "Espessura das
+// linhas" na aba Análise (Normal/Grossa/Muito grossa — 1×/2×/3×) escolhido ANTES de gerar a vista
+// (é geometria de verdade, não dá pra reescalar depois sem reconstruir a malha, ao contrário do
+// exagero vertical); padrão mudou de "Normal" pra "Grossa" — já fica melhor sem precisar mexer em
+// nada.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -1785,7 +1806,10 @@ function setStatus(msg, tipo = '') {
 }
 
 // ── Mapa ──────────────────────────────────────────────────────────────────────
-const map = L.map('map', {zoomControl: true, doubleClickZoom: false, preferCanvas: true}).setView([-21, -52], 13);
+const map = L.map('map', {zoomControl: false, doubleClickZoom: false, preferCanvas: true}).setView([-21, -52], 13);
+// Zoom no canto inferior esquerdo — o topo-esquerdo agora é do painel flutuante "Camadas" (v4.31);
+// topo-direita já é do painel "Informações". Inferior-esquerda ficava livre.
+L.control.zoom({ position: 'bottomleft' }).addTo(map);
 
 // ── Layout experimental: ribbon lateral (v4.30) ────────────────────────────────
 if(document.body.classList.contains('layout-lateral')) $('btnLayoutRibbon').innerHTML = '&#8622; Ribbon no Topo';
@@ -6338,7 +6362,8 @@ const _CAMADAS = {
   linhas:        { label: 'Linhas de Plantio',            get: () => [...talhoesArquivados.flatMap(t => t.linhas), ...linhas] },
   rotulos:       { label: 'Rótulos dos Talhões',          get: () => talhoesArquivados.map(t => t.infoMarker).filter(Boolean) },
   carreadores:   { label: 'Carreadores',                  get: () => carreadorLayers },
-  curvas:        { label: 'Curvas de Nível',              get: () => [...curvaLayers, ...curvaLabels] },
+  curvasMestras: { label: 'Curvas de Nível (mestras)',    get: () => [...curvaLayers.filter(l => l._isMaster), ...curvaLabels] },
+  curvasMenores: { label: 'Curvas de Nível (menores)',    get: () => curvaLayers.filter(l => !l._isMaster) },
   declividade:   { label: 'Classificação de Declividade', get: () => [...talhoesArquivados.flatMap(t => t.linhasDecl), ...linhasDecl] },
   declivTerreno: { label: 'Declividade do Terreno',       get: () => talhoesArquivados.map(t => t.declivTerrenoOverlay).filter(Boolean) },
   escoamento:    { label: 'Mapa de Escoamento',           get: () => talhoesArquivados.flatMap(t => [t.escoamentoOverlay, t.escoamentoLinhas]).filter(Boolean) },
@@ -6960,6 +6985,12 @@ async function gerarVista3DAnalise() {
   }
   if(typeof THREE === 'undefined') { setStatus('Three.js não carregou — verifique a conexão com a internet.', 'err'); return; }
 
+  // Multiplicador de espessura das fitas (linhas/contorno/curvas/carreadores/talvegues) — lido uma
+  // vez aqui porque a largura é geometria de verdade (metros), não dá pra ajustar depois sem
+  // reconstruir a malha, ao contrário do exagero vertical (que só reescala Y). Ver seletor
+  // "Espessura das linhas" na aba Análise.
+  const _3da_espMult = parseFloat($('analiseEspessura3D').value) || 2;
+
   // ── Reúne talhões travados + o talhão ativo (se ainda não travado) ──────────
   const fontes = talhoesArquivados.map(t => ({
     idx: t.idx, cor: t.cor || '#42a5f5', corLinha: t.corLinha || '#FFD600',
@@ -7148,7 +7179,7 @@ async function gerarVista3DAnalise() {
           }
         });
         if(segList.length) {
-          const { geo, raw } = _3da_buildRibbon(segList, 0.55, colorList);
+          const { geo, raw } = _3da_buildRibbon(segList, 0.55 * _3da_espMult, colorList);
           const mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
           scene.add(new THREE.Mesh(geo, mat));
           _3da_lineObjs.push({ geo, raw, eps: 0.6 });
@@ -7162,7 +7193,7 @@ async function gerarVista3DAnalise() {
           }
         });
         if(segList.length) {
-          const { geo, raw } = _3da_buildRibbon(segList, 0.55);
+          const { geo, raw } = _3da_buildRibbon(segList, 0.55 * _3da_espMult);
           const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(t.corLinha), side: THREE.DoubleSide });
           scene.add(new THREE.Mesh(geo, mat));
           _3da_lineObjs.push({ geo, raw, eps: 0.6 });
@@ -7174,7 +7205,7 @@ async function gerarVista3DAnalise() {
         const a = toXY(ring[i].lat, ring[i].lng), b = toXY(ring[i + 1].lat, ring[i + 1].lng);
         _3da_pushResampledSeg(bSegList, a.x, a.y, b.x, b.y, 4, meshSample);
       }
-      const { geo: bGeo, raw: bRaw } = _3da_buildRibbon(bSegList, 0.9);
+      const { geo: bGeo, raw: bRaw } = _3da_buildRibbon(bSegList, 0.9 * _3da_espMult);
       const bMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(t.cor), side: THREE.DoubleSide, transparent: true, opacity: .9 });
       scene.add(new THREE.Mesh(bGeo, bMat));
       _3da_lineObjs.push({ geo: bGeo, raw: bRaw, eps: 0.95 });
@@ -7194,7 +7225,7 @@ async function gerarVista3DAnalise() {
         }
       });
       if(cSegList.length) {
-        const { geo, raw } = _3da_buildRibbon(cSegList, 1.2);
+        const { geo, raw } = _3da_buildRibbon(cSegList, 1.2 * _3da_espMult);
         scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x795548, side: THREE.DoubleSide })));
         _3da_lineObjs.push({ geo, raw, eps: 0.8 });
         legenda.push({ label: 'Carreadores', cor: '#795548', ha: null });
@@ -7217,14 +7248,14 @@ async function gerarVista3DAnalise() {
         }
       });
       if(curvaSegNormal.length) {
-        const { geo, raw } = _3da_buildRibbon(curvaSegNormal, 0.3, curvaColNormal);
+        const { geo, raw } = _3da_buildRibbon(curvaSegNormal, 0.3 * _3da_espMult, curvaColNormal);
         const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, transparent: true, opacity: .8 }));
         m.visible = _3da_showCurvas; scene.add(m); _3da_curvaMeshes.push(m);
         _3da_lineObjs.push({ geo, raw, eps: 0.4 });
         temCurvas = true;
       }
       if(curvaSegMestra.length) {
-        const { geo, raw } = _3da_buildRibbon(curvaSegMestra, 0.5, curvaColMestra);
+        const { geo, raw } = _3da_buildRibbon(curvaSegMestra, 0.5 * _3da_espMult, curvaColMestra);
         const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }));
         m.visible = _3da_showCurvas; scene.add(m); _3da_curvaMeshes.push(m);
         _3da_lineObjs.push({ geo, raw, eps: 0.42 });
@@ -7251,7 +7282,7 @@ async function gerarVista3DAnalise() {
       });
     });
     if(talvSegList.length) {
-      const { geo, raw } = _3da_buildRibbon(talvSegList, 0.35);
+      const { geo, raw } = _3da_buildRibbon(talvSegList, 0.35 * _3da_espMult);
       const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x00e5ff, side: THREE.DoubleSide }));
       m.visible = _3da_showTalvegues; scene.add(m); _3da_talvegueMeshes.push(m);
       _3da_lineObjs.push({ geo, raw, eps: 0.5 });
