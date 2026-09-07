@@ -282,7 +282,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.37 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.38 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -532,6 +532,24 @@ body.layout-lateral #status{grid-area:status;}
           <button class="rbtn-sm clr" id="btnCancelarPerfilLinha" style="display:none;" onclick="cancelarPerfilLinhaPlantio()">&#10005; Cancelar</button>
         </div>
         <div class="rgroup-title">Perfil de Elevação de uma Linha</div>
+      </div>
+      <div class="rgroup">
+        <div class="rgroup-body">
+          <div class="rcol">
+            <label>Declividade máxima (%)</label>
+            <input type="number" id="otimDeclMax" class="rfield" value="10" min="1" max="100" step="1">
+          </div>
+          <div class="rcol">
+            <label>Faixas de declividade (%)</label>
+            <input type="text" id="otimFaixas" class="rfield wide" value="10,12,14,16,18" title="Lista separada por vírgula dos limiares de declividade pra classificar cada cenário — ex: 10,12,14,16,18 gera as faixas 0–10%, 10–12%, 12–14%, 14–16%, 16–18% e acima de 18%">
+          </div>
+          <div class="rcol">
+            <label>Passo angular (°)</label>
+            <input type="number" id="otimPassoAng" class="rfield" value="10" min="1" max="90" step="1">
+          </div>
+          <button class="rbtn c-purple" id="btnOtimizarCenarios" onclick="analisarCenariosPlantio()" title="Testa várias direções de plantio (0° a 180°, no passo angular escolhido) pro talhão selecionado e mostra comprimento/manobras/declividade de cada uma — mesma ideia da ferramenta 'Otimização de Linhas Retas' do Civil3D/AgroCAD"><span class="ico">&#9881;</span><span class="lbl">Otimizar Cenário</span></button>
+        </div>
+        <div class="rgroup-title">Otimizar Cenário de Plantio (talhão selecionado)</div>
       </div>
       <div class="rgroup" id="divDeclivAtivo" style="display:none;">
         <div class="rgroup-body">
@@ -794,6 +812,26 @@ body.layout-lateral #status{grid-area:status;}
     <button class="modal-close" onclick="fecharPerfil()">&#10005;</button>
     <h2 id="perfilTitulo">&#128200; Perfil de Eleva&#231;&#227;o &mdash; Linha Guia</h2>
     <div id="perfilContent" style="margin-top:12px;"></div>
+  </div>
+</div>
+
+<!-- ── Modal: Otimizar Cenário de Plantio ── -->
+<div class="modal-bg" id="modalCenarios" onclick="if(event.target===this)fecharModalCenarios()">
+  <div class="modal" style="max-width:960px;width:97%">
+    <button class="modal-close" onclick="fecharModalCenarios()">&#10005;</button>
+    <h2>&#9881; Otimizar Cenário de Plantio</h2>
+    <div id="cenariosResumo" style="font-size:11px;color:#90a4ae;margin:4px 0 10px;"></div>
+    <div style="overflow:auto;max-height:50vh;border:1px solid #1e4a7a;border-radius:6px;">
+      <table id="tabelaCenarios" style="width:100%;border-collapse:collapse;font-size:11.5px;white-space:nowrap;"></table>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px;">
+      <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:#cfd8dc;cursor:pointer;">
+        <input type="checkbox" id="cenariosIncluirMapa" checked> Incluir mapa temático (áreas acima da declividade máxima)
+      </label>
+      <div style="flex:1;"></div>
+      <button class="rbtn-sm" onclick="exportarCenariosCSV()">&#128190; Exportar CSV</button>
+      <button class="rbtn-sm ok" id="btnUsarCenarioEscolhido" onclick="usarCenarioEscolhido()" disabled>&#10003; Usar Ângulo Selecionado</button>
+    </div>
   </div>
 </div>
 
@@ -1071,6 +1109,10 @@ body.layout-lateral #status{grid-area:status;}
       <div id="secLegendaComprimento" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid #1e4a7a;">
         <div class="sec-title">Legenda — Comprimento das Linhas</div>
         <div id="legendaComprimentoBody" style="font-size:11px;line-height:2;"></div>
+      </div>
+      <div id="secLegendaCenario" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid #1e4a7a;">
+        <div class="sec-title">Legenda — Mapa Temático</div>
+        <div id="legendaCenarioBody" style="font-size:11px;line-height:1.7;color:#90a4ae;"></div>
       </div>
     </div>
   </div>
@@ -1767,6 +1809,25 @@ body.layout-lateral #status{grid-area:status;}
 // contorno original (relatado com print ampliado). Corrigido recortando o remendo pelo casco convexo
 // de A+B antes de fundir — mantém só a parte que já fazia sentido "entre" os dois talhões, cortando
 // o calo sem afetar o resto da borda.
+// v4.38: nova ferramenta "Otimizar Cenário de Plantio" (aba Guia & Linhas de Plantio, talhão
+// selecionado) — recria a ferramenta "Otimização de Linhas Retas" de um vídeo de referência
+// (AutoCAD/AgroCAD): testa VÁRIAS direções de plantio (0° a 180°, no passo angular escolhido) e
+// mostra, numa tabela, comprimento total/médio das linhas, número de manobras e o % do comprimento
+// em cada faixa de declividade LONGITUDINAL (a declividade que a própria linha "sente" ao longo do
+// percurso — diferente da declividade omnidirecional já existente na aba Análise) pra cada ângulo.
+// Busca a elevação UMA ÚNICA VEZ (grade + sampler bilinear, mesmo princípio do Mapa de Escoamento/
+// Declividade do Terreno) e reusa esse sampler pra testar todos os ângulos sem custo de rede extra.
+// Clique numa linha da tabela pra escolher o ângulo (destaque verde mostra o melhor valor de cada
+// coluna — comprimento, comprimento médio, manobras, % dentro da declividade máxima); "Usar Ângulo
+// Selecionado" desenha as linhas de verdade nesse ângulo. Opção de incluir um "mapa temático"
+// (hachura vermelha nas áreas onde a declividade longitudinal ultrapassa o máximo, igual ao vídeo)
+// — clicável: com o mapa temático ativo, clique em qualquer ponto do talhão pra ver o valor exato
+// ali. Também dá pra exportar a tabela de cenários em CSV. Núcleo de geração de linha reta
+// (_linhasRetasSimples) reaproveita a mesma lógica geométrica do addRetaRow (perpendicular offset +
+// interseção com o contorno) numa versão "pura" sem tocar no mapa, pra avaliar 19 ângulos (passo
+// padrão 10°) rapidamente. Aproveitado pra fechar 3 lacunas pré-existentes de limpeza de overlay
+// (Mapa de Escoamento/Risco de Erosão/Vazão de Pico nunca eram removidos em Excluir Talhão nem em
+// Limpar Talhões Travados — ficavam "presos" no mapa).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -2209,6 +2270,7 @@ function resampleCurveByStep(pts, stepM, min = 100, max = 1200) {
 
 // ── Eventos do mapa ───────────────────────────────────────────────────────────
 map.on('click', e => {
+  if(modo === 'idle' && _mapaTematicoAtivo) { _inspecionarMapaTematico(e.latlng); return; }
   if(modo === 'poly') addPolyPt(e.latlng);
   else if(modo === 'guide') {
     // Modo Reta: máximo 2 pontos
@@ -2605,6 +2667,10 @@ function limparTalhoesArquivados() {
     t.linhasDecl.forEach(l => l.remove());
     if(t.infoMarker) t.infoMarker.remove();
     limparDeclividadeTerreno(t);
+    limparMapaEscoamento(t);
+    limparRiscoErosao(t);
+    limparMapaTematico(t);
+    if(t.vazaoMarkers) t.vazaoMarkers.forEach(m => m.remove());
   });
   talhoesArquivados = [];
   carreadorLayers.forEach(l => l.remove()); carreadorLayers = [];
@@ -5939,6 +6005,7 @@ function unificarTalhoesSelecionados() {
     limparDeclividadeTerreno(t);
     limparMapaEscoamento(t);
     limparRiscoErosao(t);
+    limparMapaTematico(t);
     if(t.vazaoMarkers) t.vazaoMarkers.forEach(m => m.remove());
     const idx = talhoesArquivados.indexOf(t);
     if(idx >= 0) talhoesArquivados.splice(idx, 1);
@@ -6371,6 +6438,7 @@ function _executarDivisaoTalhao(uid, lineCoordsLngLat, largura, opts) {
   t.linhasDecl.forEach(l => l.remove());
   if(t.infoMarker) t.infoMarker.remove();
   limparDeclividadeTerreno(t); // limites do talhão mudaram — a classificação antiga não vale mais
+  limparMapaTematico(t);
   talhoesArquivados.splice(idx, 1);
 
   // Desenha carreador visível
@@ -6545,6 +6613,10 @@ function excluirTalhaoSelecionado() {
   t.linhasDecl.forEach(l => l.remove());
   if(t.infoMarker) t.infoMarker.remove();
   limparDeclividadeTerreno(t);
+  limparMapaEscoamento(t);
+  limparRiscoErosao(t);
+  limparMapaTematico(t);
+  if(t.vazaoMarkers) t.vazaoMarkers.forEach(m => m.remove());
   // Remove do array
   talhoesArquivados.splice(idx, 1);
   renumerarTalhoes();
@@ -6719,6 +6791,350 @@ async function mostrarPerfilLinhaPlantio(pl) {
   _renderPerfilGuia(samples, elevs);
 }
 
+// ══ Otimizar Cenário de Plantio ═══════════════════════════════════════════════════════════════
+// Recria a ferramenta "Otimização de Linhas Retas" vista num vídeo de referência (AutoCAD/AgroCAD):
+// testa VÁRIAS direções de plantio (0° a 180°, no passo angular escolhido) pro talhão selecionado
+// e mostra, pra cada uma, comprimento total/médio das linhas, número de manobras (uma por linha) e
+// o percentual do comprimento em cada faixa de declividade LONGITUDINAL — a declividade que a
+// própria linha de plantio "sente" ao longo do seu percurso, não a declividade omnidirecional do
+// terreno (essa já existe na aba Análise). Busca elevação UMA ÚNICA VEZ (uma grade, igual Mapa de
+// Escoamento/Declividade do Terreno) e reusa o mesmo sampler interpolado pra testar todos os
+// ângulos sem custo de rede extra — só geometria + interpolação local depois da primeira busca.
+
+// Gera as linhas retas paralelas (só geometria, sem tocar no mapa) — mesmo núcleo do addRetaRow
+// usado na geração de verdade (perpendicular offset + interseção com o contorno), mas sem
+// crossing-detection/estado de UI, pra avaliar muitos ângulos rapidamente sem desenhar nada.
+function _linhasRetasSimples(tPolyT, tBoundT, rowBrg, spacingKm) {
+  const bbox = turf.bbox(tPolyT);
+  const ext = turf.distance(turf.point([bbox[0],bbox[1]]), turf.point([bbox[2],bbox[3]])) * 2;
+  const anchor = turf.centroid(tPolyT).geometry.coordinates;
+  const perpBrg = rowBrg + 90;
+  const nBoth = Math.ceil(ext / 2 / spacingKm) + 2;
+  const linhas = [];
+
+  function addRow(projKm) {
+    const dir = projKm >= 0 ? perpBrg : perpBrg + 180;
+    const ref = Math.abs(projKm) < 1e-9 ? anchor
+      : turf.destination(turf.point(anchor), Math.abs(projKm), dir, {units:'kilometers'}).geometry.coordinates;
+    const p1 = turf.destination(turf.point(ref), ext, rowBrg,       {units:'kilometers'}).geometry.coordinates;
+    const p2 = turf.destination(turf.point(ref), ext, rowBrg + 180, {units:'kilometers'}).geometry.coordinates;
+    try {
+      const ixs = turf.lineIntersect(turf.lineString([p2, p1]), tBoundT);
+      if(!ixs.features.length) return;
+      const p2pt = turf.point(p2);
+      const sorted = ixs.features.map(f => f.geometry.coordinates)
+        .sort((a, b) => turf.distance(p2pt, turf.point(a)) - turf.distance(p2pt, turf.point(b)));
+      for(let i = 0; i + 1 < sorted.length; i += 2) {
+        const s = sorted[i], e = sorted[i+1];
+        const mid = [(s[0]+e[0])/2, (s[1]+e[1])/2];
+        if(!turf.booleanPointInPolygon(turf.point(mid), tPolyT)) continue;
+        linhas.push([s, e]);
+      }
+    } catch(e) {}
+  }
+
+  addRow(0);
+  for(let n = 1; n <= nBoth; n++) { addRow(n * spacingKm); addRow(-n * spacingKm); }
+  return linhas; // array de [ [lng,lat], [lng,lat] ] — uma linha reta = 1 segmento cada
+}
+
+// Rótulo cardinal aproximado de uma LINHA (sem sentido definido) a partir do azimute — convenção
+// padrão de agrimensura (0°=Norte, 90°=Leste), igual à guia/linhas do resto do app.
+function _rumoCardinal(azimuteDeg) {
+  const a = ((azimuteDeg % 180) + 180) % 180;
+  const pontos = ['N–S','NNL–SSO','NL–SO','LNL–OSO','L–O','LSL–ONO','SL–NO','SSL–NNO'];
+  return pontos[Math.round(a / 22.5) % 8];
+}
+
+let _cenariosPlantio = null; // {resultados, limiares, spacing, declMax, talhaoUid, sampler, tPolyT, anguloSelecionado}
+
+async function analisarCenariosPlantio() {
+  if(talhaoSelecionadoUid === null) { setStatus('Selecione um talhão primeiro.', 'err'); return; }
+  if(!window.google?.maps?.ElevationService) {
+    setStatus('Ative o Google Maps (chave API) pra essa análise — ela precisa de elevação real do terreno.', 'err');
+    return;
+  }
+  const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
+  if(!t) return;
+
+  const spacing = Math.max(0.5, parseFloat($('espac').value) || 6);
+  const declMax = Math.max(0.1, parseFloat($('otimDeclMax').value) || 10);
+  const passoAng = Math.max(1, Math.min(90, parseFloat($('otimPassoAng').value) || 10));
+  const limiares = ($('otimFaixas').value || '')
+    .split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n) && n > 0).sort((a,b) => a-b);
+  if(!limiares.length) { setStatus('Informe pelo menos uma faixa de declividade válida (ex: 10,12,14).', 'err'); return; }
+
+  const ring = [...t.polyPts.map(p => [p.lng, p.lat]), [t.polyPts[0].lng, t.polyPts[0].lat]];
+  let tPolyT, tBoundT;
+  try { tPolyT = turf.polygon([ring]); turf.rewind(tPolyT, {mutate:true}); tBoundT = turf.polygonToLine(tPolyT); }
+  catch(e) { setStatus('Erro ao processar o polígono do talhão.', 'err'); return; }
+
+  setStatus('Buscando elevação do terreno pra testar os cenários…', 'info');
+  $('btnOtimizarCenarios').disabled = true;
+
+  const bbox = turf.bbox(tPolyT);
+  const n = 30; // resolução da grade de elevação — o sampler bilinear interpola entre células
+  const [minLng, minLat, maxLng, maxLat] = bbox;
+  const lats = Array.from({length:n}, (_,i) => minLat + i*(maxLat-minLat)/(n-1));
+  const lngs = Array.from({length:n}, (_,j) => minLng + j*(maxLng-minLng)/(n-1));
+  const allPts = []; for(let r=0;r<n;r++) for(let c=0;c<n;c++) allPts.push({lat:lats[r], lng:lngs[c]});
+
+  let elevFlat;
+  try {
+    const fundido = await _buscarElevacaoFundida(allPts);
+    elevFlat = fundido.valores;
+    if(!elevFlat.some(v => v != null)) throw new Error('nenhuma fonte de elevação respondeu');
+  } catch(e) {
+    setStatus('Falha ao buscar elevação: ' + e.message, 'err');
+    $('btnOtimizarCenarios').disabled = false;
+    return;
+  }
+  // Preenche buracos nulos com a média da grade — raro (fusão multi-fonte quase sempre cobre tudo),
+  // mas evita NaN se algum ponto isolado falhar.
+  const validos = elevFlat.filter(v => v != null);
+  const media = validos.length ? validos.reduce((a,b)=>a+b,0)/validos.length : 0;
+  const elevGrid = Array.from({length:n}, (_,r) => Array.from({length:n}, (_,c) => elevFlat[r*n+c] ?? media));
+  const sampler = _mkEscoamentoSampler(elevGrid, lats, lngs, n);
+
+  const resultados = [];
+  for(let ang = 0; ang < 180; ang += passoAng) {
+    const linhas = _linhasRetasSimples(tPolyT, tBoundT, ang, spacing / 1000);
+    if(!linhas.length) continue;
+    let totalM = 0;
+    const pesos = new Array(limiares.length + 1).fill(0);
+    linhas.forEach(([s, e]) => {
+      const p0 = { lat: s[1], lng: s[0] }, p1 = { lat: e[1], lng: e[0] };
+      const distTotal = haversineM(p0, p1);
+      if(distTotal < 0.5) return;
+      totalM += distTotal;
+      const passos = Math.max(1, Math.round(distTotal / 15)); // amostra a cada ~15m
+      let elevAnt = sampler(p0.lat, p0.lng);
+      for(let k = 1; k <= passos; k++) {
+        const f = k / passos;
+        const pk = { lat: p0.lat + (p1.lat - p0.lat) * f, lng: p0.lng + (p1.lng - p0.lng) * f };
+        const elevAtu = sampler(pk.lat, pk.lng);
+        const dSeg = distTotal / passos;
+        const slope = Math.abs(elevAtu - elevAnt) / dSeg * 100;
+        let idx = limiares.findIndex(l => slope < l);
+        if(idx === -1) idx = limiares.length;
+        pesos[idx] += dSeg;
+        elevAnt = elevAtu;
+      }
+    });
+    if(totalM < 1) continue;
+    resultados.push({
+      angulo: ang,
+      comprimentoTotal: totalM,
+      comprimentoMedio: totalM / linhas.length,
+      manobras: linhas.length,
+      percentuais: pesos.map(p => p / totalM * 100)
+    });
+  }
+
+  $('btnOtimizarCenarios').disabled = false;
+  if(!resultados.length) { setStatus('Nenhum cenário gerou linhas válidas — confira o espaçamento.', 'err'); return; }
+
+  _cenariosPlantio = { resultados, limiares, spacing, declMax, talhaoUid: t.uid, sampler, tPolyT, anguloSelecionado: null };
+  _renderTabelaCenarios();
+  $('modalCenarios').classList.add('open');
+  setStatus(`${resultados.length} cenário(s) analisado(s) — escolha um ângulo na tabela.`, 'ok');
+}
+
+function _nomeFaixa(limiares, i) {
+  if(i === 0) return `0–${limiares[0]}%`;
+  if(i === limiares.length) return `&gt; ${limiares[limiares.length-1]}%`;
+  return `${limiares[i-1]}–${limiares[i]}%`;
+}
+
+function _renderTabelaCenarios() {
+  const { resultados, limiares, declMax, anguloSelecionado } = _cenariosPlantio;
+
+  // % do comprimento dentro da declividade máxima informada (soma as faixas cujo limite superior é
+  // <= declMax) — métrica-resumo usada pra destacar a melhor coluna, além das brutas por faixa.
+  const idxDeclMax = limiares.findIndex(l => l >= declMax);
+  const pctDentroDoLimite = r => {
+    const upTo = idxDeclMax === -1 ? limiares.length : idxDeclMax;
+    let soma = 0; for(let i = 0; i <= upTo; i++) soma += r.percentuais[i] || 0;
+    return soma;
+  };
+
+  // Melhor valor por coluna (pra destacar em verde) — maior é melhor pra comprimento/comprimento
+  // médio/% dentro do limite; menor é melhor pra manobras.
+  const melhorComprimento = Math.max(...resultados.map(r => r.comprimentoTotal));
+  const melhorMedio = Math.max(...resultados.map(r => r.comprimentoMedio));
+  const menorManobras = Math.min(...resultados.map(r => r.manobras));
+  const melhorPctLimite = Math.max(...resultados.map(pctDentroDoLimite));
+  const EPS = 1e-6;
+
+  let head = `<tr style="background:#0f3460;color:#e2b96e;text-align:left;">
+    <th style="padding:6px 10px;">Ângulo</th><th style="padding:6px 10px;">Rumo</th>
+    <th style="padding:6px 10px;">Compr. Total</th><th style="padding:6px 10px;">Compr. Médio</th>
+    <th style="padding:6px 10px;">Manobras</th><th style="padding:6px 10px;">Dentro de ${declMax}%</th>`;
+  for(let i = 0; i <= limiares.length; i++) head += `<th style="padding:6px 10px;">${_nomeFaixa(limiares, i)}</th>`;
+  head += '</tr>';
+
+  const linhasHtml = resultados.map(r => {
+    const pctLim = pctDentroDoLimite(r);
+    const selecionado = r.angulo === anguloSelecionado;
+    const bgBase = selecionado ? 'background:#1565c0;color:#fff;' : '';
+    const cellVerde = 'background:#2e7d32;color:#fff;';
+    const cell = (valor, destacar) => `<td style="padding:5px 10px;${destacar && !selecionado ? cellVerde : ''}">${valor}</td>`;
+    let row = `<tr onclick="_selecionarCenario(${r.angulo})" style="cursor:pointer;border-top:1px solid #1e4a7a;${bgBase}" title="Clique pra selecionar este ângulo">`;
+    row += `<td style="padding:5px 10px;font-weight:700;">${r.angulo.toFixed(0)}°</td>`;
+    row += `<td style="padding:5px 10px;">${_rumoCardinal(r.angulo)}</td>`;
+    row += cell(r.comprimentoTotal.toFixed(0) + ' m', Math.abs(r.comprimentoTotal - melhorComprimento) < EPS);
+    row += cell(r.comprimentoMedio.toFixed(1) + ' m', Math.abs(r.comprimentoMedio - melhorMedio) < EPS);
+    row += cell(r.manobras, r.manobras === menorManobras);
+    row += cell(pctLim.toFixed(1) + '%', Math.abs(pctLim - melhorPctLimite) < EPS);
+    r.percentuais.forEach(p => { row += `<td style="padding:5px 10px;">${p.toFixed(1)}%</td>`; });
+    row += '</tr>';
+    return row;
+  }).join('');
+
+  $('tabelaCenarios').innerHTML = head + linhasHtml;
+  $('cenariosResumo').textContent = `Espaçamento ${_cenariosPlantio.spacing} m · ${resultados.length} ângulo(s) testado(s) · declividade máxima ${declMax}% · clique numa linha da tabela pra escolher o ângulo.`;
+  $('btnUsarCenarioEscolhido').disabled = anguloSelecionado === null;
+}
+
+function _selecionarCenario(angulo) {
+  if(!_cenariosPlantio) return;
+  _cenariosPlantio.anguloSelecionado = angulo;
+  _renderTabelaCenarios();
+}
+
+function fecharModalCenarios() {
+  $('modalCenarios').classList.remove('open');
+}
+
+function usarCenarioEscolhido() {
+  if(!_cenariosPlantio || _cenariosPlantio.anguloSelecionado === null) return;
+  const t = talhoesArquivados.find(x => x.uid === _cenariosPlantio.talhaoUid);
+  if(!t) { setStatus('Talhão não encontrado (foi excluído ou alterado?).', 'err'); return; }
+
+  const ring = [...t.polyPts.map(p => [p.lng, p.lat]), [t.polyPts[0].lng, t.polyPts[0].lat]];
+  let tPolyT, tBoundT;
+  try { tPolyT = turf.polygon([ring]); turf.rewind(tPolyT, {mutate:true}); tBoundT = turf.polygonToLine(tPolyT); }
+  catch(e) { setStatus('Erro ao processar o polígono do talhão.', 'err'); return; }
+
+  const angulo = _cenariosPlantio.anguloSelecionado;
+  const linhasCoords = _linhasRetasSimples(tPolyT, tBoundT, angulo, _cenariosPlantio.spacing / 1000);
+  if(!linhasCoords.length) { setStatus('Não foi possível gerar linhas nesse ângulo — tente outro.', 'err'); return; }
+
+  // Substitui as linhas de plantio do talhão pelas do cenário escolhido
+  t.linhas.forEach(l => l.remove());
+  t.linhasDecl.forEach(l => l.remove());
+  const cor = t.corLinha || $('corLinha')?.value || '#FFD600';
+  const esp = parseFloat($('espess').value) || 1.5;
+  const novasLinhas = linhasCoords.map(([s, e]) => {
+    const pl = L.polyline([[s[1], s[0]], [e[1], e[0]]], { color: cor, weight: esp, opacity: .95 }).addTo(map);
+    pl.on('click', () => { if(_modoPickLinha) _cliqueEmLinhaPlantio(pl); });
+    return pl;
+  });
+  let metrosLin = 0;
+  novasLinhas.forEach(pl => { const pts = pl.getLatLngs().flat(); for(let i = 0; i < pts.length - 1; i++) metrosLin += haversineM(pts[i], pts[i+1]); });
+
+  t.linhas = novasLinhas; t.linhasDecl = [];
+  t.count = novasLinhas.length; t.metrosLin = metrosLin; t.spacing = _cenariosPlantio.spacing; t.corLinha = cor;
+  if(t.infoMarker) t.infoMarker.remove();
+  t.infoMarker = _criarInfoMarkerParaTalhao(t);
+
+  if($('cenariosIncluirMapa').checked) _gerarMapaTematicoLongitudinal(t, angulo, _cenariosPlantio.sampler, _cenariosPlantio.declMax, tPolyT);
+
+  fecharModalCenarios();
+  setStatus(`Linhas geradas no ângulo ${angulo}° (${_rumoCardinal(angulo)}) — ${novasLinhas.length} linha(s), ${Math.round(metrosLin)} m.`, 'ok');
+}
+
+// ── Mapa Temático (declividade longitudinal na direção escolhida) ────────────────────────────
+// Igual ao "mapa de hachuras" do vídeo de referência: pinta em vermelho onde a declividade AO
+// LONGO da direção de plantio escolhida (não a declividade omnidirecional do terreno) passa do
+// limite máximo — usa a MESMA grade/sampler já buscados na análise de cenários, sem nova consulta
+// de rede. Clicável: com o mapa temático ativo, clique em qualquer ponto do talhão pra ver o valor
+// exato ali (mesma ideia do vídeo, que mostrava "10.671%" ao clicar numa mancha vermelha).
+let _mapaTematicoAtivo = null; // {sampler, bearing, declMax, tPolyT} do mapa atualmente exibido, ou null
+
+function _gerarMapaTematicoLongitudinal(t, bearingDeg, sampler, declMax, tPolyT) {
+  limparMapaTematico(t);
+  const bbox = turf.bbox(tPolyT);
+  const [minLng, minLat, maxLng, maxLat] = bbox;
+  const n = 70; // raster mais fino que a grade de elevação — o sampler já interpola suavemente
+  const dxM = haversineM({lat:minLat,lng:minLng}, {lat:minLat,lng:maxLng}) / Math.max(1, n - 1);
+  const dyM = haversineM({lat:minLat,lng:minLng}, {lat:maxLat,lng:minLng}) / Math.max(1, n - 1);
+  const passoM = Math.max(3, Math.min(dxM, dyM) * 1.5); // distância pra amostrar a declividade direcional em cada célula
+
+  const canvas = document.createElement('canvas');
+  canvas.width = n; canvas.height = n;
+  const ctx = canvas.getContext('2d');
+  let algumaCelula = false;
+
+  for(let r = 0; r < n; r++) {
+    const lat = minLat + r * (maxLat - minLat) / (n - 1);
+    for(let c = 0; c < n; c++) {
+      const lng = minLng + c * (maxLng - minLng) / (n - 1);
+      if(!turf.booleanPointInPolygon(turf.point([lng, lat]), tPolyT)) continue;
+      const slope = _declividadeDirecional(sampler, lat, lng, bearingDeg, passoM);
+      if(slope > declMax) { ctx.fillStyle = 'rgba(244,67,54,.6)'; ctx.fillRect(c, n - 1 - r, 1, 1); }
+      algumaCelula = true;
+    }
+  }
+  if(!algumaCelula) return;
+
+  t.mapaTematicoOverlay = L.imageOverlay(canvas.toDataURL(), [[minLat, minLng], [maxLat, maxLng]], { opacity: 1, interactive: false }).addTo(map);
+
+  $('legendaCenarioBody').innerHTML = `<span style="display:inline-block;width:12px;height:12px;background:rgba(244,67,54,.8);border-radius:2px;vertical-align:middle;margin-right:5px;"></span>Declividade longitudinal (direção de plantio ${bearingDeg}°/${_rumoCardinal(bearingDeg)}) acima de ${declMax}%<br><span style="font-size:10px;">Clique dentro do talhão pra ver o valor exato num ponto.</span>`;
+  $('secLegendaCenario').style.display = '';
+
+  _mapaTematicoAtivo = { sampler, bearing: bearingDeg, declMax, tPolyT };
+}
+
+// Declividade % ao longo de UMA direção específica (não o gradiente omnidirecional) — mede a
+// diferença de elevação entre dois pontos a "passoM" metros de distância, um de cada lado do ponto
+// central, na direção do bearing informado (e seu oposto), dividido pela distância entre eles.
+function _declividadeDirecional(sampler, lat, lng, bearingDeg, passoM) {
+  const meio = turf.point([lng, lat]);
+  const kmMeio = passoM / 2 / 1000;
+  const p1 = turf.destination(meio, kmMeio, bearingDeg, { units: 'kilometers' }).geometry.coordinates;
+  const p2 = turf.destination(meio, kmMeio, bearingDeg + 180, { units: 'kilometers' }).geometry.coordinates;
+  const e1 = sampler(p1[1], p1[0]), e2 = sampler(p2[1], p2[0]);
+  return Math.abs(e1 - e2) / passoM * 100;
+}
+
+function limparMapaTematico(t) {
+  if(t && t.mapaTematicoOverlay) { t.mapaTematicoOverlay.remove(); t.mapaTematicoOverlay = null; }
+  _mapaTematicoAtivo = null;
+  $('secLegendaCenario').style.display = 'none';
+}
+
+function _inspecionarMapaTematico(latlng) {
+  if(!_mapaTematicoAtivo) return;
+  const { sampler, bearing, tPolyT } = _mapaTematicoAtivo;
+  if(!turf.booleanPointInPolygon(turf.point([latlng.lng, latlng.lat]), tPolyT)) return;
+  const slope = _declividadeDirecional(sampler, latlng.lat, latlng.lng, bearing, 6);
+  L.popup({ closeButton: true })
+    .setLatLng(latlng)
+    .setContent(`<b>${slope.toFixed(2)}%</b><br><span style="font-size:10px;color:#666;">declividade longitudinal (${bearing}°)</span>`)
+    .openOn(map);
+}
+
+function exportarCenariosCSV() {
+  if(!_cenariosPlantio) return;
+  const { resultados, limiares, declMax } = _cenariosPlantio;
+  const header = ['Angulo_graus','Rumo','Comprimento_Total_m','Comprimento_Medio_m','Manobras', `Dentro_de_${declMax}pct`,
+    ...Array.from({length: limiares.length+1}, (_,i) => _nomeFaixa(limiares, i).replace('&gt;','maior que').replace(/[;]/g,','))];
+  const idxDeclMax = limiares.findIndex(l => l >= declMax);
+  const pctDentroDoLimite = r => { const upTo = idxDeclMax === -1 ? limiares.length : idxDeclMax; let s=0; for(let i=0;i<=upTo;i++) s += r.percentuais[i]||0; return s; };
+  const linhas = resultados.map(r => [
+    r.angulo, _rumoCardinal(r.angulo), r.comprimentoTotal.toFixed(1), r.comprimentoMedio.toFixed(1), r.manobras,
+    pctDentroDoLimite(r).toFixed(1), ...r.percentuais.map(p => p.toFixed(1))
+  ].join(';'));
+  const csv = '﻿' + [header.join(';'), ...linhas].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'cenarios_plantio.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 function _renderPerfilGuia(samples, elevs) {
   const dists = [0];
   for(let i = 1; i < samples.length; i++) dists.push(dists[i-1] + haversineM(samples[i-1], samples[i]));
@@ -6828,7 +7244,8 @@ const _CAMADAS = {
   declivTerreno: { label: 'Declividade do Terreno',       get: () => talhoesArquivados.map(t => t.declivTerrenoOverlay).filter(Boolean) },
   escoamento:    { label: 'Mapa de Escoamento',           get: () => talhoesArquivados.flatMap(t => [t.escoamentoOverlay, t.escoamentoLinhas]).filter(Boolean) },
   erosao:        { label: 'Risco de Erosão',              get: () => talhoesArquivados.map(t => t.erosaoOverlay).filter(Boolean) },
-  vazao:         { label: 'Vazão de Pico',                get: () => talhoesArquivados.flatMap(t => t.vazaoMarkers || []) }
+  vazao:         { label: 'Vazão de Pico',                get: () => talhoesArquivados.flatMap(t => t.vazaoMarkers || []) },
+  mapaTematico:  { label: 'Mapa Temático (Otimizar Cenário)', get: () => talhoesArquivados.map(t => t.mapaTematicoOverlay).filter(Boolean) }
 };
 const _camadaVisivel = {}; // id -> bool (true = visível) — tudo ligado por padrão, ver _initCamadas()
 
