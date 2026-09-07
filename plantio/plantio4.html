@@ -282,7 +282,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.38 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.39 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -547,9 +547,10 @@ body.layout-lateral #status{grid-area:status;}
             <label>Passo angular (°)</label>
             <input type="number" id="otimPassoAng" class="rfield" value="10" min="1" max="90" step="1">
           </div>
-          <button class="rbtn c-purple" id="btnOtimizarCenarios" onclick="analisarCenariosPlantio()" title="Testa várias direções de plantio (0° a 180°, no passo angular escolhido) pro talhão selecionado e mostra comprimento/manobras/declividade de cada uma — mesma ideia da ferramenta 'Otimização de Linhas Retas' do Civil3D/AgroCAD"><span class="ico">&#9881;</span><span class="lbl">Otimizar Cenário</span></button>
+          <button class="rbtn c-purple" id="btnOtimizarCenarios" onclick="analisarCenariosPlantio()" title="Testa várias direções de plantio (0° a 180°, no passo angular escolhido) pro talhão ativo ou selecionado e mostra comprimento/manobras/declividade de cada uma — mesma ideia da ferramenta 'Otimização de Linhas Retas' do Civil3D/AgroCAD"><span class="ico">&#9881;</span><span class="lbl">Otimizar Cenário</span></button>
+          <button class="rbtn-sm clr" id="btnLimparMapaTematico" style="display:none;" onclick="limparMapaTematico(talhoesArquivados.find(x=>x.mapaTematicoOverlay))">&#10005; Limpar Mapa Temático</button>
         </div>
-        <div class="rgroup-title">Otimizar Cenário de Plantio (talhão selecionado)</div>
+        <div class="rgroup-title">Otimizar Cenário de Plantio (talhão ativo ou selecionado)</div>
       </div>
       <div class="rgroup" id="divDeclivAtivo" style="display:none;">
         <div class="rgroup-body">
@@ -829,7 +830,6 @@ body.layout-lateral #status{grid-area:status;}
         <input type="checkbox" id="cenariosIncluirMapa" checked> Incluir mapa temático (áreas acima da declividade máxima)
       </label>
       <div style="flex:1;"></div>
-      <button class="rbtn-sm" onclick="exportarCenariosCSV()">&#128190; Exportar CSV</button>
       <button class="rbtn-sm ok" id="btnUsarCenarioEscolhido" onclick="usarCenarioEscolhido()" disabled>&#10003; Usar Ângulo Selecionado</button>
     </div>
   </div>
@@ -1828,6 +1828,22 @@ body.layout-lateral #status{grid-area:status;}
 // padrão 10°) rapidamente. Aproveitado pra fechar 3 lacunas pré-existentes de limpeza de overlay
 // (Mapa de Escoamento/Risco de Erosão/Vazão de Pico nunca eram removidos em Excluir Talhão nem em
 // Limpar Talhões Travados — ficavam "presos" no mapa).
+// v4.39: 4 ajustes no Otimizar Cenário de Plantio, a partir de feedback real de uso.
+// (1) Removida a exportação CSV (não usada). (2) A cor da linha sempre saía amarela mesmo com outra
+// cor escolhida no seletor — usarCenarioEscolhido() priorizava t.corLinha (cor antiga já salva no
+// talhão) sobre o valor atual do seletor de cor; trocado pra sempre respeitar $('corLinha').value
+// primeiro, igual ao resto do app. (3) A ferramenta exigia um talhão JÁ TRAVADO selecionado — não
+// dava pra usar no fluxo normal (desenhar contorno → testar ângulos → travar), e por isso o botão
+// "Travar Talhão" nunca aparecia depois de gerar as linhas. Agora funciona também no talhão ATIVO
+// (contorno fechado, ainda não travado): sem talhão selecionado, cai automaticamente nesse modo,
+// atualiza o estado global de linhas (linhas/corLinhaAtual/etc, igual ao "Gerar Linhas" comum) e
+// mostra "Travar Talhão" normalmente ao final. (4) O mapa temático (mancha de declividade) só era
+// limpo em alguns fluxos (excluir talhão, unificar, dividir) — rodar o otimizador de novo com um
+// ângulo diferente, ou desmarcar "Incluir mapa temático" numa segunda rodada, deixava a mancha
+// antiga presa no mapa mesmo com as linhas já trocadas. usarCenarioEscolhido() agora SEMPRE limpa o
+// mapa temático anterior antes de decidir se gera um novo; e novo botão "Limpar Mapa Temático" no
+// próprio grupo do ribbon, pra limpar manualmente a qualquer momento (inclusive quando gerado no
+// talhão ativo, que agora tem seu próprio overlay rastreado à parte do talhão travado).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -2617,8 +2633,10 @@ function arquivarTalhaoAtual() {
     linhasDecl: [...linhasDecl],
     poliGuidePts: poliGuidePtsAtual,
     infoMarker,
-    turfPoly
+    turfPoly,
+    mapaTematicoOverlay: _mapaTematicoOverlayAtivo // transfere a mancha (se o Otimizar Cenário gerou uma antes de travar) — senão fica órfã, presa a um estado "ativo" que não existe mais
   });
+  _mapaTematicoOverlayAtivo = null; // não limpa o overlay em si (só passou a dono) — só solta a referência "ativa"
 
   // Click handler para seleção de talhão
   if(capturedLayer) {
@@ -6849,13 +6867,23 @@ function _rumoCardinal(azimuteDeg) {
 let _cenariosPlantio = null; // {resultados, limiares, spacing, declMax, talhaoUid, sampler, tPolyT, anguloSelecionado}
 
 async function analisarCenariosPlantio() {
-  if(talhaoSelecionadoUid === null) { setStatus('Selecione um talhão primeiro.', 'err'); return; }
+  // Funciona tanto no talhão ATIVO (contorno já fechado, ainda não travado — mesma situação de
+  // "Gerar Linhas" comum) quanto num talhão já travado e selecionado. talhaoSelecionadoUid só
+  // existe pra talhões travados; sem seleção, cai no contorno ativo (polyPts/turfPoly).
+  const modoAtivo = talhaoSelecionadoUid === null;
+  let t = null, polyPtsRef;
+  if(modoAtivo) {
+    if(!turfPoly || polyPts.length < 3) { setStatus('Desenhe (e feche) o contorno do talhão primeiro, ou selecione um talhão já travado.', 'err'); return; }
+    polyPtsRef = polyPts;
+  } else {
+    t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
+    if(!t) return;
+    polyPtsRef = t.polyPts;
+  }
   if(!window.google?.maps?.ElevationService) {
     setStatus('Ative o Google Maps (chave API) pra essa análise — ela precisa de elevação real do terreno.', 'err');
     return;
   }
-  const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
-  if(!t) return;
 
   const spacing = Math.max(0.5, parseFloat($('espac').value) || 6);
   const declMax = Math.max(0.1, parseFloat($('otimDeclMax').value) || 10);
@@ -6864,7 +6892,7 @@ async function analisarCenariosPlantio() {
     .split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n) && n > 0).sort((a,b) => a-b);
   if(!limiares.length) { setStatus('Informe pelo menos uma faixa de declividade válida (ex: 10,12,14).', 'err'); return; }
 
-  const ring = [...t.polyPts.map(p => [p.lng, p.lat]), [t.polyPts[0].lng, t.polyPts[0].lat]];
+  const ring = [...polyPtsRef.map(p => [p.lng, p.lat]), [polyPtsRef[0].lng, polyPtsRef[0].lat]];
   let tPolyT, tBoundT;
   try { tPolyT = turf.polygon([ring]); turf.rewind(tPolyT, {mutate:true}); tBoundT = turf.polygonToLine(tPolyT); }
   catch(e) { setStatus('Erro ao processar o polígono do talhão.', 'err'); return; }
@@ -6934,7 +6962,7 @@ async function analisarCenariosPlantio() {
   $('btnOtimizarCenarios').disabled = false;
   if(!resultados.length) { setStatus('Nenhum cenário gerou linhas válidas — confira o espaçamento.', 'err'); return; }
 
-  _cenariosPlantio = { resultados, limiares, spacing, declMax, talhaoUid: t.uid, sampler, tPolyT, anguloSelecionado: null };
+  _cenariosPlantio = { resultados, limiares, spacing, declMax, talhaoUid: modoAtivo ? null : t.uid, modoAtivo, sampler, tPolyT, anguloSelecionado: null };
   _renderTabelaCenarios();
   $('modalCenarios').classList.add('open');
   setStatus(`${resultados.length} cenário(s) analisado(s) — escolha um ângulo na tabela.`, 'ok');
@@ -7008,10 +7036,18 @@ function fecharModalCenarios() {
 
 function usarCenarioEscolhido() {
   if(!_cenariosPlantio || _cenariosPlantio.anguloSelecionado === null) return;
-  const t = talhoesArquivados.find(x => x.uid === _cenariosPlantio.talhaoUid);
-  if(!t) { setStatus('Talhão não encontrado (foi excluído ou alterado?).', 'err'); return; }
+  const { modoAtivo } = _cenariosPlantio;
+  let t = null, polyPtsRef;
+  if(modoAtivo) {
+    if(!turfPoly || polyPts.length < 3) { setStatus('O contorno ativo não existe mais.', 'err'); return; }
+    polyPtsRef = polyPts;
+  } else {
+    t = talhoesArquivados.find(x => x.uid === _cenariosPlantio.talhaoUid);
+    if(!t) { setStatus('Talhão não encontrado (foi excluído ou alterado?).', 'err'); return; }
+    polyPtsRef = t.polyPts;
+  }
 
-  const ring = [...t.polyPts.map(p => [p.lng, p.lat]), [t.polyPts[0].lng, t.polyPts[0].lat]];
+  const ring = [...polyPtsRef.map(p => [p.lng, p.lat]), [polyPtsRef[0].lng, polyPtsRef[0].lat]];
   let tPolyT, tBoundT;
   try { tPolyT = turf.polygon([ring]); turf.rewind(tPolyT, {mutate:true}); tBoundT = turf.polygonToLine(tPolyT); }
   catch(e) { setStatus('Erro ao processar o polígono do talhão.', 'err'); return; }
@@ -7020,10 +7056,7 @@ function usarCenarioEscolhido() {
   const linhasCoords = _linhasRetasSimples(tPolyT, tBoundT, angulo, _cenariosPlantio.spacing / 1000);
   if(!linhasCoords.length) { setStatus('Não foi possível gerar linhas nesse ângulo — tente outro.', 'err'); return; }
 
-  // Substitui as linhas de plantio do talhão pelas do cenário escolhido
-  t.linhas.forEach(l => l.remove());
-  t.linhasDecl.forEach(l => l.remove());
-  const cor = t.corLinha || $('corLinha')?.value || '#FFD600';
+  const cor = $('corLinha')?.value || (t && t.corLinha) || corLinhaAtual || '#FFD600'; // sempre respeita a cor escolhida no seletor
   const esp = parseFloat($('espess').value) || 1.5;
   const novasLinhas = linhasCoords.map(([s, e]) => {
     const pl = L.polyline([[s[1], s[0]], [e[1], e[0]]], { color: cor, weight: esp, opacity: .95 }).addTo(map);
@@ -7033,15 +7066,36 @@ function usarCenarioEscolhido() {
   let metrosLin = 0;
   novasLinhas.forEach(pl => { const pts = pl.getLatLngs().flat(); for(let i = 0; i < pts.length - 1; i++) metrosLin += haversineM(pts[i], pts[i+1]); });
 
-  t.linhas = novasLinhas; t.linhasDecl = [];
-  t.count = novasLinhas.length; t.metrosLin = metrosLin; t.spacing = _cenariosPlantio.spacing; t.corLinha = cor;
-  if(t.infoMarker) t.infoMarker.remove();
-  t.infoMarker = _criarInfoMarkerParaTalhao(t);
+  if(modoAtivo) {
+    // Talhão ainda não travado — substitui as linhas ATIVAS (mesmo estado que "Gerar Linhas" deixa
+    // pronto: aparece "Travar Talhão", "Redesenhar Linhas" etc.), igual ao fluxo normal.
+    linhas.forEach(l => l.remove()); linhas = novasLinhas;
+    linhasDecl.forEach(l => l.remove()); linhasDecl = [];
+    corLinhaAtual = cor; spacingAtual = _cenariosPlantio.spacing; countLinhasAtual = novasLinhas.length; metrosLinAtual = metrosLin;
+    const ha = areaHa(polyPts); areaHaAtual = ha;
+    $('iLinhas').textContent = novasLinhas.length;
+    $('iEspac').textContent = _cenariosPlantio.spacing + ' m';
+    mostrarLabel(ha, _cenariosPlantio.spacing, novasLinhas.length, metrosLin);
+    polyMarkers.forEach(m => m.dragging && m.dragging.disable());
+    $('btnTravarTalhao').style.display = 'flex';
+    $('btnRedesenharLinhas').style.display = 'flex';
+    $('divDeclivAtivo').style.display = '';
+  } else {
+    t.linhas.forEach(l => l.remove());
+    t.linhasDecl.forEach(l => l.remove());
+    t.linhas = novasLinhas; t.linhasDecl = [];
+    t.count = novasLinhas.length; t.metrosLin = metrosLin; t.spacing = _cenariosPlantio.spacing; t.corLinha = cor;
+    if(t.infoMarker) t.infoMarker.remove();
+    t.infoMarker = _criarInfoMarkerParaTalhao(t);
+  }
 
+  // Sempre limpa o mapa temático anterior antes — senão, escolher outro ângulo (ou desmarcar a
+  // caixa) deixava a mancha antiga presa no mapa mesmo com as linhas já diferentes.
+  limparMapaTematico(t);
   if($('cenariosIncluirMapa').checked) _gerarMapaTematicoLongitudinal(t, angulo, _cenariosPlantio.sampler, _cenariosPlantio.declMax, tPolyT);
 
   fecharModalCenarios();
-  setStatus(`Linhas geradas no ângulo ${angulo}° (${_rumoCardinal(angulo)}) — ${novasLinhas.length} linha(s), ${Math.round(metrosLin)} m.`, 'ok');
+  setStatus(`Linhas geradas no ângulo ${angulo}° (${_rumoCardinal(angulo)}) — ${novasLinhas.length} linha(s), ${Math.round(metrosLin)} m.${modoAtivo ? ' Trave o talhão quando estiver satisfeito.' : ''}`, 'ok');
 }
 
 // ── Mapa Temático (declividade longitudinal na direção escolhida) ────────────────────────────
@@ -7051,9 +7105,10 @@ function usarCenarioEscolhido() {
 // de rede. Clicável: com o mapa temático ativo, clique em qualquer ponto do talhão pra ver o valor
 // exato ali (mesma ideia do vídeo, que mostrava "10.671%" ao clicar numa mancha vermelha).
 let _mapaTematicoAtivo = null; // {sampler, bearing, declMax, tPolyT} do mapa atualmente exibido, ou null
+let _mapaTematicoOverlayAtivo = null; // overlay do talhão AINDA NÃO TRAVADO (t=null), se houver — o travado guarda o dele em t.mapaTematicoOverlay
 
+// t=null quando o mapa temático é do talhão ATIVO (ainda não travado) — ver usarCenarioEscolhido().
 function _gerarMapaTematicoLongitudinal(t, bearingDeg, sampler, declMax, tPolyT) {
-  limparMapaTematico(t);
   const bbox = turf.bbox(tPolyT);
   const [minLng, minLat, maxLng, maxLat] = bbox;
   const n = 70; // raster mais fino que a grade de elevação — o sampler já interpola suavemente
@@ -7078,10 +7133,12 @@ function _gerarMapaTematicoLongitudinal(t, bearingDeg, sampler, declMax, tPolyT)
   }
   if(!algumaCelula) return;
 
-  t.mapaTematicoOverlay = L.imageOverlay(canvas.toDataURL(), [[minLat, minLng], [maxLat, maxLng]], { opacity: 1, interactive: false }).addTo(map);
+  const overlay = L.imageOverlay(canvas.toDataURL(), [[minLat, minLng], [maxLat, maxLng]], { opacity: 1, interactive: false }).addTo(map);
+  if(t) t.mapaTematicoOverlay = overlay; else _mapaTematicoOverlayAtivo = overlay;
 
   $('legendaCenarioBody').innerHTML = `<span style="display:inline-block;width:12px;height:12px;background:rgba(244,67,54,.8);border-radius:2px;vertical-align:middle;margin-right:5px;"></span>Declividade longitudinal (direção de plantio ${bearingDeg}°/${_rumoCardinal(bearingDeg)}) acima de ${declMax}%<br><span style="font-size:10px;">Clique dentro do talhão pra ver o valor exato num ponto.</span>`;
   $('secLegendaCenario').style.display = '';
+  $('btnLimparMapaTematico').style.display = 'flex';
 
   _mapaTematicoAtivo = { sampler, bearing: bearingDeg, declMax, tPolyT };
 }
@@ -7098,10 +7155,16 @@ function _declividadeDirecional(sampler, lat, lng, bearingDeg, passoM) {
   return Math.abs(e1 - e2) / passoM * 100;
 }
 
+// Limpa o mapa temático — do talhão travado "t" (se informado) E/OU do talhão ativo (t=null ou
+// simplesmente sempre, já que só existe UM mapa temático visível por vez na prática). Chamada tanto
+// automaticamente (antes de qualquer regeneração, exclusão de talhão etc.) quanto pelo botão manual
+// "Limpar Mapa Temático" — pedido do usuário depois de notar que a mancha ficava presa no mapa.
 function limparMapaTematico(t) {
   if(t && t.mapaTematicoOverlay) { t.mapaTematicoOverlay.remove(); t.mapaTematicoOverlay = null; }
+  if(_mapaTematicoOverlayAtivo) { _mapaTematicoOverlayAtivo.remove(); _mapaTematicoOverlayAtivo = null; }
   _mapaTematicoAtivo = null;
   $('secLegendaCenario').style.display = 'none';
+  $('btnLimparMapaTematico').style.display = 'none';
 }
 
 function _inspecionarMapaTematico(latlng) {
@@ -7113,26 +7176,6 @@ function _inspecionarMapaTematico(latlng) {
     .setLatLng(latlng)
     .setContent(`<b>${slope.toFixed(2)}%</b><br><span style="font-size:10px;color:#666;">declividade longitudinal (${bearing}°)</span>`)
     .openOn(map);
-}
-
-function exportarCenariosCSV() {
-  if(!_cenariosPlantio) return;
-  const { resultados, limiares, declMax } = _cenariosPlantio;
-  const header = ['Angulo_graus','Rumo','Comprimento_Total_m','Comprimento_Medio_m','Manobras', `Dentro_de_${declMax}pct`,
-    ...Array.from({length: limiares.length+1}, (_,i) => _nomeFaixa(limiares, i).replace('&gt;','maior que').replace(/[;]/g,','))];
-  const idxDeclMax = limiares.findIndex(l => l >= declMax);
-  const pctDentroDoLimite = r => { const upTo = idxDeclMax === -1 ? limiares.length : idxDeclMax; let s=0; for(let i=0;i<=upTo;i++) s += r.percentuais[i]||0; return s; };
-  const linhas = resultados.map(r => [
-    r.angulo, _rumoCardinal(r.angulo), r.comprimentoTotal.toFixed(1), r.comprimentoMedio.toFixed(1), r.manobras,
-    pctDentroDoLimite(r).toFixed(1), ...r.percentuais.map(p => p.toFixed(1))
-  ].join(';'));
-  const csv = '﻿' + [header.join(';'), ...linhas].join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = 'cenarios_plantio.csv';
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
 }
 
 function _renderPerfilGuia(samples, elevs) {
