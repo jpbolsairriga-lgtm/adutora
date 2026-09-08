@@ -282,7 +282,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.39 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.40 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1844,6 +1844,17 @@ body.layout-lateral #status{grid-area:status;}
 // mapa temático anterior antes de decidir se gera um novo; e novo botão "Limpar Mapa Temático" no
 // próprio grupo do ribbon, pra limpar manualmente a qualquer momento (inclusive quando gerado no
 // talhão ativo, que agora tem seu próprio overlay rastreado à parte do talhão travado).
+// v4.40: 2 ajustes no Carreador a partir de Linha, a partir de feedback real.
+// (1) Uma linha de plantio que caísse INTEIRA dentro da própria faixa do carreador (ex: uma fileira
+// vizinha que passava exatamente ali, atrás da linha escolhida) sobrevivia — o fallback de
+// _executarDivisaoTalhao() (clipLinhas:false) não achava lado bom/resto pra ela e a mantinha por
+// padrão na maior parte (destino=0) em vez de descartar. Não faz sentido uma linha ficar "presa" no
+// meio do carreador; agora esse caso descarta a linha (sai da tela, já que t.linhas.forEach(remove)
+// roda de qualquer forma — só não entra em nenhuma das 2 partes novas). (2) O polígono marrom do
+// carreador, criado por esse fluxo específico, sempre ficava visível — pedido explícito pra nunca
+// mostrar: o afastamento em si já deixa a separação óbvia entre os dois talhões no mapa. Nova opção
+// {criarCarreadorVisivel:false} em _executarDivisaoTalhao() (padrão true, preserva a faixa marrom
+// da Divisão manual) suprime o desenho só nesse fluxo.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -6386,6 +6397,7 @@ function _clipLinhaForaDoCarreador(coordsLngLat, carreadorBuf) {
 // status/limpeza de tela conforme o próprio fluxo).
 function _executarDivisaoTalhao(uid, lineCoordsLngLat, largura, opts) {
   const clipLinhas = !opts || opts.clipLinhas !== false; // padrão true (comportamento antigo, usado pela Divisão manual)
+  const criarCarreadorVisivel = !opts || opts.criarCarreadorVisivel !== false; // padrão true (Divisão manual mostra a faixa marrom)
   const idx = talhoesArquivados.findIndex(t => t.uid === uid);
   if(idx < 0) return { ok: false, erro: 'Talhão não encontrado.' };
   const t = talhoesArquivados[idx];
@@ -6435,17 +6447,19 @@ function _executarDivisaoTalhao(uid, lineCoordsLngLat, largura, opts) {
     });
   } else {
     // Carreador a partir de uma Linha de Plantio: a linha de corte já nasce com 1m de afastamento
-    // da linha escolhida (ver _criarCarreadorDeLinhaPlantio), então nenhuma linha de plantio
-    // deveria realmente cair dentro da faixa do carreador — não corta NENHUMA linha, só decide de
-    // que lado (parte) cada uma inteira fica, pelo ponto médio dela. Se o meio cair bem em cima do
-    // carreador por algum motivo (linha atravessando a faixa), tenta as pontas antes de desistir.
+    // da linha escolhida (ver _criarCarreadorDeLinhaPlantio), então as linhas de plantio dos lados
+    // "bom"/"resto" não precisam ser recortadas — só decide de que lado (parte) cada uma inteira
+    // fica, pelo ponto médio dela (com fallback pras pontas se o meio cair bem em cima da faixa).
+    // Se NENHUM dos três pontos cair de nenhum dos dois lados, a linha inteira está dentro da
+    // própria faixa do carreador (ex: uma fileira vizinha que passava exatamente ali) — nesse caso
+    // ela é descartada mesmo, não faz sentido uma linha de plantio ficar "no meio" do carreador.
     t.linhas.forEach(pl => {
       const coords = pl.getLatLngs().flat().map(ll => [ll.lng, ll.lat]);
       if(coords.length < 2) return;
       let destino = _achaDestino(turf.point(coords[Math.floor(coords.length/2)]));
       if(destino < 0) destino = _achaDestino(turf.point(coords[0]));
       if(destino < 0) destino = _achaDestino(turf.point(coords[coords.length-1]));
-      if(destino < 0) destino = 0; // não achou lado nenhum (bem raro) — mantém a linha em vez de perdê-la
+      if(destino < 0) return; // caiu dentro da faixa do carreador — descarta
       linhasPorParte[destino].push({coords, color: pl.options.color, weight: pl.options.weight});
     });
   }
@@ -6459,8 +6473,10 @@ function _executarDivisaoTalhao(uid, lineCoordsLngLat, largura, opts) {
   limparMapaTematico(t);
   talhoesArquivados.splice(idx, 1);
 
-  // Desenha carreador visível
-  if(carreadorGeom) {
+  // Desenha carreador visível — Carreador a partir de Linha (opts.criarCarreadorVisivel=false) não
+  // mostra a faixa marrom: o próprio afastamento entre os dois talhões já deixa a separação visível
+  // no mapa, e o usuário pediu explicitamente pra tirar o polígono marrom desse fluxo específico.
+  if(carreadorGeom && criarCarreadorVisivel) {
     const geoms = carreadorGeom.geometry.type === 'MultiPolygon'
       ? carreadorGeom.geometry.coordinates
       : [carreadorGeom.geometry.coordinates];
@@ -6605,7 +6621,7 @@ function _criarCarreadorDeLinhaPlantio(pl) {
   const offsetDistKm = (afastamento + largura / 2) / 1000;
   const offsetCoords = pts.map(p => turf.destination(turf.point([p.lng, p.lat]), offsetDistKm, lado, {units:'kilometers'}).geometry.coordinates);
 
-  const r = _executarDivisaoTalhao(uid, offsetCoords, largura, { clipLinhas: false });
+  const r = _executarDivisaoTalhao(uid, offsetCoords, largura, { clipLinhas: false, criarCarreadorVisivel: false });
   if(!r.ok) { setStatus(r.erro, 'err'); return; }
 
   talhaoSelecionadoUid = null;
@@ -6614,7 +6630,7 @@ function _criarCarreadorDeLinhaPlantio(pl) {
   $('btnLimparArquivados').style.display = '';
   renumerarTalhoes();
   _updateLabelScale();
-  setStatus(`✓ Talhão dividido em ${r.numPartes} novos talhões — carreador de ${largura}m criado a ${afastamento}m da linha escolhida.`, 'ok');
+  setStatus(`✓ Talhão dividido em ${r.numPartes} novos talhões — afastamento de ${largura}m a partir de ${afastamento}m da linha escolhida.`, 'ok');
 }
 
 // ── Excluir Talhão Selecionado ───────────────────────────────────────────────
