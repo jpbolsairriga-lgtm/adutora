@@ -332,7 +332,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.44 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.45 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -583,7 +583,7 @@ body.layout-lateral #status{grid-area:status;}
             <button class="rbtn-sm warn" id="btnRedesenharLinhas" style="display:none;" onclick="redesenharLinhas()">&#8629; Redesenhar Linhas</button>
           </div>
           <div class="rcol">
-            <button class="rbtn-sm clr" onclick="limparLinhas()">&#10005; Limpar Linhas</button>
+            <button class="rbtn-sm clr" onclick="talhaoSelecionadoUid !== null ? limparLinhasSelecionado() : limparLinhas()">&#10005; Limpar Linhas</button>
             <button class="rbtn-sm clr" onclick="limparTudo()">&#128465; Limpar Tudo</button>
           </div>
         </div>
@@ -1979,6 +1979,12 @@ body.layout-lateral #status{grid-area:status;}
 // #37474f (fundo/borda de botão "desligado") foram convertidos pra essas variáveis — só ficaram
 // de fora o #607080 do relatório PDF (paleta própria, sempre branca) e 2 stop-color de gradiente
 // SVG do gráfico de perfil de elevação (atributo de apresentação puro, não aceita var()).
+// v4.45: "Limpar Linhas" (aba Guia & Linhas de Plantio) só limpava o array global linhas[] — com
+// um talhão TRAVADO selecionado, as linhas de verdade estão em t.linhas[], então o clique não
+// fazia nada visível (bug relatado: só "Redesenhar Linhas", na aba Carreador, funcionava nesse
+// cenário). Nova limparLinhasSelecionado(), no mesmo padrão de redesenharLinhasSelecionado() já
+// existente: desbloqueia o talhão pra edição (ativarTalhaoParaEdicao) antes de limpar, e mantém
+// "Travar Talhão" visível pra re-arquivar. Botão agora roteia pra ela quando há talhão selecionado.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -6359,6 +6365,17 @@ function redesenharLinhasSelecionado() {
   redesenharLinhas();          // limpa linhas existentes
   $('btnTravarTalhao').style.display = 'flex'; // mantém opção de re-arquivar
   setStatus('Linhas limpas. Desenhe a linha guia e gere as novas linhas de plantio.', 'info');
+}
+// v4.45: "Limpar Linhas" (aba Guia & Linhas de Plantio) só operava no talhão ATIVO (array global
+// linhas[]) — com um talhão travado selecionado, as linhas de verdade estão em t.linhas[], então o
+// clique não fazia nada (bug relatado: só "Redesenhar Linhas", na aba Carreador, funcionava). Mesmo
+// padrão de redesenharLinhasSelecionado() acima: desbloqueia o talhão pra edição antes de limpar.
+function limparLinhasSelecionado() {
+  if(talhaoSelecionadoUid === null) return;
+  ativarTalhaoParaEdicao();   // desbloqueia o talhão como ativo
+  limparLinhas();              // limpa linhas existentes
+  $('btnTravarTalhao').style.display = 'flex'; // mantém opção de re-arquivar
+  setStatus('Linhas apagadas. Desenhe a linha guia e gere as novas linhas de plantio, ou trave o talhão de volta sem linhas.', 'info');
 }
 
 // ── Editar Linhas de um Talhão Arquivado ─────────────────────────────────────
