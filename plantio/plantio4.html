@@ -291,7 +291,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.41 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.42 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1897,6 +1897,12 @@ body.layout-lateral #status{grid-area:status;}
 // (agrolinhas-logo-fundo-branco.png, splash). Ícones do PWA (icons/icon-192.png, icon-512.png,
 // icon-maskable-512.png) também atualizados pra a mesma logo (estavam com o ícone antigo da Bolsa
 // Irriga — mostra errado no menu Iniciar/taskbar depois de instalar o app).
+// v4.42: 2 ajustes na splash, a pedido do usuário. (1) Duração de 3s para 5s (SPLASH_DURACAO_MS).
+// (2) A splash agora reaparece toda vez que "Novo Projeto" é confirmado, não só na carga inicial da
+// página — nova mostrarSplash() reverte o display:none/classe 'oculto' e reagenda o timer;
+// _executarNovoProjeto() chama ela ANTES de limpar o mapa, então a limpeza acontece escondida atrás
+// da splash (o usuário só vê a logo, depois o mapa já em branco quando ela sai), dando a sensação
+// de "recomeço" de verdade.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -1984,17 +1990,27 @@ function copiarCodigoLicenca() {
 
 checarLicenca();
 
-// ── Tela de inicialização (splash) — mostra a logo grande por ~3s, depois revela o app por baixo
+// ── Tela de inicialização (splash) — mostra a logo grande por 5s, depois revela o app por baixo
 // (a checagem de licença acima continua rodando em paralelo; se o dispositivo não for autorizado,
 // o modal de licença já aparece assim que a splash sair do caminho). Clique em qualquer lugar da
 // splash pula direto, pra quem já usa o app não perder tempo toda vez que abre (ver onclick no HTML).
+// Também reaparece sempre que "Novo Projeto" é confirmado (ver _executarNovoProjeto) — dá aquela
+// sensação de "recomeço" que só limpar o mapa não passava.
+const SPLASH_DURACAO_MS = 5000;
 function esconderSplash() {
   const el = $('splashScreen');
   if(!el || el.classList.contains('oculto')) return;
   el.classList.add('oculto');
   setTimeout(() => { el.style.display = 'none'; }, 650); // depois do fade, tira do fluxo de vez
 }
-setTimeout(esconderSplash, 3000);
+function mostrarSplash() {
+  const el = $('splashScreen');
+  if(!el) return;
+  el.style.display = ''; // desfaz o display:none deixado da última vez que sumiu
+  el.classList.remove('oculto');
+  setTimeout(esconderSplash, SPLASH_DURACAO_MS);
+}
+setTimeout(esconderSplash, SPLASH_DURACAO_MS);
 
 // ── PWA instalável (ícone próprio, abre em janela sem barra de navegador) ───────
 if ('serviceWorker' in navigator) {
@@ -5925,6 +5941,7 @@ function _confirmarNovoProjeto() {
   _executarNovoProjeto();
 }
 function _executarNovoProjeto() {
+  mostrarSplash();         // cobre a tela por 5s — a limpeza abaixo acontece "escondida" atrás dela
   limparTudo();           // talhão ativo, talhões travados, guia, polígono, carreadores
   limparCurvas();          // curvas de nível já geradas
   limparPoligonoCurva();   // área de curvas desenhada (mesmo sem gerar as curvas ainda)
