@@ -332,7 +332,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.45 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.46 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -425,6 +425,29 @@ body.layout-lateral #status{grid-area:status;}
           </div>
         </div>
         <div class="rgroup-title">Tema Visual</div>
+      </div>
+      <div class="rgroup">
+        <div class="rgroup-body">
+          <div style="display:flex;flex-direction:column;gap:4px;">
+            <div style="display:flex;gap:5px;">
+              <select id="dxfUtmZona" class="rfield" style="width:76px;" title="Zona UTM em que as coordenadas do DXF foram desenhadas (confira no seu projeto do Civil3D/AgroCAD).">
+                <option value="18">18</option><option value="19">19</option><option value="20">20</option>
+                <option value="21">21</option><option value="22">22</option><option value="23" selected>23</option>
+                <option value="24">24</option><option value="25">25</option>
+              </select>
+              <select id="dxfUtmHemisferio" class="rfield" style="width:64px;" title="Hemisfério da zona UTM.">
+                <option value="S" selected>Sul</option>
+                <option value="N">Norte</option>
+              </select>
+              <button class="btn-help" onclick="abrirTutorialDadosLocais()" title="O que é isso?">?</button>
+            </div>
+            <button class="rbtn-sm" onclick="$('inputCurvasDxf').click()">&#128193; Importar Curvas de Nível (DXF)</button>
+            <input type="file" id="inputCurvasDxf" accept=".dxf" style="display:none" onchange="if(this.files[0]){importarCurvasDxf(this.files[0]);this.value='';}">
+            <div id="dxfCurvasStatus" style="font-size:10px;color:var(--panel-text-dim);max-width:190px;white-space:normal;"></div>
+            <button class="rbtn-sm clr" id="btnRemoverCurvasLocais" style="display:none;" onclick="removerCurvasLocais()">&#10005; Remover Curvas Locais</button>
+          </div>
+        </div>
+        <div class="rgroup-title">Dados Locais — Curvas de Nível (DXF)</div>
       </div>
     </div>
 
@@ -994,6 +1017,19 @@ body.layout-lateral #status{grid-area:status;}
     </ol>
     <div class="note">&#9888; O plano gratuito do Cloudflare Workers cobre até 100.000 requisições por dia — muito acima do uso normal deste app.</div>
     <button onclick="fecharTutorialDemProxy()" style="margin-top:16px;width:100%;background:var(--acc);color:#fff;border:none;border-radius:6px;padding:9px;font-size:13px;font-weight:700;cursor:pointer;">Entendi</button>
+  </div>
+</div>
+
+<!-- ── Modal: Dados Locais (curvas de nível DXF, futuramente ortofoto TIFF) ── -->
+<div class="modal-bg" id="modalDadosLocais" onclick="if(event.target===this) fecharTutorialDadosLocais()">
+  <div class="modal">
+    <button class="modal-close" onclick="fecharTutorialDadosLocais()">&#10005;</button>
+    <h2>&#128193; Dados Locais — Curvas de Nível (DXF)</h2>
+    <p style="color:var(--panel-text-dim);font-size:12px;margin-bottom:12px;">Importa curvas de nível desenhadas no AutoCAD/Civil3D (formato DXF) e usa elas como fonte <strong>exclusiva</strong> de elevação em todo o app — perfil de linha, declividade, mapa de escoamento, risco de erosão, vista 3D, otimizar cenário etc. Enquanto estiverem ativas, nenhuma chamada é feita a Google/Open-Meteo/SRTM/Mapzen/ASTER.</p>
+    <p style="color:var(--panel-text-dim);font-size:12px;margin-bottom:12px;"><strong>Formato aceito:</strong> entidades LWPOLYLINE ou POLYLINE, com a cota de cada curva no grupo de elevação (o jeito padrão que o Civil3D exporta uma superfície de curvas), no vértice (Z de polilinha 3D), ou como número no nome da camada (ex: camada "COTA_500"). Curvas sem cota identificável são ignoradas e contadas no aviso pós-importação.</p>
+    <p style="color:var(--panel-text-dim);font-size:12px;margin-bottom:12px;"><strong>Zona UTM:</strong> o DXF não guarda sistema de coordenadas — escolha a zona/hemisfério em que o desenho foi feito (confira no seu projeto do Civil3D). A conversão assume SIRGAS2000/WGS84, que coincidem na prática (diferença de poucos centímetros).</p>
+    <div class="note">&#9888; Um talhão fora da área coberta pelas curvas importadas fica sem dado de elevação ali (não busca online) — importe curvas que cubram toda a região de interesse, ou remova os dados locais pra voltar às fontes online.</div>
+    <button onclick="fecharTutorialDadosLocais()" style="margin-top:16px;width:100%;background:var(--acc);color:#fff;border:none;border-radius:6px;padding:9px;font-size:13px;font-weight:700;cursor:pointer;">Entendi</button>
   </div>
 </div>
 
@@ -1985,6 +2021,18 @@ body.layout-lateral #status{grid-area:status;}
 // cenário). Nova limparLinhasSelecionado(), no mesmo padrão de redesenharLinhasSelecionado() já
 // existente: desbloqueia o talhão pra edição (ativarTalhaoParaEdicao) antes de limpar, e mantém
 // "Travar Talhão" visível pra re-arquivar. Botão agora roteia pra ela quando há talhão selecionado.
+// v4.46: 1ª parte de "importar dados locais" (a pedido do usuário — "grande evolução"). Curvas de
+// nível em DXF (Civil3D/AgroCAD) — LWPOLYLINE/POLYLINE com cota por grupo 38, Z de vértice, ou
+// nome de camada — convertidas de UTM pra lat/lng (fórmula inversa de Snyder, WGS84≈SIRGAS2000) e
+// trianguladas num TIN (turf.tin, mesma técnica do Civil3D). Ponto de entrada único
+// _buscarElevacaoFundida() passa a resolver via interpolação baricêntrica nesse TIN quando há
+// curvas locais ativas — Google/Open-Meteo/SRTM/Mapzen/ASTER deixam de ser chamados (pedido
+// explícito). Ponto fora da cobertura (casco convexo das curvas) fica sem dado — NÃO cai pra
+// internet — só avisa. As 11 travas "requer chave Google Maps" espalhadas pelo app (declividade,
+// escoamento, erosão, vazão de pico, perfil, vista 3D, curvas de nível) ganharam uma segunda porta
+// de entrada: liberam também com curvas locais ativas, sem Google configurado. Botão "Importar
+// Curvas de Nível (DXF)" na aba Início. A importação de ortofoto TIFF (2ª parte do pedido, "dados
+// de imagem") fica pra um próximo incremento — decisão deliberada de escopo, não esquecimento.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -2248,6 +2296,8 @@ function _obterDemProxyUrl() {
 }
 function abrirTutorialDemProxy() { $('modalDemProxy').classList.add('open'); }
 function fecharTutorialDemProxy() { $('modalDemProxy').classList.remove('open'); }
+function abrirTutorialDadosLocais() { $('modalDadosLocais').classList.add('open'); }
+function fecharTutorialDadosLocais() { $('modalDadosLocais').classList.remove('open'); }
 function _atualizarStatusDemProxy() {
   const modoRapido = localStorage.getItem('elevacaoModo') === 'google';
   const el = $('demProxyStatus');
@@ -3808,6 +3858,10 @@ async function _buscarOpenTopoData(pontos, dataset, proxyBase) {
 // mas em PARALELO com Google e Open-Meteo (destinos diferentes, sem esse risco).
 async function _buscarElevacaoFundida(pontos) {
   if(!pontos.length) return { valores: [], sigmaMedio: null, fontesUsadas: [] };
+  // v4.46: curvas de nível locais (DXF) têm prioridade absoluta — nem Google, nem Open-Meteo,
+  // nem o proxy SRTM/Mapzen/ASTER são consultados enquanto elas estiverem ativas (ponto de
+  // entrada único: qualquer função do app que busque elevação passa por aqui).
+  if(_elevacaoLocalDisponivel()) return _buscarElevacaoLocal(pontos);
   const temGoogle = !!(window.google && window.google.maps && google.maps.ElevationService);
 
   // Modo rápido: só Google, sem Open-Meteo/proxy — a fusão multi-fonte deixa o app bem mais lento
@@ -3868,7 +3922,7 @@ async function _buscarElevacaoFundida(pontos) {
 // como uma imagem sobreposta ao mapa — não precisa ter linhas de plantio geradas.
 async function classificarDeclividadeTerreno() {
   if(talhaoSelecionadoUid === null) { setStatus('Selecione um talhão primeiro.', 'err'); return; }
-  if(!window.google || !window.google.maps) { setStatus('Ative o Google Maps (chave API) para classificar a declividade do terreno.', 'err'); return; }
+  if(!window.google?.maps && !_elevacaoLocalDisponivel()) { setStatus('Ative o Google Maps (chave API) ou importe curvas de nível locais para classificar a declividade do terreno.', 'err'); return; }
   const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
   if(!t) return;
 
@@ -4009,6 +4063,261 @@ function _preencherDepressoes(elev, n) {
   return filled;
 }
 
+// ── Dados Locais: Curvas de Nível (DXF) — substitui a busca online de elevação ──────────────
+// v4.46: importação de curvas de nível em DXF (Civil3D/AgroCAD), a pedido do usuário. Quando
+// ativa, TODA busca de elevação do app (perfil, declividade, mapa de escoamento, vista 3D,
+// otimizar cenário, curvas de nível geradas, vazão de pico etc.) passa a vir EXCLUSIVAMENTE da
+// interpolação nessas curvas — nenhuma chamada a Google/Open-Meteo/SRTM/Mapzen/ASTER acontece
+// mais enquanto isso estiver ativo (ver _buscarElevacaoFundida abaixo, ponto de entrada único).
+// Método: triangulação de Delaunay (TIN) com cota nos vértices — a mesma técnica que o Civil3D
+// usa pra gerar uma superfície a partir de curvas de nível — e interpolação baricêntrica dentro
+// do triângulo que contém o ponto consultado. Ponto fora da área coberta (casco convexo dos
+// pontos importados) = sem dado; NÃO cai pra internet (pedido explícito do usuário), só avisa.
+let _curvasLocais = null; // { pontos, tin, coberturaPoly, elevMin, elevMax, numContornos, layerPreview }
+function _elevacaoLocalDisponivel() { return !!(_curvasLocais && _curvasLocais.tin); }
+
+// Conversão UTM → Lat/Lng (fórmula inversa padrão de Snyder, elipsoide WGS84 — SIRGAS2000
+// coincide com WGS84 na prática, diferença de poucos cm, irrelevante pra curvas de nível
+// agrícolas). DXF não guarda sistema de coordenadas nenhum, por isso o usuário escolhe a zona
+// UTM e o hemisfério no importador.
+function _utmParaLatLng(x, y, zona, sul) {
+  const a = 6378137.0, f = 1/298.257223563;
+  const e2 = f*(2-f), ep2 = e2/(1-e2);
+  const k0 = 0.9996;
+  const x0 = x - 500000.0;
+  const y0 = sul ? y - 10000000.0 : y;
+  const M = y0 / k0;
+  const mu = M / (a*(1 - e2/4 - 3*e2*e2/64 - 5*e2*e2*e2/256));
+  const e1 = (1 - Math.sqrt(1-e2)) / (1 + Math.sqrt(1-e2));
+  const phi1 = mu
+    + (3*e1/2 - 27*e1*e1*e1/32)*Math.sin(2*mu)
+    + (21*e1*e1/16 - 55*e1*e1*e1*e1/32)*Math.sin(4*mu)
+    + (151*e1*e1*e1/96)*Math.sin(6*mu)
+    + (1097*e1*e1*e1*e1/512)*Math.sin(8*mu);
+  const senPhi1 = Math.sin(phi1), cosPhi1 = Math.cos(phi1), tanPhi1 = Math.tan(phi1);
+  const N1 = a / Math.sqrt(1 - e2*senPhi1*senPhi1);
+  const T1 = tanPhi1*tanPhi1;
+  const C1 = ep2*cosPhi1*cosPhi1;
+  const R1 = a*(1-e2) / Math.pow(1 - e2*senPhi1*senPhi1, 1.5);
+  const D = x0 / (N1*k0);
+
+  const lat = phi1 - (N1*tanPhi1/R1) * (
+      D*D/2
+      - (5 + 3*T1 + 10*C1 - 4*C1*C1 - 9*ep2)*D*D*D*D/24
+      + (61 + 90*T1 + 298*C1 + 45*T1*T1 - 252*ep2 - 3*C1*C1)*D*D*D*D*D*D/720
+    );
+  const lng0 = (zona*6 - 183) * Math.PI/180;
+  const lng = lng0 + (
+      D
+      - (1 + 2*T1 + C1)*D*D*D/6
+      + (5 - 2*C1 + 28*T1 - 3*C1*C1 + 8*ep2 + 24*T1*T1)*D*D*D*D*D/120
+    ) / cosPhi1;
+
+  return { lat: lat*180/Math.PI, lng: lng*180/Math.PI };
+}
+
+// Parser DXF mínimo — só o que interessa pra curvas de nível: LWPOLYLINE (mais comum em exports
+// do Civil3D, cota constante no grupo 38) e POLYLINE clássica com VERTEX (cota por vértice, grupo
+// 30, quando a polilinha é 3D). Ignora bulge (arcos) — trata tudo como segmentos retos, aceitável
+// pra curva de nível já densificada pelo CAD. Se a entidade não tiver cota nenhuma (nem grupo 38,
+// nem Z de vértice), tenta extrair um número do nome da camada (grupo 8) — convenção comum tipo
+// "COTA_500" ou "500"; se nem isso der, a entidade é descartada e contada em `puladas`.
+function _parseDXFCurvas(texto) {
+  const linhas = texto.split(/\r\n|\r|\n/);
+  const contornos = [];
+  let puladas = 0;
+  let i = 0;
+  const lerPar = () => {
+    if(i+1 >= linhas.length) return null;
+    const code = parseInt(linhas[i].trim(), 10);
+    const val = linhas[i+1] !== undefined ? linhas[i+1].trim() : '';
+    i += 2;
+    return { code, val };
+  };
+  const elevDaCamada = (layer) => {
+    if(!layer) return null;
+    const m = layer.match(/-?\d+(\.\d+)?/);
+    return m ? parseFloat(m[0]) : null;
+  };
+
+  while(i < linhas.length) {
+    const par = lerPar();
+    if(!par) break;
+
+    if(par.code === 0 && par.val === 'LWPOLYLINE') {
+      let layer = null, elevConst = null, pontos = [], curX = null;
+      while(i < linhas.length) {
+        const save = i;
+        const p = lerPar();
+        if(!p) break;
+        if(p.code === 0) { i = save; break; }
+        if(p.code === 8) layer = p.val;
+        else if(p.code === 38) elevConst = parseFloat(p.val);
+        else if(p.code === 10) curX = parseFloat(p.val);
+        else if(p.code === 20 && curX != null) { pontos.push({ x: curX, y: parseFloat(p.val) }); curX = null; }
+      }
+      const z = (elevConst != null && !isNaN(elevConst)) ? elevConst : elevDaCamada(layer);
+      if(pontos.length >= 2 && z != null && !isNaN(z)) contornos.push({ pontos: pontos.map(p => ({ x:p.x, y:p.y, z })) });
+      else if(pontos.length >= 2) puladas++;
+
+    } else if(par.code === 0 && par.val === 'POLYLINE') {
+      let layer = null, elevConst = null, pontos = [];
+      while(i < linhas.length) {
+        const save = i;
+        const p = lerPar();
+        if(!p) break;
+        if(p.code === 0) { i = save; break; }
+        if(p.code === 8) layer = p.val;
+        else if(p.code === 38) elevConst = parseFloat(p.val);
+      }
+      while(i < linhas.length) {
+        const p0 = lerPar();
+        if(!p0) break;
+        if(p0.code === 0 && p0.val === 'SEQEND') break;
+        if(p0.code === 0 && p0.val === 'VERTEX') {
+          let vx = null, vy = null, vz = null;
+          while(i < linhas.length) {
+            const save = i;
+            const p = lerPar();
+            if(!p) break;
+            if(p.code === 0) { i = save; break; }
+            if(p.code === 10) vx = parseFloat(p.val);
+            else if(p.code === 20) vy = parseFloat(p.val);
+            else if(p.code === 30) vz = parseFloat(p.val);
+          }
+          if(vx != null && vy != null) pontos.push({ x: vx, y: vy, z: vz });
+        } else if(p0.code === 0) { i -= 2; break; } // entidade inesperada — protege contra DXF malformado
+      }
+      const zConst = (elevConst != null && !isNaN(elevConst)) ? elevConst : elevDaCamada(layer);
+      const comZ = pontos.map(p => ({ x:p.x, y:p.y, z: (p.z != null && !isNaN(p.z)) ? p.z : zConst }));
+      if(comZ.length >= 2 && comZ.every(p => p.z != null && !isNaN(p.z))) contornos.push({ pontos: comZ });
+      else if(pontos.length >= 2) puladas++;
+    }
+  }
+  return { contornos, puladas };
+}
+
+// Ponto dentro do triângulo via coordenadas baricêntricas — mais rápido que
+// turf.booleanPointInPolygon pro caso especial de exatamente 3 vértices.
+function _baricentrica(px, py, ax, ay, bx, by, cx, cy) {
+  const d = (bx-ax)*(cy-ay) - (cx-ax)*(by-ay);
+  if(Math.abs(d) < 1e-14) return null;
+  const w1 = ((bx-px)*(cy-py) - (cx-px)*(by-py)) / d;
+  const w2 = ((cx-px)*(ay-py) - (ax-px)*(cy-py)) / d;
+  const w3 = 1 - w1 - w2;
+  const eps = -1e-9;
+  if(w1 < eps || w2 < eps || w3 < eps) return null;
+  return [w1, w2, w3];
+}
+
+// Constrói o TIN a partir dos contornos já em lat/lng+elevação. turf.tin() devolve triângulos com
+// as cotas dos 3 vértices em properties.a/b/c (na mesma ordem dos vértices do anel).
+function _construirCurvasLocais(contornosLatLng) {
+  const pontos = [];
+  contornosLatLng.forEach(c => c.pontos.forEach(p => pontos.push(p)));
+  if(pontos.length < 3) return null;
+
+  const fc = turf.featureCollection(pontos.map(p => turf.point([p.lng, p.lat], { elev: p.z })));
+  let tin;
+  try { tin = turf.tin(fc, 'elev'); } catch(e) { return null; }
+  if(!tin || !tin.features.length) return null;
+  tin.features.forEach(tri => { tri._bbox = turf.bbox(tri); });
+
+  let coberturaPoly;
+  try { coberturaPoly = turf.convex(fc); } catch(e) { coberturaPoly = null; }
+  if(!coberturaPoly) return null;
+
+  const elevs = pontos.map(p => p.z);
+  return {
+    tin, coberturaPoly, pontos,
+    numContornos: contornosLatLng.length,
+    elevMin: Math.min(...elevs), elevMax: Math.max(...elevs)
+  };
+}
+
+function _elevacaoViaTin(lat, lng, cl) {
+  const tris = cl.tin.features;
+  for(let k = 0; k < tris.length; k++) {
+    const tri = tris[k];
+    const bb = tri._bbox;
+    if(lng < bb[0] || lng > bb[2] || lat < bb[1] || lat > bb[3]) continue;
+    const ring = tri.geometry.coordinates[0];
+    const bc = _baricentrica(lng, lat, ring[0][0], ring[0][1], ring[1][0], ring[1][1], ring[2][0], ring[2][1]);
+    if(!bc) continue;
+    const { a, b, c } = tri.properties;
+    return bc[0]*a + bc[1]*b + bc[2]*c;
+  }
+  return null;
+}
+
+// Ponto de entrada equivalente a _buscarElevacaoGoogleLote/etc — chamado de dentro de
+// _buscarElevacaoFundida() quando _elevacaoLocalDisponivel(). Nunca lança rede; ponto fora da
+// cobertura vira null (mesma convenção que o app já usa pra "sem dado nessa fonte ali").
+function _buscarElevacaoLocal(pontos) {
+  const cl = _curvasLocais;
+  const valores = new Array(pontos.length).fill(null);
+  let fora = 0;
+  for(let idx = 0; idx < pontos.length; idx++) {
+    const p = pontos[idx];
+    const dentro = turf.booleanPointInPolygon(turf.point([p.lng, p.lat]), cl.coberturaPoly);
+    if(!dentro) { fora++; continue; }
+    valores[idx] = _elevacaoViaTin(p.lat, p.lng, cl);
+    if(valores[idx] == null) fora++;
+  }
+  if(fora > 0) {
+    setStatus(`⚠ ${fora} ponto(s) fora da área coberta pelas curvas de nível importadas — sem dado ali (curvas locais ativas, não busca online). Importe curvas que cubram toda a região se precisar.`, 'err');
+  }
+  return { valores, sigmaMedio: 0, fontesUsadas: ['Curvas de Nível (importado, DXF)'] };
+}
+
+async function importarCurvasDxf(file) {
+  if(!file) return;
+  const zona = parseInt($('dxfUtmZona').value, 10);
+  const sul = $('dxfUtmHemisferio').value === 'S';
+  setStatus('Lendo curvas de nível do DXF…', 'info');
+
+  let texto;
+  try { texto = await file.text(); }
+  catch(e) { setStatus('Não consegui ler o arquivo DXF.', 'err'); return; }
+
+  const { contornos, puladas } = _parseDXFCurvas(texto);
+  if(!contornos.length) {
+    setStatus('Nenhuma curva com cota válida encontrada no DXF (confira se são LWPOLYLINE/POLYLINE com elevação — grupo 38, Z do vértice, ou cota no nome da camada).', 'err');
+    return;
+  }
+
+  const contornosLatLng = contornos.map(c => ({
+    pontos: c.pontos.map(p => { const ll = _utmParaLatLng(p.x, p.y, zona, sul); return { lat: ll.lat, lng: ll.lng, z: p.z }; })
+  }));
+
+  const cl = _construirCurvasLocais(contornosLatLng);
+  if(!cl) { setStatus('Não consegui construir a superfície a partir das curvas importadas (poucos pontos ou geometria degenerada).', 'err'); return; }
+
+  if(_curvasLocais && _curvasLocais.layerPreview) map.removeLayer(_curvasLocais.layerPreview);
+  const grp = L.layerGroup();
+  contornosLatLng.forEach(c => {
+    L.polyline(c.pontos.map(p => [p.lat, p.lng]), { color:'#8d6e63', weight:1, opacity:.6, dashArray:'2,3' }).addTo(grp);
+  });
+  grp.addTo(map);
+  cl.layerPreview = grp;
+  _curvasLocais = cl;
+
+  const st = $('dxfCurvasStatus');
+  if(st) st.innerHTML = `✓ ${cl.numContornos} curva(s) importada(s) · cotas ${cl.elevMin.toFixed(1)}–${cl.elevMax.toFixed(1)} m${puladas ? ` · ${puladas} entidade(s) sem cota ignorada(s)` : ''}`;
+  const btnRem = $('btnRemoverCurvasLocais'); if(btnRem) btnRem.style.display = 'flex';
+  setStatus(`✓ Curvas de nível importadas — a partir de agora, a elevação de todo o app vem exclusivamente delas (${cl.numContornos} curvas${puladas ? `, ${puladas} puladas` : ''}).`, 'ok');
+
+  try { map.fitBounds(L.geoJSON(cl.coberturaPoly).getBounds(), { padding: [20,20] }); } catch(e) {}
+}
+
+function removerCurvasLocais() {
+  if(_curvasLocais && _curvasLocais.layerPreview) map.removeLayer(_curvasLocais.layerPreview);
+  _curvasLocais = null;
+  const st = $('dxfCurvasStatus'); if(st) st.innerHTML = '';
+  const btnRem = $('btnRemoverCurvasLocais'); if(btnRem) btnRem.style.display = 'none';
+  setStatus('Curvas de nível locais removidas — a elevação volta a vir das fontes online.', 'info');
+}
+
 // Campo de elevação contínuo (interpolação bilinear sobre a grade regular buscada) — usado pra
 // traçar o caminho de descida mais íngreme passo a passo, em vez de pular célula a célula.
 function _mkEscoamentoSampler(elevGrid, lats, lngs, n) {
@@ -4126,7 +4435,7 @@ function _calcularD8Acumulo(elev, n, dxM, dyM) {
 
 async function gerarMapaEscoamento() {
   if(talhaoSelecionadoUid === null) { setStatus('Selecione um talhão primeiro.', 'err'); return; }
-  if(!window.google || !window.google.maps) { setStatus('Ative o Google Maps (chave API) para o mapa de escoamento.', 'err'); return; }
+  if(!window.google?.maps && !_elevacaoLocalDisponivel()) { setStatus('Ative o Google Maps (chave API) ou importe curvas de nível locais para o mapa de escoamento.', 'err'); return; }
   const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
   if(!t) return;
 
@@ -4332,7 +4641,7 @@ function _corRiscoErosao(A) {
 
 async function gerarRiscoErosao() {
   if(talhaoSelecionadoUid === null) { setStatus('Selecione um talhão primeiro.', 'err'); return; }
-  if(!window.google || !window.google.maps) { setStatus('Ative o Google Maps (chave API) para o risco de erosão.', 'err'); return; }
+  if(!window.google?.maps && !_elevacaoLocalDisponivel()) { setStatus('Ative o Google Maps (chave API) ou importe curvas de nível locais para o risco de erosão.', 'err'); return; }
   const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
   if(!t) return;
 
@@ -4466,7 +4775,7 @@ const _VAZAO_C_POR_COBERTURA = {
 
 async function gerarVazaoPico() {
   if(talhaoSelecionadoUid === null) { setStatus('Selecione um talhão primeiro.', 'err'); return; }
-  if(!window.google || !window.google.maps) { setStatus('Ative o Google Maps (chave API) para a vazão de pico.', 'err'); return; }
+  if(!window.google?.maps && !_elevacaoLocalDisponivel()) { setStatus('Ative o Google Maps (chave API) ou importe curvas de nível locais para a vazão de pico.', 'err'); return; }
   const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
   if(!t) return;
 
@@ -4547,8 +4856,8 @@ function resampleLine(latlngs, spacingM) {
 // ── Declividade do talhão ATIVO (antes de travar) ────────────────────────────
 async function classificarDeclivAtivo() {
   if(!linhas.length) { setStatus('Gere as linhas primeiro.', 'err'); return; }
-  if(!window.google || !window.google.maps) {
-    setStatus('Ative o Google Maps (chave API) para classificação.', 'err'); return;
+  if(!window.google?.maps && !_elevacaoLocalDisponivel()) {
+    setStatus('Ative o Google Maps (chave API) ou importe curvas de nível locais para classificação.', 'err'); return;
   }
   const spacingM = Math.max(5, parseFloat($('espacDeclivAtivo').value) || 25);
   setStatus('Classificando declividade do talhão ativo…', 'info');
@@ -4605,8 +4914,8 @@ function limparDeclivAtivo() {
 
 async function classificarTodosDeclividade() {
   if(!talhoesArquivados.length) { setStatus('Gere pelo menos um talhão primeiro.', 'err'); return; }
-  if(!window.google || !window.google.maps) {
-    setStatus('Ative o Google Maps (chave API) para classificação de declividade.', 'err'); return;
+  if(!window.google?.maps && !_elevacaoLocalDisponivel()) {
+    setStatus('Ative o Google Maps (chave API) ou importe curvas de nível locais para classificação de declividade.', 'err'); return;
   }
 
   const spacingM = Math.max(5, parseFloat($('espacDecliv').value) || 25);
@@ -4909,7 +5218,7 @@ function marchingSquaresCurva(elev, lts, lns, level) {
 async function gerarCurvas() {
   const polyRef = turfCurvaPoly || turfPoly;
   if(!polyRef) { setStatus('Desenhe a área de curvas (ou o talhão) primeiro.', 'err'); return; }
-  if(!window.google || !window.google.maps) { setStatus('Chave Google Maps necessária para curvas de nível.','err'); return; }
+  if(!window.google?.maps && !_elevacaoLocalDisponivel()) { setStatus('Chave Google Maps necessária (ou importe curvas de nível locais) para gerar curvas de nível.','err'); return; }
 
   limparCurvas();
   $('btnCurvas').disabled = true;
@@ -6935,8 +7244,8 @@ function fecharTutorialChave() {
 // ── Perfil de Elevação da Linha Guia ──────────────────────────────────────────
 async function mostrarPerfilGuia() {
   if(guidePts.length < 2) { setStatus('Defina a linha guia primeiro.', 'err'); return; }
-  if(!window.google?.maps?.ElevationService) {
-    alert('Perfil de elevação requer a chave Google Maps API. Ative-a nas configurações.');
+  if(!window.google?.maps?.ElevationService && !_elevacaoLocalDisponivel()) {
+    alert('Perfil de elevação requer a chave Google Maps API (ou curvas de nível locais importadas). Ative-a nas configurações.');
     return;
   }
   const rawPts = modoGuia === 'spline'
@@ -7020,8 +7329,8 @@ function _cliqueEmLinhaPlantio(pl) {
 }
 
 async function mostrarPerfilLinhaPlantio(pl) {
-  if(!window.google?.maps?.ElevationService) {
-    alert('Perfil de elevação requer a chave Google Maps API. Ative-a nas configurações.');
+  if(!window.google?.maps?.ElevationService && !_elevacaoLocalDisponivel()) {
+    alert('Perfil de elevação requer a chave Google Maps API (ou curvas de nível locais importadas). Ative-a nas configurações.');
     return;
   }
   const rawPts = pl.getLatLngs().flat().map(p => ({ lat: p.lat, lng: p.lng }));
@@ -7111,8 +7420,8 @@ async function analisarCenariosPlantio() {
     if(!t) return;
     polyPtsRef = t.polyPts;
   }
-  if(!window.google?.maps?.ElevationService) {
-    setStatus('Ative o Google Maps (chave API) pra essa análise — ela precisa de elevação real do terreno.', 'err');
+  if(!window.google?.maps?.ElevationService && !_elevacaoLocalDisponivel()) {
+    setStatus('Ative o Google Maps (chave API) ou importe curvas de nível locais pra essa análise — ela precisa de elevação real do terreno.', 'err');
     return;
   }
 
@@ -8130,8 +8439,8 @@ function capturarImagem3DAnalise() {
 }
 
 async function gerarVista3DAnalise() {
-  if(!window.google || !window.google.maps || !google.maps.ElevationService) {
-    setStatus('Ative o Google Maps (chave API) para gerar a Vista 3D — precisa de dados de elevação.', 'err');
+  if(!window.google?.maps?.ElevationService && !_elevacaoLocalDisponivel()) {
+    setStatus('Ative o Google Maps (chave API) ou importe curvas de nível locais para gerar a Vista 3D — precisa de dados de elevação.', 'err');
     return;
   }
   if(typeof THREE === 'undefined') { setStatus('Three.js não carregou — verifique a conexão com a internet.', 'err'); return; }
