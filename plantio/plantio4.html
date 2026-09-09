@@ -334,7 +334,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.50 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.51 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -2133,6 +2133,32 @@ body.layout-lateral #status{grid-area:status;}
 //     mutada no MESMO objeto referenciado tanto pelo array atual quanto pelo antigo. Nova
 //     _capturarOverlayParaUndo(descricao, desfazerFn) — cada botão "Limpar X" passa uma função que
 //     já sabe se restaurar, fechando sobre o overlay antigo antes dele ser removido.
+// v4.51: 3 relatos investigados a fundo com o DXF real do usuário e a fórmula de amostragem de
+// linhas — 1 bug real confirmado, 2 melhorias de mensagem (a fonte já estava certa nos dois):
+// (1) BUG REAL: resampleLine() empurrava o ponto final da linha incondicionalmente, mesmo quando
+//     ele caía a centímetros/poucos metros do último ponto já amostrado no passo regular (o
+//     passo quase nunca "bate" exato no fim da linha). Isso criava um ÚLTIMO SEGMENTO minúsculo
+//     (1-2m) uma vez por linha — nesse tamanho, qualquer ruído de meio metro na elevação
+//     interpolada (natural em IDW perto da borda da cobertura) já estoura pra uma declividade
+//     "de tela" enorme. Bug relatado ("declividade acima de 20% em muitos pontos") reproduzido e
+//     confirmado com uma linha de comprimento proposital (176m, sobra de 1m no passo de 25m) —
+//     sem a correção, um segmento de exatos 176m sobraria só 1m; corrigido fundindo o ponto final
+//     no último já amostrado quando a sobra é pequena (<30% do espaçamento), em vez de somar mais
+//     um ponto quase-duplicado.
+// (2) Vista 3D e "Fonte de Elevação": testado a fundo com o DXF real (grade densa 25×25, perfil de
+//     linha real) — a fonte JÁ estava correta em ambos (fontesUsadas = "Curvas de Nível
+//     (importado)", confirmado via teste). O que gerava a impressão de "parece Google" era a
+//     MENSAGEM: "±0.0 m (1 fonte)" lê como dado quebrado/ausente, não como "fonte local exata"
+//     (sigma exatamente 0 é o esperado — sem incerteza de fusão, uma leitura direta da curva).
+//     Trocado por um rótulo explícito ("Curvas de Nível (importado)") só quando é essa a única
+//     fonte, mantendo o formato antigo (±sigma, N fontes) pras fontes online.
+// (3) "Não consigo mais selecionar uma linha" (perfil de elevação): o clique estava funcionando
+//     (confirmado com clique de mouse de verdade, inclusive sobre a ortofoto — L.imageOverlay é
+//     interactive:false por padrão, não bloqueia cliques por baixo). O que acontecia: a linha
+//     clicada caía FORA da área coberta pelas curvas locais (comum quando as curvas cobrem só
+//     parte do talhão/fazenda) — a mensagem genérica "Erro ao buscar elevações" não deixava isso
+//     claro, parecendo que a seleção em si tinha falhado. Mensagem trocada por uma explicação
+//     específica desse caso.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -5412,7 +5438,17 @@ function resampleLine(latlngs, spacingM) {
     }
     pending -= (segLen - walked);
   }
-  pts.push(latlngs[latlngs.length - 1]);
+  // v4.51: empurrava o ponto final da linha incondicionalmente — o passo de amostragem regular
+  // quase nunca "bate" exatamente no fim, sobrando um resto de poucos centímetros a poucos
+  // metros, e esse resto virava um ÚLTIMO SEGMENTO muito curto. Num segmento de 1-2m, qualquer
+  // ruído de meio metro na elevação interpolada já estoura pra uma declividade "de tela" enorme
+  // (bug relatado: "declividade acima de 20% em muitos pontos" — batia 1 vez por linha, bem no
+  // fim de cada uma). Só empurra o ponto final se ele ficar longe o bastante do último ponto já
+  // amostrado; senão funde os dois (o ponto final substitui o último, em vez de somar mais um).
+  const fim = latlngs[latlngs.length - 1];
+  const ultimo = pts[pts.length - 1];
+  if(haversineM(ultimo, fim) > spacingM * 0.3) pts.push(fim);
+  else pts[pts.length - 1] = fim;
   return pts;
 }
 
@@ -8412,7 +8448,14 @@ function _renderPerfilGuia(samples, elevs) {
 
   const validIdxs = samples.map((_,i) => i).filter(i => elevs[i] != null);
   if(!validIdxs.length) {
-    $('perfilContent').innerHTML = '<p style="color:#ef5350;text-align:center;padding:20px">Erro ao buscar eleva&#231;&#245;es.</p>';
+    // v4.51: mensagem genérica ("Erro ao buscar elevações") deixava parecer que a linha não foi
+    // selecionada de verdade (bug relatado: "não consigo mais selecionar uma linha") — na
+    // verdade o clique funcionou, só que essa linha específica cai FORA da área coberta pelas
+    // curvas locais (comum quando as curvas cobrem só parte do talhão/fazenda).
+    const motivo = _elevacaoLocalDisponivel()
+      ? 'essa linha cai fora da área coberta pelas curvas de nível importadas — importe curvas que cubram essa região, ou desenhe/escolha uma linha dentro da área já coberta.'
+      : 'nenhuma fonte de elevação respondeu (confira a chave do Google Maps).';
+    $('perfilContent').innerHTML = `<p style="color:var(--c-err);text-align:center;padding:20px">A linha foi selecionada, mas não consegui buscar elevação: ${motivo}</p>`;
     return;
   }
   const valid = validIdxs.map(i => elevs[i]);
@@ -9482,7 +9525,12 @@ async function gerarVista3DAnalise() {
       + `Talhões: <b>${fontes.length}</b> &nbsp; Área total: <b>${totalHa.toFixed(2)} ha</b><br>`
       + `Linhas: <b>${totalLinhas}</b> &nbsp; Metros lineares: <b>${Math.round(totalMetros).toLocaleString('pt-BR')} m</b><br>`
       + `Amplitude do relevo: <b>${(elevMax - elevMin).toFixed(1)} m</b> (${elevMin.toFixed(1)}–${elevMax.toFixed(1)} m)`
-      + (precisao3D && precisao3D.sigmaMedio != null ? `<br>Precisão da elevação: <b>±${precisao3D.sigmaMedio.toFixed(1)} m</b> (${precisao3D.fontesUsadas.length} fonte${precisao3D.fontesUsadas.length !== 1 ? 's' : ''})` : '')
+      // v4.51: "±0.0 m (1 fonte)" (o que aparece com curvas locais, sigma exatamente 0) lia como
+      // dado quebrado/ausente, não como "fonte local exata" (bug relatado: "parece que estamos
+      // usando as elevações do Google" — a fonte JÁ estava certa, só a mensagem confundia).
+      + (precisao3D && precisao3D.fontesUsadas.length === 1 && precisao3D.fontesUsadas[0].includes('importado')
+          ? `<br>Elevação: <b style="color:var(--acc2)">${precisao3D.fontesUsadas[0]}</b>`
+          : (precisao3D && precisao3D.sigmaMedio != null ? `<br>Precisão da elevação: <b>±${precisao3D.sigmaMedio.toFixed(1)} m</b> (${precisao3D.fontesUsadas.length} fonte${precisao3D.fontesUsadas.length !== 1 ? 's' : ''})` : ''))
       + `<div style="margin-top:6px;border-top:1px solid rgba(255,255,255,.15);padding-top:6px;">${legHtml}</div>`;
     $('m3da-inf').style.display = 'block';
 
