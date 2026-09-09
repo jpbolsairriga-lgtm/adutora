@@ -334,7 +334,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.53 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.54 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -2198,6 +2198,49 @@ body.layout-lateral #status{grid-area:status;}
 //    houver ortofoto) — antes essa faixa extra virava um platô achatado extrapolado sem aviso
 //    (bug relatado com print: "a área perto do reservatório... não deveria ter dados de elevação
 //    ou preenchimento de terreno além da área da ortofoto").
+// v4.54: usuário fez um experimento decisivo — desenhou só UM talhão pequeno perto do
+// reservatório e o relevo bateu certo com as curvas; ao desenhar os outros talhões da fazenda
+// (área total bem maior, mesmo padrão de antes), o reservatório ficou "ondulado"/torto de novo,
+// como se estivesse "entrelaçando o terreno de duas fontes". Achei a causa raiz de verdade:
+// 1) A malha da Vista 3D é um RETÂNGULO (a bbox de todos os talhões, já clampada no v4.53 pra
+//    não passar da ortofoto/hull das curvas) — mas a cobertura real quase nunca é um retângulo
+//    perfeito (hull convexo de forma irregular), então mesmo já clampada, boa parte dos CANTOS
+//    do retângulo continuava fora da área real. Com 1 talhão pequeno bem alinhado com as curvas,
+//    quase não sobrava canto de fora; com a fazenda toda (retângulo bem maior), sobrava muito
+//    mais — e essa parte seguia sendo preenchida pelo vizinho mais próximo
+//    (_preencherGradeVazios), criando um platô extrapolado colado no relevo real, com uma costura
+//    irregular exatamente na fronteira entre os dois — daí o "entrelaçado"/ondulado. Corrigido de
+//    raiz: a malha agora testa CADA vértice contra a área real (hull das curvas, ou o retângulo
+//    da ortofoto) e simplesmente NÃO desenha o triângulo se ele cair fora — vira um buraco de
+//    verdade na malha em vez de terreno inventado, exatamente o que foi pedido ("não deveria ter
+//    dados de elevação ou preenchimento de terreno além da área real").
+// 2) SEGUNDA causa (mais grave) do reservatório ondulado, achada testando com o levantamento de
+//    curvas de verdade (denso, 163 curvas — o antigo arquivo de teste era um DXF do Google Earth
+//    bem mais grosseiro, 66 curvas, que nunca tinha detalhe suficiente pra expor esse bug):
+//    _dedupPontosGrade (v4.53, criado pra parar o turf.tin() de travar num KML denso com pontos
+//    quase duplicados) deduplicava só por posição (grade de 1m), IGNORANDO a cota. Numa parede
+//    quase vertical — exatamente o corte do reservatório na encosta — dezenas de curvas de nível
+//    BEM diferentes (achado: até 69 curvas, de 826m a 894m, quase toda a faixa de altitude da
+//    fazenda) caem dentro de 1 metro horizontal umas das outras. O dedup tratava isso como
+//    "duplicado" e jogava fora até 68 dessas curvas, sobrando 1 ponto só — destruindo o relevo
+//    exatamente onde ele é mais acidentado. Corrigido incluindo a cota (arredondada a 0.1m) na
+//    chave de dedup: só um ponto REALMENTE repetido (mesmo vértice, mesma curva, mesma cota)
+//    ainda funde; curvas de níveis diferentes nunca mais colidem, mesmo coladas no mapa.
+//    Confirmado que isso não trouxe de volta o travamento antigo (testado de novo com o mesmo KML
+//    denso do Google Earth que motivou o dedup: continua ~180ms, sem explosão de triângulos).
+// 3) Exportação DXF/KML nunca incluía as curvas de nível IMPORTADAS (_curvasLocais) — só as
+//    GERADAS online (curvaLayers) — bug relatado: "em kml ele não exporta as curvas de nível que
+//    importei". Corrigido nos dois formatos, com a cota Z real de cada vértice.
+// 4) DXF ganhou $EXTMIN/$EXTMAX (e $LIMMIN/$LIMMAX) no header — sem isso, o AutoCAD abre com o
+//    zoom padrão perto da origem (0,0), e como a geometria fica em coordenadas UTM absolutas
+//    (~267000, 7726000 nesse caso) tudo fica fora da tela até um "Zoom Extents" manual — hipótese
+//    forte pro relato "consigo exportar, mas o arquivo fica vazio quando abro" (o app não tem
+//    exportação DWG — só DXF; conversão pra DWG de fato é feita fora do app, pelo AutoCAD).
+// Não resolvido/não confirmado ainda: o relato de "não consigo mais pegar o perfil de uma linha"
+// ao reimportar um KML/DXF que o próprio app exportou (mas SEM esse problema ao desenhar uma área
+// nova) — o código de reimportação de KML já liga o clique certinho em cada linha (mesma função
+// usada em todo canto), não achei uma causa distinta disso ainda; pode ter sido o mesmo efeito de
+// "área grande" acima, ou outra coisa que só aparece com o arquivo real dele. Peço confirmação.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -4489,7 +4532,16 @@ function _dedupPontosGrade(pontos, tolM) {
   const saida = [];
   for(let i = 0; i < pontos.length; i++) {
     const p = pontos[i];
-    const key = Math.round(p.lat / cellLat) + '_' + Math.round(p.lng / cellLng);
+    // v4.54: a chave inclui a COTA (arredondada a 0.1m) — bug real achado com um levantamento
+    // denso de verdade (163 curvas, reservatório escavado num talude): numa parede quase
+    // vertical (corte do reservatório), dezenas de curvas de nível BEM diferentes (826m a 894m,
+    // quase toda a faixa de altitude da fazenda) caem dentro de 1m horizontal umas das outras —
+    // sem a cota na chave, o dedup tratava isso como "duplicado" e jogava fora até 68 das 69
+    // curvas ali, sobrando só 1 ponto — destruindo exatamente o relevo mais acidentado (bug
+    // relatado: "área do reservatório ficou ondulada/diferente do formato das curvas"). Só um
+    // ponto realmente repetido (mesmo vértice, mesma curva) tem a MESMA cota também — curvas de
+    // níveis genuinamente diferentes, mesmo coladas no mapa, nunca colidem nessa chave.
+    const key = Math.round(p.lat / cellLat) + '_' + Math.round(p.lng / cellLng) + '_' + Math.round(p.z * 10);
     if(!vistos.has(key)) { vistos.add(key); saida.push(p); }
   }
   return saida;
@@ -6546,6 +6598,23 @@ function _exportarKMLInterno() {
     kml += `</Folder>\n`;
   }
 
+  // v4.54: curvas de nível IMPORTADAS (_curvasLocais) nunca eram exportadas — só as GERADAS
+  // online (curvaLayers) — bug relatado: "em kml ele não exporta as curvas de nível que
+  // importei". Cada ponto tem sua própria cota real (vem do levantamento, não de um nível único
+  // por linha como as geradas online), então usa a cota de CADA vértice, não uma constante.
+  if(_curvasLocais && _curvasLocais.contornosDecimados && _curvasLocais.contornosDecimados.length) {
+    kml += `<Folder><name>Curvas de Nível (importadas)</name>\n`;
+    kml += `<description>Alt. mín: ${_curvasLocais.elevMin.toFixed(1)} m  Alt. máx: ${_curvasLocais.elevMax.toFixed(1)} m</description>\n`;
+    _curvasLocais.contornosDecimados.forEach(c => {
+      if(c.pontos.length < 2) return;
+      const coords = c.pontos.map(p => `${p.lng.toFixed(7)},${p.lat.toFixed(7)},${p.z.toFixed(2)}`).join(' ');
+      kml += `<Placemark><name>${c.pontos[0].z.toFixed(1)} m</name>${kmlLine('#7de2bd', 1.5)}` +
+        `<LineString><tessellate>1</tessellate><altitudeMode>absolute</altitudeMode>` +
+        `<coordinates>${coords}</coordinates></LineString></Placemark>\n`;
+    });
+    kml += `</Folder>\n`;
+  }
+
   kml += `</Document></kml>`;
   baixarArquivo(kml, 'plantio_bolsairriga.kml', 'application/vnd.google-earth.kml+xml');
 } // fim _exportarKMLInterno
@@ -6633,6 +6702,7 @@ function _exportarDXFInterno() {
 
   const layers = new Map(); // nome sanitizado -> cor true color (int)
   const entities = [];
+  const extentsUTM = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
 
   function addLayer(name, color) {
     const ln = dxfLayerName(name);
@@ -6642,6 +6712,10 @@ function _exportarDXFInterno() {
   function addPolyline(pts, layerName, closed, elevation) {
     if(pts.length < 2) return;
     const uv = pts.map(proj);
+    uv.forEach(p => {
+      if(p.x < extentsUTM.minX) extentsUTM.minX = p.x; if(p.x > extentsUTM.maxX) extentsUTM.maxX = p.x;
+      if(p.y < extentsUTM.minY) extentsUTM.minY = p.y; if(p.y > extentsUTM.maxY) extentsUTM.maxY = p.y;
+    });
     const aci = layers.get(layerName);
     const is3d = elevation != null;
     // POLYLINE clássico (R12): flag 66=1 obrigatória, vértices como entidades VERTEX separadas,
@@ -6712,18 +6786,52 @@ function _exportarDXFInterno() {
     });
   }
 
+  // v4.54: curvas de nível IMPORTADAS (_curvasLocais) nunca eram exportadas pro DXF — só as
+  // GERADAS online (curvaLayers), mesmo bug do KML. addPolyline() só aceita UMA elevação
+  // constante por polilinha, mas cada curva importada já É de um nível só (mesma cota em todos
+  // os pontos, ver _classificarMestraMenor) — então dá pra reusar direto, exportando cada
+  // contorno como uma POLYLINE 3D separada por cota.
+  if(_curvasLocais && _curvasLocais.contornosDecimados && _curvasLocais.contornosDecimados.length) {
+    const step = (() => {
+      const unicas = [...new Set(_curvasLocais.contornosDecimados.map(c => c.pontos[0].z))].sort((a,b)=>a-b);
+      if(unicas.length < 2) return null;
+      const diffs = []; for(let i=1;i<unicas.length;i++) diffs.push(unicas[i]-unicas[i-1]);
+      diffs.sort((a,b)=>a-b); return diffs[Math.floor(diffs.length/2)];
+    })();
+    const zMinCl = _curvasLocais.elevMin;
+    const lnMloc = addLayer('Curvas_Nivel_Importadas_Mestras', '#ea5832');
+    const lnIloc = addLayer('Curvas_Nivel_Importadas_Intermediarias', '#7de2bd');
+    _curvasLocais.contornosDecimados.forEach(c => {
+      if(c.pontos.length < 2) return;
+      const z = c.pontos[0].z;
+      const mestra = !!(step && step > 0 && Math.round((z - zMinCl) / step) % 5 === 0);
+      addPolyline(c.pontos, mestra ? lnMloc : lnIloc, false, z);
+    });
+  }
+
   if(!entities.length) { alert('Nada para exportar ainda.'); return; }
 
-  const dxf = buildDxfDocument(layers, entities);
+  const dxf = buildDxfDocument(layers, entities, extentsUTM);
   baixarArquivo(dxf, 'plantio_bolsairriga.dxf', 'application/dxf');
 }
 
 // Monta o texto DXF (AutoCAD 2000/AC1015): HEADER + TABLES (LTYPE, LAYER) + ENTITIES
-function buildDxfDocument(layers, entities) {
+function buildDxfDocument(layers, entities, extents) {
   let s = '';
   s += '0\nSECTION\n2\nHEADER\n';
   s += '9\n$ACADVER\n1\nAC1009\n';
   s += '9\n$INSUNITS\n70\n6\n'; // 6 = metros
+  // v4.54: $EXTMIN/$EXTMAX (e $LIMMIN/$LIMMAX) — sem isso, o AutoCAD abre o arquivo com o zoom
+  // padrão perto da origem (0,0), e como a geometria real está em coordenadas UTM absolutas
+  // (~267000, 7726000 nesse caso) fica tudo fora da tela — parece um arquivo vazio até o usuário
+  // fazer "Zoom Extents" manualmente (bug relatado: "consigo exportar, mas o arquivo fica vazio
+  // quando abro"). Com $EXTMIN/$EXTMAX no header, qualquer CAD compatível já abre enquadrado.
+  if(extents && Number.isFinite(extents.minX) && Number.isFinite(extents.maxX)) {
+    s += `9\n$EXTMIN\n10\n${extents.minX.toFixed(3)}\n20\n${extents.minY.toFixed(3)}\n30\n0.0\n`;
+    s += `9\n$EXTMAX\n10\n${extents.maxX.toFixed(3)}\n20\n${extents.maxY.toFixed(3)}\n30\n0.0\n`;
+    s += `9\n$LIMMIN\n10\n${extents.minX.toFixed(3)}\n20\n${extents.minY.toFixed(3)}\n`;
+    s += `9\n$LIMMAX\n10\n${extents.maxX.toFixed(3)}\n20\n${extents.maxY.toFixed(3)}\n`;
+  }
   s += '0\nENDSEC\n';
 
   s += '0\nSECTION\n2\nTABLES\n';
@@ -9529,6 +9637,23 @@ async function gerarVista3DAnalise() {
     const terrRaw = new Float32Array((NGTX + 1) * (NGTY + 1));
     const tPos = new Float32Array((NGTX + 1) * (NGTY + 1) * 3);
     const tUV = new Float32Array((NGTX + 1) * (NGTY + 1) * 2);
+    // v4.54: teste de cobertura REAL por vértice (não só o retângulo da bbox, clamped no v4.53) —
+    // com múltiplos talhões o retângulo da malha cobre uma área bem maior, e como a cobertura de
+    // curvas/ortofoto quase nunca é um retângulo perfeito (hull convexo de forma irregular), boa
+    // parte dos CANTOS do retângulo cai fora da área real mesmo já clampada — isso ainda virava
+    // platô extrapolado (_preencherGradeVazios) ali, sem aviso, "entrelaçando" com o relevo real
+    // vizinho (bug relatado com prints: reservatório ficava ondulado só quando vários talhões
+    // estavam desenhados, batendo exatamente com essa faixa de borda sem dado real).
+    let testeCobertura = null;
+    if(_ortofotoLocal && _ortofotoLocal.bounds) {
+      const ob = _ortofotoLocal.bounds;
+      const s = ob.getSouth(), n2 = ob.getNorth(), w = ob.getWest(), e2 = ob.getEast();
+      testeCobertura = (lat, lng) => lat >= s && lat <= n2 && lng >= w && lng <= e2;
+    } else if(_elevacaoLocalDisponivel() && _curvasLocais.coberturaPoly) {
+      const poly = _curvasLocais.coberturaPoly;
+      testeCobertura = (lat, lng) => turf.booleanPointInPolygon(turf.point([lng, lat]), poly);
+    }
+    const coberto = testeCobertura ? new Uint8Array((NGTX + 1) * (NGTY + 1)) : null;
     for(let jj = 0; jj <= NGTY; jj++) {
       for(let ii = 0; ii <= NGTX; ii++) {
         const idx = jj * (NGTX + 1) + ii;
@@ -9538,12 +9663,20 @@ async function gerarVista3DAnalise() {
         terrRaw[idx] = raw;
         tPos[idx * 3] = gx; tPos[idx * 3 + 1] = raw * _3da_exag; tPos[idx * 3 + 2] = -gy;
         tUV[idx * 2] = ii / NGTX; tUV[idx * 2 + 1] = jj / NGTY;
+        if(coberto) coberto[idx] = testeCobertura(ll.lat, ll.lng) ? 1 : 0;
       }
     }
+    // Se a máscara excluir quase tudo (ex: teste de cobertura falhando por algum motivo
+    // inesperado), ignora ela em vez de arriscar mostrar uma cena vazia/quebrada — nesse caso o
+    // aviso de "% com dado real" (mais abaixo) já avisa sobre a extrapolação.
+    let numCobertos = 0;
+    if(coberto) for(let i = 0; i < coberto.length; i++) if(coberto[i]) numCobertos++;
+    const usarMascara = coberto && numCobertos / coberto.length >= 0.05;
     const tIdx = [];
     for(let jj = 0; jj < NGTY; jj++) for(let ii = 0; ii < NGTX; ii++) {
       const a = jj * (NGTX + 1) + ii, b = jj * (NGTX + 1) + ii + 1, c = (jj + 1) * (NGTX + 1) + ii, d = (jj + 1) * (NGTX + 1) + ii + 1;
-      tIdx.push(a, c, b, b, c, d);
+      if(!usarMascara || (coberto[a] && coberto[c] && coberto[b])) tIdx.push(a, c, b);
+      if(!usarMascara || (coberto[b] && coberto[c] && coberto[d])) tIdx.push(b, c, d);
     }
     const tGeo = new THREE.BufferGeometry();
     tGeo.setAttribute('position', new THREE.BufferAttribute(tPos, 3));
