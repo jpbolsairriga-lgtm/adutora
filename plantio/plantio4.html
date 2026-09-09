@@ -334,7 +334,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.52 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.53 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -2170,6 +2170,34 @@ body.layout-lateral #status{grid-area:status;}
 // não que a fonte estava errada. Novo aviso (Vista 3D e Declividade do Terreno) mostra o % de
 // células com elevação real das curvas sempre que ficar abaixo de 90%, explicando que o resto
 // aparece achatado e que é preciso importar curvas cobrindo mais área pra ter relevo completo.
+// v4.53: usuário provou com print real (curvas cobrindo TODO o talhão, 3 imagens) que o
+// diagnóstico do v4.52 ("só 16% da malha tem dado real") estava simplesmente ERRADO pro cenário
+// dele — não era um problema de cobertura. Investigação a fundo, comparando ponto a ponto contra
+// um levantamento de referência feito no Civil3D com as MESMAS curvas e linhas do usuário ("Civil
+// - Analise - 090926.dxf", 56 mil pontos extraídos das linhas da camada PLANTIO_ANALISE):
+// 1) TIN real (triangulação de Delaunay) substitui o IDW como método principal de elevação de
+//    curvas de nível — o IDW cruzava curvas de níveis bem diferentes nos K vizinhos, "achatando"
+//    picos/depressões pela média (regressão à média clássica). turf.tin() resolve isso (só usa os
+//    3 vértices do triângulo que envolve o ponto), mas tinha travado antes num KML denso (pontos
+//    quase duplicados confundindo o Delaunay) — corrigido deduplicando por grade de 1m antes de
+//    triangular (mesmo KML: de 69s/1,9 milhão de triângulos patológicos para 148ms/68 mil, dentro
+//    do esperado). Batido contra o Civil3D: TIN é exato nos vértices das curvas (dif 0.00m), mas
+//    o viés médio contra o levantamento do Civil3D não mudou (~6.4m antes e depois, TIN e IDW
+//    praticamente empatados) — ou seja, a causa da divergência com o Civil3D NÃO é o algoritmo de
+//    interpolação (isso já descarta minha própria hipótese aqui: não é bug de suavização). Fica
+//    provavelmente uma diferença entre os dados de origem dos dois arquivos (o Civil3D pode ter
+//    usado uma superfície com mais pontos/curvas do que só o DXF importado aqui) — segue sem
+//    solução definitiva, reportado ao usuário pra confirmar a origem dos dados do Civil3D.
+// 2) Curvas de nível importadas agora são interactive:false — por padrão toda polyline do
+//    Leaflet captura clique/hover, e como elas ficam sempre por cima no z-order (pra aparecer
+//    sobre a ortofoto), uma linha de plantio que CRUZA uma curva podia ter o clique roubado pela
+//    curva (sem ação nenhuma) em vez de chegar na linha — contribuía pro relato "não consigo mais
+//    selecionar uma linha pra perfil". Curva é só desenho, não precisa ser clicável.
+// 3) Vista 3D: com ortofoto/curvas LOCAIS ativas, a malha não pode mais se estender, com sua
+//    margem de contexto de 25%, além da área real da ortofoto (ou do hull das curvas, se não
+//    houver ortofoto) — antes essa faixa extra virava um platô achatado extrapolado sem aviso
+//    (bug relatado com print: "a área perto do reservatório... não deveria ter dados de elevação
+//    ou preenchimento de terreno além da área da ortofoto").
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -4437,6 +4465,97 @@ function _construirGradeEspacial(pontos) {
   return { grade, ladoGraus };
 }
 
+// v4.53: TIN real (triangulação de Delaunay) pra elevação de curvas de nível — confirmado
+// comparando contra um levantamento de referência (Civil3D, EXATAMENTE as mesmas curvas e linhas
+// de plantio do usuário: "Civil - Analise - 090926.dxf") que o IDW acima tem um viés sistemático
+// de 3 a 10m PRA BAIXO nos pontos mais altos, porque ele mistura pontos de curvas de nível bem
+// mais altas/baixas que o ponto consultado nos K vizinhos — "regressão à média" clássica,
+// achatando morros e depressões (bug relatado: "área perto do reservatório deveria estar
+// modelada de acordo com a topografia importada", Vista 3D visualmente achatada mesmo com
+// cobertura de curvas real e completa ali). turf.tin() só usa os 3 vértices do triângulo que
+// envolve o ponto — sem misturar curva nenhuma de fora dali — e bate com o Civil3D. turf.tin()
+// tinha sido abandonado antes por travar num KML denso (69s e 1,87 milhão de triângulos pra 40
+// mil pontos — matematicamente devia dar ~80 mil): causa raiz achada é pontos QUASE duplicados
+// (curvas do Google Earth têm vértices a centímetros um do outro), que confundem o algoritmo de
+// Delaunay. Deduplicar por grade de 1m antes de triangular resolve: mesmo KML, mesmo resultado
+// visual, mas 148ms e ~68 mil triângulos (dentro do esperado). IDW continua de rede de segurança
+// só pra imprecisão numérica de borda (ponto dentro da cobertura, mas nenhum triângulo bate por
+// arredondamento de ponto flutuante) — nunca mais como método principal.
+function _dedupPontosGrade(pontos, tolM) {
+  const latRef = pontos[0].lat;
+  const mLat = 111320, mLng = Math.max(Math.cos(latRef * Math.PI / 180) * 111320, 1);
+  const cellLat = tolM / mLat, cellLng = tolM / mLng;
+  const vistos = new Set();
+  const saida = [];
+  for(let i = 0; i < pontos.length; i++) {
+    const p = pontos[i];
+    const key = Math.round(p.lat / cellLat) + '_' + Math.round(p.lng / cellLng);
+    if(!vistos.has(key)) { vistos.add(key); saida.push(p); }
+  }
+  return saida;
+}
+
+// Grade espacial de TRIÂNGULOS (bucket por célula, guardando o triângulo em toda célula que sua
+// bounding box toca) — mesmo princípio de _construirGradeEspacial, mas indexando os triângulos do
+// TIN em vez dos pontos originais, pra achar rápido "qual triângulo contém esse lat/lng".
+function _construirIndiceTriangulos(triangulos) {
+  let latMin = Infinity, latMax = -Infinity, lngMin = Infinity, lngMax = -Infinity;
+  for(let i = 0; i < triangulos.length; i++) {
+    const c = triangulos[i].geometry.coordinates[0];
+    for(let j = 0; j < c.length; j++) {
+      const lng = c[j][0], lat = c[j][1];
+      if(lat < latMin) latMin = lat; if(lat > latMax) latMax = lat;
+      if(lng < lngMin) lngMin = lng; if(lng > lngMax) lngMax = lng;
+    }
+  }
+  const ladoGraus = Math.max(latMax - latMin, lngMax - lngMin, 1e-6) / 40;
+  const grade = new Map();
+  for(let i = 0; i < triangulos.length; i++) {
+    const t = triangulos[i];
+    const c = t.geometry.coordinates[0];
+    let tLatMin = Infinity, tLatMax = -Infinity, tLngMin = Infinity, tLngMax = -Infinity;
+    for(let j = 0; j < c.length; j++) {
+      const lng = c[j][0], lat = c[j][1];
+      if(lat < tLatMin) tLatMin = lat; if(lat > tLatMax) tLatMax = lat;
+      if(lng < tLngMin) tLngMin = lng; if(lng > tLngMax) tLngMax = lng;
+    }
+    const gxMin = Math.floor(tLngMin / ladoGraus), gxMax = Math.floor(tLngMax / ladoGraus);
+    const gyMin = Math.floor(tLatMin / ladoGraus), gyMax = Math.floor(tLatMax / ladoGraus);
+    for(let gx = gxMin; gx <= gxMax; gx++) for(let gy = gyMin; gy <= gyMax; gy++) {
+      const k = gx + '_' + gy;
+      if(!grade.has(k)) grade.set(k, []);
+      grade.get(k).push(t);
+    }
+  }
+  return { grade, ladoGraus };
+}
+
+// Interpolação linear baricêntrica dentro do triângulo do TIN que contém (lat,lng) — o mesmo
+// princípio que qualquer CAD usa pra "drapear" uma linha numa superfície TIN, sem misturar
+// nenhuma curva de fora daquele triângulo específico.
+function _elevacaoViaTin(lat, lng, indiceTin) {
+  const { grade, ladoGraus } = indiceTin;
+  const gx = Math.floor(lng / ladoGraus), gy = Math.floor(lat / ladoGraus);
+  const candidatos = grade.get(gx + '_' + gy);
+  if(!candidatos) return null;
+  for(let i = 0; i < candidatos.length; i++) {
+    const t = candidatos[i];
+    const c = t.geometry.coordinates[0];
+    const ax = c[0][0], ay = c[0][1], bx = c[1][0], by = c[1][1], cx = c[2][0], cy = c[2][1];
+    const denom = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay);
+    if(Math.abs(denom) < 1e-18) continue;
+    const wA = ((bx - lng) * (cy - lat) - (cx - lng) * (by - lat)) / denom;
+    const wB = ((cx - lng) * (ay - lat) - (ax - lng) * (cy - lat)) / denom;
+    const wC = 1 - wA - wB;
+    const eps = -1e-9;
+    if(wA >= eps && wB >= eps && wC >= eps) {
+      const p = t.properties;
+      return wA * p.a + wB * p.b + wC * p.c;
+    }
+  }
+  return null;
+}
+
 // Interpolação por distância inversa (IDW, potência 2) nos K vizinhos mais próximos, achados
 // expandindo em anéis de células ao redor do ponto consultado até ter vizinhos suficientes.
 function _elevacaoViaIDW(lat, lng, indice, kVizinhos) {
@@ -4474,6 +4593,24 @@ function _construirCurvasLocais(contornosLatLngOriginal) {
   catch(e) { coberturaPoly = null; }
   if(!coberturaPoly) return null;
 
+  // TIN (ver comentário de _elevacaoViaTin) é o método PRINCIPAL a partir daqui — dedup por grade
+  // de 1m antes de triangular pra não reproduzir o travamento antigo com pontos quase duplicados.
+  // Falha (geometria degenerada, triangulação explode) não é fatal: indiceTin fica null e
+  // _buscarElevacaoLocal cai de volta pro IDW puro (comportamento antigo, nunca pior que antes).
+  let indiceTin = null;
+  try {
+    const pontosDedup = _dedupPontosGrade(pontos, 1);
+    if(pontosDedup.length >= 3) {
+      const tin = turf.tin(turf.featureCollection(pontosDedup.map(p => turf.point([p.lng, p.lat], { z: p.z }))), 'z');
+      // Sanidade: uma triangulação plana válida tem ~2× o nº de pontos em triângulos. Bem acima
+      // disso é o mesmo comportamento patológico já visto (não deveria mais acontecer com a
+      // dedup, mas por segurança cai pro IDW em vez de arriscar travar a página).
+      if(tin.features.length && tin.features.length <= pontosDedup.length * 4) {
+        indiceTin = _construirIndiceTriangulos(tin.features);
+      }
+    }
+  } catch(e) { indiceTin = null; }
+
   // Math.min/max(...array) quebra ("Maximum call stack size exceeded") em arrays grandes — o
   // espalhamento vira uma chamada de função com 1 argumento por elemento, e o V8 tem um limite de
   // ~65 mil argumentos. Um KML denso do Google Earth pode facilmente passar de 100 mil pontos
@@ -4481,7 +4618,7 @@ function _construirCurvasLocais(contornosLatLngOriginal) {
   let elevMin = Infinity, elevMax = -Infinity;
   for(let i = 0; i < pontos.length; i++) { const z = pontos[i].z; if(z < elevMin) elevMin = z; if(z > elevMax) elevMax = z; }
   return {
-    indiceEspacial, coberturaPoly, pontos,
+    indiceEspacial, indiceTin, coberturaPoly, pontos,
     contornosDecimados: contornosLatLng, // pra desenhar com a MESMA densidade usada na interpolação, não a original (pode ter sido decimada)
     numContornos: contornosLatLng.length,
     elevMin, elevMax
@@ -4499,7 +4636,11 @@ function _buscarElevacaoLocal(pontos) {
     const p = pontos[idx];
     const dentro = turf.booleanPointInPolygon(turf.point([p.lng, p.lat]), cl.coberturaPoly);
     if(!dentro) { fora++; continue; }
-    valores[idx] = _elevacaoViaIDW(p.lat, p.lng, cl.indiceEspacial, 8);
+    // TIN primeiro (segue o relevo real, sem misturar curvas distantes — ver comentário de
+    // _elevacaoViaTin); IDW só como rede de segurança numérica de borda.
+    let z = cl.indiceTin ? _elevacaoViaTin(p.lat, p.lng, cl.indiceTin) : null;
+    if(z == null) z = _elevacaoViaIDW(p.lat, p.lng, cl.indiceEspacial, 8);
+    valores[idx] = z;
     if(valores[idx] == null) fora++;
   }
   if(fora > 0) {
@@ -4595,7 +4736,14 @@ function _finalizarImportacaoCurvas(contornosLatLng, puladas, dicaErro) {
   classificadas.forEach(c => {
     const cor = _corPorElevacao(c.z, cl.elevMin, cl.elevMax);
     L.polyline(c.pontos.map(p => [p.lat, p.lng]), {
-      color: cor, weight: c.mestra ? 2.6 : 1.4, opacity: c.mestra ? .95 : .85
+      // v4.53: interactive:false — por padrão toda polyline do Leaflet captura clique/hover, e
+      // como as curvas ficam no topo do SVG compartilhado (_garantirCurvasNoTopo, pra aparecer
+      // sobre a ortofoto), onde uma linha de plantio CRUZA uma curva o clique era capturado pela
+      // curva (que não tem ação nenhuma) em vez de chegar na linha de plantio embaixo — bug
+      // relatado: "não estou mais conseguindo selecionar 01 linha para pegar o perfil de
+      // elevação" (começou a acontecer depois do fix de z-order das curvas). Curva é só desenho,
+      // não precisa ser clicável.
+      color: cor, weight: c.mestra ? 2.6 : 1.4, opacity: c.mestra ? .95 : .85, interactive: false
     }).addTo(grp);
   });
   grp.addTo(map);
@@ -9249,6 +9397,35 @@ async function gerarVista3DAnalise() {
   // redor dos talhões (relatado como mata/entorno sumindo da vista 3D).
   const padLat = Math.max((latMax - latMin) * 0.25, 0.001), padLng = Math.max((lngMax - lngMin) * 0.25, 0.001);
   latMin -= padLat; latMax += padLat; lngMin -= padLng; lngMax += padLng;
+
+  // v4.53: com dado LOCAL (ortofoto TIFF e/ou curvas importadas), a margem de 25% acima não pode
+  // avançar além da área que o usuário realmente levantou — diferente de uma fonte online
+  // (Google/etc, que "existe" em qualquer lugar), aqui não existe elevação de verdade fora dali, e
+  // _preencherGradeVazios criava um platô plano extrapolado nessa faixa sem aviso nenhum (bug
+  // relatado com print: "a área perto do reservatório... não deveria ter dados de elevação ou
+  // preenchimento de terreno além da área da ortofoto"). Restringe ao retângulo da ortofoto (se
+  // houver) e, senão, ao hull real das curvas — mas só se a interseção continuar válida (talhão
+  // pode ter uma ponta fora da ortofoto; nesse caso mantém o bbox original em vez de zerar tudo).
+  function _clampParaCobertura(lo1, hi1, lo2, hi2) {
+    const novoMin = Math.max(lo1, lo2), novoMax = Math.min(hi1, hi2);
+    return novoMax > novoMin ? [novoMin, novoMax] : null;
+  }
+  let coberturaLocal = null;
+  if(_ortofotoLocal && _ortofotoLocal.bounds) {
+    const ob = _ortofotoLocal.bounds;
+    coberturaLocal = { latMin: ob.getSouth(), latMax: ob.getNorth(), lngMin: ob.getWest(), lngMax: ob.getEast() };
+  } else if(_elevacaoLocalDisponivel() && _curvasLocais.coberturaPoly) {
+    try {
+      const cb = L.geoJSON(_curvasLocais.coberturaPoly).getBounds();
+      coberturaLocal = { latMin: cb.getSouth(), latMax: cb.getNorth(), lngMin: cb.getWest(), lngMax: cb.getEast() };
+    } catch(e) {}
+  }
+  if(coberturaLocal) {
+    const clampLat = _clampParaCobertura(latMin, latMax, coberturaLocal.latMin, coberturaLocal.latMax);
+    const clampLng = _clampParaCobertura(lngMin, lngMax, coberturaLocal.lngMin, coberturaLocal.lngMax);
+    if(clampLat) { latMin = clampLat[0]; latMax = clampLat[1]; }
+    if(clampLng) { lngMin = clampLng[0]; lngMax = clampLng[1]; }
+  }
 
   $('modal3dAnalise').classList.add('open');
   $('m3da-loading').style.display = 'flex';
