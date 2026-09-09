@@ -334,7 +334,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.49 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.50 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -379,6 +379,7 @@ body.layout-lateral #status{grid-area:status;}
             <option value="fusao" selected>Fusão multi-fonte (mais precisa, mais lenta)</option>
             <option value="google">Só Google (mais rápida)</option>
           </select>
+          <div id="avisoElevacaoLocal" style="display:none;font-size:10px;color:var(--acc2);font-weight:700;margin-top:4px;max-width:190px;white-space:normal;">&#9989; Curvas de nível locais ativas — esse seletor está sendo ignorado (elevação vem só das curvas importadas)</div>
         </div>
         <div class="rgroup-title">Fonte de Elevação</div>
       </div>
@@ -2108,6 +2109,30 @@ body.layout-lateral #status{grid-area:status;}
 //     interpolação por distância inversa (IDW nos 8 vizinhos mais próximos) — método padrão de
 //     GIS pra esse problema, sem o limite de escala do TIN: o mesmo arquivo real agora importa em
 //     ~450ms (antes: 5+ minutos, quando não quebrava antes disso).
+// v4.50: mais 4 correções, achadas usando os Dados Locais de verdade num talhão real (não só nos
+// testes sintéticos):
+// (1) Vista 3D não mostrava a ortofoto importada (bug real: "não está puxando... imagem que
+//     importei"). Causa: a captura de textura (_3da_captureMapTexture) esconde o overlayPane
+//     inteiro pra não gravar contorno/linhas/carreadores na foto — mas a ortofoto (L.imageOverlay)
+//     mora NO MESMO pane, então também ficava escondida. Corrigido tirando o elemento DOM da
+//     ortofoto do pane ANTES dele ser escondido (fica visível junto do tilePane, que nunca é
+//     escondido) e devolvendo pro lugar certo depois.
+// (2) Declividade do Terreno não cobria o polígono inteiro quando as curvas locais cobriam só
+//     parte dele — o v4.48 corrigiu esse "buraco" em 3 lugares (escoamento/curvas geradas/vista
+//     3D) mas esse consumidor específico tinha ficado de fora por engano. Mesma correção
+//     (_preencherGradeVazios) aplicada aqui; de brinde, Otimizar Cenário também trocou seu
+//     preenchimento mais fraco (média global, achatava num platô artificial) pelo mesmo método.
+// (3) Nenhum jeito de saber, só olhando a aba Início, se uma ferramenta (Mapa de Escoamento etc.)
+//     estava mesmo usando as curvas locais ou ainda o seletor "Fonte de Elevação" (Fusão multi-
+//     fonte/Só Google) — que fica mostrando a última escolha mesmo irrelevante, já que curvas
+//     locais sempre têm prioridade. Novo aviso fixo + seletor desabilitado enquanto durar.
+// (4) "Desfazer" não aparecia pra "Limpar Escoamento"/"Limpar Declividade"/"Limpar Risco"/"Limpar
+//     Vazão"/"Limpar Mapa Temático" — só cobria exclusão de talhão/curvas/ortofoto/Limpar Tudo.
+//     A captura de estado completo (_capturarEstadoParaUndo) não serve pra isso: ela guarda uma
+//     cópia do ARRAY talhoesArquivados, mas a propriedade do overlay (ex: t.escoamentoOverlay) é
+//     mutada no MESMO objeto referenciado tanto pelo array atual quanto pelo antigo. Nova
+//     _capturarOverlayParaUndo(descricao, desfazerFn) — cada botão "Limpar X" passa uma função que
+//     já sabe se restaurar, fechando sobre o overlay antigo antes dele ser removido.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -4025,7 +4050,13 @@ async function classificarDeclividadeTerreno() {
   for(let r=0;r<n;r++) for(let c=0;c<n;c++) allPts.push({ lat: lats[r], lng: lngs[c] });
   const { valores: elevFlat } = await _buscarElevacaoFundida(allPts);
 
-  const elevGrid = Array.from({length:n}, (_,r) => Array.from({length:n}, (_,c) => elevFlat[r*n+c] ?? null));
+  // v4.50: célula fora da área coberta pelas curvas locais ficava sem NENHUM valor (nem o vizinho
+  // mais próximo) — o pixel virava transparente (ver "continue" alguns passos abaixo quando um
+  // vizinho é null), deixando um "buraco" na classificação bem onde a cobertura das curvas acaba
+  // (bug relatado: "declividade do terreno não cobre todo polígono"). Mesma correção do v4.48
+  // aplicada aos outros 3 consumidores (escoamento/curvas geradas/vista 3D), só que essa aqui
+  // tinha ficado de fora por engano.
+  const elevGrid = _preencherGradeVazios(Array.from({length:n}, (_,r) => Array.from({length:n}, (_,c) => elevFlat[r*n+c])), n);
 
   // Tamanho real (metros) de cada célula da grade — converte diferença de altura em % de declive
   const dxM = haversineM({lat:minLat,lng:minLng}, {lat:minLat,lng:maxLng}) / Math.max(1,n-1);
@@ -4078,6 +4109,14 @@ function limparDeclividadeTerrenoSelecionado() {
   if(talhaoSelecionadoUid === null) return;
   const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
   if(!t) return;
+  if(t.declivTerrenoOverlay) {
+    const overlayAntigo = t.declivTerrenoOverlay;
+    _capturarOverlayParaUndo(`remoção da declividade do terreno (Talhão ${t.idx})`, () => {
+      t.declivTerrenoOverlay = overlayAntigo;
+      if(!map.hasLayer(overlayAntigo)) overlayAntigo.addTo(map);
+      $('btnLimparDeclivTerreno').style.display = 'flex';
+    });
+  }
   limparDeclividadeTerreno(t);
   $('btnLimparDeclivTerreno').style.display = 'none';
   _renderLegendaDeclividade(null);
@@ -4155,6 +4194,15 @@ function _preencherDepressoes(elev, n) {
 // pontos importados) = sem dado; NÃO cai pra internet (pedido explícito do usuário), só avisa.
 let _curvasLocais = null; // { pontos, tin, coberturaPoly, elevMin, elevMax, numContornos, layerPreview }
 function _elevacaoLocalDisponivel() { return !!(_curvasLocais && _curvasLocais.indiceEspacial); }
+// v4.50: pedido do usuário — o seletor "Fonte de Elevação" (Fusão multi-fonte/Só Google) ficava
+// mostrando a última opção escolhida mesmo com curvas locais ativas (que sempre têm prioridade,
+// ignorando esse seletor por completo — ver _buscarElevacaoFundida), sem nenhum jeito de saber
+// isso olhando só a aba Início. Desabilita o seletor e mostra um aviso fixo enquanto durar.
+function _atualizarIndicadorFonteElevacao() {
+  const ativo = _elevacaoLocalDisponivel();
+  const aviso = $('avisoElevacaoLocal'); if(aviso) aviso.style.display = ativo ? 'block' : 'none';
+  const sel = $('elevacaoModo'); if(sel) sel.disabled = ativo;
+}
 
 // Conversão UTM → Lat/Lng (fórmula inversa padrão de Snyder, elipsoide WGS84 — SIRGAS2000
 // coincide com WGS84 na prática, diferença de poucos cm, irrelevante pra curvas de nível
@@ -4509,6 +4557,7 @@ function _finalizarImportacaoCurvas(contornosLatLng, puladas, dicaErro) {
   cl.layerPreview = grp;
   _curvasLocais = cl;
   _garantirCurvasNoTopo(); // sempre acima da ortofoto, não importa a ordem de importação (ver importarOrtofotoTiff)
+  _atualizarIndicadorFonteElevacao();
 
   const st = $('dxfCurvasStatus');
   if(st) st.innerHTML = `✓ ${cl.numContornos} curva(s) importada(s) · cotas ${cl.elevMin.toFixed(1)}–${cl.elevMax.toFixed(1)} m${puladas ? ` · ${puladas} entidade(s) sem cota ignorada(s)` : ''}`;
@@ -4604,6 +4653,7 @@ function _removerCurvasLocaisSemUndo() {
   _curvasLocais = null;
   const st = $('dxfCurvasStatus'); if(st) st.innerHTML = '';
   const btnRem = $('btnRemoverCurvasLocais'); if(btnRem) btnRem.style.display = 'none';
+  _atualizarIndicadorFonteElevacao();
 }
 function removerCurvasLocais() {
   if(_curvasLocais) _capturarEstadoParaUndo('remoção das curvas de nível locais');
@@ -5009,6 +5059,16 @@ function limparMapaEscoamentoSelecionado() {
   if(talhaoSelecionadoUid === null) return;
   const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
   if(!t) return;
+  if(t.escoamentoOverlay || t.escoamentoLinhas) {
+    const overlayAntigo = t.escoamentoOverlay, linhasAntigas = t.escoamentoLinhas;
+    _capturarOverlayParaUndo(`remoção do mapa de escoamento (Talhão ${t.idx})`, () => {
+      t.escoamentoOverlay = overlayAntigo; t.escoamentoLinhas = linhasAntigas;
+      if(overlayAntigo && !map.hasLayer(overlayAntigo)) overlayAntigo.addTo(map);
+      if(linhasAntigas && !map.hasLayer(linhasAntigas)) linhasAntigas.addTo(map);
+      $('btnLimparEscoamento').style.display = 'flex';
+      $('secLegendaEscoamento').style.display = '';
+    });
+  }
   limparMapaEscoamento(t);
   $('btnLimparEscoamento').style.display = 'none';
   $('secLegendaEscoamento').style.display = 'none';
@@ -5200,6 +5260,15 @@ function limparRiscoErosaoSelecionado() {
   if(talhaoSelecionadoUid === null) return;
   const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
   if(!t) return;
+  if(t.erosaoOverlay) {
+    const overlayAntigo = t.erosaoOverlay;
+    _capturarOverlayParaUndo(`remoção do risco de erosão (Talhão ${t.idx})`, () => {
+      t.erosaoOverlay = overlayAntigo;
+      if(!map.hasLayer(overlayAntigo)) overlayAntigo.addTo(map);
+      $('btnLimparRiscoErosao').style.display = 'flex';
+      $('secLegendaErosao').style.display = '';
+    });
+  }
   limparRiscoErosao(t);
   $('btnLimparRiscoErosao').style.display = 'none';
   $('secLegendaErosao').style.display = 'none';
@@ -5311,6 +5380,14 @@ function limparVazaoPicoSelecionado() {
   if(talhaoSelecionadoUid === null) return;
   const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
   if(!t) return;
+  if(t.vazaoMarkers && t.vazaoMarkers.length) {
+    const markersAntigos = t.vazaoMarkers;
+    _capturarOverlayParaUndo(`remoção da vazão de pico (Talhão ${t.idx})`, () => {
+      t.vazaoMarkers = markersAntigos;
+      markersAntigos.forEach(m => { if(m && !map.hasLayer(m)) m.addTo(map); });
+      $('btnLimparVazaoPico').style.display = 'flex';
+    });
+  }
   limparVazaoPico(t);
   $('btnLimparVazaoPico').style.display = 'none';
   setStatus(`Vazão de pico removida — Talhão ${t.idx}.`, 'ok');
@@ -6816,6 +6893,7 @@ function limparPoligono() {
 let _snapshotUndo = null;
 function _capturarEstadoParaUndo(descricao) {
   _snapshotUndo = {
+    tipo: 'estado',
     descricao,
     talhoesArquivados: [...talhoesArquivados],
     polyPts: [...polyPts], linhas: [...linhas], linhasDecl: [...linhasDecl],
@@ -6829,9 +6907,30 @@ function _capturarEstadoParaUndo(descricao) {
   };
   const btn = $('btnDesfazer'); if(btn) btn.style.display = 'flex';
 }
+// v4.50: variante mais leve pra "Limpar X" de uma análise pontual de talhão (declividade do
+// terreno, escoamento, erosão, vazão de pico, mapa temático) — pedido do usuário ("o botão de
+// volta não aparece", testando justamente essas ferramentas). A versão de estado completo acima
+// não serve pra isso: ela guarda uma cópia superficial do array talhoesArquivados, mas a
+// PROPRIEDADE de overlay (ex: t.declivTerrenoOverlay) é mutada no MESMO objeto talhão referenciado
+// tanto pelo array "atual" quanto pelo "antigo" — não tem como desfazer só com isso. Aqui cada
+// chamador passa uma função que já sabe como se restaurar (fecha sobre o overlay antigo antes de
+// ele ser removido).
+function _capturarOverlayParaUndo(descricao, desfazerFn) {
+  _snapshotUndo = { tipo: 'callback', descricao, desfazerFn };
+  const btn = $('btnDesfazer'); if(btn) btn.style.display = 'flex';
+}
 function desfazerUltimaExclusao() {
   const s = _snapshotUndo;
   if(!s) return;
+  if(s.tipo === 'callback') {
+    s.desfazerFn();
+    _garantirCurvasNoTopo();
+    $('btnDesfazer').style.display = 'none';
+    const descricaoCb = s.descricao;
+    _snapshotUndo = null;
+    setStatus(`↩ Desfeito: ${descricaoCb}.`, 'ok');
+    return;
+  }
   // Qualquer talhão/layer criado DEPOIS do snapshot (ex: o usuário desenhou algo novo antes de
   // clicar em desfazer) sai do mapa pra não duplicar — o snapshot é a fonte da verdade.
   talhoesArquivados.forEach(t => {
@@ -6879,6 +6978,7 @@ function desfazerUltimaExclusao() {
   if(stTiff) stTiff.innerHTML = _ortofotoLocal ? `✓ ${_ortofotoLocal.larguraPx}×${_ortofotoLocal.alturaPx}px` : '';
   const btnRemC = $('btnRemoverCurvasLocais'); if(btnRemC) btnRemC.style.display = _curvasLocais ? 'flex' : 'none';
   const btnRemO = $('btnRemoverOrtofotoLocal'); if(btnRemO) btnRemO.style.display = _ortofotoLocal ? 'flex' : 'none';
+  _atualizarIndicadorFonteElevacao();
 
   _aplicarTodasCamadas();
   $('btnDesfazer').style.display = 'none';
@@ -8036,11 +8136,10 @@ async function analisarCenariosPlantio() {
     $('btnOtimizarCenarios').disabled = false;
     return;
   }
-  // Preenche buracos nulos com a média da grade — raro (fusão multi-fonte quase sempre cobre tudo),
-  // mas evita NaN se algum ponto isolado falhar.
-  const validos = elevFlat.filter(v => v != null);
-  const media = validos.length ? validos.reduce((a,b)=>a+b,0)/validos.length : 0;
-  const elevGrid = Array.from({length:n}, (_,r) => Array.from({length:n}, (_,c) => elevFlat[r*n+c] ?? media));
+  // v4.50: preenchia buraco nulo com a média da grade inteira — funcionava (evita NaN), mas achata
+  // a região sem dado num platô artificial na média, em vez de estender o relevo real mais
+  // próximo (mesma correção do v4.48/v4.50 nos outros consumidores — ver _preencherGradeVazios).
+  const elevGrid = _preencherGradeVazios(Array.from({length:n}, (_,r) => Array.from({length:n}, (_,c) => elevFlat[r*n+c])), n);
   const sampler = _mkEscoamentoSampler(elevGrid, lats, lngs, n);
 
   const resultados = [];
@@ -8279,6 +8378,15 @@ function _declividadeDirecional(sampler, lat, lng, bearingDeg, passoM) {
 // automaticamente (antes de qualquer regeneração, exclusão de talhão etc.) quanto pelo botão manual
 // "Limpar Mapa Temático" — pedido do usuário depois de notar que a mancha ficava presa no mapa.
 function limparMapaTematico(t) {
+  if((t && t.mapaTematicoOverlay) || _mapaTematicoOverlayAtivo) {
+    const overlayTalhao = t && t.mapaTematicoOverlay, overlayAtivo = _mapaTematicoOverlayAtivo, tRef = t;
+    _capturarOverlayParaUndo('remoção do mapa temático (Otimizar Cenário)', () => {
+      if(tRef && overlayTalhao) { tRef.mapaTematicoOverlay = overlayTalhao; if(!map.hasLayer(overlayTalhao)) overlayTalhao.addTo(map); }
+      if(overlayAtivo) { _mapaTematicoOverlayAtivo = overlayAtivo; if(!map.hasLayer(overlayAtivo)) overlayAtivo.addTo(map); }
+      $('secLegendaCenario').style.display = '';
+      $('btnLimparMapaTematico').style.display = 'flex';
+    });
+  }
   if(t && t.mapaTematicoOverlay) { t.mapaTematicoOverlay.remove(); t.mapaTematicoOverlay = null; }
   if(_mapaTematicoOverlayAtivo) { _mapaTematicoOverlayAtivo.remove(); _mapaTematicoOverlayAtivo = null; }
   _mapaTematicoAtivo = null;
@@ -8671,20 +8779,37 @@ async function _3da_captureMapTexture(latMin, latMax, lngMin, lngMax) {
   // html2canvas normalmente não consegue capturar isso direito (sai cinza/em branco). Esri é
   // sempre <img> comum, captura de forma confiável.
   const usandoGoogle = !!(googleLayer && map.hasLayer(googleLayer));
+  // v4.50: a ortofoto local (L.imageOverlay) mora no MESMO overlayPane que o contorno/linhas/
+  // carreadores do app — escondê-lo por inteiro também escondia a ortofoto, então a Vista 3D
+  // nunca mostrava a imagem importada (bug relatado: "não está puxando a imagem que importei").
+  // Corrige tirando o elemento DOM da ortofoto do pane antes de escondê-lo (fica visível junto do
+  // tilePane, que nunca é escondido) e devolvendo pro lugar certo depois — sem isso não tem como
+  // manter só ELA visível e esconder o resto do mesmo pane via CSS (display:none no pai some com
+  // os filhos incondicionalmente, não dá pra "reverter" isso só num filho).
+  let ortoEl = null, ortoPaiOriginal = null, ortoProxIrmao = null;
+  if(_ortofotoLocal && _ortofotoLocal.overlay) {
+    ortoEl = _ortofotoLocal.overlay.getElement();
+    if(ortoEl) { ortoPaiOriginal = ortoEl.parentNode; ortoProxIrmao = ortoEl.nextSibling; }
+  }
   try {
     if(usandoGoogle) { googleLayer.remove(); esriLayer.addTo(map); }
+    if(ortoEl) map.getPane('tilePane').appendChild(ortoEl); // sai do overlayPane antes dele ser escondido
     // Esconde os overlays do próprio app (contorno, linhas, carreadores, labels) durante a captura —
     // senão eles ficam "gravados" na textura, duplicados por baixo das linhas 3D desenhadas por cima.
     if(overlayPane) overlayPane.style.display = 'none';
     if(markerPane) markerPane.style.display = 'none';
     map.fitBounds([[latMin, lngMin], [latMax, lngMax]], { animate: false, padding: [0, 0] });
-    await new Promise(res => setTimeout(res, 900)); // tempo dos tiles carregarem (maioria já em cache)
+    await new Promise(res => setTimeout(res, 900)); // tempo dos tiles/ortofoto carregarem (maioria já em cache)
     const canvas = await html2canvas(document.getElementById('map'), { useCORS: true, logging: false, scale: 1 });
     const b = map.getBounds();
     return { canvas, north: b.getNorth(), south: b.getSouth(), east: b.getEast(), west: b.getWest() };
   } finally {
     if(overlayPane) overlayPane.style.display = prevOverlay;
     if(markerPane) markerPane.style.display = prevMarker;
+    if(ortoEl && ortoPaiOriginal) { // devolve a ortofoto pro overlayPane, na posição original
+      if(ortoProxIrmao) ortoPaiOriginal.insertBefore(ortoEl, ortoProxIrmao);
+      else ortoPaiOriginal.appendChild(ortoEl);
+    }
     if(usandoGoogle) { esriLayer.remove(); googleLayer.addTo(map); }
     map.setView(originalCenter, originalZoom, { animate: false });
   }
