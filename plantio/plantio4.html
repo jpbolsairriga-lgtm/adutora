@@ -334,7 +334,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.51 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.52 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -2159,6 +2159,17 @@ body.layout-lateral #status{grid-area:status;}
 //     parte do talhão/fazenda) — a mensagem genérica "Erro ao buscar elevações" não deixava isso
 //     claro, parecendo que a seleção em si tinha falhado. Mensagem trocada por uma explicação
 //     específica desse caso.
+// v4.52: usuário continuou vendo a Vista 3D "parecer satélite" mesmo depois do v4.51 — a causa
+// raiz de verdade (confirmada com o DXF real + um talhão simulado 5× mais largo que a área
+// coberta pelas curvas, reproduzindo exatamente a forma alongada do talhão real dele): quando o
+// talhão é bem maior que a superfície levantada, a MAIOR PARTE da malha 3D (e da classificação de
+// Declividade do Terreno) vem do preenchimento por vizinho mais próximo (_preencherGradeVazios,
+// v4.48/v4.50) — um platô achatado, sem relevo de verdade ali, porque não HÁ dado de elevação
+// real nessa parte (as curvas simplesmente não cobrem). A fonte de dados sempre esteve certa
+// (curvas locais) — o que faltava era deixar claro que boa parte da ÁREA não tem dado real,
+// não que a fonte estava errada. Novo aviso (Vista 3D e Declividade do Terreno) mostra o % de
+// células com elevação real das curvas sempre que ficar abaixo de 90%, explicando que o resto
+// aparece achatado e que é preciso importar curvas cobrindo mais área pra ter relevo completo.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -4124,7 +4135,15 @@ async function classificarDeclividadeTerreno() {
   $('btnLimparDeclivTerreno').style.display = 'flex';
   _renderLegendaDeclividade(_percentuaisPorPeso(pesoPorFaixa)); // % de ÁREA do talhão em cada faixa
   $('secLegenda').style.display = '';
-  setStatus(`Declividade do terreno classificada — Talhão ${t.idx}.`, 'ok');
+  // v4.52: mesmo aviso da Vista 3D — talhão bem maior que a área coberta pelas curvas locais faz
+  // a maior parte da classificação vir do preenchimento por vizinho mais próximo (relevo achatado
+  // ali), não de dado real. Sem aviso, parecia que as curvas não estavam sendo usadas.
+  const pctReal = elevFlat.filter(v => v != null).length / elevFlat.length * 100;
+  if(_elevacaoLocalDisponivel() && pctReal < 90) {
+    setStatus(`Declividade do terreno classificada — Talhão ${t.idx}. ⚠ só ${pctReal.toFixed(0)}% da área tem elevação real das curvas — o resto ficou achatado (extensão da borda mais próxima).`, 'ok');
+  } else {
+    setStatus(`Declividade do terreno classificada — Talhão ${t.idx}.`, 'ok');
+  }
 }
 
 function limparDeclividadeTerreno(t) {
@@ -9255,6 +9274,13 @@ async function gerarVista3DAnalise() {
     const fundido = await _buscarElevacaoFundida(allLL);
     elevFlat = fundido.valores; precisao3D = { sigmaMedio: fundido.sigmaMedio, fontesUsadas: fundido.fontesUsadas };
     if(!elevFlat.some(v => v != null)) throw new Error('nenhuma fonte de elevação respondeu');
+    // v4.52: quando as curvas locais cobrem só PARTE da área (comum num talhão bem maior que a
+    // superfície levantada — margem de 25% pro entorno já ajuda a expor isso), a maior parte da
+    // malha 3D acabava sendo uma extensão PLANA do vizinho mais próximo (ver
+    // _preencherGradeVazios) — sem aviso nenhum, isso parecia "não está usando as curvas" (bug
+    // relatado), quando na verdade É a curva, só que a maior parte da malha genuinamente não tem
+    // dado de elevação ali. Guarda o % de células com dado REAL pra avisar isso na tela.
+    precisao3D.pctComDadoReal = elevFlat.filter(v => v != null).length / elevFlat.length * 100;
   } catch(e) {
     $('m3da-loading').firstElementChild.textContent = '❌ Falha ao buscar elevação (' + e.message + ')';
     $('btnVista3D').disabled = false;
@@ -9531,6 +9557,13 @@ async function gerarVista3DAnalise() {
       + (precisao3D && precisao3D.fontesUsadas.length === 1 && precisao3D.fontesUsadas[0].includes('importado')
           ? `<br>Elevação: <b style="color:var(--acc2)">${precisao3D.fontesUsadas[0]}</b>`
           : (precisao3D && precisao3D.sigmaMedio != null ? `<br>Precisão da elevação: <b>±${precisao3D.sigmaMedio.toFixed(1)} m</b> (${precisao3D.fontesUsadas.length} fonte${precisao3D.fontesUsadas.length !== 1 ? 's' : ''})` : ''))
+      // v4.52: avisa quando a maior parte da malha é extensão PLANA (sem dado real de elevação
+      // ali) — sem isso, um talhão bem maior que a área coberta pelas curvas parecia "não estar
+      // usando as curvas" (bug relatado), quando na verdade a maior parte do terreno mostrado só
+      // não tem levantamento nenhum.
+      + (precisao3D && precisao3D.pctComDadoReal != null && precisao3D.pctComDadoReal < 90
+          ? `<br><span style="color:var(--c-warn)">&#9888; só ${precisao3D.pctComDadoReal.toFixed(0)}% da área tem elevação real das curvas — o resto aparece achatado (extensão da borda mais próxima). Importe curvas que cubram mais área pra relevo completo ali.</span>`
+          : '')
       + `<div style="margin-top:6px;border-top:1px solid rgba(255,255,255,.15);padding-top:6px;">${legHtml}</div>`;
     $('m3da-inf').style.display = 'block';
 
