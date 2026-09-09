@@ -189,6 +189,8 @@ body.layout-lateral #mapWrap{grid-area:map;}
 body.layout-lateral #status{grid-area:status;}
 #btnLayoutRibbon{background:none;border:1px solid var(--panel-border);color:var(--panel-text-dim);border-radius:5px;padding:5px 10px;font-size:11px;cursor:pointer;white-space:nowrap;transition:.15s;}
 #btnLayoutRibbon:hover{border-color:var(--acc-light);color:var(--acc-light);}
+#btnDesfazer{background:var(--c-warn);border:1px solid var(--c-warn);color:#fff;border-radius:5px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;transition:.15s;}
+#btnDesfazer:hover{opacity:.85;}
 
 /* ── Mapa + painel flutuante de informações ── */
 #mapWrap{flex:1;position:relative;min-height:0;}
@@ -332,10 +334,11 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.47 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.48 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
+  <button id="btnDesfazer" onclick="desfazerUltimaExclusao()" style="display:none;" title="Desfazer a última exclusão (talhão, curvas locais, ortofoto local, etc.)">&#8630; Desfazer</button>
   <button id="btnLayoutRibbon" onclick="alternarLayoutRibbon()" title="Experimental: move a barra de ferramentas pra lateral esquerda (mais altura útil de mapa)">&#8622; Ribbon Lateral</button>
   <button id="btnInstalarApp" onclick="instalarApp()" style="display:none;">&#11015; Instalar App</button>
   <a class="back-link" href="../index.html">&#8592; Menu</a>
@@ -2055,6 +2058,34 @@ body.layout-lateral #status{grid-area:status;}
 // bordas de imagens muito grandes; aceitável pra um fundo visual (a elevação, que precisa de mais
 // precisão, já vem exclusivamente das curvas de nível). Botão "Importar Ortofoto (TIFF)" no mesmo
 // grupo "Dados Locais" da aba Início, compartilhando o seletor de zona/hemisfério UTM com o DXF.
+// v4.48: rodada de correções relatadas em uso real dos Dados Locais (v4.46/v4.47), mais um pedido
+// novo (Desfazer):
+// (1) "Novo Projeto"/"Limpar Tudo" não removiam a ortofoto/curvas locais importadas — agora entram
+//     na limpeza igual qualquer outro elemento (_existeConteudoNoProjeto também passou a
+//     considerá-las, pra abrir o modal de confirmação corretamente).
+// (2) Mapa "pulava pro mapa múndi" ao importar curvas/ortofoto com a zona UTM errada (1 zona de
+//     diferença já desloca ~600km) — novo limite de sanidade geográfica (_LIMITE_SPAN_GRAUS, 0.5°)
+//     aborta a importação com aviso claro ANTES de gravar o estado ou mover o mapa, em vez de
+//     aceitar coordenadas absurdas.
+// (3) Curvas de nível importadas quase invisíveis sobre a ortofoto (cor única clara, fina,
+//     tracejada) e podiam ficar ESCONDIDAS embaixo da ortofoto dependendo da ordem de importação
+//     (z-order do Leaflet = ordem de inserção) — agora coloridas por elevação (gradiente azul→
+//     vermelho, mesma linguagem do resto do app), com espessura/opacidade maior a cada 5 níveis
+//     ("mestra", igual à convenção das curvas geradas online), sempre trazidas pra frente
+//     (bringToFront) nos dois sentidos de importação, e registradas no painel de Camadas.
+// (4) "Altimetria misturada"/listras verticais na Vista 3D: célula de grade fora da área coberta
+//     pelas curvas locais (comum, já que várias ferramentas buscam elevação numa margem além do
+//     talhão pra dar contexto visual) virava elevação 0 (nível do mar), criando um "penhasco"
+//     falso exatamente onde a cobertura acaba. Nova _preencherGradeVazios() (BFS a partir de toda
+//     célula com dado real) estende o valor do vizinho mais próximo em vez de zerar, nas 3 grades
+//     afetadas (mapa de escoamento, curvas de nível geradas, vista 3D).
+// (5) Novo botão "Desfazer" (titlebar) — pedido do usuário pra reverter exclusão acidental de
+//     talhão/curvas/ortofoto. Estratégia deliberada: layer.remove() do Leaflet não destrói o
+//     objeto, só desanexa do mapa, então desfazer só precisa guardar uma cópia superficial dos
+//     arrays/variáveis de estado ANTES da exclusão e, pra desfazer, restaurar e reanexar quem não
+//     estiver mais no mapa — sem serializar/reconstruir nada. Só 1 nível (a última exclusão), não
+//     um histórico completo. Capturado nos pontos de exclusão EXPLÍCITA (botões), não em funções
+//     auxiliares de baixo nível chamadas o tempo todo em fluxos normais.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -2937,7 +2968,8 @@ function arquivarTalhaoAtual() {
   setStatus(`Talhão ${talhoesArquivados.length} travado ✓  Desenhe o próximo contorno ou classifique a declividade.`, 'ok');
 }
 
-function limparTalhoesArquivados() {
+// Versão interna sem captura de undo — usada por limparTudo() (ver _removerCurvasLocaisSemUndo).
+function _limparTalhoesArquivadosSemUndo() {
   talhoesArquivados.forEach(t => {
     if(t.polyLayer) t.polyLayer.remove();
     t.linhas.forEach(l => l.remove());
@@ -2972,6 +3004,10 @@ function limparTalhoesArquivados() {
   $('secLegenda').style.display = 'none';
   $('btnLimparDecliv').style.display = 'none';
   if(!linhas.length) { $('btnKml').style.display = 'none'; $('btnDxf').style.display = 'none'; }
+}
+function limparTalhoesArquivados() {
+  if(talhoesArquivados.length) _capturarEstadoParaUndo('limpeza dos talhões bloqueados');
+  _limparTalhoesArquivadosSemUndo();
 }
 
 function renumerarTalhoes() {
@@ -4292,6 +4328,67 @@ function _buscarElevacaoLocal(pontos) {
   return { valores, sigmaMedio: 0, fontesUsadas: ['Curvas de Nível (importado, DXF)'] };
 }
 
+// v4.48: limite de sanidade geográfica — qualquer talhão/fazenda real cabe bem dentro de 0.5°
+// (~50km nessa latitude). Um valor acima disso quase certo indica zona/hemisfério UTM errado
+// (1 zona de diferença já desloca ~600km) — bug relatado: mapa "pulava pro mapa múndi" depois de
+// importar. Aborta ANTES de gravar em _curvasLocais/_ortofotoLocal, em vez de aceitar e só
+// descobrir o problema no fitBounds() (que é onde o sintoma aparecia).
+function _spanBoundsGraus(bounds) {
+  return Math.max(bounds.getNorth() - bounds.getSouth(), bounds.getEast() - bounds.getWest());
+}
+const _LIMITE_SPAN_GRAUS = 0.5;
+// O span sozinho NÃO pega zona UTM errada por 1-2 zonas de diferença: o hull importado continua
+// pequeno (mesma forma/tamanho da fazenda), só desloca ~600km por zona pra um lugar errado —
+// span pequeno, localização errada. Checagem complementar: o app só dá suporte a zonas UTM do
+// Brasil (17S–25S, ver _epsgParaUtm/seletor), então o centro tem que cair dentro do território
+// nacional (bbox aproximado, com folga). Pega exatamente esse caso (bug relatado: zona errada foi
+// aceita silenciosamente).
+function _dentroDoBrasilAprox(bounds) {
+  const c = bounds.getCenter();
+  return c.lat >= -34 && c.lat <= 6 && c.lng >= -75 && c.lng <= -32;
+}
+// bringToFront() de um FeatureGroup só reordena os _paths DENTRO do <svg> compartilhado do pane —
+// não move o próprio <svg> em relação a um <img> irmão (a ortofoto, que é L.imageOverlay, não usa
+// esse <svg>). Bug relatado: curvas ficavam escondidas atrás da ortofoto quando ela era importada
+// DEPOIS das curvas, mesmo chamando bringToFront(). Corrige movendo o contêiner <svg> inteiro pro
+// fim do pane (appendChild em nó já presente no DOM MOVE em vez de duplicar) — aí sim fica acima
+// de qualquer <img> irmã, não importa a ordem de importação.
+function _garantirCurvasNoTopo() {
+  if(!_curvasLocais || !_curvasLocais.layerPreview) return;
+  const layers = _curvasLocais.layerPreview.getLayers();
+  if(!layers.length) return;
+  const svg = layers[0]._renderer && layers[0]._renderer._container;
+  if(svg && svg.parentNode) svg.parentNode.appendChild(svg);
+}
+
+// Cor por elevação (gradiente azul=mais baixo → vermelho=mais alto, mesma linguagem visual do
+// gradiente de "Classificar por Comprimento" já usado no app) — bem mais visível sobre qualquer
+// fundo (satélite ou ortofoto) do que uma cor única.
+function _corPorElevacao(z, zMin, zMax) {
+  if(zMax <= zMin) return '#ff5722';
+  const t = (z - zMin) / (zMax - zMin);
+  return _hslParaHex(210 - t * 210, 85, 45);
+}
+// "Mestra" (mais grossa/opaca) a cada 5 níveis, igual à convenção de curvas mestras/menores que o
+// app já usa nas curvas geradas online — usa a mediana do passo entre cotas únicas (robusta a
+// alguma cota importada fora do padrão).
+function _classificarMestraMenor(contornosLatLng) {
+  const unicas = [...new Set(contornosLatLng.map(c => c.pontos[0].z))].sort((a, b) => a - b);
+  let step = null;
+  if(unicas.length >= 2) {
+    const diffs = [];
+    for(let i = 1; i < unicas.length; i++) diffs.push(unicas[i] - unicas[i-1]);
+    diffs.sort((a, b) => a - b);
+    step = diffs[Math.floor(diffs.length / 2)];
+  }
+  const zMin = unicas[0] ?? 0;
+  return contornosLatLng.map(c => {
+    const z = c.pontos[0].z;
+    const mestra = !!(step && step > 0 && Math.round((z - zMin) / step) % 5 === 0);
+    return { pontos: c.pontos, z, mestra };
+  });
+}
+
 async function importarCurvasDxf(file) {
   if(!file) return;
   const zona = parseInt($('dxfUtmZona').value, 10);
@@ -4315,28 +4412,49 @@ async function importarCurvasDxf(file) {
   const cl = _construirCurvasLocais(contornosLatLng);
   if(!cl) { setStatus('Não consegui construir a superfície a partir das curvas importadas (poucos pontos ou geometria degenerada).', 'err'); return; }
 
+  const boundsCl = L.geoJSON(cl.coberturaPoly).getBounds();
+  if(_spanBoundsGraus(boundsCl) > _LIMITE_SPAN_GRAUS) {
+    setStatus(`As curvas importadas cobririam uma área maior que qualquer fazenda (mais de ${_LIMITE_SPAN_GRAUS}° de extensão) — a zona/hemisfério UTM selecionados provavelmente não são os do seu DXF. Confira a zona (seletor ao lado do botão) e importe de novo.`, 'err');
+    return;
+  }
+  if(!_dentroDoBrasilAprox(boundsCl)) {
+    setStatus('As curvas importadas cairiam fora do território brasileiro — a zona/hemisfério UTM selecionados provavelmente não são os do seu DXF (cada zona errada desloca ~600km). Confira a zona (seletor ao lado do botão) e importe de novo.', 'err');
+    return;
+  }
+
   if(_curvasLocais && _curvasLocais.layerPreview) map.removeLayer(_curvasLocais.layerPreview);
-  const grp = L.layerGroup();
-  contornosLatLng.forEach(c => {
-    L.polyline(c.pontos.map(p => [p.lat, p.lng]), { color:'#8d6e63', weight:1, opacity:.6, dashArray:'2,3' }).addTo(grp);
+  const classificadas = _classificarMestraMenor(contornosLatLng);
+  const grp = L.featureGroup(); // (não layerGroup) — precisa de bringToFront(), que só FeatureGroup tem
+  classificadas.forEach(c => {
+    const cor = _corPorElevacao(c.z, cl.elevMin, cl.elevMax);
+    L.polyline(c.pontos.map(p => [p.lat, p.lng]), {
+      color: cor, weight: c.mestra ? 2.6 : 1.4, opacity: c.mestra ? .95 : .85
+    }).addTo(grp);
   });
   grp.addTo(map);
   cl.layerPreview = grp;
   _curvasLocais = cl;
+  _garantirCurvasNoTopo(); // sempre acima da ortofoto, não importa a ordem de importação (ver importarOrtofotoTiff)
 
   const st = $('dxfCurvasStatus');
   if(st) st.innerHTML = `✓ ${cl.numContornos} curva(s) importada(s) · cotas ${cl.elevMin.toFixed(1)}–${cl.elevMax.toFixed(1)} m${puladas ? ` · ${puladas} entidade(s) sem cota ignorada(s)` : ''}`;
   const btnRem = $('btnRemoverCurvasLocais'); if(btnRem) btnRem.style.display = 'flex';
   setStatus(`✓ Curvas de nível importadas — a partir de agora, a elevação de todo o app vem exclusivamente delas (${cl.numContornos} curvas${puladas ? `, ${puladas} puladas` : ''}).`, 'ok');
 
-  try { map.fitBounds(L.geoJSON(cl.coberturaPoly).getBounds(), { padding: [20,20] }); } catch(e) {}
+  try { map.fitBounds(boundsCl, { padding: [20,20] }); } catch(e) {}
 }
 
-function removerCurvasLocais() {
+// Versão interna sem captura de undo — usada por limparTudo(), que já captura o estado inteiro
+// no próprio início; capturar de novo aqui sobrescreveria aquele snapshot maior com um parcial.
+function _removerCurvasLocaisSemUndo() {
   if(_curvasLocais && _curvasLocais.layerPreview) map.removeLayer(_curvasLocais.layerPreview);
   _curvasLocais = null;
   const st = $('dxfCurvasStatus'); if(st) st.innerHTML = '';
   const btnRem = $('btnRemoverCurvasLocais'); if(btnRem) btnRem.style.display = 'none';
+}
+function removerCurvasLocais() {
+  if(_curvasLocais) _capturarEstadoParaUndo('remoção das curvas de nível locais');
+  _removerCurvasLocaisSemUndo();
   setStatus('Curvas de nível locais removidas — a elevação volta a vir das fontes online.', 'info');
 }
 
@@ -4464,12 +4582,26 @@ async function importarOrtofotoTiff(file) {
     return;
   }
 
-  const canvas = _rasterParaCanvas(raster, w, h, samplesPerPixel);
   const bounds = _bboxParaLatLngBounds(bbox, sistema);
+  if(_spanBoundsGraus(bounds) > _LIMITE_SPAN_GRAUS) {
+    setStatus(`A ortofoto cobriria uma área maior que qualquer fazenda (mais de ${_LIMITE_SPAN_GRAUS}° de extensão) — o sistema de coordenadas detectado no arquivo pode estar incorreto ou não suportado. Confira o TIFF antes de importar.`, 'err');
+    if(st) st.textContent = '';
+    return;
+  }
+  if(!_dentroDoBrasilAprox(bounds)) {
+    setStatus('A ortofoto cairia fora do território brasileiro — o sistema de coordenadas detectado no arquivo pode estar incorreto. Confira o TIFF antes de importar.', 'err');
+    if(st) st.textContent = '';
+    return;
+  }
+
+  const canvas = _rasterParaCanvas(raster, w, h, samplesPerPixel);
 
   if(_ortofotoLocal && _ortofotoLocal.overlay) map.removeLayer(_ortofotoLocal.overlay);
   const overlay = L.imageOverlay(canvas.toDataURL('image/png'), bounds, { opacity: 1 }).addTo(map);
   _ortofotoLocal = { overlay, bounds, larguraPx: w, alturaPx: h };
+  // Reafirma as curvas de nível por cima, caso já estivessem importadas antes da ortofoto (senão a
+  // ortofoto, adicionada depois, cobriria elas — bug relatado: "curvas não aparecem na ortofoto").
+  _garantirCurvasNoTopo();
 
   if(st) st.innerHTML = `✓ ${w}×${h}px${foiReduzida ? ' (reduzida do original pra caber com folga na memória do navegador)' : ''}`;
   const btnRem = $('btnRemoverOrtofotoLocal'); if(btnRem) btnRem.style.display = 'flex';
@@ -4477,12 +4609,46 @@ async function importarOrtofotoTiff(file) {
   try { map.fitBounds(bounds, { padding: [20,20] }); } catch(e) {}
 }
 
-function removerOrtofotoLocal() {
+// Versão interna sem captura de undo — usada por limparTudo() (ver _removerCurvasLocaisSemUndo).
+function _removerOrtofotoLocalSemUndo() {
   if(_ortofotoLocal && _ortofotoLocal.overlay) map.removeLayer(_ortofotoLocal.overlay);
   _ortofotoLocal = null;
   const st = $('tiffOrtoStatus'); if(st) st.textContent = '';
   const btnRem = $('btnRemoverOrtofotoLocal'); if(btnRem) btnRem.style.display = 'none';
+}
+function removerOrtofotoLocal() {
+  if(_ortofotoLocal) _capturarEstadoParaUndo('remoção da ortofoto local');
+  _removerOrtofotoLocalSemUndo();
   setStatus('Ortofoto local removida — o satélite online volta a aparecer nessa área.', 'info');
+}
+
+// v4.48: célula sem dado (fora da área coberta pelas curvas de nível locais — comum, já que a
+// grade de amostragem quase sempre tem uma margem além do talhão pra mostrar o entorno) virava
+// elevação 0 (nível do mar) nas 3 grades abaixo (mapa de escoamento, curvas de nível geradas,
+// vista 3D) — um "penhasco" falso na malha/imagem exatamente onde a cobertura das curvas acaba
+// (bug relatado: vista 3D com listras verticais, "altimetria misturada"). Preenche pelo vizinho
+// mais próximo (BFS a partir de toda célula com dado real) em vez de zerar — mantém a superfície
+// contínua nas bordas sem dado, sem fabricar um valor absoluto (só estende o último valor real).
+function _preencherGradeVazios(grid, n) {
+  const visited = Array.from({ length: n }, () => new Array(n).fill(false));
+  const fila = [];
+  for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) {
+    if(grid[r][c] != null) { visited[r][c] = true; fila.push([r, c]); }
+  }
+  if(!fila.length) { for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) grid[r][c] = 0; return grid; } // nenhuma célula com dado — não há vizinho pra copiar
+  const dirs = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
+  let head = 0;
+  while(head < fila.length) {
+    const [r, c] = fila[head++];
+    for(const [dr, dc] of dirs) {
+      const nr = r + dr, nc = c + dc;
+      if(nr < 0 || nr >= n || nc < 0 || nc >= n || visited[nr][nc]) continue;
+      visited[nr][nc] = true;
+      grid[nr][nc] = grid[r][c];
+      fila.push([nr, nc]);
+    }
+  }
+  return grid;
 }
 
 // Campo de elevação contínuo (interpolação bilinear sobre a grade regular buscada) — usado pra
@@ -4548,7 +4714,7 @@ async function _calcularHidrologiaTalhao(t, n) {
   const allPts = [];
   for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) allPts.push({ lat: lats[r], lng: lngs[c] });
   const { valores: elevFlat } = await _buscarElevacaoFundida(allPts);
-  const elevBruta = Array.from({ length: n }, (_, r) => Array.from({ length: n }, (_, c) => elevFlat[r * n + c] ?? 0));
+  const elevBruta = _preencherGradeVazios(Array.from({ length: n }, (_, r) => Array.from({ length: n }, (_, c) => elevFlat[r * n + c])), n);
   // Preenche depressões/"pits" ANTES de calcular direção de fluxo (algoritmo priority-flood) — sem
   // isso, ruído nos dados de elevação (a Elevation API não tem precisão infinita) cria "poços"
   // artificiais que quebram a continuidade do escoamento. Numa grade mais grosseira a diferença de
@@ -5410,8 +5576,8 @@ async function gerarCurvas() {
   _curvaUltimaPrecisao = { sigmaMedio, fontesUsadas };
 
   // Reorganiza em grade 2D: elevGrid[r][c]
-  const elevGrid = Array.from({length:n}, (_,r) =>
-    Array.from({length:n}, (_,c) => elevFlat[r*n+c] ?? 0));
+  const elevGrid = _preencherGradeVazios(Array.from({length:n}, (_,r) =>
+    Array.from({length:n}, (_,c) => elevFlat[r*n+c])), n);
 
   const validElevs = elevFlat.filter(v=>v!=null);
   const minElev = Math.min(...validElevs), maxElev = Math.max(...validElevs);
@@ -6483,11 +6649,102 @@ function limparPoligono() {
   // Só desabilita "Gerar Curvas" se também não houver área de curvas desenhada
   if(!turfCurvaPoly) $('btnCurvas').disabled=true;
 }
+
+// ── Desfazer (undo) — pedido explícito do usuário: "as vezes eu deleto algum talhão ou elemento
+// sem querer, quero um botão de volta". Estratégia deliberadamente simples: layer.remove() do
+// Leaflet NÃO destrói o objeto, só desanexa do mapa — então desfazer não precisa reconstruir nada
+// do zero, só guardar uma cópia superficial dos arrays/variáveis de estado ANTES de uma ação
+// destrutiva e, pra desfazer, restaurar essas referências e reanexar (addTo) quem não estiver mais
+// no mapa. Só 1 nível (a última exclusão), não um histórico completo — suficiente pro caso de uso
+// relatado. Chamada nos pontos de exclusão explícita (botões "Excluir Talhão"/"Limpar Talhões
+// Bloqueados"/"Limpar Tudo"/"Novo Projeto"/"Remover Curvas Locais"/"Remover Ortofoto Local"), não
+// dentro de funções auxiliares de baixo nível que já são chamadas o tempo todo em fluxos normais
+// (ex: limparLinhas() antes de regenerar) — senão o "desfazer" ficaria imprevisível.
+let _snapshotUndo = null;
+function _capturarEstadoParaUndo(descricao) {
+  _snapshotUndo = {
+    descricao,
+    talhoesArquivados: [...talhoesArquivados],
+    polyPts: [...polyPts], linhas: [...linhas], linhasDecl: [...linhasDecl],
+    polyLayer, infoMarker, turfPoly, turfBound,
+    areaHaAtual, spacingAtual, countLinhasAtual, metrosLinAtual, corLinhaAtual, baseLabelZoom,
+    curvaLayers: [...curvaLayers], curvaLabels: [...curvaLabels],
+    curvaPolyPts: [...curvaPolyPts], curvaPolyLayer, turfCurvaPoly, turfCurvaBound,
+    carreadorLayers: [...carreadorLayers],
+    talhaoSelecionadoUid,
+    _curvasLocais, _ortofotoLocal
+  };
+  const btn = $('btnDesfazer'); if(btn) btn.style.display = 'flex';
+}
+function desfazerUltimaExclusao() {
+  const s = _snapshotUndo;
+  if(!s) return;
+  // Qualquer talhão/layer criado DEPOIS do snapshot (ex: o usuário desenhou algo novo antes de
+  // clicar em desfazer) sai do mapa pra não duplicar — o snapshot é a fonte da verdade.
+  talhoesArquivados.forEach(t => {
+    if(s.talhoesArquivados.includes(t)) return;
+    if(t.polyLayer) t.polyLayer.remove();
+    t.linhas.forEach(l => l.remove()); t.linhasDecl.forEach(l => l.remove());
+    if(t.infoMarker) t.infoMarker.remove();
+  });
+
+  talhoesArquivados = s.talhoesArquivados;
+  polyPts = s.polyPts; linhas = s.linhas; linhasDecl = s.linhasDecl;
+  polyLayer = s.polyLayer; infoMarker = s.infoMarker; turfPoly = s.turfPoly; turfBound = s.turfBound;
+  areaHaAtual = s.areaHaAtual; spacingAtual = s.spacingAtual; countLinhasAtual = s.countLinhasAtual;
+  metrosLinAtual = s.metrosLinAtual; corLinhaAtual = s.corLinhaAtual; baseLabelZoom = s.baseLabelZoom;
+  curvaLayers = s.curvaLayers; curvaLabels = s.curvaLabels;
+  curvaPolyPts = s.curvaPolyPts; curvaPolyLayer = s.curvaPolyLayer; turfCurvaPoly = s.turfCurvaPoly; turfCurvaBound = s.turfCurvaBound;
+  carreadorLayers = s.carreadorLayers;
+  talhaoSelecionadoUid = s.talhaoSelecionadoUid;
+  _curvasLocais = s._curvasLocais; _ortofotoLocal = s._ortofotoLocal;
+
+  talhoesArquivados.forEach(t => {
+    if(t.polyLayer && !map.hasLayer(t.polyLayer)) t.polyLayer.addTo(map);
+    t.linhas.forEach(l => { if(!map.hasLayer(l)) l.addTo(map); });
+    t.linhasDecl.forEach(l => { if(!map.hasLayer(l)) l.addTo(map); });
+    if(t.infoMarker && !map.hasLayer(t.infoMarker)) t.infoMarker.addTo(map);
+  });
+  if(polyLayer && !map.hasLayer(polyLayer)) polyLayer.addTo(map);
+  linhas.forEach(l => { if(!map.hasLayer(l)) l.addTo(map); });
+  linhasDecl.forEach(l => { if(!map.hasLayer(l)) l.addTo(map); });
+  if(infoMarker && !map.hasLayer(infoMarker)) infoMarker.addTo(map);
+  if(curvaPolyLayer && !map.hasLayer(curvaPolyLayer)) curvaPolyLayer.addTo(map);
+  curvaLayers.forEach(l => { if(!map.hasLayer(l)) l.addTo(map); });
+  curvaLabels.forEach(l => { if(!map.hasLayer(l)) l.addTo(map); });
+  carreadorLayers.forEach(l => { if(!map.hasLayer(l)) l.addTo(map); });
+  if(_curvasLocais && _curvasLocais.layerPreview && !map.hasLayer(_curvasLocais.layerPreview)) _curvasLocais.layerPreview.addTo(map);
+  if(_ortofotoLocal && _ortofotoLocal.overlay && !map.hasLayer(_ortofotoLocal.overlay)) _ortofotoLocal.overlay.addTo(map);
+  _garantirCurvasNoTopo();
+
+  $('iArea').textContent = polyPts.length >= 3 ? areaHaAtual.toFixed(2) + ' ha' : '—';
+  $('btnTravarTalhao').style.display = (polyPts.length >= 3 && talhaoSelecionadoUid === null) ? 'flex' : 'none';
+  $('btnLimparArquivados').style.display = talhoesArquivados.length ? '' : 'none';
+  renumerarTalhoes(); // reaplica idx/rótulos + atualiza o contador #iTalhoes
+  const stDxf = $('dxfCurvasStatus'), stTiff = $('tiffOrtoStatus');
+  if(stDxf) stDxf.innerHTML = _curvasLocais ? `✓ ${_curvasLocais.numContornos} curva(s) importada(s) · cotas ${_curvasLocais.elevMin.toFixed(1)}–${_curvasLocais.elevMax.toFixed(1)} m` : '';
+  if(stTiff) stTiff.innerHTML = _ortofotoLocal ? `✓ ${_ortofotoLocal.larguraPx}×${_ortofotoLocal.alturaPx}px` : '';
+  const btnRemC = $('btnRemoverCurvasLocais'); if(btnRemC) btnRemC.style.display = _curvasLocais ? 'flex' : 'none';
+  const btnRemO = $('btnRemoverOrtofotoLocal'); if(btnRemO) btnRemO.style.display = _ortofotoLocal ? 'flex' : 'none';
+
+  _aplicarTodasCamadas();
+  $('btnDesfazer').style.display = 'none';
+  const descricao = s.descricao;
+  _snapshotUndo = null;
+  setStatus(`↩ Desfeito: ${descricao}.`, 'ok');
+}
+
 function limparTudo() {
+  if(_existeConteudoNoProjeto()) _capturarEstadoParaUndo('Limpar Tudo / Novo Projeto');
   limparDeclivTodos();
   limparComprimentoTodos();
   limparLinhas(); limparGuia(); limparPoligono(); limparPoligonoCurva();
-  limparTalhoesArquivados();
+  _limparTalhoesArquivadosSemUndo();
+  // v4.48: "Limpar Tudo"/"Novo Projeto" não estavam removendo os Dados Locais importados (ortofoto
+  // TIFF e curvas de nível DXF) — o usuário via o botão dizer "tudo" mas a imagem/curvas continuavam
+  // no mapa. Ambos entram na limpeza igual qualquer outro elemento do projeto agora.
+  if(_ortofotoLocal) _removerOrtofotoLocalSemUndo();
+  if(_curvasLocais) _removerCurvasLocaisSemUndo();
   if(multiSelectMode) cancelarMultiSelect();
   _modoPickLinha = null; // sem isso o cursor ficava travado em crosshair se Perfil/Carreador de Linha estivesse ativo
   modo='idle'; map.getContainer().style.cursor='';
@@ -6509,7 +6766,8 @@ function limparTudo() {
 // (reusa Exportar KML/DXF, que já existiam) em vez de simplesmente zerar sem perguntar.
 function _existeConteudoNoProjeto() {
   return talhoesArquivados.length > 0 || polyPts.length >= 3 || linhas.length > 0 ||
-         curvaLayers.length > 0 || curvaPolyPts.length >= 3 || carreadorLayers.length > 0;
+         curvaLayers.length > 0 || curvaPolyPts.length >= 3 || carreadorLayers.length > 0 ||
+         !!_ortofotoLocal || !!_curvasLocais;
 }
 function novoProjeto() {
   if(!_existeConteudoNoProjeto()) { _executarNovoProjeto(); return; }
@@ -7331,7 +7589,8 @@ function excluirTalhaoSelecionado() {
   const idx = talhoesArquivados.findIndex(t => t.uid === uid);
   if(idx < 0) return;
   const t = talhoesArquivados[idx];
-  if(!confirm(`Excluir Talhão ${t.idx} (${t.areaHa.toFixed(2)} ha)? Esta ação não pode ser desfeita.`)) return;
+  if(!confirm(`Excluir Talhão ${t.idx} (${t.areaHa.toFixed(2)} ha)?`)) return;
+  _capturarEstadoParaUndo(`exclusão do Talhão ${t.idx}`);
   // Remove do mapa
   if(t.polyLayer) t.polyLayer.remove();
   t.linhas.forEach(l => l.remove());
@@ -7995,7 +8254,9 @@ const _CAMADAS = {
   escoamento:    { label: 'Mapa de Escoamento',           get: () => talhoesArquivados.flatMap(t => [t.escoamentoOverlay, t.escoamentoLinhas]).filter(Boolean) },
   erosao:        { label: 'Risco de Erosão',              get: () => talhoesArquivados.map(t => t.erosaoOverlay).filter(Boolean) },
   vazao:         { label: 'Vazão de Pico',                get: () => talhoesArquivados.flatMap(t => t.vazaoMarkers || []) },
-  mapaTematico:  { label: 'Mapa Temático (Otimizar Cenário)', get: () => talhoesArquivados.map(t => t.mapaTematicoOverlay).filter(Boolean) }
+  mapaTematico:  { label: 'Mapa Temático (Otimizar Cenário)', get: () => talhoesArquivados.map(t => t.mapaTematicoOverlay).filter(Boolean) },
+  ortofotoLocal: { label: 'Ortofoto Local (TIFF importado)', get: () => _ortofotoLocal ? [_ortofotoLocal.overlay] : [] },
+  curvasLocais:  { label: 'Curvas de Nível Locais (DXF importado)', get: () => _curvasLocais && _curvasLocais.layerPreview ? [_curvasLocais.layerPreview] : [] }
 };
 const _camadaVisivel = {}; // id -> bool (true = visível) — tudo ligado por padrão, ver _initCamadas()
 
@@ -8681,7 +8942,7 @@ async function gerarVista3DAnalise() {
   }
   $('btnVista3D').disabled = false;
 
-  const elevGrid = Array.from({ length: n }, (_, r) => Array.from({ length: n }, (_, c) => elevFlat[r * n + c] ?? 0));
+  const elevGrid = _preencherGradeVazios(Array.from({ length: n }, (_, r) => Array.from({ length: n }, (_, c) => elevFlat[r * n + c])), n);
   let elevMin = Infinity, elevMax = -Infinity;
   for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) { const e = elevGrid[r][c]; if(e < elevMin) elevMin = e; if(e > elevMax) elevMax = e; }
   const sampler = _3da_mkSampler(elevGrid, lats, lngs, n);
