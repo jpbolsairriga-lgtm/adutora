@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ETP Diária & Balanço Hídrico v1.13 — Bolsa Irriga</title>
+<title>ETP Diária & Balanço Hídrico v1.13.1 — Bolsa Irriga</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -162,7 +162,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     </div>
   </div>
   <div class="hdr-nav">
-    <span class="ver-tag">v1.13</span>
+    <span class="ver-tag">v1.13.1</span>
     <button class="info-btn new-calc-btn" id="btnNovoCalculo" type="button" title="Limpa todos os dias e parâmetros e mostra a tela inicial de novo">&#128260; Novo C&#225;lculo</button>
     <button class="info-btn" id="btnInfo" type="button">&#8505;&#65039; Como funciona</button>
     <a class="back-link" href="../index.html">&#8592; Menu</a>
@@ -208,6 +208,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
         </div>
 
         <div class="kml-info" id="localInfo" style="display:none;"></div>
+        <div id="coordMap" style="height:220px;border-radius:8px;border:1px solid var(--line);margin-top:10px;display:none;"></div>
 
         <details style="margin-top:4px;">
           <summary style="cursor:pointer;font-size:.78rem;font-weight:600;color:var(--slate);">Ajustar coordenadas manualmente (avan&#231;ado)</summary>
@@ -546,14 +547,38 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     $('modeKml').style.display=mode==='kml'?'':'none';
     $('tabCoord').classList.toggle('active',mode==='coord');
     $('tabKml').classList.toggle('active',mode==='kml');
-    if(mode==='kml'&&kmlMap)setTimeout(()=>kmlMap.invalidateSize(),60);
+    // Mesma lógica do renderKmlMap: reencaixar depois do invalidateSize, senão o mapa fica
+    // cortado ao voltar de uma aba onde ele estava escondido (container sem tamanho ainda).
+    if(mode==='kml'&&kmlMap)setTimeout(()=>{
+      kmlMap.invalidateSize();
+      if(kmlPolyLayer)kmlMap.fitBounds(kmlPolyLayer.getBounds(),{padding:[20,20],animate:false});
+    },60);
+    if(mode==='coord'&&coordMap)setTimeout(()=>coordMap.invalidateSize(),60);
   }
 
   function setLocal(lat,lon,label){
     $('lat').value=lat.toFixed(5);$('lon').value=lon.toFixed(5);
     $('localInfo').style.display='block';
     $('localInfo').textContent=`📍 Local definido: Lat ${lat.toFixed(5)}, Lon ${lon.toFixed(5)}${label?' — '+label:''}`;
+    mostrarCoordMap(lat,lon);
     if(days.length)render();
+  }
+
+  /* ── Mapa de satélite pro modo "Local" (cidade / link / coordenadas manuais) — mesma ideia do
+     mapa do polígono KML, só que com um marcador no ponto em vez de um contorno. ── */
+  let coordMap=null,coordMarker=null;
+  function mostrarCoordMap(lat,lon){
+    $('coordMap').style.display='block';
+    if(!coordMap){
+      coordMap=L.map('coordMap',{attributionControl:true});
+      criarCamadaSatelite().addTo(coordMap);
+    }
+    if(coordMarker)coordMap.removeLayer(coordMarker);
+    coordMarker=L.marker([lat,lon]).addTo(coordMap);
+    coordMap.setView([lat,lon],15,{animate:false});
+    // Mesmo cuidado do mapa KML: o container pode ter acabado de virar display:block agora
+    // mesmo, então o tamanho que o Leaflet enxerga ainda não é o final do card.
+    setTimeout(()=>{coordMap.invalidateSize();coordMap.setView([lat,lon],15,{animate:false});},120);
   }
 
   /* ── Busca por cidade (geocoding Open-Meteo, sem chave) ── */
@@ -711,15 +736,18 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
 
   /* ── Mapa (Leaflet + satélite Esri World Imagery) ── */
   let kmlMap=null,kmlPolyLayer=null,kmlAreaHa=null;
+  function criarCamadaSatelite(){
+    return L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{
+      maxZoom:19,attribution:'Imagery &copy; Esri, Maxar, Earthstar Geographics',
+      crossOrigin:true // pede os tiles com CORS — a Esri libera, e isso evita "tainted canvas"
+                        // quando a gente captura o mapa pro relatório PDF (ver gerarRelatorio)
+    });
+  }
   function renderKmlMap(polygons){
     $('kmlMap').style.display='block';
     if(!kmlMap){
       kmlMap=L.map('kmlMap',{attributionControl:true});
-      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{
-        maxZoom:19,attribution:'Imagery &copy; Esri, Maxar, Earthstar Geographics',
-        crossOrigin:true // pede os tiles com CORS — a Esri libera, e isso evita "tainted canvas"
-                          // quando a gente captura o mapa pro relatório PDF (ver gerarRelatorio)
-      }).addTo(kmlMap);
+      criarCamadaSatelite().addTo(kmlMap);
     }
     if(kmlPolyLayer)kmlMap.removeLayer(kmlPolyLayer);
     const layers=polygons.map(poly=>{
@@ -728,8 +756,12 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     });
     kmlPolyLayer=L.featureGroup(layers).addTo(kmlMap);
     const bounds=kmlPolyLayer.getBounds();
-    kmlMap.fitBounds(bounds,{padding:[20,20],animate:false});
-    setTimeout(()=>kmlMap.invalidateSize(),80);
+    kmlMap.fitBounds(bounds,{padding:[20,20],animate:false}); // encaixe imediato (aproximado)
+    // O container acabou de sair de display:none — nesse exato instante o Leaflet pode não ter
+    // o tamanho final do card ainda, então o fitBounds acima calcula o zoom errado (fica
+    // "cortando" o polígono). invalidateSize() corrige o tamanho interno, mas sozinho não
+    // reencaixa a view — por isso reaplicamos fitBounds depois, já com o tamanho certo.
+    setTimeout(()=>{kmlMap.invalidateSize();kmlMap.fitBounds(bounds,{padding:[20,20],animate:false});},120);
   }
 
   async function handleKmlFile(file){
@@ -1168,18 +1200,23 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     if(!days.length){alert('Adicione dias ao balanço antes de gerar o relatório.');return;}
     const logo={url:AGROLAMINA_LOGO_PNG,ratio:AGROLAMINA_LOGO_RATIO};
 
-    // Se o modo KML está ativo e tem polígono importado, captura o mapa (satélite + contorno)
-    // pra entrar no relatório. A Esri libera CORS nos tiles (crossOrigin:true no tileLayer, ver
-    // renderKmlMap) então dá pra rasterizar sem "tainted canvas". Se falhar (ex.: sem internet
-    // nesse momento), segue sem a imagem — não trava o relatório por causa disso.
+    // Captura o mapa de satélite pra entrar no relatório: o polígono (modo KML, se já importado)
+    // ou o marcador do local (modo cidade/link/coordenadas, se já definido). A Esri libera CORS
+    // nos tiles (crossOrigin:true nos tileLayers) então dá pra rasterizar sem "tainted canvas".
+    // Se falhar (ex.: sem internet nesse momento), segue sem a imagem — não trava o relatório.
     const modoKml=$('tabKml').classList.contains('active');
-    let mapaImg=null;
-    if(modoKml&&kmlMap&&kmlPolyLayer){
-      const zoomEl=document.querySelector('#kmlMap .leaflet-control-zoom'); // some do print, feio no relatório
+    let mapaImg=null,mapaCaption=null;
+    const mapaAtivoId=modoKml?'kmlMap':'coordMap';
+    const mapaPronto=modoKml?(kmlMap&&kmlPolyLayer):(coordMap&&coordMarker);
+    if(mapaPronto){
+      const zoomEl=document.querySelector(`#${mapaAtivoId} .leaflet-control-zoom`); // some do print, feio no relatório
       if(zoomEl)zoomEl.style.visibility='hidden';
       try{
-        const canvasMapa=await html2canvas($('kmlMap'),{useCORS:true,logging:false,scale:2});
+        const canvasMapa=await html2canvas($(mapaAtivoId),{useCORS:true,logging:false,scale:2});
         mapaImg={url:canvasMapa.toDataURL('image/png'),ratio:canvasMapa.width/canvasMapa.height};
+        mapaCaption=modoKml
+          ?(kmlAreaHa!=null?`Polígono importado · Área: ${fmt(kmlAreaHa,2)} ha`:'Polígono importado')
+          :`Local: Lat ${(parseFloat($('lat').value)||0).toFixed(5)}, Lon ${(parseFloat($('lon').value)||0).toFixed(5)}`;
       }catch(e){mapaImg=null;}
       finally{if(zoomEl)zoomEl.style.visibility='';}
     }
@@ -1221,13 +1258,15 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     doc.text('João Paulo de Oliveira · Eng. Agrônomo · (16) 99401-2495 · bolsairriga.com.br',W-12,9,{align:'right'});
     doc.text('Emitido em: '+now,W-12,15.5,{align:'right'});
 
-    // ── Mapa do polígono importado (satélite + contorno), se houver ──
+    // ── Mapa (satélite + polígono importado ou marcador do local), se houver ──
+    let mapaBottom=0;
     if(mapaImg){
-      const mapaW=70,mapaH=mapaW/mapaImg.ratio,mapaX=W-12-mapaW,mapaY=28;
+      const mapaW=96,mapaH=mapaW/mapaImg.ratio,mapaX=W-12-mapaW,mapaY=28;
       doc.addImage(mapaImg.url,'PNG',mapaX,mapaY,mapaW,mapaH,undefined,'FAST');
       doc.setDrawColor(31,78,76);doc.setLineWidth(0.4);doc.rect(mapaX,mapaY,mapaW,mapaH);
       doc.setFontSize(6.5);doc.setFont(undefined,'bold');doc.setTextColor(31,78,76);
-      doc.text(kmlAreaHa!=null?`Polígono importado · Área: ${fmt(kmlAreaHa,2)} ha`:'Polígono importado',mapaX,mapaY+mapaH+4);
+      doc.text(mapaCaption||'',mapaX,mapaY+mapaH+4);
+      mapaBottom=mapaY+mapaH+4;
     }
 
     // ── Parâmetros ──
@@ -1255,9 +1294,10 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
       doc.text(p[1],px,py+3.5);
     });
     const numParamRows=Math.ceil(params.length/4);
+    const paramsBottom=y+numParamRows*6.5;
 
-    // ── KPIs ──
-    y+=numParamRows*6.5+8;
+    // ── KPIs ── (começa depois do que for mais baixo: parâmetros ou o mapa, maior agora)
+    y=Math.max(paramsBottom,mapaBottom)+8;
     const kpis=[
       ['Precip. Total',fmt(totP)+' mm'],
       ['ETP Total',fmt(totETP)+' mm'],
@@ -1373,6 +1413,8 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     $('cidadeResultados').style.display='none';$('cidadeResultados').innerHTML='';
     $('mapsLinkInput').value='';$('mapsLinkStatus').textContent='';$('mapsLinkStatus').className='status';
     $('localInfo').style.display='none';
+    $('coordMap').style.display='none';
+    if(coordMarker&&coordMap){coordMap.removeLayer(coordMarker);coordMarker=null;}
     $('kmlStatus').textContent='';$('kmlStatus').className='status';
     $('kmlInfo').style.display='none';$('kmlMap').style.display='none';
     if(kmlPolyLayer&&kmlMap){kmlMap.removeLayer(kmlPolyLayer);kmlPolyLayer=null;}
@@ -1421,7 +1463,13 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
   $('btnPDF').addEventListener('click',gerarRelatorio);
   $('btnCSV').addEventListener('click',exportCSV);
   $('btnClear').addEventListener('click',()=>{if(confirm('Remover todos os dias adicionados?')){days=[];render();}});
-  $('lat').addEventListener('change',render);
+  function ajustarLocalManual(){
+    const la=parseFloat($('lat').value),lo=parseFloat($('lon').value);
+    if(Number.isFinite(la)&&Number.isFinite(lo))mostrarCoordMap(la,lo);
+    render();
+  }
+  $('lat').addEventListener('change',ajustarLocalManual);
+  $('lon').addEventListener('change',ajustarLocalManual);
   ['emQ','emSe','emSl','kc','pam','emEf','diamCopa'].forEach(id=>{
     $(id).addEventListener('input',()=>{atualizarTaxa();if(days.length)render();});
   });
