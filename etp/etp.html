@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ETP Diária & Balanço Hídrico v1.11 — Bolsa Irriga</title>
+<title>ETP Diária & Balanço Hídrico v1.12 — Bolsa Irriga</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -130,9 +130,25 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
 
 /* ── Nota ── */
 .formula-note{font-size:.7rem;color:#7c8a92;margin-top:12px;line-height:1.6;border-top:1px solid var(--line);padding-top:10px;}
+
+/* ── Solo & zona radicular ── */
+.solo-readout{background:var(--teal-light);border-radius:6px;padding:8px 14px;font-size:.8rem;color:var(--teal-dark);display:flex;gap:2rem;flex-wrap:wrap;align-items:center;margin-top:10px;}
+
+/* ── Tela de inicialização (splash) ── fica por cima de tudo até sumir sozinha ou no clique;
+   reaparece sempre que "Novo Cálculo" é confirmado, dando a sensação de recomeço. */
+#splashScreen{position:fixed;inset:0;z-index:99999;background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:opacity .6s ease;}
+#splashScreen img{max-width:min(560px,80vw);max-height:40vh;width:auto;height:auto;}
+#splashScreen .splash-skip{position:absolute;bottom:26px;font-size:.72rem;color:#8b9aa1;letter-spacing:.03em;}
+#splashScreen.oculto{opacity:0;pointer-events:none;}
+.new-calc-btn:hover{background:rgba(192,57,43,.35) !important;}
 </style>
 </head>
 <body>
+
+<div id="splashScreen" title="Clique para pular">
+  <img src="agrolamina-lockup.svg" alt="Agrolâmina — estimativa de irrigação">
+  <div class="splash-skip">Clique para pular</div>
+</div>
 
 <header>
   <div class="hdr-left" style="display:flex;align-items:center;gap:14px;">
@@ -145,7 +161,8 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     </div>
   </div>
   <div class="hdr-nav">
-    <span class="ver-tag">v1.11</span>
+    <span class="ver-tag">v1.12</span>
+    <button class="info-btn new-calc-btn" id="btnNovoCalculo" type="button" title="Limpa todos os dias e parâmetros e mostra a tela inicial de novo">&#128260; Novo C&#225;lculo</button>
     <button class="info-btn" id="btnInfo" type="button">&#8505;&#65039; Como funciona</button>
     <a class="back-link" href="../index.html">&#8592; Menu</a>
     <div class="hdr-right">
@@ -194,8 +211,9 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
       </div>
 
       <div class="hint" style="margin-top:8px;">
-        Modelo simplificado: a ETR consome apenas a chuva do dia (sem armazenamento no solo).
-        Chuva abate o saldo acumulado negativo at&#233; zero&#8239;—&#8239;o excedente &#233; contabilizado como EXC.
+        Balan&#231;o com reservat&#243;rio limitado: a chuva s&#243; abate a evapotranspira&#231;&#227;o at&#233; onde o
+        <b>solo consegue armazenar</b> na zona radicular (ver card "Solo &amp; Zona Radicular" abaixo).
+        Chuva acima dessa capacidade &#233; contabilizada como <b>Perc.</b> (perdida por percola&#231;&#227;o/escoamento, n&#227;o fica dispon&#237;vel pra planta).
       </div>
     </div>
 
@@ -306,9 +324,51 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     </div>
   </div>
 
+  <!-- Card 3b: Solo & Zona Radicular -->
+  <div class="card" style="margin-bottom:16px;">
+    <h2><span class="n">4</span>Solo &amp; Zona Radicular</h2>
+    <div style="display:grid;grid-template-columns:1.3fr 1fr 1fr 1fr;gap:10px;margin-bottom:0;">
+      <div class="field">
+        <label>Tipo de solo (textura)</label>
+        <select id="tipoSolo">
+          <option value="arenoso">Arenoso</option>
+          <option value="francoArenoso">Franco-arenoso</option>
+          <option value="franco" selected>Franco (textura m&#233;dia)</option>
+          <option value="francoArgiloso">Franco-argiloso</option>
+          <option value="argiloso">Argiloso</option>
+          <option value="muitoArgiloso">Muito argiloso</option>
+          <option value="custom">Personalizado&#8230;</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>CAD &#8212; &#225;gua disp. (mm/m)</label>
+        <input type="number" id="cad" value="175" step="5" min="10">
+      </div>
+      <div class="field">
+        <label>Prof. radicular / avalia&#231;&#227;o (cm)</label>
+        <input type="number" id="profRad" value="40" step="5" min="5">
+      </div>
+      <div class="field">
+        <label>Armaz. inicial do solo (%)</label>
+        <input type="number" id="reservaIniPct" value="0" step="5" min="0" max="100">
+      </div>
+    </div>
+    <div class="hint" style="margin-top:8px;">
+      CAD = &#225;gua total dispon&#237;vel por metro de solo (varia com a textura &#8212; valores de refer&#234;ncia,
+      ajuste se houver an&#225;lise de solo local). Profundidade = zona radicular efetiva da cultura
+      (ex.: hortali&#231;as 20&#8211;40&#8239;cm, gr&#227;os 40&#8211;60&#8239;cm, fruteiras adultas 60&#8211;100&#8239;cm+) ou a profundidade
+      que voc&#234; quer avaliar. Armaz. inicial define quanta &#225;gua o solo j&#225; tem no 1&#186; dia do per&#237;odo
+      (0% = solo seco, mais conservador; 100% = solo na capacidade de campo, ex. logo ap&#243;s chuva forte).
+    </div>
+    <div class="solo-readout">
+      <span>Capacidade total do solo: <b id="smaxDisplay">&#8212;</b> mm (Smax = CAD &times; profundidade)</span>
+      <span>Reserva inicial: <b id="reservaIniDisplay">&#8212;</b> mm</span>
+    </div>
+  </div>
+
   <!-- Card 4: Tabela -->
   <div class="card">
-    <h2><span class="n">4</span>Balan&#231;o H&#237;drico Sequencial Di&#225;rio</h2>
+    <h2><span class="n">5</span>Balan&#231;o H&#237;drico Sequencial Di&#225;rio</h2>
 
     <div class="tbl-wrap">
       <table id="tbl">
@@ -317,7 +377,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
             <th rowspan="2" style="text-align:left;min-width:70px;">Data</th>
             <th rowspan="2">Origem</th>
             <th colspan="5" class="grp-temp" style="text-align:center;border-bottom:1px solid rgba(255,255,255,.3);">Temperatura &amp; Evapotranspira&#231;&#227;o</th>
-            <th colspan="5" class="grp-bal" style="text-align:center;border-bottom:1px solid rgba(255,255,255,.3);">Balan&#231;o H&#237;drico (mm)</th>
+            <th colspan="6" class="grp-bal" style="text-align:center;border-bottom:1px solid rgba(255,255,255,.3);">Balan&#231;o H&#237;drico (mm)</th>
             <th rowspan="2" style="background:#1a4a2e;color:#fff;text-align:center;">Irrig.<br>(h)</th>
             <th rowspan="2"></th>
           </tr>
@@ -328,14 +388,15 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
             <th title="ETc = ETP × Kc">ETc</th>
             <th title="ETc localizada = ETP × Kc × fc (fração de cobertura do dossel — Fereres & Soriano, 2007)" style="background:#1f6b3a;color:#fff;">ETc_loc</th>
             <th class="grp-bal">P</th>
-            <th title="Chuva + reserva do dia anterior">Disp.</th>
+            <th title="&#193;gua perdida por percola&#231;&#227;o/escoamento — excedeu a capacidade de armazenamento do solo (Smax)" style="color:#ffd7d2;">Perc.</th>
+            <th title="&#193;gua dispon&#237;vel no solo: reserva do dia anterior + chuva, limitada &#224; capacidade do solo (Smax)">Disp.</th>
             <th>ETR</th>
             <th class="def">DEF</th>
-            <th title="&#193;gua restante para o pr&#243;ximo dia">Reserva</th>
+            <th title="&#193;gua restante para o pr&#243;ximo dia (limitada a Smax)">Reserva</th>
           </tr>
         </thead>
         <tbody id="tbody">
-          <tr><td colspan="14" class="empty">Nenhum dia adicionado. Preencha os campos acima e clique em "+ Adicionar ao balan&#231;o".</td></tr>
+          <tr><td colspan="15" class="empty">Nenhum dia adicionado. Preencha os campos acima e clique em "+ Adicionar ao balan&#231;o".</td></tr>
         </tbody>
         <tfoot id="tfoot" style="display:none;"></tfoot>
       </table>
@@ -347,6 +408,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
       <div class="kpi"><div class="lab">ETP total</div><div class="val" id="kpiETP">–</div></div>
       <div class="kpi"><div class="lab">ETR total</div><div class="val" id="kpiETR">–</div></div>
       <div class="kpi kpi-def"><div class="lab">D&#233;ficit total</div><div class="val" id="kpiDEF">–</div></div>
+      <div class="kpi" style="background:#fdecea;"><div class="lab">Perdido por percola&#231;&#227;o</div><div class="val" id="kpiPerc" style="color:var(--red);">–</div></div>
       <div class="kpi kpi-arm"><div class="lab">Reserva final (mm)</div><div class="val" id="kpiReserva">–</div></div>
       <div class="kpi" style="background:#e8f5ee;"><div class="lab">Total irrigado (h)</div><div class="val" id="kpiIrrigH" style="color:#1a4a2e;">–</div></div>
       <div class="kpi" style="background:#e8f5ee;"><div class="lab">M&#233;dia/dia (h)</div><div class="val" id="kpiIrrigMed" style="color:#1a4a2e;">–</div></div>
@@ -365,7 +427,8 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
       <b>ETP:</b> Hargreaves-Samani — 0,0023 &times; (Tmed + 17,8) &times; &radic;(Tmax&minus;Tmin) &times; Ra (FAO-56).<br>
       <b>ETc_loc = ETP &times; Kc &times; fc</b> — fc = fra&#231;&#227;o de cobertura do dossel (&#225;rea sombreada &#247; &#225;rea total).
       Funda&#231;&#227;o: Fereres &amp; Soriano (2007), Orgaz et al. — a transpira&#231;&#227;o &#233; proporcional &#224; intercepta&#231;&#227;o de radia&#231;&#227;o pela copa, n&#227;o &#224; &#225;rea molhada.<br>
-      <b>Balan&#231;o:</b> Dispon&#237;vel = Reserva + P. ETR = m&#237;n(ETc_loc, Dispon&#237;vel). DEF = ETc_loc &minus; Dispon&#237;vel quando insuficiente.
+      <b>Balan&#231;o:</b> Smax = CAD &times; profundidade radicular. Bruto = Reserva(dia&#8722;1) + P. Perc. = m&#225;x(0, Bruto &minus; Smax). Dispon&#237;vel = m&#237;n(Bruto, Smax).
+      ETR = m&#237;n(ETc_loc, Dispon&#237;vel). DEF = ETc_loc &minus; Dispon&#237;vel quando insuficiente. Reserva = Dispon&#237;vel &minus; ETR.
     </div>
   </div>
 
@@ -403,7 +466,10 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
       <p><code>ETc_loc = ETP &times; Kc &times; fc</code>, onde <b>fc</b> &#233; a fra&#231;&#227;o de cobertura do dossel (Fereres &amp; Soriano, 2007) &mdash; a transpira&#231;&#227;o &#233; proporcional &#224; &#225;rea sombreada pela copa, n&#227;o &#224; &#225;rea molhada pelo gotejador.</p>
 
       <h4>Balan&#231;o h&#237;drico sequencial</h4>
-      <p>Modelo simplificado dia a dia, sem capacidade de armazenamento no solo: <code>Dispon&#237;vel = Reserva do dia anterior + Chuva</code>. <code>ETR = m&#237;n(ETc_loc, Dispon&#237;vel)</code>. Se sobrar &#225;gua, vira <b>Reserva</b> pro dia seguinte; se faltar, vira <b>D&#233;ficit</b> (a ser suprido pela irriga&#231;&#227;o).</p>
+      <p>Nem toda chuva &#233; aproveitada pela cultura: o solo s&#243; consegue guardar &#225;gua at&#233; um limite, definido pela <b>textura do solo</b> (CAD &#8212; &#225;gua disponível, em mm por metro) e pela <b>profundidade da zona radicular</b> (ou a profundidade que voc&#234; quiser avaliar). O produto dos dois d&#225; a capacidade total do reservat&#243;rio de solo:</p>
+      <p><code>Smax = CAD &times; Profundidade</code></p>
+      <p>A cada dia: <code>Bruto = Reserva do dia anterior + Chuva</code>. Se <b>Bruto</b> passar de <b>Smax</b>, o excedente vira <b>Perc.</b> (perdido por percola&#231;&#227;o abaixo da zona radicular ou escoamento &#8212; &#225;gua que a cultura n&#227;o vai conseguir usar). <code>Dispon&#237;vel = m&#237;n(Bruto, Smax)</code>. <code>ETR = m&#237;n(ETc_loc, Dispon&#237;vel)</code>. Se sobrar &#225;gua dentro do limite, vira <b>Reserva</b> pro dia seguinte; se faltar, vira <b>D&#233;ficit</b> (a ser suprido pela irriga&#231;&#227;o).</p>
+      <p>Valores de CAD por textura (refer&#234;ncia, ajust&#225;veis no card "Solo &amp; Zona Radicular"): Arenoso &#8776; 80&#8239;mm/m &#8226; Franco-arenoso &#8776; 125&#8239;mm/m &#8226; Franco &#8776; 175&#8239;mm/m &#8226; Franco-argiloso &#8776; 190&#8239;mm/m &#8226; Argiloso &#8776; 220&#8239;mm/m &#8226; Muito argiloso &#8776; 260&#8239;mm/m. O campo "Armaz. inicial" define quanta &#225;gua o solo j&#225; tinha no 1&#186; dia do per&#237;odo (0% = solo seco).</p>
 
       <h4>Horas de irriga&#231;&#227;o</h4>
       <p><code>Horas = D&#233;ficit &divide; Efici&#234;ncia &divide; Taxa de aplica&#231;&#227;o do gotejador</code>, onde a taxa &#233; <code>Vaz&#227;o do emissor &divide; (Espa&#231;. emissor &times; Espa&#231;. lateral)</code>.</p>
@@ -736,25 +802,51 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     $('krDisplay').textContent=kr.toFixed(3);
   }
 
-  /* ── Cálculo do balanço — reservatório acumulativo ── */
+  /* ── Solo & zona radicular: capacidade de armazenamento (Smax) ── */
+  const SOLO_CAD={           // mm de água disponível por metro de profundidade (valores de referência)
+    arenoso:80, francoArenoso:125, franco:175, francoArgiloso:190, argiloso:220, muitoArgiloso:260
+  };
+  function aplicarTipoSolo(){
+    const tipo=$('tipoSolo').value;
+    if(tipo!=='custom'&&SOLO_CAD[tipo]!=null)$('cad').value=SOLO_CAD[tipo];
+  }
+  function getSoloParams(){
+    const cad=Math.max(1,parseFloat($('cad').value)||175);       // mm/m
+    const profCm=Math.max(1,parseFloat($('profRad').value)||40); // cm
+    const profM=profCm/100;
+    const smax=cad*profM;                                        // mm — capacidade total do solo
+    const reservaIniPct=Math.max(0,Math.min(100,parseFloat($('reservaIniPct').value)||0));
+    const reservaIni=smax*(reservaIniPct/100);
+    return{cad,profCm,smax,reservaIniPct,reservaIni};
+  }
+  function atualizarSolo(){
+    const{smax,reservaIni}=getSoloParams();
+    $('smaxDisplay').textContent=fmt(smax,0);
+    $('reservaIniDisplay').textContent=fmt(reservaIni,0);
+  }
+
+  /* ── Cálculo do balanço — reservatório do solo limitado a Smax (CAD × profundidade) ── */
   function computeBalance(){
     const lat=parseFloat($('lat').value)||(-20.53);
     const{kc,kr,ef,taxa}=getIrrigParams();
-    let reserva=0;
+    const{smax,reservaIni}=getSoloParams();
+    let reserva=reservaIni;
     return days.map(d=>{
       const J=dayOfYear(d.date);
       const ra=calcRa(lat,J);
       const eto=calcETo(d.tmin,d.tmax,ra);
       const etc=eto*kc;          // ETc = ETP × Kc (sem correção de área)
       const etcLoc=etc*kr;       // ETc_loc = ETc × Kr (corrigida pelo PAM)
-      const disponivel=reserva+d.precip;
-      const etr=Math.min(etcLoc,disponivel); // balanço usa ETc_loc
+      const bruto=reserva+d.precip;             // reserva do dia anterior + chuva do dia, sem limite
+      const perc=Math.max(0,bruto-smax);        // chuva que o solo não tem onde guardar — perdida
+      const disponivel=Math.min(bruto,smax);    // água efetivamente disponível na zona radicular
+      const etr=Math.min(etcLoc,disponivel);    // balanço usa ETc_loc
       reserva=disponivel-etr;
       const def=Math.max(0,etcLoc-disponivel);
       const net=d.precip-etcLoc;
       const irrigBruto=ef>0?def/ef:0;
       const irrigH=taxa>0?irrigBruto/taxa:0;
-      return{...d,ra,eto,etc,etcLoc,net,disponivel,etr,def,reserva,irrigH,taxa};
+      return{...d,ra,eto,etc,etcLoc,net,bruto,perc,disponivel,etr,def,reserva,irrigH,taxa,smax};
     });
   }
 
@@ -779,7 +871,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
   function render(){
     const tbody=$('tbody'),tfoot=$('tfoot'),kpis=$('kpis');
     if(!days.length){
-      tbody.innerHTML='<tr><td colspan="13" class="empty">Nenhum dia adicionado. Preencha os campos acima e clique em "+ Adicionar ao balanço".</td></tr>';
+      tbody.innerHTML='<tr><td colspan="15" class="empty">Nenhum dia adicionado. Preencha os campos acima e clique em "+ Adicionar ao balanço".</td></tr>';
       tfoot.style.display='none';kpis.style.display='none';
       drawChart([]);return;
     }
@@ -796,6 +888,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
         <td>${fmt(r.etc)}</td>
         <td style="font-weight:700;color:#1f6b3a;">${fmt(r.etcLoc)}</td>
         <td>${fmt(r.precip)}</td>
+        <td style="${r.perc>0.005?'color:var(--red);font-weight:700;':'color:#aaa;'}">${r.perc>0.005?fmt(r.perc):'—'}</td>
         <td>${fmt(r.disponivel)}</td>
         <td>${fmt(r.etr)}</td>
         <td class="def">${r.def>0.005?fmt(r.def):'—'}</td>
@@ -807,7 +900,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
 
     const sum=(key)=>rows.reduce((s,r)=>s+r[key],0);
     const totP=sum('precip'),totETP=sum('eto'),totETC=sum('etc'),totETCLoc=sum('etcLoc'),
-          totETR=sum('etr'),totDEF=sum('def'),totIrrigH=sum('irrigH');
+          totETR=sum('etr'),totDEF=sum('def'),totPerc=sum('perc'),totIrrigH=sum('irrigH');
     const avgTmin=rows.reduce((s,r)=>s+r.tmin,0)/rows.length;
     const avgTmax=rows.reduce((s,r)=>s+r.tmax,0)/rows.length;
     const reservaFinal=rows[rows.length-1].reserva;
@@ -822,6 +915,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
       <td>${fmt(totETC)}</td>
       <td style="color:#1f6b3a;">${fmt(totETCLoc)}</td>
       <td>${fmt(totP)}</td>
+      <td class="def">${totPerc>0.005?fmt(totPerc):'—'}</td>
       <td></td>
       <td>${fmt(totETR)}</td>
       <td class="def">${fmt(totDEF)}</td>
@@ -835,6 +929,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     $('kpiETP').textContent=fmt(totETP)+' mm';
     $('kpiETR').textContent=fmt(totETR)+' mm';
     $('kpiDEF').textContent=fmt(totDEF)+' mm';
+    $('kpiPerc').textContent=fmt(totPerc)+' mm';
     $('kpiReserva').textContent=fmt(reservaFinal)+' mm';
     $('kpiIrrigH').textContent=fmtH(totIrrigH);
     $('kpiIrrigMed').textContent=fmtH(totIrrigH/rows.length);
@@ -870,13 +965,29 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
       ctx.textAlign='right';ctx.fillText((maxVal*g/4).toFixed(0),padL-4,y+3);
     }
 
-    // Barras de precipitação
-    ctx.fillStyle='rgba(47,122,120,.65)';
+    // Barras de precipitação (trecho perdido por percolação destacado no topo, em vermelho)
     rows.forEach((r,i)=>{
       const x=padL+(i+0.5)*(plotW/n)-barW/2;
       const h=(r.precip/maxVal)*plotH;
-      if(h>0)ctx.fillRect(x,toY(r.precip),barW,h);
+      if(h<=0)return;
+      ctx.fillStyle='rgba(47,122,120,.65)';
+      ctx.fillRect(x,toY(r.precip),barW,h);
+      if(r.perc>0.01){
+        const hPerc=(r.perc/maxVal)*plotH;
+        ctx.fillStyle='rgba(192,57,43,.75)';
+        ctx.fillRect(x,toY(r.precip),barW,hPerc);
+      }
     });
+
+    // Linha de capacidade do solo (Smax)
+    const smax=rows[0]?.smax;
+    if(smax!=null&&smax<=maxVal){
+      const y=toY(smax);
+      ctx.strokeStyle='#7b3fa0';ctx.lineWidth=1;ctx.setLineDash([2,3]);
+      ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke();ctx.setLineDash([]);
+      ctx.fillStyle='#7b3fa0';ctx.font='9px sans-serif';ctx.textAlign='right';
+      ctx.fillText('Smax',W-padR-2,y-3);
+    }
 
     // Linha ETP
     ctx.strokeStyle='#c0392b';ctx.lineWidth=2;ctx.beginPath();
@@ -916,6 +1027,8 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     ctx.fillStyle='#44546a';ctx.fillText('ETR',lx+133,ly+8);
     ctx.fillStyle='rgba(30,123,69,.25)';ctx.fillRect(lx+163,ly,10,9);
     ctx.fillStyle='#44546a';ctx.fillText('Reserva',lx+176,ly+8);
+    ctx.fillStyle='rgba(192,57,43,.75)';ctx.fillRect(lx+223,ly,10,9);
+    ctx.fillStyle='#44546a';ctx.fillText('Perc.',lx+236,ly+8);
   }
 
   /* ── CSV ── */
@@ -928,6 +1041,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     const now=new Date().toLocaleDateString('pt-BR');
     const rows=computeBalance();
     const{kc,kr,ef,taxa}=getIrrigParams();
+    const{cad,profCm,smax,reservaIniPct}=getSoloParams();
     const lat=parseFloat($('lat').value)||(-20.53);
     const lon=parseFloat($('lon').value)||(-47.40);
     const pam=parseFloat($('pam').value)||100;
@@ -935,7 +1049,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
 
     const sum=key=>rows.reduce((s,r)=>s+r[key],0);
     const totP=sum('precip'),totETP=sum('eto'),totETC=sum('etc'),totETCLoc=sum('etcLoc'),
-          totETR=sum('etr'),totDEF=sum('def'),totIrrigH=sum('irrigH');
+          totETR=sum('etr'),totDEF=sum('def'),totPerc=sum('perc'),totIrrigH=sum('irrigH');
     const n=rows.length;
     const periodo=n>0?fmtDate(rows[0].date)+' a '+fmtDate(rows[n-1].date):'—';
 
@@ -962,36 +1076,41 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
       ['Diam. copa',fmt(diam,1)+' m'],['Espaç. Sl',fmt(parseFloat($('emSl').value)||1,2)+' m'],
       ['Emis. Q',fmt(parseFloat($('emQ').value)||1.6,1)+' L/h'],['Taxa ap.',fmt(taxa,2)+' mm/h'],
       ['Eficiência',fmt(parseFloat($('emEf').value)||90,0)+'%'],
+      ['CAD do solo',fmt(cad,0)+' mm/m'],['Prof. radicular',fmt(profCm,0)+' cm'],
+      ['Smax (capac. solo)',fmt(smax,0)+' mm'],['Armaz. inicial',fmt(reservaIniPct,0)+'%'],
     ];
     const colW=42;
     params.forEach((p,i)=>{
       const col=i%4,row=Math.floor(i/4);
-      const px=12+col*colW,py=y+row*5;
+      const px=12+col*colW,py=y+row*6.5;
       doc.setFont(undefined,'bold');doc.setTextColor(80,96,112);doc.setFontSize(6.5);
       doc.text(p[0],px,py);
       doc.setFont(undefined,'normal');doc.setTextColor(28,43,42);doc.setFontSize(7.5);
       doc.text(p[1],px,py+3.5);
     });
+    const numParamRows=Math.ceil(params.length/4);
 
     // ── KPIs ──
-    y+=20;
+    y+=numParamRows*6.5+8;
     const kpis=[
       ['Precip. Total',fmt(totP)+' mm'],
       ['ETP Total',fmt(totETP)+' mm'],
       ['ETc_loc Total',fmt(totETCLoc)+' mm'],
       ['Déficit Total',fmt(totDEF)+' mm'],
+      ['Perc. Total',fmt(totPerc)+' mm'],
       ['Irrig. Total',fmtH(totIrrigH)],
       ['Média/dia',fmtH(totIrrigH/n)],
     ];
     const kW=(W-24)/kpis.length;
     kpis.forEach((k,i)=>{
       const kx=12+i*kW;
-      doc.setFillColor(i===3?255:i>=4?230:240,i===3?240:i>=4?245:247,i===3?240:i>=4?238:246);
+      const isDef=i===3||i===4,isIrrig=i>=5;
+      doc.setFillColor(isDef?255:isIrrig?230:240,isDef?240:isIrrig?245:247,isDef?240:isIrrig?238:246);
       doc.roundedRect(kx,y,kW-2,14,2,2,'F');
       doc.setFontSize(6);doc.setFont(undefined,'normal');doc.setTextColor(80,100,112);
       doc.text(k[0],kx+(kW-2)/2,y+4.5,{align:'center'});
       doc.setFontSize(10);doc.setFont(undefined,'bold');
-      doc.setTextColor(i===3?192:i>=4?30:31,i===3?57:i>=4?123:78,i===3?43:i>=4?69:76);
+      doc.setTextColor(isDef?192:isIrrig?30:31,isDef?57:isIrrig?123:78,isDef?43:isIrrig?69:76);
       doc.text(k[1],kx+(kW-2)/2,y+11,{align:'center'});
     });
 
@@ -1008,12 +1127,14 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     // ── Tabela de dados ──
     doc.autoTable({
       startY:y,
-      head:[['Data','Orig.','Tmin','Tmax','ETP','ETc','ETc_loc','P','Disp.','ETR','DEF','Reserva','Irrig.']],
+      head:[['Data','Orig.','Tmin','Tmax','ETP','ETc','ETc_loc','P','Perc.','Disp.','ETR','DEF','Reserva','Irrig.']],
       body:rows.map(r=>[
         fmtDate(r.date),ORIGIN_LABEL[r.origin]||r.origin,
         fmt(r.tmin,1),fmt(r.tmax,1),
         fmt(r.eto),fmt(r.etc),fmt(r.etcLoc),
-        fmt(r.precip),fmt(r.disponivel),fmt(r.etr),
+        fmt(r.precip),
+        r.perc>0.005?fmt(r.perc):'—',
+        fmt(r.disponivel),fmt(r.etr),
         r.def>0.005?fmt(r.def):'—',
         r.reserva>0.005?fmt(r.reserva):'—',
         fmtH(r.irrigH)
@@ -1022,11 +1143,11 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
         fmt(rows.reduce((s,r)=>s+r.tmin,0)/n,1),
         fmt(rows.reduce((s,r)=>s+r.tmax,0)/n,1),
         fmt(totETP),fmt(totETC),fmt(totETCLoc),
-        fmt(totP),'',fmt(totETR),fmt(totDEF),'',fmtH(totIrrigH)]],
+        fmt(totP),fmt(totPerc),'',fmt(totETR),fmt(totDEF),'',fmtH(totIrrigH)]],
       styles:{fontSize:6.5,cellPadding:2},
       headStyles:{fillColor:[31,78,76],textColor:255,fontStyle:'bold',fontSize:6},
       footStyles:{fillColor:[220,238,238],textColor:[31,78,76],fontStyle:'bold'},
-      columnStyles:{12:{fontStyle:'bold',textColor:[30,123,69]}},
+      columnStyles:{8:{textColor:[192,57,43]},13:{fontStyle:'bold',textColor:[30,123,69]}},
       alternateRowStyles:{fillColor:[247,250,249]},
       margin:{left:12,right:12},
     });
@@ -1043,10 +1164,10 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
   function exportCSV(){
     if(!days.length){alert('Nada para exportar ainda.');return;}
     const rows=computeBalance();
-    const hdr=['Data','Origem','Tmin_C','Tmax_C','Ra_mm','ETP_mm','ETc_mm','ETc_loc_mm','P_mm','Disponivel_mm','ETR_mm','DEF_mm','Reserva_mm','Irrigacao_h'];
+    const hdr=['Data','Origem','Tmin_C','Tmax_C','Ra_mm','ETP_mm','ETc_mm','ETc_loc_mm','P_mm','Perc_mm','Disponivel_mm','ETR_mm','DEF_mm','Reserva_mm','Irrigacao_h'];
     const lines=[hdr.join(';')].concat(rows.map(r=>[
       r.date,ORIGIN_LABEL[r.origin]||r.origin,fmt(r.tmin,1),fmt(r.tmax,1),fmt(r.ra),fmt(r.eto),fmt(r.etc),fmt(r.etcLoc),
-      fmt(r.precip),fmt(r.disponivel),fmt(r.etr),fmt(r.def),fmt(r.reserva),fmt(r.irrigH,1)
+      fmt(r.precip),fmt(r.perc),fmt(r.disponivel),fmt(r.etr),fmt(r.def),fmt(r.reserva),fmt(r.irrigH,1)
     ].join(';')));
     const blob=new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8;'});
     const a=document.createElement('a');
@@ -1055,7 +1176,60 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     a.click();
   }
 
+  /* ── Tela de inicialização (splash) ── mostra a logo Agrolâmina por alguns segundos (ou até o
+     clique) antes de liberar o app; reaparece sempre que "Novo Cálculo" é confirmado, reforçando
+     a sensação de recomeço. */
+  const SPLASH_DURACAO_MS=3200;
+  function esconderSplash(){
+    const el=$('splashScreen');
+    if(!el||el.classList.contains('oculto'))return;
+    el.classList.add('oculto');
+    setTimeout(()=>{el.style.display='none';},650);
+  }
+  function mostrarSplash(){
+    const el=$('splashScreen');
+    if(!el)return;
+    el.style.display='';
+    el.classList.remove('oculto');
+    setTimeout(esconderSplash,SPLASH_DURACAO_MS);
+  }
+  setTimeout(esconderSplash,SPLASH_DURACAO_MS);
+
+  /* ── Novo Cálculo ── limpa todos os dias e devolve todos os campos aos valores padrão,
+     mostrando a splash de novo (mesmo comportamento da Sistematização de Plantio). */
+  function novoCalculo(){
+    if(days.length&&!confirm('Isso vai limpar todos os dias adicionados e os parâmetros preenchidos. Deseja continuar?'))return;
+    days=[];lastFetchOrigin=null;
+
+    setLocalMode('coord');
+    $('lat').value=-20.53;$('lon').value=-47.40;
+    $('kmlStatus').textContent='';$('kmlStatus').className='status';
+    $('kmlInfo').style.display='none';$('kmlMap').style.display='none';
+    if(kmlPolyLayer&&kmlMap){kmlMap.removeLayer(kmlPolyLayer);kmlPolyLayer=null;}
+
+    $('dateStart').valueAsDate=new Date(Date.now()-6*86400000);
+    $('dateEnd').valueAsDate=new Date();
+    $('date').valueAsDate=new Date();
+    $('tmin').value='';$('tmax').value='';$('precip').value=0;
+    $('fetchStatus').textContent='';$('fetchStatus').className='status';
+
+    $('emQ').value=1.6;$('emSe').value=0.40;$('emSl').value=1.00;$('emEf').value=90;
+    $('kc').value=1.00;$('diamCopa').value=1.5;
+
+    $('tipoSolo').value='franco';aplicarTipoSolo();
+    $('profRad').value=40;$('reservaIniPct').value=0;
+
+    atualizarTaxa();atualizarSolo();render();
+    mostrarSplash();
+  }
+
   /* ── Eventos ── */
+  $('splashScreen').addEventListener('click',esconderSplash);
+  $('btnNovoCalculo').addEventListener('click',novoCalculo);
+  $('tipoSolo').addEventListener('change',()=>{aplicarTipoSolo();atualizarSolo();if(days.length)render();});
+  ['cad','profRad','reservaIniPct'].forEach(id=>{
+    $(id).addEventListener('input',()=>{atualizarSolo();if(days.length)render();});
+  });
   $('tabCoord').addEventListener('click',()=>setLocalMode('coord'));
   $('tabKml').addEventListener('click',()=>setLocalMode('kml'));
   $('btnKml').addEventListener('click',()=>$('kmlInput').click());
@@ -1081,6 +1255,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
   $('pam').addEventListener('blur',()=>$('pam').setAttribute('readonly',''));
   window.addEventListener('resize',()=>{if(days.length)render();});
   atualizarTaxa();
+  atualizarSolo();
 
   render();
 })();
