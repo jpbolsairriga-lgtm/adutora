@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ETP Diária & Balanço Hídrico v1.13.5 — Agrolâmina</title>
+<title>ETP Diária & Balanço Hídrico v1.14 — Agrolâmina</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -58,7 +58,7 @@ main{max-width:1280px;margin:0 auto;padding:18px 20px 60px;}
 /* ── Inputs ── */
 label{display:block;font-size:.72rem;color:var(--slate);margin-bottom:3px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;}
 input[type=number],input[type=date],input[type=text]{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:6px;font-family:var(--mono);font-size:.85rem;color:var(--ink);background:#fbfcfb;}
-input:focus{outline:2px solid var(--teal);outline-offset:1px;}
+input:focus,textarea:focus{outline:2px solid var(--teal);outline-offset:1px;}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;}
 .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px;}
 .g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
@@ -181,7 +181,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
   </div>
   <div class="hdr-nav">
     <div class="hdr-nav-btns">
-      <span class="ver-tag">v1.13.5</span>
+      <span class="ver-tag">v1.14</span>
       <button class="info-btn new-calc-btn" id="btnNovoCalculo" type="button" title="Limpa todos os dias e parâmetros e mostra a tela inicial de novo">&#128260; Novo C&#225;lculo</button>
       <button class="info-btn" id="btnInfo" type="button">&#8505;&#65039; Como funciona</button>
       <a class="back-link" href="../index.html">&#8592; Menu</a>
@@ -323,9 +323,29 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     </div>
   </div>
 
-  <!-- Card 3: Gotejamento + Cultura -->
+  <!-- Card 3: Cliente / Propriedade / Observações (identificação do relatório) -->
   <div class="card" style="margin-bottom:16px;">
-    <h2><span class="n">3</span>Sistema de Gotejamento &amp; Cultura</h2>
+    <h2><span class="n">3</span>Cliente &amp; Propriedade</h2>
+    <div class="row2">
+      <div class="field">
+        <label>Nome do cliente</label>
+        <input type="text" id="nomeCliente" placeholder="Ex.: Jo&#227;o da Silva">
+      </div>
+      <div class="field">
+        <label>Nome da propriedade / talh&#227;o</label>
+        <input type="text" id="nomePropriedade" placeholder="Ex.: Fazenda S&#227;o Jos&#233; — Talh&#227;o 3">
+      </div>
+    </div>
+    <div class="field">
+      <label>Observa&#231;&#245;es</label>
+      <textarea id="observacoes" rows="3" placeholder="Anota&#231;&#245;es livres sobre a &#225;rea, cultura, manejo, etc. — entram no relat&#243;rio PDF." style="width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:6px;font-family:var(--sans);font-size:.82rem;color:var(--ink);background:#fbfcfb;resize:vertical;"></textarea>
+    </div>
+    <div class="hint" style="margin-top:4px;">Esses dados n&#227;o entram no c&#225;lculo — s&#227;o s&#243; pra identificar o relat&#243;rio (cliente, propriedade e observa&#231;&#245;es aparecem no PDF).</div>
+  </div>
+
+  <!-- Card 4: Gotejamento + Cultura -->
+  <div class="card" style="margin-bottom:16px;">
+    <h2><span class="n">4</span>Sistema de Gotejamento &amp; Cultura</h2>
     <!-- Linha 1: Gotejador -->
     <div class="g4" style="margin-bottom:10px;">
       <div class="field">
@@ -372,7 +392,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
 
   <!-- Card 3b: Solo & Zona Radicular -->
   <div class="card" style="margin-bottom:16px;">
-    <h2><span class="n">4</span>Solo &amp; Zona Radicular</h2>
+    <h2><span class="n">5</span>Solo &amp; Zona Radicular</h2>
     <div class="g4-solo">
       <div class="field">
         <label>Tipo de solo (textura)</label>
@@ -417,7 +437,7 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
 
   <!-- Card 4: Tabela -->
   <div class="card">
-    <h2><span class="n">5</span>Balan&#231;o H&#237;drico Sequencial Di&#225;rio</h2>
+    <h2><span class="n">6</span>Balan&#231;o H&#237;drico Sequencial Di&#225;rio</h2>
 
     <div class="tbl-wrap">
       <table id="tbl">
@@ -1278,8 +1298,23 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
     doc.text('João Paulo de Oliveira · Eng. Agrônomo · (16) 99779-5055',W-12,9,{align:'right'});
     doc.text('Emitido em: '+now,W-12,15.5,{align:'right'});
 
-    // ── Parâmetros ──
+    // ── Cliente / Propriedade ── linha própria, largura total (evita colidir com a grade de
+    // parâmetros ao lado — nomes longos não cabiam nos 42mm de uma coluna).
     let y=28;
+    const nomeCliente=$('nomeCliente').value.trim();
+    const nomePropriedade=$('nomePropriedade').value.trim();
+    const observacoes=$('observacoes').value.trim();
+    if(nomeCliente||nomePropriedade){
+      const partesCP=[];
+      if(nomeCliente)partesCP.push('Cliente: '+nomeCliente);
+      if(nomePropriedade)partesCP.push('Propriedade: '+nomePropriedade);
+      doc.setFontSize(9.5);doc.setFont(undefined,'bold');doc.setTextColor(31,78,76);
+      const linhaCP=doc.splitTextToSize(partesCP.join('   ·   '),W-24);
+      doc.text(linhaCP,12,y);
+      y+=linhaCP.length*4.2+3;
+    }
+
+    // ── Parâmetros ──
     doc.setFontSize(7.5);doc.setFont(undefined,'bold');doc.setTextColor(31,78,76);
     doc.text('PARÂMETROS DO SISTEMA',12,y);
     y+=4;
@@ -1327,9 +1362,20 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
       doc.setTextColor(isDef?192:isIrrig?30:31,isDef?57:isIrrig?123:78,isDef?43:isIrrig?69:76);
       doc.text(k[1],kx+(kW-2)/2,y+11,{align:'center'});
     });
+    y+=18;
+
+    // ── Observações (só entra se o campo foi preenchido) ──
+    if(observacoes){
+      doc.setFontSize(7.5);doc.setFont(undefined,'bold');doc.setTextColor(31,78,76);
+      doc.text('OBSERVAÇÕES',12,y);
+      y+=4;
+      doc.setFontSize(7.5);doc.setFont(undefined,'normal');doc.setTextColor(60,72,72);
+      const obsLines=doc.splitTextToSize(observacoes,W-24);
+      doc.text(obsLines,12,y);
+      y+=obsLines.length*3.6+6;
+    }
 
     // ── Gráfico ──
-    y+=18;
     const canvas=$('chart');
     if(canvas.width>0){
       const imgData=canvas.toDataURL('image/png');
@@ -1440,6 +1486,8 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
   function novoCalculo(){
     if(days.length&&!confirm('Isso vai limpar todos os dias adicionados e os parâmetros preenchidos. Deseja continuar?'))return;
     days=[];lastFetchOrigin=null;
+
+    $('nomeCliente').value='';$('nomePropriedade').value='';$('observacoes').value='';
 
     setLocalMode('coord');
     $('lat').value=-20.53;$('lon').value=-47.40;
