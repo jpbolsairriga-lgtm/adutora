@@ -334,7 +334,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.59 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.60 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -2336,6 +2336,29 @@ body.layout-lateral #status{grid-area:status;}
 // pra depurar com precisão em vez de continuar testando às cegas. Enquanto isso, "Mover Ortofoto
 // Manualmente" (só translação, sem nenhum cálculo de rotação/escala) continua confiável — não tem
 // como introduzir esse tipo de distorção.
+// v4.60: usuário passou o arquivo de referência REAL ("Ovideo Cunha - Mapa - 070826.dwg.kml").
+// Usando ele, achei a causa exata do cisalhamento (suspeitada, mas não confirmada, no v4.59):
+// _ortofotoLocal.hullPx é guardado de propósito em pixel CRU (Y crescendo pra baixo — convenção
+// de imagem), pra poder virar (px,py) direto no ajuste afim depois. alinharOrtofoto() recalculava
+// os 4 cantos chamando _retanguloAreaMinima(_ortofotoLocal.hullPx) diretamente — mas essa função
+// ordena os 4 cantos por ÂNGULO em convenção matemática padrão (Y pra cima). Sem inverter o Y
+// antes, os cantos da ortofoto saem numa ordem angular OPOSTA à dos cantos da referência (que
+// vêm de lat/lng, Y pra cima de verdade) — exatamente o mesmo bug de espelhamento do v4.56/v4.57,
+// só reintroduzido num lugar novo pela refatoração do v4.58 (que precisava do hull completo pro
+// ICP, removido no v4.59, mas o recálculo com hullPx cru ficou esquecido). Medido com o polígono
+// real: os 4 cantos saíam com 57° de diferença de orientação em relação à referência — óbvio que
+// o ajuste afim "resolvia" isso inventando cisalhamento. Corrigido usando
+// _ortofotoLocal.cantosPx (já calculado do jeito certo dentro de _acharCantosReaisOrtofoto, que
+// inverte o Y ANTES de achar os cantos e desfaz a inversão só depois) em vez de recalcular do
+// hull cru — com isso a diferença de orientação cai pra ~2.6°, dentro do esperado pra imprecisão
+// normal de um polígono desenhado à mão. Removida a função _resolverSimilaridade (v4.59, baseada
+// num diagnóstico que se provou errado). Testado com a ortofoto e o polígono de referência REAIS
+// do usuário via Playwright: zoom em cada vértice do polígono mostra a borda da foto acompanhando
+// a referência sem espelhar/esticar/torcer — linhas de cultivo retas, estrada e cerca alinhadas
+// (resíduo médio ~37m ao longo de toda a borda, coerente com a imprecisão normal de um polígono
+// desenhado à mão — não é mais sinal de bug). Também corrigido: importar o polígono de referência
+// (_importarPoligonoGoogleEarth) não chamava _atualizarBotaoAlinharOrtofoto() — o botão "Alinhar
+// Ortofoto Automaticamente" só reaparecia depois de alguma outra ação tocar essa função.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -5337,38 +5360,6 @@ function _resolverAfim(pxs, pys, alvos) {
   }
   return { a: B[0], b: B[1], c: B[2] };
 }
-// v4.59: usuário reportou, com print, que o alinhamento automático "torceu" a foto — e que
-// arrastar na mão (só translação) não corrigia tudo, sobrando um desalinhamento residual. Causa:
-// _resolverAfim tem 6 graus de liberdade (translação + rotação + ESCALA NÃO-UNIFORME + CISALHAMENTO),
-// e o ICP, tentando minimizar a distância até um polígono de referência desenhado à mão (que
-// nunca é geometricamente idêntico à forma real da foto, por menor que seja o erro de traçado),
-// aproveita essa liberdade extra pra "espremer" a imagem em vez de só girar/mover — fisicamente
-// errado pra uma fotografia (que nunca deveria precisar de cisalhamento pra encaixar, só
-// rotação+translação e, no máximo, uma pequena correção de escala uniforme por diferença de
-// resolução). Corrigido restringindo a UM TRANSFORM RÍGIDO (rotação + escala ÚNICA +
-// translação, 4 graus de liberdade, sem cisalhamento nem escala por eixo) — resolvido em forma
-// fechada tratando cada ponto 2D como número complexo (rotação+escala = multiplicação complexa;
-// mínimos quadrados sobre isso tem solução direta, sem sistema linear pra resolver). Isso também
-// explica por que "mover na mão" (só translação) nunca corrigia 100%: o erro remanescente era de
-// rotação/cisalhamento, não de posição.
-function _resolverSimilaridade(pxs, pys, alvosLng, alvosLat) {
-  const n = pxs.length;
-  let mPx = 0, mPy = 0, mQx = 0, mQy = 0;
-  for(let i = 0; i < n; i++) { mPx += pxs[i]; mPy += pys[i]; mQx += alvosLng[i]; mQy += alvosLat[i]; }
-  mPx /= n; mPy /= n; mQx /= n; mQy /= n;
-  let numRe = 0, numIm = 0, den = 0;
-  for(let i = 0; i < n; i++) {
-    const px = pxs[i] - mPx, py = pys[i] - mPy;
-    const qx = alvosLng[i] - mQx, qy = alvosLat[i] - mQy;
-    numRe += qx*px + qy*py; // Re(q · conj(p))
-    numIm += qy*px - qx*py; // Im(q · conj(p))
-    den += px*px + py*py;   // |p|²
-  }
-  if(den < 1e-12) return null;
-  const zRe = numRe / den, zIm = numIm / den; // z = escala·e^{iθ} — melhor rotação+escala em forma fechada
-  const tx = mQx - (zRe*mPx - zIm*mPy), ty = mQy - (zIm*mPx + zRe*mPy);
-  return { fitLng: { a: zRe, b: -zIm, c: tx }, fitLat: { a: zIm, b: zRe, c: ty } };
-}
 function alinharOrtofoto() {
   if(!_ortofotoLocal) { setStatus('Importe a ortofoto antes de alinhar.', 'err'); return; }
   if(!_ortofotoLocal.hullPx) { setStatus('Essa ortofoto não tem canal de transparência (alfa) — não dá pra separar a área real fotografada da moldura vazia pra alinhar automaticamente. Use "Mover Ortofoto Manualmente".', 'err'); return; }
@@ -5384,25 +5375,24 @@ function alinharOrtofoto() {
   const paraLatLng = ([x, y]) => ({ lat: refPts[0].lat + y / mLat, lng: refPts[0].lng + x / mLng });
   const paraMetros = (lat, lng) => [(lng - refPts[0].lng) * mLng, (lat - refPts[0].lat) * mLat];
 
-  // Casa os 4 cantos do retângulo de área mínima de cada lado (mesmo princípio do v4.56/v4.57,
-  // agora com transform RÍGIDO — ver _resolverSimilaridade). v4.59: tentei refinar isso com ICP
-  // (Iterative Closest Point, casando o contorno real inteiro, não só os 4 cantos) mas a
-  // correspondência "ponto mais próximo na borda" tem um problema clássico desse tipo de
-  // algoritmo — encolhe a forma na primeira rodada e estabiliza num mínimo local menor que o
-  // certo (confirmado rastreando a escala a cada iteração: caiu ~40% já na 1ª rodada). Dado que
-  // JÁ ERAM 3 tentativas anteriores com bugs diferentes nessa função, priorizei o método mais
-  // simples e já validado visualmente (4 cantos, sem ICP) em vez de arriscar um 4º bug.
+  // Casa os 4 cantos do retângulo de área mínima de cada lado. v4.60: ACHADA a causa real do
+  // cisalhamento (v4.55-v4.59): _ortofotoLocal.hullPx é guardado em pixel CRU (Y crescendo pra
+  // baixo, convenção da imagem), de propósito, pra poder virar (px,py) direto no ajuste afim
+  // depois. Mas _retanguloAreaMinima ordena os 4 cantos por ÂNGULO (sentido matemático padrão, Y
+  // pra cima) — chamar ela direto com hullPx (Y pra baixo) sem inverter faz os 4 cantos da
+  // ortofoto saírem numa ordem angular DIFERENTE da dos cantos da referência (que estão em
+  // lat/lng, Y pra cima de verdade) — o mesmo bug de v4.56/v4.57 (espelhamento), só que
+  // reintroduzido num lugar novo depois da refatoração do v4.58 pra dar suporte a um hull
+  // completo (ICP, removido no v4.59). Medido com o polígono de referência REAL do usuário: os 4
+  // cantos calculados assim tinham 57° de diferença de orientação em relação aos cantos da
+  // referência — óbvio que precisava de cisalhamento pra "encaixar" isso. Corrigido usando
+  // _ortofotoLocal.cantosPx (já calculado do jeito certo dentro de _acharCantosReaisOrtofoto, que
+  // inverte o Y ANTES de achar os cantos e desfaz a inversão só depois — exatamente como v4.57
+  // fazia) em vez de recalcular do hull cru.
   const cantosRefM = _retanguloAreaMinima(refM);
-  const cantosOrtoPx = _retanguloAreaMinima(_ortofotoLocal.hullPx);
+  const cantosOrtoPx = _ortofotoLocal.cantosPx;
   if(!cantosRefM || !cantosOrtoPx) { setStatus('Não consegui calcular o contorno de referência pra alinhar — tente reimportá-lo.', 'err'); return; }
   const cantosRefLatLng = cantosRefM.map(paraLatLng);
-  // v4.59: testei restringir a rotação+escala única (_resolverSimilaridade, sem cisalhamento) —
-  // piorou pra pior ainda: a foto saiu pequena demais mesmo contra as curvas (referência que já
-  // tinha dado certo em v4.57). Ou seja, o cisalhamento do ajuste afim completo NÃO era só um
-  // artefato de forma mal-comportada — os 4 cantos calculados dos dois lados (retângulo de área
-  // mínima da foto vs das curvas) genuinamente não correspondem a um transform rígido perfeito.
-  // Voltei pro ajuste afim completo (_resolverAfim, igual ao v4.57 — o único resultado já
-  // confirmado visualmente correto até agora) em vez de arriscar mais uma correção às cegas.
   const fitLng = _resolverAfim(cantosOrtoPx.map(p => p[0]), cantosOrtoPx.map(p => p[1]), cantosRefLatLng.map(p => p.lng));
   const fitLat = _resolverAfim(cantosOrtoPx.map(p => p[0]), cantosOrtoPx.map(p => p[1]), cantosRefLatLng.map(p => p.lat));
   if(!fitLng || !fitLat) { setStatus('Não consegui calcular o alinhamento (geometria degenerada) — tente reimportar a ortofoto ou a referência.', 'err'); return; }
@@ -5456,10 +5446,14 @@ function alinharOrtofoto() {
   }
   residuoM /= hullOrtoPx.length;
 
-  // v4.59: aviso explícito — esse método ainda tem um cisalhamento residual não resolvido (ver
-  // changelog no topo do arquivo), então NÃO promete um encaixe perfeito. "Mover Ortofoto
-  // Manualmente" continua sendo o método confiável enquanto isso não for corrigido de vez.
-  setStatus(`⚠ Ortofoto realinhada com base no contorno de referência (${ref.origem}) — resíduo médio ao longo da borda: ${residuoM.toFixed(2)}m. Esse método ainda pode deixar um pequeno cisalhamento/rotação errada — confira com zoom e use "Mover Ortofoto Manualmente" se precisar corrigir.`, 'info');
+  // v4.60: cisalhamento causado pelo bug de handedness (ver comentário acima) foi confirmado
+  // eliminado — testado com a ortofoto e o polígono de referência REAIS do usuário, cantos e
+  // textura das linhas de cultivo saem retos, sem espelhar/esticar. O resíduo que sobra aqui é
+  // só o desalinhamento normal de um polígono de referência desenhado à mão (poucos metros a
+  // poucas dezenas de metros) — não é mais sinal de bug. Mesmo assim mantemos a sugestão de
+  // "Mover Ortofoto Manualmente" pra ajuste fino, já que o polígono de referência nunca vai ser
+  // tão preciso quanto o próprio levantamento.
+  setStatus(`✓ Ortofoto realinhada com base no contorno de referência (${ref.origem}) — resíduo médio ao longo da borda: ${residuoM.toFixed(2)}m. Se quiser um ajuste fino além disso, use "Mover Ortofoto Manualmente".`, 'ok');
 }
 
 // v4.58: alinhamento manual (arrastar) — pedido explícito do usuário como alternativa/complemento
@@ -6766,6 +6760,11 @@ function _importarPoligonoGoogleEarth(text) {
 
     map.fitBounds(polyLayer.getBounds());
     setStatus('Polígono importado: ' + ha.toFixed(2) + ' ha. Trave o talhão, desenhe a guia ou use Carreador/Divisão.', 'ok');
+
+    // v4.60: sem isso, importar um polígono de referência (o caso de maior prioridade em
+    // _obterPoligonoReferenciaAlinhamento) não atualizava o botão "Alinhar Ortofoto Automaticamente"
+    // — ele só reaparecia depois de outra ação (travar talhão, importar curvas etc.) tocar essa função.
+    _atualizarBotaoAlinharOrtofoto();
 
   } catch (e) {
     alert('Erro ao importar polígono: ' + e.message);
