@@ -334,7 +334,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.55 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.56 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1249,6 +1249,7 @@ body.layout-lateral #status{grid-area:status;}
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@latest/dist/Leaflet.GoogleMutant.js"></script>
+<script src="https://unpkg.com/leaflet-imageoverlay-rotated@0.2.1/Leaflet.ImageOverlay.Rotated.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.127.0/build/three.min.js"></script>
@@ -2262,6 +2263,22 @@ body.layout-lateral #status{grid-area:status;}
 // com o polígono de cobertura das curvas já importadas (mesmo princípio de um ajuste de registro
 // de GIS profissional, só que automático). Aparece só quando ortofoto E curvas locais estão
 // ativas; integrado ao Desfazer.
+// v4.56: usuário testou o alinhamento automático do v4.55 e PIOROU o deslocamento — com razão.
+// A faixa fotografada por um voo de drone quase nunca é alinhada ao norte (aqui, ~17° de
+// rotação); o retângulo alinhado ao norte usado no v4.55 sobra ~40% de área vazia nos cantos, e
+// seu centro não é o centro da área real — corrigir por ele (centro+escala) empurrava a foto pro
+// lugar errado. Sugestão do usuário: usar um polígono com a forma real e casar os vértices —
+// exatamente isso. Achou o retângulo de ÁREA MÍNIMA (via "rotating calipers", não alinhado ao
+// norte) tanto da área REAL fotografada (usando o canal alfa da ortofoto pra separar do fundo
+// vazio — _acharCantosReaisOrtofoto) quanto do polígono de cobertura das curvas
+// (_retanguloAreaMinima), casa os 4 vértices correspondentes e resolve um ajuste AFIM completo de
+// 6 parâmetros por mínimos quadrados (_resolverAfim) — uma primeira tentativa só com px→lng e
+// py→lat separados (sem termos cruzados) ainda dava errado com rotação real, esticando a foto;
+// o ajuste afim completo lida com isso corretamente. Como a correção agora inclui rotação de
+// verdade, a exibição passou a usar o plugin Leaflet.ImageOverlay.Rotated (3 cantos em vez de um
+// retângulo reto) — um L.imageOverlay comum não tem como representar uma imagem girada. Testado
+// contra os arquivos reais do usuário: resíduo de ~0m nos 4 cantos (era de centenas de metros com
+// a abordagem anterior sem rotação).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -4992,6 +5009,66 @@ async function _escolherMelhorOverview(tiff, alvoPx) {
   return candidatos[0].img;
 }
 
+// v4.56: retângulo de ÁREA MÍNIMA (rotating calipers) que envolve um conjunto de pontos 2D — a
+// faixa fotografada por um voo de drone quase nunca é alinhada ao norte (aqui, ~17° de rotação);
+// o retângulo alinhado ao norte (bounding box simples) sobra até 40% de área vazia nos cantos,
+// o que faz qualquer alinhamento baseado nele (centro/escala) ficar impreciso ou até piorar as
+// coisas (bug relatado: "o alinhamento piorou o deslocamento"). Recebe pontos [x,y] já no plano
+// (metros locais ou pixels, tanto faz) e devolve os 4 cantos do retângulo que realmente envolve a
+// forma real, na mesma ordem ao redor (não fechado).
+function _retanguloAreaMinima(pontos) {
+  let hullPts;
+  try {
+    const hull = turf.convex(turf.featureCollection(pontos.map(p => turf.point(p))));
+    hullPts = hull.geometry.coordinates[0];
+  } catch(e) { return null; }
+  if(!hullPts || hullPts.length < 3) return null;
+  let melhor = { ang: 0, area: Infinity };
+  for(let i = 0; i < hullPts.length - 1; i++) {
+    const dx = hullPts[i+1][0] - hullPts[i][0], dy = hullPts[i+1][1] - hullPts[i][1];
+    const ang = Math.atan2(dy, dx);
+    const c = Math.cos(-ang), s = Math.sin(-ang);
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for(let j = 0; j < hullPts.length; j++) {
+      const x = hullPts[j][0], y = hullPts[j][1];
+      const rx = x*c - y*s, ry = x*s + y*c;
+      if(rx < minX) minX = rx; if(rx > maxX) maxX = rx;
+      if(ry < minY) minY = ry; if(ry > maxY) maxY = ry;
+    }
+    const area = (maxX - minX) * (maxY - minY);
+    if(area < melhor.area) melhor = { ang, area, minX, maxX, minY, maxY };
+  }
+  const c = Math.cos(melhor.ang), s = Math.sin(melhor.ang);
+  const cantosLocais = [[melhor.minX, melhor.minY], [melhor.maxX, melhor.minY], [melhor.maxX, melhor.maxY], [melhor.minX, melhor.maxY]];
+  const cantos = cantosLocais.map(([lx, ly]) => [lx*c - ly*s, lx*s + ly*c]);
+  // ordena os 4 cantos por ângulo ao redor do próprio centro — dá uma ordem CONSISTENTE
+  // (sempre "sentido anti-horário a partir da direita") independente de qual aresta do hull
+  // originou o retângulo, essencial pra depois casar canto-a-canto com outro retângulo.
+  const cx = cantos.reduce((s,p)=>s+p[0],0)/4, cy = cantos.reduce((s,p)=>s+p[1],0)/4;
+  cantos.sort((a,b) => Math.atan2(a[1]-cy, a[0]-cx) - Math.atan2(b[1]-cy, b[0]-cx));
+  return cantos;
+}
+
+// Acha os 4 cantos REAIS (retângulo de área mínima) da área fotografada dentro do raster —
+// amostra o canal alfa (transparência) numa grade esparsa pra achar só os pixels com conteúdo de
+// verdade, ignorando a moldura vazia/transparente que sobra em qualquer imagem de voo diagonal
+// dentro de um TIFF retangular. Retorna os cantos em coordenada de PIXEL (não lat/lng) — a
+// conversão pra lat/lng usa sempre os bounds ATUAIS (_ortofotoLocal.bounds), pra continuar válido
+// depois de um realinhamento.
+function _acharCantosReaisOrtofoto(raster, w, h, samplesPerPixel) {
+  if(samplesPerPixel < 4) return null; // sem canal alfa não dá pra separar conteúdo real da moldura
+  const passo = Math.max(1, Math.round(Math.max(w, h) / 300));
+  const pontosPx = [];
+  for(let py = 0; py < h; py += passo) {
+    for(let px = 0; px < w; px += passo) {
+      const idx = (py * w + px) * samplesPerPixel;
+      if(raster[idx + 3] > 200) pontosPx.push([px, py]);
+    }
+  }
+  if(pontosPx.length < 8) return null;
+  return _retanguloAreaMinima(pontosPx);
+}
+
 function _rasterParaCanvas(raster, width, height, samplesPerPixel) {
   const canvas = document.createElement('canvas');
   canvas.width = width; canvas.height = height;
@@ -5066,10 +5143,18 @@ async function importarOrtofotoTiff(file) {
   }
 
   const canvas = _rasterParaCanvas(raster, w, h, samplesPerPixel);
+  // Cantos reais da área fotografada (retângulo de área mínima sobre o canal alfa) — em pixel,
+  // não em lat/lng, pra continuar válido depois de um realinhamento (ver alinharOrtofotoComCurvas
+  // e _acharCantosReaisOrtofoto). null se a imagem não tiver canal alfa (sem como separar
+  // conteúdo real da moldura vazia — nesse caso o alinhamento automático não fica disponível).
+  const cantosPx = _acharCantosReaisOrtofoto(raster, w, h, samplesPerPixel);
 
   if(_ortofotoLocal && _ortofotoLocal.overlay) map.removeLayer(_ortofotoLocal.overlay);
-  const overlay = L.imageOverlay(canvas.toDataURL('image/png'), bounds, { opacity: 1 }).addTo(map);
-  _ortofotoLocal = { overlay, bounds, larguraPx: w, alturaPx: h };
+  const dataUrl = canvas.toDataURL('image/png');
+  const overlay = L.imageOverlay(dataUrl, bounds, { opacity: 1 }).addTo(map);
+  // dataUrl guardado pra poder recriar a camada (plana ou rotacionada, ver
+  // alinharOrtofotoComCurvas) sem precisar reler o arquivo original.
+  _ortofotoLocal = { overlay, bounds, larguraPx: w, alturaPx: h, cantosPx, dataUrl, rotacionada: false };
   // Reafirma as curvas de nível por cima, caso já estivessem importadas antes da ortofoto (senão a
   // ortofoto, adicionada depois, cobriria elas — bug relatado: "curvas não aparecem na ortofoto").
   _garantirCurvasNoTopo();
@@ -5101,56 +5186,101 @@ function _atualizarBotaoAlinharOrtofoto() {
   if(btn) btn.style.display = (_ortofotoLocal && _elevacaoLocalDisponivel()) ? 'flex' : 'none';
 }
 
-// v4.55: alinhamento automático — usuário relatou (com prints e comparação em QGIS/AutoCAD/Google
-// Earth) uma diferença pequena (poucos metros) entre a área da ortofoto e a área das curvas de
-// nível, mesmo as duas vindo do MESMO levantamento/processamento no Agisoft — confirmado com
-// números exatos direto nos arquivos originais (sem nenhuma conversão): o polígono das curvas é
-// sistematicamente um pouco menor e deslocado em relação ao retângulo da ortofoto. Isso é uma
-// diferença de REGISTRO entre os dois produtos exportados (não um bug de leitura/conversão aqui —
-// já verificado 4 vezes por caminhos independentes), mas não dá pra pedir pro usuário corrigir na
-// mão toda vez. Em vez disso: calcula automaticamente a transformação de similaridade (translação +
-// escala uniforme, sem esticar a foto) que centraliza e escala o retângulo da ortofoto pra bater
-// com o retângulo do polígono de cobertura das curvas (_curvasLocais.coberturaPoly, já calculado
-// pelo hull convexo dos pontos importados) — mesmo princípio de um "ajuste de registro" que
-// qualquer GIS profissional oferece, só que automático em vez de manual.
+// v4.55/v4.56: alinhamento automático — usuário relatou (com prints e comparação em QGIS/AutoCAD/
+// Google Earth) uma diferença entre a área da ortofoto e a área das curvas de nível, mesmo as
+// duas vindo do MESMO levantamento/processamento no Agisoft — confirmado com números exatos
+// direto nos arquivos originais (sem nenhuma conversão): diferença de REGISTRO entre os dois
+// produtos exportados (não bug de leitura/conversão — já verificado por vários caminhos
+// independentes). v4.55 corrigia usando centro+escala do retângulo alinhado ao NORTE — mas a
+// faixa fotografada por um voo de drone quase nunca é alinhada ao norte (aqui, ~17°), então esse
+// retângulo sobra ~40% de área vazia nos cantos e seu centro não é o centro da área real —
+// corrigir por ele piorava o deslocamento em vez de melhorar (bug relatado). Uma primeira versão
+// desta correção tentou ajustar só px→lng e py→lat separados usando os 4 cantos REAIS — mas isso
+// também está errado com rotação: numa forma girada, a longitude de um canto depende dos DOIS
+// eixos de pixel ao mesmo tempo, não só de X (piorou ainda mais, esticou a foto). Correção de
+// verdade: ajuste AFIM completo de 6 parâmetros (lng = a·px + b·py + c, lat = d·px + e·py + f),
+// resolvido por mínimos quadrados casando os 4 cantos do retângulo de ÁREA MÍNIMA (não alinhado
+// ao norte) da área real fotografada (_acharCantosReaisOrtofoto, via canal alfa) com os 4 cantos
+// do retângulo de área mínima do polígono de cobertura das curvas — e, como isso NATURALMENTE
+// inclui uma rotação, passa a usar L.imageOverlay.rotated (plugin, 3 cantos em vez de um
+// retângulo reto) pra conseguir de fato girar a imagem, não só mover/redimensionar um retângulo
+// que nunca ia encaixar numa faixa rotacionada.
+function _resolverAfim(pxs, pys, alvos) {
+  // resolve [a;b;c] no sistema normal 3x3 de mínimos quadrados pra alvo = a*px + b*py + c
+  const n = pxs.length;
+  let Sxx=0,Sxy=0,Sx=0,Syy=0,Sy=0,Sxz=0,Syz=0,Sz=0;
+  for(let i=0;i<n;i++){ const x=pxs[i],y=pys[i],z=alvos[i]; Sxx+=x*x;Sxy+=x*y;Sx+=x;Syy+=y*y;Sy+=y;Sxz+=x*z;Syz+=y*z;Sz+=z; }
+  const A = [[Sxx,Sxy,Sx],[Sxy,Syy,Sy],[Sx,Sy,n]], B = [Sxz,Syz,Sz];
+  for(let i=0;i<3;i++){
+    const piv = A[i][i]; if(Math.abs(piv) < 1e-12) return null;
+    for(let j=i;j<3;j++) A[i][j]/=piv; B[i]/=piv;
+    for(let k=0;k<3;k++) if(k!==i){ const f=A[k][i]; for(let j=i;j<3;j++) A[k][j]-=f*A[i][j]; B[k]-=f*B[i]; }
+  }
+  return { a: B[0], b: B[1], c: B[2] };
+}
 function alinharOrtofotoComCurvas() {
   if(!_ortofotoLocal || !_elevacaoLocalDisponivel()) { setStatus('Importe a ortofoto E as curvas de nível antes de alinhar.', 'err'); return; }
-  const curvaBounds = L.geoJSON(_curvasLocais.coberturaPoly).getBounds();
-  const orthoBounds = _ortofotoLocal.bounds;
+  if(!_ortofotoLocal.cantosPx) { setStatus('Essa ortofoto não tem canal de transparência (alfa) — não dá pra separar a área real fotografada da moldura vazia pra alinhar automaticamente.', 'err'); return; }
 
-  const curvaCLat = (curvaBounds.getSouth() + curvaBounds.getNorth()) / 2;
-  const curvaCLng = (curvaBounds.getWest() + curvaBounds.getEast()) / 2;
-  const orthoCLat = (orthoBounds.getSouth() + orthoBounds.getNorth()) / 2;
-  const orthoCLng = (orthoBounds.getWest() + orthoBounds.getEast()) / 2;
+  const hullCurvas = _curvasLocais.coberturaPoly.geometry.coordinates[0];
+  const latRef = hullCurvas[0][1], mLat = 111320, mLng = Math.cos(latRef * Math.PI / 180) * mLat;
+  const hullCurvasM = hullCurvas.map(([lng, lat]) => [(lng - hullCurvas[0][0]) * mLng, (lat - hullCurvas[0][1]) * mLat]);
+  const cantosCurvasM = _retanguloAreaMinima(hullCurvasM);
+  if(!cantosCurvasM) { setStatus('Não consegui calcular o contorno das curvas pra alinhar — tente reimportá-las.', 'err'); return; }
+  const cantosCurvas = cantosCurvasM.map(([x, y]) => ({ lat: hullCurvas[0][1] + y / mLat, lng: hullCurvas[0][0] + x / mLng }));
 
-  // Escala ÚNICA (não uma por eixo) — uma ortofoto de verdade nunca deveria ficar "esticada"
-  // diferente em X e Y; usa a média das duas razões (largura e altura) pra achar o melhor encaixe
-  // geral sem distorcer a foto.
-  const larguraCurva = curvaBounds.getEast() - curvaBounds.getWest(), alturaCurva = curvaBounds.getNorth() - curvaBounds.getSouth();
-  const larguraOrto = orthoBounds.getEast() - orthoBounds.getWest(), alturaOrto = orthoBounds.getNorth() - orthoBounds.getSouth();
-  if(larguraOrto <= 0 || alturaOrto <= 0) return;
-  const escala = ((larguraCurva / larguraOrto) + (alturaCurva / alturaOrto)) / 2;
+  // Casa os 4 cantos por ordem angular (ambos já vêm ordenados assim, ver _retanguloAreaMinima) —
+  // como são a MESMA forma real medida duas vezes, a ordem corresponde ponto a ponto mesmo com o
+  // giro. Ajuste afim completo (6 parâmetros, não separado por eixo) — só assim uma rotação real
+  // fica corretamente representada.
+  const pxs = _ortofotoLocal.cantosPx.map(p => p[0]), pys = _ortofotoLocal.cantosPx.map(p => p[1]);
+  const fitLng = _resolverAfim(pxs, pys, cantosCurvas.map(p => p.lng));
+  const fitLat = _resolverAfim(pxs, pys, cantosCurvas.map(p => p.lat));
+  if(!fitLng || !fitLat) { setStatus('Não consegui calcular o alinhamento (geometria degenerada) — tente reimportar a ortofoto ou as curvas.', 'err'); return; }
+  const transformar = (px, py) => ({ lng: fitLng.a*px + fitLng.b*py + fitLng.c, lat: fitLat.a*px + fitLat.b*py + fitLat.c });
 
-  const transformar = (lat, lng) => ({
-    lat: curvaCLat + (lat - orthoCLat) * escala,
-    lng: curvaCLng + (lng - orthoCLng) * escala
-  });
-  const novoSW = transformar(orthoBounds.getSouth(), orthoBounds.getWest());
-  const novoNE = transformar(orthoBounds.getNorth(), orthoBounds.getEast());
-  const novosBounds = L.latLngBounds([novoSW.lat, novoSW.lng], [novoNE.lat, novoNE.lng]);
+  // Estado ANTERIOR (pra Desfazer) — guarda o suficiente pra recriar a camada EXATAMENTE como
+  // estava, seja ela plana (import normal) ou já rotacionada (um 2º alinhamento em cima do 1º).
+  const estadoAntigo = _ortofotoLocal.rotacionada
+    ? { rotacionada: true, topleft: _ortofotoLocal.cantoTL, topright: _ortofotoLocal.cantoTR, bottomleft: _ortofotoLocal.cantoBL }
+    : { rotacionada: false, bounds: _ortofotoLocal.bounds };
 
-  const boundsAntigos = orthoBounds;
+  // Novos cantos da imagem TODA (0,0)/(w,0)/(0,h) — topleft/topright/bottomleft, exatamente o que
+  // L.imageOverlay.rotated pede (o 4º canto é deduzido automaticamente como paralelogramo).
+  const w = _ortofotoLocal.larguraPx, h = _ortofotoLocal.alturaPx;
+  const novoTL = transformar(0, 0), novoTR = transformar(w, 0), novoBL = transformar(0, h);
+
+  map.removeLayer(_ortofotoLocal.overlay);
+  const novoOverlay = L.imageOverlay.rotated(_ortofotoLocal.dataUrl, novoTL, novoTR, novoBL, { opacity: 1 }).addTo(map);
+  const novosBoundsAprox = L.latLngBounds([novoTL, novoTR, novoBL, transformar(w, h)]);
+
   _capturarOverlayParaUndo('alinhamento da ortofoto', () => {
-    _ortofotoLocal.overlay.setBounds(boundsAntigos);
-    _ortofotoLocal.bounds = boundsAntigos;
+    map.removeLayer(_ortofotoLocal.overlay);
+    if(estadoAntigo.rotacionada) {
+      _ortofotoLocal.overlay = L.imageOverlay.rotated(_ortofotoLocal.dataUrl, estadoAntigo.topleft, estadoAntigo.topright, estadoAntigo.bottomleft, { opacity: 1 }).addTo(map);
+      _ortofotoLocal.cantoTL = estadoAntigo.topleft; _ortofotoLocal.cantoTR = estadoAntigo.topright; _ortofotoLocal.cantoBL = estadoAntigo.bottomleft;
+      _ortofotoLocal.bounds = L.latLngBounds([estadoAntigo.topleft, estadoAntigo.topright, estadoAntigo.bottomleft]);
+    } else {
+      _ortofotoLocal.overlay = L.imageOverlay(_ortofotoLocal.dataUrl, estadoAntigo.bounds, { opacity: 1 }).addTo(map);
+      _ortofotoLocal.bounds = estadoAntigo.bounds;
+    }
+    _ortofotoLocal.rotacionada = estadoAntigo.rotacionada;
+    _garantirCurvasNoTopo();
   });
 
-  _ortofotoLocal.overlay.setBounds(novosBounds);
-  _ortofotoLocal.bounds = novosBounds;
+  _ortofotoLocal.overlay = novoOverlay;
+  _ortofotoLocal.bounds = novosBoundsAprox;
+  _ortofotoLocal.rotacionada = true;
+  _ortofotoLocal.cantoTL = novoTL; _ortofotoLocal.cantoTR = novoTR; _ortofotoLocal.cantoBL = novoBL;
   _garantirCurvasNoTopo();
 
-  const deslocamentoM = haversineM({ lat: orthoCLat, lng: orthoCLng }, { lat: curvaCLat, lng: curvaCLng });
-  setStatus(`✓ Ortofoto realinhada às curvas de nível (deslocamento de ${deslocamentoM.toFixed(1)}m, escala ajustada em ${((escala - 1) * 100).toFixed(2)}%).`, 'ok');
+  // Resíduo médio nos 4 cantos DEPOIS do ajuste — dá uma ideia de quão boa ficou a sobreposição.
+  const cantosOrtoNovos = _ortofotoLocal.cantosPx.map(([px, py]) => transformar(px, py));
+  let residuoM = 0;
+  for(let i = 0; i < 4; i++) residuoM += haversineM(cantosOrtoNovos[i], cantosCurvas[i]);
+  residuoM /= 4;
+
+  setStatus(`✓ Ortofoto realinhada e rotacionada pra bater com o contorno real das curvas de nível (resíduo médio nos 4 cantos: ${residuoM.toFixed(2)}m).`, 'ok');
 }
 
 // v4.48: célula sem dado (fora da área coberta pelas curvas de nível locais — comum, já que a
