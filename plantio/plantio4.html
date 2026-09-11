@@ -334,7 +334,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.56 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.57 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -2279,6 +2279,18 @@ body.layout-lateral #status{grid-area:status;}
 // retângulo reto) — um L.imageOverlay comum não tem como representar uma imagem girada. Testado
 // contra os arquivos reais do usuário: resíduo de ~0m nos 4 cantos (era de centenas de metros com
 // a abordagem anterior sem rotação).
+// v4.57: usuário testou o v4.56 e a foto saiu toda esticada/borrada (não só rotacionada) — bug
+// real achado: pixel de imagem tem Y crescendo PRA BAIXO (linha 0 = topo/norte), mas lat/lng
+// (usado pro polígono das curvas) tem Y (latitude) crescendo PRA CIMA — mesmo eixo físico,
+// sentido invertido. _retanguloAreaMinima ordena os 4 cantos por ângulo em sentido matemático
+// padrão (Y pra cima); chamada direto com pixel (Y pra baixo) sem inverter, os 4 cantos da
+// ortofoto saem em sentido de giro CONTRÁRIO ao dos cantos das curvas — o ajuste casava o canto
+// errado com o errado (mesma contagem, ordem invertida), produzindo uma reflexão escondida
+// dentro do ajuste afim que estica/borra a imagem em vez de só girar. Corrigido em
+// _acharCantosReaisOrtofoto guardando -py em vez de py antes de achar o retângulo, e desfazendo a
+// inversão no resultado — os cantos saem no MESMO sentido de giro que os das curvas. Confirmado
+// com print real do usuário mostrando o bug, e depois com screenshot mostrando a correção
+// (reservatório e linha de mata encaixando com precisão, do mesmo tamanho, sem esticar).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -5058,15 +5070,26 @@ function _retanguloAreaMinima(pontos) {
 function _acharCantosReaisOrtofoto(raster, w, h, samplesPerPixel) {
   if(samplesPerPixel < 4) return null; // sem canal alfa não dá pra separar conteúdo real da moldura
   const passo = Math.max(1, Math.round(Math.max(w, h) / 300));
+  // v4.57: pixel de imagem tem Y crescendo PRA BAIXO (linha 0 = topo/norte), mas lat/lng (usado
+  // pro polígono das curvas) tem Y (latitude) crescendo PRA CIMA (norte = valor maior) — mesmo
+  // eixo físico, sentido invertido. _retanguloAreaMinima ordena os 4 cantos por ângulo (sentido
+  // matemático padrão, Y pra cima); chamando ela direto com pixel (Y pra baixo) sem inverter, os
+  // 4 cantos saem em sentido de giro CONTRÁRIO ao dos cantos das curvas — o ajuste casava o canto
+  // errado com o errado (mesma contagem de vértices, ordem invertida), o que produz uma reflexão
+  // escondida dentro do ajuste afim e estica/borra a imagem em vez de só girar (bug relatado, com
+  // print, depois do 1º "Alinhar Ortofoto às Curvas" da v4.56). Corrigido guardando -py em vez de
+  // py antes de achar o retângulo, e desfazendo a inversão no resultado — assim os cantos saem no
+  // MESMO sentido de giro que os das curvas, e o ajuste casa canto certo com canto certo.
   const pontosPx = [];
   for(let py = 0; py < h; py += passo) {
     for(let px = 0; px < w; px += passo) {
       const idx = (py * w + px) * samplesPerPixel;
-      if(raster[idx + 3] > 200) pontosPx.push([px, py]);
+      if(raster[idx + 3] > 200) pontosPx.push([px, -py]);
     }
   }
   if(pontosPx.length < 8) return null;
-  return _retanguloAreaMinima(pontosPx);
+  const cantos = _retanguloAreaMinima(pontosPx);
+  return cantos ? cantos.map(([x, y]) => [x, -y]) : null;
 }
 
 function _rasterParaCanvas(raster, width, height, samplesPerPixel) {
