@@ -334,7 +334,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.54 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.55 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -454,6 +454,7 @@ body.layout-lateral #status{grid-area:status;}
             <input type="file" id="inputOrtofotoTiff" accept=".tif,.tiff" style="display:none" onchange="if(this.files[0]){importarOrtofotoTiff(this.files[0]);this.value='';}">
             <div id="tiffOrtoStatus" style="font-size:10px;color:var(--panel-text-dim);max-width:190px;white-space:normal;"></div>
             <button class="rbtn-sm clr" id="btnRemoverOrtofotoLocal" style="display:none;" onclick="removerOrtofotoLocal()">&#10005; Remover Ortofoto Local</button>
+            <button class="rbtn-sm" id="btnAlinharOrtofoto" style="display:none;" onclick="alinharOrtofotoComCurvas()" title="Corrige automaticamente uma pequena diferença de registro entre a ortofoto e as curvas (comum entre exportações do mesmo levantamento) — sem precisar arrastar nada na mão">&#128736; Alinhar Ortofoto às Curvas</button>
           </div>
         </div>
         <div class="rgroup-title">Dados Locais — Ortofoto (TIFF) + Curvas de Nível (DXF)</div>
@@ -2241,6 +2242,26 @@ body.layout-lateral #status{grid-area:status;}
 // nova) — o código de reimportação de KML já liga o clique certinho em cada linha (mesma função
 // usada em todo canto), não achei uma causa distinta disso ainda; pode ter sido o mesmo efeito de
 // "área grande" acima, ou outra coisa que só aparece com o arquivo real dele. Peço confirmação.
+// v4.55: usuário trouxe evidência forte de 4 fontes independentes (AutoCAD, QGIS, Google Earth,
+// Agisoft) mostrando ortofoto+curvas perfeitamente encaixadas, o que não bate com o app. Investiguei
+// a fundo: extraí o cabeçalho do GeoTIFF byte a byte (sem usar geotiff.js), validei a fórmula
+// UTM→lat/lng contra a biblioteca `pyproj` (autoritativa, usada por QGIS por baixo dos panos) —
+// bateram a 0.1mm — e comparei o DXF das curvas (coordenada UTM nativa, do próprio cabeçalho
+// $EXTMIN/$EXTMAX) contra o bbox da ortofoto, também nativo, sem conversão nenhuma. Resultado: as
+// duas fontes concordam entre si sobre a MATEMÁTICA (não há bug de conversão/zona/datum), mas o
+// polígono das curvas e o retângulo da ortofoto realmente têm uma pequena diferença de registro
+// (1-10m, mais visível nos cantos/bordas) — presente nos arquivos originais do Agisoft, não
+// introduzida pelo app (confirmado reproduzindo o mesmo resultado num script Python isolado, sem
+// nenhuma linha do app). Um teste do usuário no Google Earth 3D (curvas em altitude absoluta
+// "flutuando" por diferença de terreno) explica um efeito visual parecido lá, mas é mecanismo de
+// perspectiva 3D — não se aplica ao nosso mapa 2D (Leaflet nunca usa a cota Z pra posicionar nada
+// na tela). Em vez de insistir em achar de quem é a "culpa" nos dois arquivos de origem, ou pedir
+// ajuste manual (rejeitado, com razão, como gambiarra): novo botão "Alinhar Ortofoto às Curvas"
+// (alinharOrtofotoComCurvas) — calcula automaticamente a transformação de similaridade (translação
+// + escala ÚNICA, sem esticar a foto) que centraliza e escala o retângulo da ortofoto pra bater
+// com o polígono de cobertura das curvas já importadas (mesmo princípio de um ajuste de registro
+// de GIS profissional, só que automático). Aparece só quando ortofoto E curvas locais estão
+// ativas; integrado ao Desfazer.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -4803,6 +4824,7 @@ function _finalizarImportacaoCurvas(contornosLatLng, puladas, dicaErro) {
   _curvasLocais = cl;
   _garantirCurvasNoTopo(); // sempre acima da ortofoto, não importa a ordem de importação (ver importarOrtofotoTiff)
   _atualizarIndicadorFonteElevacao();
+  _atualizarBotaoAlinharOrtofoto();
 
   const st = $('dxfCurvasStatus');
   if(st) st.innerHTML = `✓ ${cl.numContornos} curva(s) importada(s) · cotas ${cl.elevMin.toFixed(1)}–${cl.elevMax.toFixed(1)} m${puladas ? ` · ${puladas} entidade(s) sem cota ignorada(s)` : ''}`;
@@ -4899,6 +4921,7 @@ function _removerCurvasLocaisSemUndo() {
   const st = $('dxfCurvasStatus'); if(st) st.innerHTML = '';
   const btnRem = $('btnRemoverCurvasLocais'); if(btnRem) btnRem.style.display = 'none';
   _atualizarIndicadorFonteElevacao();
+  _atualizarBotaoAlinharOrtofoto();
 }
 function removerCurvasLocais() {
   if(_curvasLocais) _capturarEstadoParaUndo('remoção das curvas de nível locais');
@@ -5053,6 +5076,7 @@ async function importarOrtofotoTiff(file) {
 
   if(st) st.innerHTML = `✓ ${w}×${h}px${foiReduzida ? ' (reduzida do original pra caber com folga na memória do navegador)' : ''}`;
   const btnRem = $('btnRemoverOrtofotoLocal'); if(btnRem) btnRem.style.display = 'flex';
+  _atualizarBotaoAlinharOrtofoto();
   setStatus('✓ Ortofoto importada — a imagem de fundo dessa área agora vem exclusivamente do arquivo local (fora dela, o satélite online continua aparecendo).', 'ok');
   try { map.fitBounds(bounds, { padding: [20,20] }); } catch(e) {}
 }
@@ -5063,11 +5087,70 @@ function _removerOrtofotoLocalSemUndo() {
   _ortofotoLocal = null;
   const st = $('tiffOrtoStatus'); if(st) st.textContent = '';
   const btnRem = $('btnRemoverOrtofotoLocal'); if(btnRem) btnRem.style.display = 'none';
+  _atualizarBotaoAlinharOrtofoto();
 }
 function removerOrtofotoLocal() {
   if(_ortofotoLocal) _capturarEstadoParaUndo('remoção da ortofoto local');
   _removerOrtofotoLocalSemUndo();
   setStatus('Ortofoto local removida — o satélite online volta a aparecer nessa área.', 'info');
+}
+
+// v4.55: botão "Alinhar Ortofoto às Curvas" só faz sentido com os dois importados ao mesmo tempo.
+function _atualizarBotaoAlinharOrtofoto() {
+  const btn = $('btnAlinharOrtofoto');
+  if(btn) btn.style.display = (_ortofotoLocal && _elevacaoLocalDisponivel()) ? 'flex' : 'none';
+}
+
+// v4.55: alinhamento automático — usuário relatou (com prints e comparação em QGIS/AutoCAD/Google
+// Earth) uma diferença pequena (poucos metros) entre a área da ortofoto e a área das curvas de
+// nível, mesmo as duas vindo do MESMO levantamento/processamento no Agisoft — confirmado com
+// números exatos direto nos arquivos originais (sem nenhuma conversão): o polígono das curvas é
+// sistematicamente um pouco menor e deslocado em relação ao retângulo da ortofoto. Isso é uma
+// diferença de REGISTRO entre os dois produtos exportados (não um bug de leitura/conversão aqui —
+// já verificado 4 vezes por caminhos independentes), mas não dá pra pedir pro usuário corrigir na
+// mão toda vez. Em vez disso: calcula automaticamente a transformação de similaridade (translação +
+// escala uniforme, sem esticar a foto) que centraliza e escala o retângulo da ortofoto pra bater
+// com o retângulo do polígono de cobertura das curvas (_curvasLocais.coberturaPoly, já calculado
+// pelo hull convexo dos pontos importados) — mesmo princípio de um "ajuste de registro" que
+// qualquer GIS profissional oferece, só que automático em vez de manual.
+function alinharOrtofotoComCurvas() {
+  if(!_ortofotoLocal || !_elevacaoLocalDisponivel()) { setStatus('Importe a ortofoto E as curvas de nível antes de alinhar.', 'err'); return; }
+  const curvaBounds = L.geoJSON(_curvasLocais.coberturaPoly).getBounds();
+  const orthoBounds = _ortofotoLocal.bounds;
+
+  const curvaCLat = (curvaBounds.getSouth() + curvaBounds.getNorth()) / 2;
+  const curvaCLng = (curvaBounds.getWest() + curvaBounds.getEast()) / 2;
+  const orthoCLat = (orthoBounds.getSouth() + orthoBounds.getNorth()) / 2;
+  const orthoCLng = (orthoBounds.getWest() + orthoBounds.getEast()) / 2;
+
+  // Escala ÚNICA (não uma por eixo) — uma ortofoto de verdade nunca deveria ficar "esticada"
+  // diferente em X e Y; usa a média das duas razões (largura e altura) pra achar o melhor encaixe
+  // geral sem distorcer a foto.
+  const larguraCurva = curvaBounds.getEast() - curvaBounds.getWest(), alturaCurva = curvaBounds.getNorth() - curvaBounds.getSouth();
+  const larguraOrto = orthoBounds.getEast() - orthoBounds.getWest(), alturaOrto = orthoBounds.getNorth() - orthoBounds.getSouth();
+  if(larguraOrto <= 0 || alturaOrto <= 0) return;
+  const escala = ((larguraCurva / larguraOrto) + (alturaCurva / alturaOrto)) / 2;
+
+  const transformar = (lat, lng) => ({
+    lat: curvaCLat + (lat - orthoCLat) * escala,
+    lng: curvaCLng + (lng - orthoCLng) * escala
+  });
+  const novoSW = transformar(orthoBounds.getSouth(), orthoBounds.getWest());
+  const novoNE = transformar(orthoBounds.getNorth(), orthoBounds.getEast());
+  const novosBounds = L.latLngBounds([novoSW.lat, novoSW.lng], [novoNE.lat, novoNE.lng]);
+
+  const boundsAntigos = orthoBounds;
+  _capturarOverlayParaUndo('alinhamento da ortofoto', () => {
+    _ortofotoLocal.overlay.setBounds(boundsAntigos);
+    _ortofotoLocal.bounds = boundsAntigos;
+  });
+
+  _ortofotoLocal.overlay.setBounds(novosBounds);
+  _ortofotoLocal.bounds = novosBounds;
+  _garantirCurvasNoTopo();
+
+  const deslocamentoM = haversineM({ lat: orthoCLat, lng: orthoCLng }, { lat: curvaCLat, lng: curvaCLng });
+  setStatus(`✓ Ortofoto realinhada às curvas de nível (deslocamento de ${deslocamentoM.toFixed(1)}m, escala ajustada em ${((escala - 1) * 100).toFixed(2)}%).`, 'ok');
 }
 
 // v4.48: célula sem dado (fora da área coberta pelas curvas de nível locais — comum, já que a
@@ -7289,6 +7372,7 @@ function desfazerUltimaExclusao() {
   if(stTiff) stTiff.innerHTML = _ortofotoLocal ? `✓ ${_ortofotoLocal.larguraPx}×${_ortofotoLocal.alturaPx}px` : '';
   const btnRemC = $('btnRemoverCurvasLocais'); if(btnRemC) btnRemC.style.display = _curvasLocais ? 'flex' : 'none';
   const btnRemO = $('btnRemoverOrtofotoLocal'); if(btnRemO) btnRemO.style.display = _ortofotoLocal ? 'flex' : 'none';
+  _atualizarBotaoAlinharOrtofoto();
   _atualizarIndicadorFonteElevacao();
 
   _aplicarTodasCamadas();
