@@ -339,7 +339,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.61 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.62 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -470,6 +470,16 @@ body.layout-lateral #status{grid-area:status;}
             <button class="rbtn-sm" id="btnAlinharOrtofoto" style="display:none;" onclick="alinharOrtofoto()" title="Corrige automaticamente uma pequena diferença de registro entre a ortofoto e um polígono de referência (o talhão importado via 'Importar Polígono' tem prioridade; sem ele, usa a cobertura das curvas de nível) — sem precisar arrastar nada na mão">&#128736; Alinhar Ortofoto Automaticamente</button>
             <button class="rbtn-sm" id="btnMoverOrtofotoManual" style="display:none;" onclick="alternarMoverOrtofotoManualmente()" title="Clique para ativar, depois clique e arraste a ortofoto no mapa pra reposicionar na mão; clique de novo pra desativar">&#9995; Mover Ortofoto Manualmente</button>
             <button class="rbtn-sm" id="btnGirarOrtofotoManual" style="display:none;" onclick="alternarGirarOrtofotoManualmente()" title="Clique para ativar, depois clique e arraste a ortofoto no mapa pra girá-la em torno do próprio centro; clique de novo pra desativar">&#128260; Girar Ortofoto Manualmente</button>
+            <div id="girarOrtofotoStepper" style="display:none;align-items:center;gap:3px;flex-wrap:wrap;margin-top:2px;" title="Giro em incrementos exatos, pra saber precisamente quantos graus foram necessários (mostrador ao lado)">
+              <button class="rbtn-sm" style="padding:3px 6px;min-width:auto;flex:none;" onclick="girarOrtofotoIncremento(-5)">&minus;5&deg;</button>
+              <button class="rbtn-sm" style="padding:3px 6px;min-width:auto;flex:none;" onclick="girarOrtofotoIncremento(-1)">&minus;1&deg;</button>
+              <button class="rbtn-sm" style="padding:3px 6px;min-width:auto;flex:none;" onclick="girarOrtofotoIncremento(-0.1)">&minus;0,1&deg;</button>
+              <span id="anguloManualOrtofotoLabel" style="font-size:11px;font-weight:700;min-width:50px;text-align:center;color:var(--acc2);">0,0&deg;</span>
+              <button class="rbtn-sm" style="padding:3px 6px;min-width:auto;flex:none;" onclick="girarOrtofotoIncremento(0.1)">+0,1&deg;</button>
+              <button class="rbtn-sm" style="padding:3px 6px;min-width:auto;flex:none;" onclick="girarOrtofotoIncremento(1)">+1&deg;</button>
+              <button class="rbtn-sm" style="padding:3px 6px;min-width:auto;flex:none;" onclick="girarOrtofotoIncremento(5)">+5&deg;</button>
+              <button class="rbtn-sm clr" style="padding:3px 6px;min-width:auto;flex:none;" onclick="zerarAnguloManualOrtofoto()" title="Zera só o mostrador (não desfaz o giro já aplicado) — útil pra contar a partir de um encaixe que já ficou bom">Zerar</button>
+            </div>
           </div>
         </div>
         <div class="rgroup-title">Dados Locais — Ortofoto (TIFF) + Curvas de Nível (DXF)</div>
@@ -2392,6 +2402,35 @@ body.layout-lateral #status{grid-area:status;}
 // e invisível, sem nenhum indício de que havia mais conteúdo abaixo. Rolagem interna adicionada
 // só nesse grupo (classe .rdadosLocaisScroll), desligada no layout "Ribbon Lateral" (que já cresce
 // livremente e não precisa disso).
+// v4.62: usuário girou manualmente e confirmou (com prints) que o encaixe melhora muito — pediu um
+// MOSTRADOR com botões de incremento exato (±5°/±1°/±0,1°) pra medir precisamente quanto giro é
+// necessário (dado útil pra futura investigação da causa raiz). Implementado
+// girarOrtofotoIncremento()/zerarAnguloManualOrtofoto(), acumulando em
+// _ortofotoLocal.anguloManualGraus (soma de todo giro manual — incremento OU arrasto livre — desde
+// a última importação ou o último "Alinhar Ortofoto Automaticamente", que vira o novo "zero");
+// integrado ao Desfazer (restaura o mostrador junto com a geometria); mostrador atualiza em tempo
+// real durante o arrasto livre também, não só nos botões.
+// Nessa investigação, ACHADO UM BUG REAL SEPARADO, provavelmente a explicação de outro relato do
+// usuário ("na tela principal a ortofoto está toda dentro do polígono e das curvas, mas na Vista
+// 3D o polígono aparece por fora da ortofoto — mesmo arquivo, não deveria ter diferença"): TODO
+// lugar que calculava _ortofotoLocal.bounds de uma ortofoto rotacionada usava
+// `L.latLngBounds([topleft, topright, bottomleft])` — só 3 dos 4 cantos. Pra um paralelogramo
+// GIRADO (não mais um retângulo alinhado aos eixos), o 4º canto (bottomright = topright+bottomleft
+// −topleft) pode cair FORA da caixa que envolve só os outros 3 — confirmado num teste sintético
+// (giro de 45°: o 4º canto realmente ficava fora do bounds calculado do jeito antigo). Isso
+// subestimava silenciosamente a área real coberta pela ortofoto sempre que rotacionada — usado
+// pelo fitBounds/clamp de cobertura da Vista 3D, entre outros lugares — exatamente o tipo de
+// inconsistência relatada. Corrigido com _boundsDe3Cantos()/_quartoCantoOrtofoto(), que calculam o
+// 4º canto e o incluem no bounds; aplicado nos 4 lugares que tinham o cálculo antigo (giro por
+// arrasto, giro por incremento, e as respectivas restaurações do Desfazer — o cálculo de bounds do
+// "Alinhar Ortofoto Automaticamente" em si já usava 4 pontos corretamente, não precisou mudar).
+// Também testada e DESCARTADA a hipótese de que html2canvas (usado pra "fotografar" o mapa 2D como
+// textura da Vista 3D) não capturasse corretamente o CSS transform da ortofoto rotacionada — teste
+// dedicado confirmou que a captura reflete a rotação real, igual à tela.
+// Por fim, esclarecimento (não é bug): a Vista 3D pode mostrar imagem de satélite mesmo "sem
+// chave" porque o ESRI (usado como mapa de fundo em todo o app, inclusive sem nenhuma chave do
+// Google configurada) não exige chave — é o comportamento padrão desde sempre, só reaproveitado
+// como textura na Vista 3D.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -5292,8 +5331,10 @@ async function importarOrtofotoTiff(file) {
   // precisar reler o arquivo original.
   _ortofotoLocal = {
     overlay, bounds, larguraPx: w, alturaPx: h, dataUrl, rotacionada: false,
-    cantosPx: areaReal ? areaReal.cantos : null, hullPx: areaReal ? areaReal.hull : null
+    cantosPx: areaReal ? areaReal.cantos : null, hullPx: areaReal ? areaReal.hull : null,
+    anguloManualGraus: 0 // v4.62: mostrador de giro manual acumulado — zera numa importação nova
   };
+  _atualizarLabelAnguloManual(0);
   // Reafirma as curvas de nível por cima, caso já estivessem importadas antes da ortofoto (senão a
   // ortofoto, adicionada depois, cobriria elas — bug relatado: "curvas não aparecem na ortofoto").
   _garantirCurvasNoTopo();
@@ -5329,6 +5370,8 @@ function _atualizarBotaoAlinharOrtofoto() {
   if(btnMover) btnMover.style.display = _ortofotoLocal ? 'flex' : 'none';
   const btnGirar = $('btnGirarOrtofotoManual');
   if(btnGirar) btnGirar.style.display = _ortofotoLocal ? 'flex' : 'none';
+  const stepper = $('girarOrtofotoStepper');
+  if(stepper) stepper.style.display = _ortofotoLocal ? 'flex' : 'none';
 }
 // v4.58: pega o polígono a usar como referência pro alinhamento — usuário pediu explicitamente
 // pra dar prioridade a um polígono importado com a forma exata do recorte da ortofoto (via
@@ -5438,6 +5481,7 @@ function alinharOrtofoto() {
   const estadoAntigo = _ortofotoLocal.rotacionada
     ? { rotacionada: true, topleft: _ortofotoLocal.cantoTL, topright: _ortofotoLocal.cantoTR, bottomleft: _ortofotoLocal.cantoBL }
     : { rotacionada: false, bounds: _ortofotoLocal.bounds };
+  const anguloManualAntesGraus = _ortofotoLocal.anguloManualGraus || 0;
 
   // Novos cantos da imagem TODA (0,0)/(w,0)/(0,h) — topleft/topright/bottomleft, exatamente o que
   // L.imageOverlay.rotated pede (o 4º canto é deduzido automaticamente como paralelogramo).
@@ -5453,12 +5497,14 @@ function alinharOrtofoto() {
     if(estadoAntigo.rotacionada) {
       _ortofotoLocal.overlay = L.imageOverlay.rotated(_ortofotoLocal.dataUrl, estadoAntigo.topleft, estadoAntigo.topright, estadoAntigo.bottomleft, { opacity: 1 }).addTo(map);
       _ortofotoLocal.cantoTL = estadoAntigo.topleft; _ortofotoLocal.cantoTR = estadoAntigo.topright; _ortofotoLocal.cantoBL = estadoAntigo.bottomleft;
-      _ortofotoLocal.bounds = L.latLngBounds([estadoAntigo.topleft, estadoAntigo.topright, estadoAntigo.bottomleft]);
+      _ortofotoLocal.bounds = _boundsDe3Cantos(estadoAntigo.topleft, estadoAntigo.topright, estadoAntigo.bottomleft);
     } else {
       _ortofotoLocal.overlay = L.imageOverlay(_ortofotoLocal.dataUrl, estadoAntigo.bounds, { opacity: 1 }).addTo(map);
       _ortofotoLocal.bounds = estadoAntigo.bounds;
     }
     _ortofotoLocal.rotacionada = estadoAntigo.rotacionada;
+    _ortofotoLocal.anguloManualGraus = anguloManualAntesGraus;
+    _atualizarLabelAnguloManual(0);
     _garantirCurvasNoTopo();
   });
 
@@ -5466,6 +5512,10 @@ function alinharOrtofoto() {
   _ortofotoLocal.bounds = novosBoundsAprox;
   _ortofotoLocal.rotacionada = true;
   _ortofotoLocal.cantoTL = novoTL; _ortofotoLocal.cantoTR = novoTR; _ortofotoLocal.cantoBL = novoBL;
+  // v4.62: zera o mostrador de giro manual — esse alinhamento automático é o novo "ponto de
+  // partida", o mostrador passa a medir só o giro manual adicionado A PARTIR de agora.
+  _ortofotoLocal.anguloManualGraus = 0;
+  _atualizarLabelAnguloManual(0);
   _garantirCurvasNoTopo();
 
   // Resíduo médio (todo o contorno, não só 4 cantos) DEPOIS do ajuste — quão bem a borda real da
@@ -5516,6 +5566,23 @@ function alternarMoverOrtofotoManualmente() {
     setStatus('', '');
   }
 }
+// v4.62: achado investigando o relato do usuário ("na tela principal a foto está toda dentro do
+// polígono, mas na Vista 3D o polígono fica pra fora da foto — mesmo arquivo, não deveria ter
+// diferença"). Causa real: TODO lugar que calculava _ortofotoLocal.bounds de uma ortofoto
+// rotacionada usava `L.latLngBounds([topleft, topright, bottomleft])` — só 3 dos 4 cantos. Pra um
+// paralelogramo GIRADO (não mais um retângulo alinhado aos eixos), o 4º canto (bottomright) pode
+// ficar FORA da caixa que envolve só os outros 3 — ex.: topleft=(0,1), topright=(1,2),
+// bottomleft=(1,0) → bottomright=(2,1) tem x=2, fora do intervalo x=[0,1] dos outros três. Isso
+// subestimava silenciosamente a área real coberta pela ortofoto sempre que ela estava rotacionada
+// (usado por fitBounds da Vista 3D, pelo clamp de cobertura _clampParaCobertura, etc.) — exatamente
+// o tipo de inconsistência relatada. Corrigido calculando o 4º canto (bottomright = topright +
+// bottomleft − topleft, álgebra de paralelogramo) e incluindo ele em TODO cálculo de bounds.
+function _quartoCantoOrtofoto(tl, tr, bl) {
+  return L.latLng(tr.lat + bl.lat - tl.lat, tr.lng + bl.lng - tl.lng);
+}
+function _boundsDe3Cantos(tl, tr, bl) {
+  return L.latLngBounds([tl, tr, bl, _quartoCantoOrtofoto(tl, tr, bl)]);
+}
 // Recalcula a posição da ortofoto a partir de um estado-base FIXO (nunca incrementalmente a
 // partir da posição atual) — evita acumular erro de arredondamento a cada frame do arrasto.
 function _reposicionarOrtofotoPorDelta(estadoBase, dLat, dLng) {
@@ -5524,7 +5591,7 @@ function _reposicionarOrtofotoPorDelta(estadoBase, dLat, dLng) {
     const tl = desl(estadoBase.topleft), tr = desl(estadoBase.topright), bl = desl(estadoBase.bottomleft);
     _ortofotoLocal.overlay.reposition(tl, tr, bl);
     _ortofotoLocal.cantoTL = tl; _ortofotoLocal.cantoTR = tr; _ortofotoLocal.cantoBL = bl;
-    _ortofotoLocal.bounds = L.latLngBounds([tl, tr, bl]);
+    _ortofotoLocal.bounds = _boundsDe3Cantos(tl, tr, bl);
   } else {
     const b = estadoBase.bounds;
     const novosBounds = L.latLngBounds([b.getSouth() + dLat, b.getWest() + dLng], [b.getNorth() + dLat, b.getEast() + dLng]);
@@ -5628,12 +5695,54 @@ function _girarOrtofotoPorAngulo(estadoBase, anguloRad) {
   }
   _ortofotoLocal.rotacionada = true;
   _ortofotoLocal.cantoTL = tl; _ortofotoLocal.cantoTR = tr; _ortofotoLocal.cantoBL = bl;
-  _ortofotoLocal.bounds = L.latLngBounds([tl, tr, bl]);
+  _ortofotoLocal.bounds = _boundsDe3Cantos(tl, tr, bl);
 }
 // Ângulo do mouse em relação ao pivô, em metros locais (mesma aproximação de _girarOrtofotoPorAngulo).
 function _anguloMouseEmRelacaoAoPivot(pivot, latlng) {
   const mLat = 111320, mLng = Math.cos(pivot.lat * Math.PI / 180) * mLat;
   return Math.atan2((latlng.lat - pivot.lat) * mLat, (latlng.lng - pivot.lng) * mLng);
+}
+// v4.62: usuário girou na mão e ficou visivelmente melhor ("norte parece desalinhado") — pediu um
+// MOSTRADOR com botões de incremento exato, pra sabermos precisamente quantos graus foram
+// necessários (dado que vai ajudar a achar a causa raiz — ex.: se for sempre ~mesmo valor e mesma
+// direção em arquivos diferentes, é sistemático; se variar, é por arquivo). Acumula em
+// _ortofotoLocal.anguloManualGraus (soma de TODO giro manual — arrasto livre OU botão — desde a
+// última importação/zerada), mostrado ao lado dos botões +5°/+1°/+0,1°/... Não conta a rotação
+// que "Alinhar Ortofoto Automaticamente" aplica (essa é um ajuste afim, não um ângulo puro).
+function _atualizarLabelAnguloManual(extraGraus) {
+  const lbl = $('anguloManualOrtofotoLabel');
+  if(!lbl || !_ortofotoLocal) return;
+  const total = (_ortofotoLocal.anguloManualGraus || 0) + (extraGraus || 0);
+  lbl.textContent = total.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '°';
+}
+function zerarAnguloManualOrtofoto() {
+  if(!_ortofotoLocal) return;
+  _ortofotoLocal.anguloManualGraus = 0;
+  _atualizarLabelAnguloManual(0);
+  setStatus('Mostrador de ângulo manual zerado (o giro já aplicado na imagem não foi desfeito — só o contador).', 'info');
+}
+// Giro em incremento exato (botões +5°/+1°/+0,1°/...) — mesma mecânica do arrasto livre
+// (_girarOrtofotoPorAngulo a partir do estado ATUAL), só que com um ângulo fixo em vez de
+// derivado do mouse. Integrado ao Desfazer e ao mostrador acumulado.
+function girarOrtofotoIncremento(deltaGraus) {
+  if(!_ortofotoLocal) { setStatus('Importe a ortofoto antes.', 'err'); return; }
+  const estadoBase = _cantosAtuaisOrtofoto();
+  const anguloAntesGraus = _ortofotoLocal.anguloManualGraus || 0;
+  _girarOrtofotoPorAngulo(estadoBase, deltaGraus * Math.PI / 180);
+  _ortofotoLocal.anguloManualGraus = anguloAntesGraus + deltaGraus;
+  _atualizarLabelAnguloManual(0);
+  _capturarOverlayParaUndo('girar ortofoto (incremento)', () => {
+    map.removeLayer(_ortofotoLocal.overlay);
+    _ortofotoLocal.overlay = L.imageOverlay.rotated(_ortofotoLocal.dataUrl, estadoBase.topleft, estadoBase.topright, estadoBase.bottomleft, { opacity: 1 }).addTo(map);
+    _ortofotoLocal.cantoTL = estadoBase.topleft; _ortofotoLocal.cantoTR = estadoBase.topright; _ortofotoLocal.cantoBL = estadoBase.bottomleft;
+    _ortofotoLocal.bounds = _boundsDe3Cantos(estadoBase.topleft, estadoBase.topright, estadoBase.bottomleft);
+    _ortofotoLocal.rotacionada = true;
+    _ortofotoLocal.anguloManualGraus = anguloAntesGraus;
+    _atualizarLabelAnguloManual(0);
+    _garantirCurvasNoTopo();
+  });
+  _garantirCurvasNoTopo();
+  setStatus(`✓ Ortofoto girada ${deltaGraus > 0 ? '+' : ''}${deltaGraus}° — total acumulado: ${_ortofotoLocal.anguloManualGraus.toFixed(1)}°.`, 'ok');
 }
 map.on('mousedown', e => {
   if(!_girandoOrtofotoManualmente || !_ortofotoLocal) return;
@@ -5645,27 +5754,36 @@ map.on('mousemove', e => {
   if(!_girandoOrtofotoManualmente || _girOrtofotoAnguloInicial === null) return;
   const pivot = L.latLng((_girOrtofotoEstadoBase.topright.lat + _girOrtofotoEstadoBase.bottomleft.lat) / 2, (_girOrtofotoEstadoBase.topright.lng + _girOrtofotoEstadoBase.bottomleft.lng) / 2);
   const anguloAtual = _anguloMouseEmRelacaoAoPivot(pivot, e.latlng);
+  const deltaGraus = (anguloAtual - _girOrtofotoAnguloInicial) * 180 / Math.PI;
   _girarOrtofotoPorAngulo(_girOrtofotoEstadoBase, anguloAtual - _girOrtofotoAnguloInicial);
+  _atualizarLabelAnguloManual(deltaGraus); // mostrador em tempo real durante o arrasto
 });
 map.on('mouseup', e => {
   if(!_girandoOrtofotoManualmente || _girOrtofotoAnguloInicial === null) return;
   const pivot = L.latLng((_girOrtofotoEstadoBase.topright.lat + _girOrtofotoEstadoBase.bottomleft.lat) / 2, (_girOrtofotoEstadoBase.topright.lng + _girOrtofotoEstadoBase.bottomleft.lng) / 2);
   const anguloFinal = _anguloMouseEmRelacaoAoPivot(pivot, e.latlng);
   const deltaGraus = (anguloFinal - _girOrtofotoAnguloInicial) * 180 / Math.PI;
+  const anguloAntesGraus = _ortofotoLocal.anguloManualGraus || 0;
   if(Math.abs(deltaGraus) > 0.05) {
     const estadoBase = _girOrtofotoEstadoBase;
     const delta = anguloFinal - _girOrtofotoAnguloInicial;
     _girarOrtofotoPorAngulo(estadoBase, delta);
+    _ortofotoLocal.anguloManualGraus = anguloAntesGraus + deltaGraus;
+    _atualizarLabelAnguloManual(0);
     _capturarOverlayParaUndo('girar ortofoto manualmente', () => {
       map.removeLayer(_ortofotoLocal.overlay);
       _ortofotoLocal.overlay = L.imageOverlay.rotated(_ortofotoLocal.dataUrl, estadoBase.topleft, estadoBase.topright, estadoBase.bottomleft, { opacity: 1 }).addTo(map);
       _ortofotoLocal.cantoTL = estadoBase.topleft; _ortofotoLocal.cantoTR = estadoBase.topright; _ortofotoLocal.cantoBL = estadoBase.bottomleft;
-      _ortofotoLocal.bounds = L.latLngBounds([estadoBase.topleft, estadoBase.topright, estadoBase.bottomleft]);
+      _ortofotoLocal.bounds = _boundsDe3Cantos(estadoBase.topleft, estadoBase.topright, estadoBase.bottomleft);
       _ortofotoLocal.rotacionada = true;
+      _ortofotoLocal.anguloManualGraus = anguloAntesGraus;
+      _atualizarLabelAnguloManual(0);
       _garantirCurvasNoTopo();
     });
     _garantirCurvasNoTopo();
-    setStatus(`✓ Ortofoto girada ${deltaGraus.toFixed(1)}° na mão.`, 'ok');
+    setStatus(`✓ Ortofoto girada ${deltaGraus.toFixed(1)}° na mão — total acumulado: ${_ortofotoLocal.anguloManualGraus.toFixed(1)}°.`, 'ok');
+  } else {
+    _atualizarLabelAnguloManual(0); // clique sem arrastar: mostrador volta pro valor confirmado
   }
   _girOrtofotoAnguloInicial = null;
 });
