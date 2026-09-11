@@ -200,6 +200,10 @@ body.layout-lateral #status{grid-area:status;}
 /* ── Mapa + painel flutuante de informações ── */
 #mapWrap{flex:1;position:relative;min-height:0;}
 #map{position:absolute;inset:0;}
+/* v4.63: fundo neutro pro mapa quando "Ocultar Imagem Online" está ativo — sem isso, fora da área
+   da ortofoto (ou se nem houver ortofoto) o mapa ficava branco/quebrado em vez de só "vazio" de
+   propósito. */
+#map.map-sem-online{background:#1a2e22;}
 #infoFloat{position:absolute;top:10px;right:10px;width:220px;background:var(--panel-bg-float);border:1px solid var(--panel-border);border-radius:10px;box-shadow:0 6px 22px rgba(0,0,0,.5);z-index:900;color:var(--panel-text);}
 #infoFloat .ifhead{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;cursor:pointer;}
 #infoFloat .ifhead span{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--panel-text-dim);}
@@ -339,7 +343,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.62 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.63 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -374,6 +378,7 @@ body.layout-lateral #status{grid-area:status;}
               <button class="btn-help" onclick="abrirTutorialChave()" title="Como obter a chave?">?</button>
             </div>
             <div id="keyStatus" style="font-size:10px;color:var(--panel-text-dim);">Usando ESRI (sem chave)</div>
+            <button class="rbtn-sm" id="btnImagemOnline" style="margin-top:2px;" onclick="alternarImagemOnline()" title="Liga/desliga a imagem de satélite online (ESRI ou Google) no mapa 2D E na Vista 3D — pra ver SÓ a ortofoto que você importou, sem a foto online por baixo/ao redor competindo visualmente com ela.">&#128225; Ocultar Imagem Online</button>
           </div>
         </div>
         <div class="rgroup-title">Chave Google Maps</div>
@@ -2431,6 +2436,26 @@ body.layout-lateral #status{grid-area:status;}
 // chave" porque o ESRI (usado como mapa de fundo em todo o app, inclusive sem nenhuma chave do
 // Google configurada) não exige chave — é o comportamento padrão desde sempre, só reaproveitado
 // como textura na Vista 3D.
+// v4.63: dois pedidos do usuário depois de ver a Vista 3D com dados locais:
+// 1) "as curvas de nível importadas não aparecem na vista 3d e as que eram geradas apareciam" —
+//    BUG REAL confirmado: gerarVista3DAnalise() só desenhava curvaLayers (curvas GERADAS online,
+//    aba "Curvas de Nível") — nunca _curvasLocais.layerPreview (curvas IMPORTADAS via DXF/KML).
+//    Corrigido com um bloco extra igual ao das geradas, extraindo as polylines do FeatureGroup
+//    (classificação "mestra" pelo weight, já que essas não têm pl._isMaster) e usando o MESMO
+//    toggle _3da_showCurvas/_3da_curvaMeshes — o botão "Ocultar/Mostrar Curvas" da Vista 3D passa
+//    a controlar as duas fontes juntas.
+// 2) "a imagem ESRI está atrapalhando a vista 3d... queremos aparecer só a imagem importada
+//    quando eu quiser" — em vez de tentar separar isso DENTRO da Vista 3D (ela só herda o que já
+//    está no mapa 2D, ver _3da_captureMapTexture), a solução mais simples e reaproveitável é
+//    controlar isso no PRÓPRIO mapa 2D: novo botão "Ocultar/Mostrar Imagem Online" (aba Início,
+//    grupo "Chave Google Maps") liga/desliga ESRI (ou Google, o que estiver ativo) do mapa 2D.
+//    Como a Vista 3D "fotografa" o mapa 2D exatamente como ele está na hora de abrir
+//    (_3da_captureMapTexture), ocultar a imagem online ANTES de abrir a Vista 3D já resolve os
+//    dois lugares de uma vez: no 2D, só a ortofoto importada (+curvas+linhas) fica visível; na
+//    Vista 3D, a textura capturada sai só com a ortofoto, sem o satélite competindo/criando
+//    costura na borda. Preferência persistida (localStorage, mesmo padrão do layout do ribbon).
+//    _ativarMutant() também respeita esse estado — ativar uma chave Google nova não "religa" a
+//    imagem online se o usuário tinha desligado.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -2629,6 +2654,39 @@ esriLabels.addTo(map);
 
 let googleLayer = null;
 
+// v4.63: pedido do usuário — "pensar em como desligar todas as imagens exceto a importada".
+// Liga/desliga TODA imagem de satélite online (ESRI ou Google, o que estiver ativo) no mapa 2D.
+// Sozinho isso já resolve os dois relatos: (1) no 2D, sem a imagem online, só a ortofoto
+// importada (e curvas/linhas) ficam visíveis; (2) na Vista 3D, _3da_captureMapTexture "fotografa"
+// o mapa 2D EXATAMENTE como ele está na hora — se a imagem online já estiver oculta antes de abrir
+// a Vista 3D, a textura capturada sai só com a ortofoto (sem o satélite competindo visualmente/
+// criando costura visível na borda). Persistido (como o layout do ribbon) — some/aparece igual em
+// toda sessão futura até o usuário mudar de novo.
+let _mostrarImagemOnline = localStorage.getItem('mostrarImagemOnline') !== 'false';
+function alternarImagemOnline() {
+  _mostrarImagemOnline = !_mostrarImagemOnline;
+  localStorage.setItem('mostrarImagemOnline', String(_mostrarImagemOnline));
+  _aplicarVisibilidadeImagemOnline();
+  setStatus(_mostrarImagemOnline
+    ? 'Imagem online (ESRI/Google) voltou a aparecer no mapa.'
+    : 'Imagem online ocultada — agora só a ortofoto importada (se houver), curvas e linhas aparecem. Fora da área da ortofoto o mapa fica em branco de propósito.', 'info');
+}
+function _aplicarVisibilidadeImagemOnline() {
+  const mapEl = document.getElementById('map');
+  if(mapEl) mapEl.classList.toggle('map-sem-online', !_mostrarImagemOnline);
+  if(_mostrarImagemOnline) {
+    if(googleLayer) { if(!map.hasLayer(googleLayer)) googleLayer.addTo(map); }
+    else { if(!map.hasLayer(esriLayer)) esriLayer.addTo(map); if(!map.hasLayer(esriLabels)) esriLabels.addTo(map); }
+  } else {
+    if(googleLayer && map.hasLayer(googleLayer)) googleLayer.remove();
+    if(map.hasLayer(esriLayer)) esriLayer.remove();
+    if(map.hasLayer(esriLabels)) esriLabels.remove();
+  }
+  const btn = $('btnImagemOnline');
+  if(btn) btn.innerHTML = _mostrarImagemOnline ? '&#128225; Ocultar Imagem Online' : '&#128225; Mostrar Imagem Online';
+}
+_aplicarVisibilidadeImagemOnline(); // respeita a preferência salva já na carga da página
+
 function ativarGoogleMaps(key) {
   if(!key) return;
   // Carrega o Google Maps JS API e ativa o GoogleMutant
@@ -2647,8 +2705,11 @@ function _ativarMutant() {
   try {
     esriLayer.remove();
     esriLabels.remove();
-    // hybrid = satélite + nomes de cidades/rodovias (igual Google Maps)
-    googleLayer = L.gridLayer.googleMutant({type: 'hybrid', maxZoom: 21}).addTo(map);
+    // hybrid = satélite + nomes de cidades/rodovias (igual Google Maps). v4.63: só adiciona ao
+    // mapa se a imagem online não estiver desligada pelo usuário (_mostrarImagemOnline) — senão
+    // ativar uma chave nova "religava" a imagem online escondida sem querer.
+    googleLayer = L.gridLayer.googleMutant({type: 'hybrid', maxZoom: 21});
+    if(_mostrarImagemOnline) googleLayer.addTo(map);
     $('keyStatus').textContent = 'Google Maps ativo';
     $('keyStatus').style.color = 'var(--c-ok)';
   } catch(e) {
@@ -10525,6 +10586,39 @@ async function gerarVista3DAnalise() {
       }
       if(curvaSegMestra.length) {
         const { geo, raw } = _3da_buildRibbon(curvaSegMestra, 0.5 * _3da_espMult, curvaColMestra);
+        const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+        m.visible = _3da_showCurvas; scene.add(m); _3da_curvaMeshes.push(m);
+        _3da_lineObjs.push({ geo, raw, eps: 0.42 });
+        temCurvas = true;
+      }
+    }
+    // v4.63: curvas de nível IMPORTADAS (_curvasLocais.layerPreview) nunca apareciam na Vista 3D —
+    // só as GERADAS online (curvaLayers, acima) — bug relatado: "as curvas de nível importadas não
+    // aparecem na vista 3d e as que eram geradas apareciam". Mesmo tratamento: extrai as polylines
+    // do FeatureGroup (cada uma já colorida por _corPorElevacao na importação), classifica
+    // "mestra" pelo weight (2.6 = mestra, 1.4 = menor — não tem pl._isMaster aqui, ver
+    // _finalizarImportacaoCurvas), e usa o MESMO toggle _3da_showCurvas/_3da_curvaMeshes.
+    if(_curvasLocais && _curvasLocais.layerPreview) {
+      const clSegNormal = [], clColNormal = [], clSegMestra = [], clColMestra = [];
+      _curvasLocais.layerPreview.getLayers().forEach(pl => {
+        let pts; try { pts = pl.getLatLngs().flat(); } catch(e) { return; }
+        if(pts.length < 2) return;
+        const cor = new THREE.Color(pl.options.color || '#ffffff');
+        const destino = (pl.options.weight || 0) > 2 ? { seg: clSegMestra, col: clColMestra } : { seg: clSegNormal, col: clColNormal };
+        for(let i = 0; i < pts.length - 1; i++) {
+          const a = toXY(pts[i].lat, pts[i].lng), b = toXY(pts[i + 1].lat, pts[i + 1].lng);
+          _3da_pushResampledSeg(destino.seg, a.x, a.y, b.x, b.y, 4, meshSample, destino.col, cor);
+        }
+      });
+      if(clSegNormal.length) {
+        const { geo, raw } = _3da_buildRibbon(clSegNormal, 0.3 * _3da_espMult, clColNormal);
+        const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, transparent: true, opacity: .8 }));
+        m.visible = _3da_showCurvas; scene.add(m); _3da_curvaMeshes.push(m);
+        _3da_lineObjs.push({ geo, raw, eps: 0.4 });
+        temCurvas = true;
+      }
+      if(clSegMestra.length) {
+        const { geo, raw } = _3da_buildRibbon(clSegMestra, 0.5 * _3da_espMult, clColMestra);
         const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }));
         m.visible = _3da_showCurvas; scene.add(m); _3da_curvaMeshes.push(m);
         _3da_lineObjs.push({ geo, raw, eps: 0.42 });
