@@ -334,7 +334,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.57 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.58 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -454,7 +454,8 @@ body.layout-lateral #status{grid-area:status;}
             <input type="file" id="inputOrtofotoTiff" accept=".tif,.tiff" style="display:none" onchange="if(this.files[0]){importarOrtofotoTiff(this.files[0]);this.value='';}">
             <div id="tiffOrtoStatus" style="font-size:10px;color:var(--panel-text-dim);max-width:190px;white-space:normal;"></div>
             <button class="rbtn-sm clr" id="btnRemoverOrtofotoLocal" style="display:none;" onclick="removerOrtofotoLocal()">&#10005; Remover Ortofoto Local</button>
-            <button class="rbtn-sm" id="btnAlinharOrtofoto" style="display:none;" onclick="alinharOrtofotoComCurvas()" title="Corrige automaticamente uma pequena diferença de registro entre a ortofoto e as curvas (comum entre exportações do mesmo levantamento) — sem precisar arrastar nada na mão">&#128736; Alinhar Ortofoto às Curvas</button>
+            <button class="rbtn-sm" id="btnAlinharOrtofoto" style="display:none;" onclick="alinharOrtofoto()" title="Corrige automaticamente uma pequena diferença de registro entre a ortofoto e um polígono de referência (o talhão importado via 'Importar Polígono' tem prioridade; sem ele, usa a cobertura das curvas de nível) — sem precisar arrastar nada na mão">&#128736; Alinhar Ortofoto Automaticamente</button>
+            <button class="rbtn-sm" id="btnMoverOrtofotoManual" style="display:none;" onclick="alternarMoverOrtofotoManualmente()" title="Clique para ativar, depois clique e arraste a ortofoto no mapa pra reposicionar na mão; clique de novo pra desativar">&#9995; Mover Ortofoto Manualmente</button>
           </div>
         </div>
         <div class="rgroup-title">Dados Locais — Ortofoto (TIFF) + Curvas de Nível (DXF)</div>
@@ -2291,6 +2292,25 @@ body.layout-lateral #status{grid-area:status;}
 // inversão no resultado — os cantos saem no MESMO sentido de giro que os das curvas. Confirmado
 // com print real do usuário mostrando o bug, e depois com screenshot mostrando a correção
 // (reservatório e linha de mata encaixando com precisão, do mesmo tamanho, sem esticar).
+// v4.58: usuário rejeitou continuar usando o hull das curvas como referência ("totalmente
+// errado, vamos mudar") — pediu pra usar um POLÍGONO EM KML como referência, com a forma exata
+// do recorte da foto (reaproveitado o botão "Importar Polígono" que já existia), e também uma
+// opção de alinhamento manual (arrastar). As duas coisas foram implementadas:
+// 1) _obterPoligonoReferenciaAlinhamento(): dá prioridade ao talhão importado/selecionado (a
+//    forma exata desenhada/importada pelo usuário) e só cai pra cobertura das curvas se não
+//    houver nenhum talhão. Como um polígono desenhado à mão raramente é um paralelogramo
+//    perfeito, o ajuste de 4 cantos (só translação+rotação+escala) não é suficiente — trocado por
+//    ICP (Iterative Closest Point): usa o ajuste de 4 cantos só como chute inicial, depois refina
+//    até 12 rodadas casando cada ponto do contorno real da ortofoto com o ponto mais próximo em
+//    QUALQUER LUGAR da borda do polígono de referência (_pontoMaisProximoNoPoligono, projeção
+//    ponto-segmento em cada aresta, não só nos vértices) e resolvendo um novo ajuste afim a cada
+//    rodada. Testado com uma forma NÃO-paralelogramo (pentágono irregular): converge sem travar
+//    nem explodir; com dados reais (curvas), resíduo médio de ~12m ao longo de TODA a borda (o
+//    ajuste antigo só garantia 4 pontos exatos, sem medir o meio das arestas).
+// 2) alternarMoverOrtofotoManualmente(): novo botão "Mover Ortofoto Manualmente" — ativa um modo
+//    onde clicar e arrastar em qualquer lugar do mapa desloca a ortofoto (translação pura,
+//    preserva rotação/escala se já tiver sido alinhada antes); desativa o arrasto do mapa nesse
+//    modo pra não confundir com panorâmica. Integrado ao Desfazer.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -5028,12 +5048,17 @@ async function _escolherMelhorOverview(tiff, alvoPx) {
 // coisas (bug relatado: "o alinhamento piorou o deslocamento"). Recebe pontos [x,y] já no plano
 // (metros locais ou pixels, tanto faz) e devolve os 4 cantos do retângulo que realmente envolve a
 // forma real, na mesma ordem ao redor (não fechado).
-function _retanguloAreaMinima(pontos) {
-  let hullPts;
+function _hullConvexo(pontos) {
   try {
     const hull = turf.convex(turf.featureCollection(pontos.map(p => turf.point(p))));
-    hullPts = hull.geometry.coordinates[0];
+    return hull ? hull.geometry.coordinates[0] : null; // fechado (primeiro === último)
   } catch(e) { return null; }
+}
+// v4.58: aceita um hull JÁ CALCULADO (hullPronto) pra não repetir o turf.convex quando o mesmo
+// hull também é usado por fora (ver alinhamento por ICP, que precisa do hull cru, não só do
+// retângulo).
+function _retanguloAreaMinima(pontos, hullPronto) {
+  const hullPts = hullPronto || _hullConvexo(pontos);
   if(!hullPts || hullPts.length < 3) return null;
   let melhor = { ang: 0, area: Infinity };
   for(let i = 0; i < hullPts.length - 1; i++) {
@@ -5088,8 +5113,15 @@ function _acharCantosReaisOrtofoto(raster, w, h, samplesPerPixel) {
     }
   }
   if(pontosPx.length < 8) return null;
-  const cantos = _retanguloAreaMinima(pontosPx);
-  return cantos ? cantos.map(([x, y]) => [x, -y]) : null;
+  const hull = _hullConvexo(pontosPx);
+  if(!hull) return null;
+  const cantos = _retanguloAreaMinima(pontosPx, hull);
+  // desfaz a inversão de Y nos dois resultados antes de devolver — hull cru (pro ajuste fino por
+  // ICP, ver alinharOrtofoto) e o retângulo de área mínima (pro chute inicial).
+  return {
+    hull: hull.map(([x, y]) => [x, -y]),
+    cantos: cantos ? cantos.map(([x, y]) => [x, -y]) : null
+  };
 }
 
 function _rasterParaCanvas(raster, width, height, samplesPerPixel) {
@@ -5166,18 +5198,21 @@ async function importarOrtofotoTiff(file) {
   }
 
   const canvas = _rasterParaCanvas(raster, w, h, samplesPerPixel);
-  // Cantos reais da área fotografada (retângulo de área mínima sobre o canal alfa) — em pixel,
-  // não em lat/lng, pra continuar válido depois de um realinhamento (ver alinharOrtofotoComCurvas
-  // e _acharCantosReaisOrtofoto). null se a imagem não tiver canal alfa (sem como separar
-  // conteúdo real da moldura vazia — nesse caso o alinhamento automático não fica disponível).
-  const cantosPx = _acharCantosReaisOrtofoto(raster, w, h, samplesPerPixel);
+  // Área real fotografada (hull cru do canal alfa + retângulo de área mínima dele) — em pixel,
+  // não em lat/lng, pra continuar válida depois de um realinhamento (ver alinharOrtofoto e
+  // _acharCantosReaisOrtofoto). null se a imagem não tiver canal alfa (sem como separar conteúdo
+  // real da moldura vazia — nesse caso o alinhamento automático não fica disponível).
+  const areaReal = _acharCantosReaisOrtofoto(raster, w, h, samplesPerPixel);
 
   if(_ortofotoLocal && _ortofotoLocal.overlay) map.removeLayer(_ortofotoLocal.overlay);
   const dataUrl = canvas.toDataURL('image/png');
   const overlay = L.imageOverlay(dataUrl, bounds, { opacity: 1 }).addTo(map);
-  // dataUrl guardado pra poder recriar a camada (plana ou rotacionada, ver
-  // alinharOrtofotoComCurvas) sem precisar reler o arquivo original.
-  _ortofotoLocal = { overlay, bounds, larguraPx: w, alturaPx: h, cantosPx, dataUrl, rotacionada: false };
+  // dataUrl guardado pra poder recriar a camada (plana ou rotacionada, ver alinharOrtofoto) sem
+  // precisar reler o arquivo original.
+  _ortofotoLocal = {
+    overlay, bounds, larguraPx: w, alturaPx: h, dataUrl, rotacionada: false,
+    cantosPx: areaReal ? areaReal.cantos : null, hullPx: areaReal ? areaReal.hull : null
+  };
   // Reafirma as curvas de nível por cima, caso já estivessem importadas antes da ortofoto (senão a
   // ortofoto, adicionada depois, cobriria elas — bug relatado: "curvas não aparecem na ortofoto").
   _garantirCurvasNoTopo();
@@ -5203,31 +5238,67 @@ function removerOrtofotoLocal() {
   setStatus('Ortofoto local removida — o satélite online volta a aparecer nessa área.', 'info');
 }
 
-// v4.55: botão "Alinhar Ortofoto às Curvas" só faz sentido com os dois importados ao mesmo tempo.
+// v4.58: botão "Alinhar Ortofoto" só faz sentido com a ortofoto E alguma referência (talhão
+// importado/travado OU curvas de nível) importados ao mesmo tempo. "Mover Manualmente" só
+// precisa da ortofoto.
 function _atualizarBotaoAlinharOrtofoto() {
   const btn = $('btnAlinharOrtofoto');
-  if(btn) btn.style.display = (_ortofotoLocal && _elevacaoLocalDisponivel()) ? 'flex' : 'none';
+  if(btn) btn.style.display = (_ortofotoLocal && _obterPoligonoReferenciaAlinhamento()) ? 'flex' : 'none';
+  const btnMover = $('btnMoverOrtofotoManual');
+  if(btnMover) btnMover.style.display = _ortofotoLocal ? 'flex' : 'none';
+}
+// v4.58: pega o polígono a usar como referência pro alinhamento — usuário pediu explicitamente
+// pra dar prioridade a um polígono importado com a forma exata do recorte da ortofoto (via
+// "Importar Polígono", que já existia pra outra finalidade — reaproveitado aqui), em vez de
+// depender só do hull das curvas de nível (que é só uma APROXIMAÇÃO convexa da área real,
+// podendo não ter a mesma forma exata do recorte da foto). Ordem de prioridade: talhão ativo
+// (ainda não travado) > talhão selecionado > último talhão travado > cobertura das curvas.
+function _obterPoligonoReferenciaAlinhamento() {
+  if(polyPts && polyPts.length >= 3) return { pontosLatLng: polyPts.map(p => ({ lat: p.lat, lng: p.lng })), origem: 'talhão ativo' };
+  if(talhaoSelecionadoUid !== null) {
+    const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
+    if(t && t.polyPts && t.polyPts.length >= 3) return { pontosLatLng: t.polyPts.map(p => ({ lat: p.lat, lng: p.lng })), origem: 'talhão selecionado' };
+  }
+  if(talhoesArquivados.length) {
+    const t = talhoesArquivados[talhoesArquivados.length - 1];
+    if(t.polyPts && t.polyPts.length >= 3) return { pontosLatLng: t.polyPts.map(p => ({ lat: p.lat, lng: p.lng })), origem: `Talhão ${t.idx}` };
+  }
+  if(_elevacaoLocalDisponivel() && _curvasLocais.coberturaPoly) {
+    const hull = _curvasLocais.coberturaPoly.geometry.coordinates[0];
+    return { pontosLatLng: hull.slice(0, -1).map(([lng, lat]) => ({ lat, lng })), origem: 'cobertura das curvas de nível' };
+  }
+  return null;
+}
+// Ponto mais próximo de (px,py) em QUALQUER LUGAR da borda de um polígono fechado (não só nos
+// vértices dele) — projeção ponto-segmento em cada aresta, mantendo a menor distância. Usado pelo
+// ICP abaixo pra achar o alvo de cada ponto do contorno da ortofoto.
+function _pontoMaisProximoNoPoligono(px, py, poligonoFechado) {
+  let melhorDist = Infinity, melhorX = px, melhorY = py;
+  for(let i = 0; i < poligonoFechado.length - 1; i++) {
+    const [ax, ay] = poligonoFechado[i], [bx, by] = poligonoFechado[i + 1];
+    const dx = bx - ax, dy = by - ay;
+    const len2 = dx*dx + dy*dy;
+    let t = len2 > 1e-12 ? ((px - ax)*dx + (py - ay)*dy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const cx = ax + t*dx, cy = ay + t*dy;
+    const d = (px - cx)*(px - cx) + (py - cy)*(py - cy);
+    if(d < melhorDist) { melhorDist = d; melhorX = cx; melhorY = cy; }
+  }
+  return [melhorX, melhorY];
 }
 
-// v4.55/v4.56: alinhamento automático — usuário relatou (com prints e comparação em QGIS/AutoCAD/
-// Google Earth) uma diferença entre a área da ortofoto e a área das curvas de nível, mesmo as
-// duas vindo do MESMO levantamento/processamento no Agisoft — confirmado com números exatos
-// direto nos arquivos originais (sem nenhuma conversão): diferença de REGISTRO entre os dois
-// produtos exportados (não bug de leitura/conversão — já verificado por vários caminhos
-// independentes). v4.55 corrigia usando centro+escala do retângulo alinhado ao NORTE — mas a
-// faixa fotografada por um voo de drone quase nunca é alinhada ao norte (aqui, ~17°), então esse
-// retângulo sobra ~40% de área vazia nos cantos e seu centro não é o centro da área real —
-// corrigir por ele piorava o deslocamento em vez de melhorar (bug relatado). Uma primeira versão
-// desta correção tentou ajustar só px→lng e py→lat separados usando os 4 cantos REAIS — mas isso
-// também está errado com rotação: numa forma girada, a longitude de um canto depende dos DOIS
-// eixos de pixel ao mesmo tempo, não só de X (piorou ainda mais, esticou a foto). Correção de
-// verdade: ajuste AFIM completo de 6 parâmetros (lng = a·px + b·py + c, lat = d·px + e·py + f),
-// resolvido por mínimos quadrados casando os 4 cantos do retângulo de ÁREA MÍNIMA (não alinhado
-// ao norte) da área real fotografada (_acharCantosReaisOrtofoto, via canal alfa) com os 4 cantos
-// do retângulo de área mínima do polígono de cobertura das curvas — e, como isso NATURALMENTE
-// inclui uma rotação, passa a usar L.imageOverlay.rotated (plugin, 3 cantos em vez de um
-// retângulo reto) pra conseguir de fato girar a imagem, não só mover/redimensionar um retângulo
-// que nunca ia encaixar numa faixa rotacionada.
+// v4.55→v4.57: histórico da correção de registro ortofoto×curvas (centro+escala do retângulo
+// norte → ajuste afim 4 cantos → fix de espelhamento) — ver detalhes no changelog no topo do
+// arquivo. v4.58: usuário pediu pra usar um POLÍGONO DE REFERÊNCIA (com a forma exata do recorte
+// da foto, importado via "Importar Polígono") em vez de só a cobertura das curvas — e, como um
+// polígono desenhado à mão raramente é um paralelogramo perfeito, o ajuste de 4 cantos (que só
+// captura translação+rotação+escala, não a forma toda) deixou de ser suficiente. Trocado por
+// ICP (Iterative Closest Point, algoritmo padrão pra alinhar duas formas parecidas sem
+// correspondência exata de vértice): usa o ajuste de 4 cantos só como CHUTE INICIAL, depois
+// refina iterativamente casando cada ponto do contorno real da ortofoto com o ponto mais próximo
+// em QUALQUER LUGAR da borda do polígono de referência (não só nos vértices dele,
+// _pontoMaisProximoNoPoligono) e resolvendo um novo ajuste afim a cada rodada — converge pra um
+// encaixe bem mais fiel à forma real de ambos.
 function _resolverAfim(pxs, pys, alvos) {
   // resolve [a;b;c] no sistema normal 3x3 de mínimos quadrados pra alvo = a*px + b*py + c
   const n = pxs.length;
@@ -5241,25 +5312,50 @@ function _resolverAfim(pxs, pys, alvos) {
   }
   return { a: B[0], b: B[1], c: B[2] };
 }
-function alinharOrtofotoComCurvas() {
-  if(!_ortofotoLocal || !_elevacaoLocalDisponivel()) { setStatus('Importe a ortofoto E as curvas de nível antes de alinhar.', 'err'); return; }
-  if(!_ortofotoLocal.cantosPx) { setStatus('Essa ortofoto não tem canal de transparência (alfa) — não dá pra separar a área real fotografada da moldura vazia pra alinhar automaticamente.', 'err'); return; }
+function alinharOrtofoto() {
+  if(!_ortofotoLocal) { setStatus('Importe a ortofoto antes de alinhar.', 'err'); return; }
+  if(!_ortofotoLocal.hullPx) { setStatus('Essa ortofoto não tem canal de transparência (alfa) — não dá pra separar a área real fotografada da moldura vazia pra alinhar automaticamente. Use "Mover Ortofoto Manualmente".', 'err'); return; }
+  const ref = _obterPoligonoReferenciaAlinhamento();
+  if(!ref) { setStatus('Importe um polígono de referência (botão "Importar Polígono", com a forma exata do recorte da foto) ou curvas de nível antes de alinhar.', 'err'); return; }
 
-  const hullCurvas = _curvasLocais.coberturaPoly.geometry.coordinates[0];
-  const latRef = hullCurvas[0][1], mLat = 111320, mLng = Math.cos(latRef * Math.PI / 180) * mLat;
-  const hullCurvasM = hullCurvas.map(([lng, lat]) => [(lng - hullCurvas[0][0]) * mLng, (lat - hullCurvas[0][1]) * mLat]);
-  const cantosCurvasM = _retanguloAreaMinima(hullCurvasM);
-  if(!cantosCurvasM) { setStatus('Não consegui calcular o contorno das curvas pra alinhar — tente reimportá-las.', 'err'); return; }
-  const cantosCurvas = cantosCurvasM.map(([x, y]) => ({ lat: hullCurvas[0][1] + y / mLat, lng: hullCurvas[0][0] + x / mLng }));
+  // Referência em metros locais (plano, em torno do 1º ponto) — fechado (1º === último), pra usar
+  // como sequência de arestas no ICP.
+  const refPts = ref.pontosLatLng;
+  const latRef0 = refPts[0].lat, mLat = 111320, mLng = Math.cos(latRef0 * Math.PI / 180) * mLat;
+  const refM = refPts.map(p => [(p.lng - refPts[0].lng) * mLng, (p.lat - refPts[0].lat) * mLat]);
+  refM.push(refM[0]);
+  const paraLatLng = ([x, y]) => ({ lat: refPts[0].lat + y / mLat, lng: refPts[0].lng + x / mLng });
+  const paraMetros = (lat, lng) => [(lng - refPts[0].lng) * mLng, (lat - refPts[0].lat) * mLat];
 
-  // Casa os 4 cantos por ordem angular (ambos já vêm ordenados assim, ver _retanguloAreaMinima) —
-  // como são a MESMA forma real medida duas vezes, a ordem corresponde ponto a ponto mesmo com o
-  // giro. Ajuste afim completo (6 parâmetros, não separado por eixo) — só assim uma rotação real
-  // fica corretamente representada.
-  const pxs = _ortofotoLocal.cantosPx.map(p => p[0]), pys = _ortofotoLocal.cantosPx.map(p => p[1]);
-  const fitLng = _resolverAfim(pxs, pys, cantosCurvas.map(p => p.lng));
-  const fitLat = _resolverAfim(pxs, pys, cantosCurvas.map(p => p.lat));
-  if(!fitLng || !fitLat) { setStatus('Não consegui calcular o alinhamento (geometria degenerada) — tente reimportar a ortofoto ou as curvas.', 'err'); return; }
+  // 1) Chute inicial: casa os 4 cantos do retângulo de área mínima de cada lado (mesmo método do
+  // v4.56/v4.57) — dá um ponto de partida razoável pro ICP refinar.
+  const cantosRefM = _retanguloAreaMinima(refM);
+  const cantosOrtoPx = _retanguloAreaMinima(_ortofotoLocal.hullPx);
+  if(!cantosRefM || !cantosOrtoPx) { setStatus('Não consegui calcular o contorno de referência pra alinhar — tente reimportá-lo.', 'err'); return; }
+  const cantosRefLatLng = cantosRefM.map(paraLatLng);
+  let fitLng = _resolverAfim(cantosOrtoPx.map(p => p[0]), cantosOrtoPx.map(p => p[1]), cantosRefLatLng.map(p => p.lng));
+  let fitLat = _resolverAfim(cantosOrtoPx.map(p => p[0]), cantosOrtoPx.map(p => p[1]), cantosRefLatLng.map(p => p.lat));
+  if(!fitLng || !fitLat) { setStatus('Não consegui calcular o alinhamento inicial (geometria degenerada) — tente reimportar a ortofoto ou a referência.', 'err'); return; }
+
+  // 2) Refina por ICP usando o CONTORNO REAL completo (não só os 4 cantos) — a cada rodada, acha
+  // o ponto mais próximo (em qualquer lugar da borda, não só nos vértices) do polígono de
+  // referência pra cada ponto do contorno da ortofoto já transformado, e resolve um novo ajuste
+  // afim casando o pixel ORIGINAL com esse alvo atualizado. Converge rápido (forma já parecida
+  // desde o chute inicial).
+  const hullOrtoPx = _ortofotoLocal.hullPx.slice(0, -1); // sem o ponto de fechamento duplicado
+  for(let iter = 0; iter < 12; iter++) {
+    const pxs = [], pys = [], alvosLng = [], alvosLat = [];
+    for(const [px, py] of hullOrtoPx) {
+      const lng = fitLng.a*px + fitLng.b*py + fitLng.c, lat = fitLat.a*px + fitLat.b*py + fitLat.c;
+      const [xM, yM] = paraMetros(lat, lng);
+      const [cx, cy] = _pontoMaisProximoNoPoligono(xM, yM, refM);
+      const alvo = paraLatLng([cx, cy]);
+      pxs.push(px); pys.push(py); alvosLng.push(alvo.lng); alvosLat.push(alvo.lat);
+    }
+    const novoFitLng = _resolverAfim(pxs, pys, alvosLng), novoFitLat = _resolverAfim(pxs, pys, alvosLat);
+    if(!novoFitLng || !novoFitLat) break; // mantém o último ajuste válido
+    fitLng = novoFitLng; fitLat = novoFitLat;
+  }
   const transformar = (px, py) => ({ lng: fitLng.a*px + fitLng.b*py + fitLng.c, lat: fitLat.a*px + fitLat.b*py + fitLat.c });
 
   // Estado ANTERIOR (pra Desfazer) — guarda o suficiente pra recriar a camada EXATAMENTE como
@@ -5297,14 +5393,84 @@ function alinharOrtofotoComCurvas() {
   _ortofotoLocal.cantoTL = novoTL; _ortofotoLocal.cantoTR = novoTR; _ortofotoLocal.cantoBL = novoBL;
   _garantirCurvasNoTopo();
 
-  // Resíduo médio nos 4 cantos DEPOIS do ajuste — dá uma ideia de quão boa ficou a sobreposição.
-  const cantosOrtoNovos = _ortofotoLocal.cantosPx.map(([px, py]) => transformar(px, py));
+  // Resíduo médio (todo o contorno, não só 4 cantos) DEPOIS do ajuste — quão bem a borda real da
+  // ortofoto encostou na borda do polígono de referência.
   let residuoM = 0;
-  for(let i = 0; i < 4; i++) residuoM += haversineM(cantosOrtoNovos[i], cantosCurvas[i]);
-  residuoM /= 4;
+  for(const [px, py] of hullOrtoPx) {
+    const p = transformar(px, py);
+    const [xM, yM] = paraMetros(p.lat, p.lng);
+    const [cx, cy] = _pontoMaisProximoNoPoligono(xM, yM, refM);
+    residuoM += haversineM(p, paraLatLng([cx, cy]));
+  }
+  residuoM /= hullOrtoPx.length;
 
-  setStatus(`✓ Ortofoto realinhada e rotacionada pra bater com o contorno real das curvas de nível (resíduo médio nos 4 cantos: ${residuoM.toFixed(2)}m).`, 'ok');
+  setStatus(`✓ Ortofoto realinhada e rotacionada pra bater com o contorno de referência (${ref.origem}) — resíduo médio ao longo da borda: ${residuoM.toFixed(2)}m.`, 'ok');
 }
+
+// v4.58: alinhamento manual (arrastar) — pedido explícito do usuário como alternativa/complemento
+// ao automático. Ativa um modo onde clicar e arrastar em qualquer lugar do mapa desloca a
+// ortofoto (translação pura, preserva rotação/escala se já tiver sido alinhada automaticamente
+// antes) — desativa o arrasto do MAPA nesse modo pra não confundir com panorâmica.
+let _movendoOrtofotoManualmente = false;
+let _movOrtofotoInicioLatLng = null;
+let _movOrtofotoEstadoBase = null;
+function alternarMoverOrtofotoManualmente() {
+  if(!_ortofotoLocal) { setStatus('Importe a ortofoto antes.', 'err'); return; }
+  _movendoOrtofotoManualmente = !_movendoOrtofotoManualmente;
+  const btn = $('btnMoverOrtofotoManual');
+  if(_movendoOrtofotoManualmente) {
+    map.dragging.disable();
+    map.getContainer().style.cursor = 'move';
+    if(btn) { btn.classList.add('active'); btn.innerHTML = '&#9995; Parar de Mover (clique pra sair)'; }
+    setStatus('Clique e arraste em qualquer ponto do mapa pra mover a ortofoto. Clique no botão de novo pra sair do modo.', 'info');
+  } else {
+    map.dragging.enable();
+    map.getContainer().style.cursor = '';
+    _movOrtofotoInicioLatLng = null;
+    if(btn) { btn.classList.remove('active'); btn.innerHTML = '&#9995; Mover Ortofoto Manualmente'; }
+    setStatus('', '');
+  }
+}
+// Recalcula a posição da ortofoto a partir de um estado-base FIXO (nunca incrementalmente a
+// partir da posição atual) — evita acumular erro de arredondamento a cada frame do arrasto.
+function _reposicionarOrtofotoPorDelta(estadoBase, dLat, dLng) {
+  if(estadoBase.rotacionada) {
+    const desl = p => L.latLng(p.lat + dLat, p.lng + dLng);
+    const tl = desl(estadoBase.topleft), tr = desl(estadoBase.topright), bl = desl(estadoBase.bottomleft);
+    _ortofotoLocal.overlay.reposition(tl, tr, bl);
+    _ortofotoLocal.cantoTL = tl; _ortofotoLocal.cantoTR = tr; _ortofotoLocal.cantoBL = bl;
+    _ortofotoLocal.bounds = L.latLngBounds([tl, tr, bl]);
+  } else {
+    const b = estadoBase.bounds;
+    const novosBounds = L.latLngBounds([b.getSouth() + dLat, b.getWest() + dLng], [b.getNorth() + dLat, b.getEast() + dLng]);
+    _ortofotoLocal.overlay.setBounds(novosBounds);
+    _ortofotoLocal.bounds = novosBounds;
+  }
+}
+map.on('mousedown', e => {
+  if(!_movendoOrtofotoManualmente || !_ortofotoLocal) return;
+  _movOrtofotoInicioLatLng = e.latlng;
+  _movOrtofotoEstadoBase = _ortofotoLocal.rotacionada
+    ? { rotacionada: true, topleft: _ortofotoLocal.cantoTL, topright: _ortofotoLocal.cantoTR, bottomleft: _ortofotoLocal.cantoBL }
+    : { rotacionada: false, bounds: _ortofotoLocal.bounds };
+});
+map.on('mousemove', e => {
+  if(!_movendoOrtofotoManualmente || !_movOrtofotoInicioLatLng) return;
+  _reposicionarOrtofotoPorDelta(_movOrtofotoEstadoBase, e.latlng.lat - _movOrtofotoInicioLatLng.lat, e.latlng.lng - _movOrtofotoInicioLatLng.lng);
+});
+map.on('mouseup', e => {
+  if(!_movendoOrtofotoManualmente || !_movOrtofotoInicioLatLng) return;
+  const dLat = e.latlng.lat - _movOrtofotoInicioLatLng.lat, dLng = e.latlng.lng - _movOrtofotoInicioLatLng.lng;
+  const distM = haversineM(_movOrtofotoInicioLatLng, e.latlng);
+  if(distM > 0.05) {
+    const estadoBase = _movOrtofotoEstadoBase;
+    _reposicionarOrtofotoPorDelta(estadoBase, dLat, dLng);
+    _capturarOverlayParaUndo('mover ortofoto manualmente', () => { _reposicionarOrtofotoPorDelta(estadoBase, 0, 0); });
+    _garantirCurvasNoTopo();
+    setStatus(`✓ Ortofoto movida ${distM.toFixed(1)}m na mão.`, 'ok');
+  }
+  _movOrtofotoInicioLatLng = null;
+});
 
 // v4.48: célula sem dado (fora da área coberta pelas curvas de nível locais — comum, já que a
 // grade de amostragem quase sempre tem uma margem além do talhão pra mostrar o entorno) virava
