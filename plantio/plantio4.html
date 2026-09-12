@@ -343,7 +343,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.63 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.64 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -2456,6 +2456,25 @@ body.layout-lateral #status{grid-area:status;}
 //    costura na borda. Preferência persistida (localStorage, mesmo padrão do layout do ribbon).
 //    _ativarMutant() também respeita esse estado — ativar uma chave Google nova não "religa" a
 //    imagem online se o usuário tinha desligado.
+// v4.64: usuário comparou print da tela 2D com o das curvas importadas (formato bem definido, em
+// terraço, do reservatório) contra a Vista 3D (terreno arredondado, sem seguir o formato real) e
+// pediu pra investigar — "a malha em pequenos trechos parece ser muito grosseira". Causa raiz
+// confirmada: todo vértice da malha 3D (até 161×161, NGTX/NGTY) pegava sua altura de `sampler`, um
+// campo BILINEAR sobre elevGrid — uma grade de só até 40×40 amostras espalhadas pela bbox INTEIRA
+// (limite existente por causa do custo de consultar Google/Open-Meteo/etc. por ponto). Numa
+// propriedade grande com uma feição pequena e detalhada (reservatório com paredes em degraus), os
+// 40×40 pontos praticamente nunca caem dentro da área pequena — o campo bilinear aí vira uma rampa
+// lisa entre 1-2 amostras distantes, sem nenhum dos degraus reais. Diferente de fontes online, o
+// TIN das curvas importadas é cálculo LOCAL instantâneo (mesma função que qualquer consulta de
+// elevação local já usa, _elevacaoViaTin/_elevacaoViaIDW) — sem custo de rede, dá pra consultar
+// direto em CADA vértice da malha (até 161×161, bem mais fino que os 40×40), só DENTRO da área
+// real coberta pelas curvas (turf.booleanPointInPolygon em coberturaPoly, com pré-filtro por bbox
+// pra não pagar o teste caro em vértices óbvios de fora) — fora da cobertura das curvas continua
+// usando o campo bilinear grosseiro (ali não existe dado fino de verdade mesmo). Validado com um
+// reservatório sintético (talhão 800×200m, "reservatório" de 20×20m com 6 níveis/10m de desnível
+// numa ponta — mesma proporção do caso real): SEM o fix, o desnível medido entre centro e borda da
+// feição dava 0,00m (a malha simplesmente engolia o buraco/morro inteiro); COM o fix, 8,62m dos
+// 10m reais projetados (86%) — a malha agora acompanha a forma de verdade.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -10439,12 +10458,39 @@ async function gerarVista3DAnalise() {
       testeCobertura = (lat, lng) => turf.booleanPointInPolygon(turf.point([lng, lat]), poly);
     }
     const coberto = testeCobertura ? new Uint8Array((NGTX + 1) * (NGTY + 1)) : null;
+    // v4.64: usuário relatou (com prints comparando 2D×3D) que o terreno 3D não acompanha o
+    // formato real das curvas num reservatório com paredes em terraço (vários degraus próximos
+    // numa área pequena) — "a malha em pequenos trechos parece muito grosseira". Causa: até aqui,
+    // TODO vértice da malha (até 161×161, NGTX/NGTY) pegava sua altura do `sampler` bilinear sobre
+    // elevGrid — uma grade de só até 40×40 amostras espalhadas pela bbox INTEIRA (a busca de
+    // elevação online é cara, então o app limita esse tamanho). Numa propriedade grande com um
+    // reservatório pequeno, isso dá amostras a dezenas de metros de distância — entre elas o campo
+    // bilinear só sabe desenhar uma rampa suave, nunca os degraus reais (que têm metros de
+    // largura). Diferente de Google/Open-Meteo, consultar o TIN das curvas importadas é cálculo
+    // local instantâneo (_elevacaoViaTin/_elevacaoViaIDW, mesma função usada em qualquer consulta
+    // de elevação local) — sem custo de rede, dá pra chamar direto em CADA vértice da malha (até
+    // 161×161, bem mais fino que os 40×40 da grade), só DENTRO da área real coberta pelas curvas
+    // (turf.booleanPointInPolygon em coberturaPoly — mesma checagem de _buscarElevacaoLocal; fora
+    // dela o TIN/IDW não tem garantia nenhuma e extrapolaria errado). Fora da cobertura das curvas
+    // (entorno/contexto), continua usando o campo bilinear grosseiro — lá não existe dado fino de
+    // verdade mesmo, então mais resolução não ajudaria.
+    const curvasCoberturaBBox = (_elevacaoLocalDisponivel() && _curvasLocais.coberturaPoly) ? turf.bbox(_curvasLocais.coberturaPoly) : null;
+    function _dentroCoberturaCurvas(lat, lng) {
+      if(!curvasCoberturaBBox) return false;
+      if(lng < curvasCoberturaBBox[0] || lat < curvasCoberturaBBox[1] || lng > curvasCoberturaBBox[2] || lat > curvasCoberturaBBox[3]) return false; // rejeição rápida pelo bbox antes do teste caro
+      return turf.booleanPointInPolygon(turf.point([lng, lat]), _curvasLocais.coberturaPoly);
+    }
     for(let jj = 0; jj <= NGTY; jj++) {
       for(let ii = 0; ii <= NGTX; ii++) {
         const idx = jj * (NGTX + 1) + ii;
         const gx = (bcx - halfW) + ii * (2 * halfW / NGTX), gy = (bcy - halfH) + jj * (2 * halfH / NGTY);
         const ll = toLL(gx, gy);
-        const raw = sampler(ll.lat, ll.lng) - elevMin;
+        let elevFina = null;
+        if(curvasCoberturaBBox && _dentroCoberturaCurvas(ll.lat, ll.lng)) {
+          elevFina = _curvasLocais.indiceTin ? _elevacaoViaTin(ll.lat, ll.lng, _curvasLocais.indiceTin) : null;
+          if(elevFina == null) elevFina = _elevacaoViaIDW(ll.lat, ll.lng, _curvasLocais.indiceEspacial, 8);
+        }
+        const raw = (elevFina != null ? elevFina : sampler(ll.lat, ll.lng)) - elevMin;
         terrRaw[idx] = raw;
         tPos[idx * 3] = gx; tPos[idx * 3 + 1] = raw * _3da_exag; tPos[idx * 3 + 2] = -gy;
         tUV[idx * 2] = ii / NGTX; tUV[idx * 2 + 1] = jj / NGTY;
