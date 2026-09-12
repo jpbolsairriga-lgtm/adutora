@@ -343,7 +343,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.64 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.65 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -2475,6 +2475,30 @@ body.layout-lateral #status{grid-area:status;}
 // numa ponta — mesma proporção do caso real): SEM o fix, o desnível medido entre centro e borda da
 // feição dava 0,00m (a malha simplesmente engolia o buraco/morro inteiro); COM o fix, 8,62m dos
 // 10m reais projetados (86%) — a malha agora acompanha a forma de verdade.
+// v4.65: usuário resolveu o problema crônico de alinhamento foto×curvas×polígono usando uma
+// ferramenta feita com o Gemini (georaster+proj4, confiando na georreferência real do arquivo em
+// vez de heurística) e pediu pra usar isso como referência pra corrigir o app "de forma
+// acertiva". Investigando o que fazia diferença lá, achamos o BUG REAL: importarOrtofotoTiff()
+// convertia só 2 dos 4 cantos do retângulo UTM da ortofoto (SW e NE, via
+// image.getBoundingBox()) e montava um L.imageOverlay SEMPRE alinhado aos eixos lat/lng — os
+// outros 2 cantos (NW/SE) eram "herdados" desses dois, nunca calculados de verdade. A conversão
+// UTM→lat/lng (Transverse Mercator) tem convergência de grade real (a grade UTM não aponta
+// exatamente pro norte verdadeiro, exceto no meridiano central da zona — -45° na zona 23S) e uma
+// leve curvatura das retas da grade — descartar 2 dos 4 cantos calculados jogava fora essa
+// informação. Medido com pyproj (autoridade externa, mesmo padrão de validação usado neste
+// projeto desde o início) no arquivo real do usuário: os cantos "herdados" pelo método antigo
+// erravam 17,67m em relação à conversão correta — não é sutil, é uma parte real e mensurável do
+// desalinhamento crônico reportado.
+// Corrigido: _bboxParaCantosOrtofoto() converte os 4 cantos (SW/SE/NE/NW) individualmente, e
+// importarOrtofotoTiff() agora sempre cria a ortofoto via L.imageOverlay.rotated (rotacionada
+// desde a IMPORTAÇÃO, refletindo a forma geométrica real desde o primeiro momento) em vez de
+// nascer sempre "forçada" a ficar reta — antes disso, toda a maquinaria de alinhamento automático/
+// manual (v4.55-v4.62) só remendava por cima um erro de origem, em vez de a causa ser eliminada
+// na raiz. Validado: os 3 cantos calculados batem com pyproj a menos de 1mm de diferença (novo
+// teste test_v465_cantos_utm.js, com valores de referência pré-calculados e sanity-check
+// confirmando que o teste pega a regressão se o bug antigo voltar); testado com a ortofoto+curvas
+// REAIS do usuário SEM nenhum alinhamento manual/automático aplicado — reservatório, tanque e
+// lago batem com precisão nas curvas já na importação pura (ver screenshots do processo).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -5218,12 +5242,38 @@ function _lerSistemaCoordDoGeoTiff(image) {
   }
   return null;
 }
-// bbox = [minX,minY,maxX,maxY] no CRS da própria imagem (ver image.getBoundingBox() do geotiff.js)
-function _bboxParaLatLngBounds(bbox, sistema) {
-  if(sistema.geografico) return L.latLngBounds([bbox[1], bbox[0]], [bbox[3], bbox[2]]);
+// v4.65: achado usando como referência uma ferramenta que o usuário fez no Gemini (que resolveu o
+// alinhamento usando a biblioteca georaster+proj4, confiando na georreferência real do arquivo em
+// vez de heurística) — investigando o que fazia diferença, achamos que _bboxParaLatLngBounds só
+// convertia 2 dos 4 cantos do retângulo UTM (SW e NE) e montava um retângulo SEMPRE alinhado aos
+// eixos lat/lng. Isso descarta qualquer rotação/distorção real que a conversão UTM→lat/lng
+// introduz — a projeção Transverse Mercator (UTM) tem convergência de grade (a grade UTM não
+// aponta exatamente pro norte verdadeiro, exceto no meridiano central da zona) e uma leve
+// curvatura das linhas retas da grade — quanto mais longe do meridiano central (-45° na zona 23S)
+// e quanto maior a imagem, maior o efeito. Medido com pyproj no arquivo real do usuário: ~0,79° de
+// convergência nesse caso específico — pequeno aqui, mas cresce com a distância do meridiano
+// central, e é sempre estruturalmente ERRADO descartar 2 dos 4 cantos calculados. Corrigido:
+// converte os 4 cantos do retângulo (SW/SE/NE/NW) individualmente e devolve os 3 necessários pra
+// um overlay ROTACIONADO (L.imageOverlay.rotated) de verdade, refletindo a forma geométrica real
+// da imagem desde a IMPORTAÇÃO — antes disso, a ortofoto sempre começava "forçada" a ficar reta
+// (mesmo quando geometricamente não deveria), e todo o alinhamento automático/manual só
+// remendava esse erro de origem por cima.
+function _bboxParaCantosOrtofoto(bbox, sistema) {
+  if(sistema.geografico) {
+    // GeoTIFF já em lat/lng (WGS84 geográfico) — um retângulo alinhado aos eixos ali É
+    // genuinamente reto, não tem projeção nenhuma pra "desalinhar" os cantos.
+    return {
+      topleft: L.latLng(bbox[3], bbox[0]), topright: L.latLng(bbox[3], bbox[2]), bottomleft: L.latLng(bbox[1], bbox[0])
+    };
+  }
   const sw = _utmParaLatLng(bbox[0], bbox[1], sistema.zona, sistema.sul);
+  const se = _utmParaLatLng(bbox[2], bbox[1], sistema.zona, sistema.sul);
   const ne = _utmParaLatLng(bbox[2], bbox[3], sistema.zona, sistema.sul);
-  return L.latLngBounds([sw.lat, sw.lng], [ne.lat, ne.lng]);
+  const nw = _utmParaLatLng(bbox[0], bbox[3], sistema.zona, sistema.sul);
+  return {
+    topleft: L.latLng(nw.lat, nw.lng), topright: L.latLng(ne.lat, ne.lng), bottomleft: L.latLng(sw.lat, sw.lng),
+    se: L.latLng(se.lat, se.lng) // só pra diagnóstico/telemetria futura, não usado pelo overlay (paralelogramo já assume o 4º canto)
+  };
 }
 
 // Escolhe a overview (imagem interna do TIFF) de menor resolução que ainda seja >= alvoPx no lado
@@ -5385,7 +5435,10 @@ async function importarOrtofotoTiff(file) {
     return;
   }
 
-  const bounds = _bboxParaLatLngBounds(bbox, sistema);
+  // v4.65: converte os 4 cantos do retângulo UTM individualmente (não mais só SW/NE) — ver
+  // comentário de _bboxParaCantosOrtofoto sobre convergência de grade/distorção da projeção.
+  const cantosGeo = _bboxParaCantosOrtofoto(bbox, sistema);
+  const bounds = _boundsDe3Cantos(cantosGeo.topleft, cantosGeo.topright, cantosGeo.bottomleft);
   if(_spanBoundsGraus(bounds) > _LIMITE_SPAN_GRAUS) {
     setStatus(`A ortofoto cobriria uma área maior que qualquer fazenda (mais de ${_LIMITE_SPAN_GRAUS}° de extensão) — o sistema de coordenadas detectado no arquivo pode estar incorreto ou não suportado. Confira o TIFF antes de importar.`, 'err');
     if(st) st.textContent = '';
@@ -5406,11 +5459,16 @@ async function importarOrtofotoTiff(file) {
 
   if(_ortofotoLocal && _ortofotoLocal.overlay) map.removeLayer(_ortofotoLocal.overlay);
   const dataUrl = canvas.toDataURL('image/png');
-  const overlay = L.imageOverlay(dataUrl, bounds, { opacity: 1 }).addTo(map);
+  // v4.65: SEMPRE via L.imageOverlay.rotated, com os cantos geometricamente corretos calculados
+  // acima — antes, a ortofoto sempre nascia "forçada" a ficar reta (L.imageOverlay comum), mesmo
+  // quando a conversão UTM→lat/lng dizia o contrário, e só um alinhamento automático/manual
+  // POSTERIOR corrigia isso (remendo em cima do erro de origem, não a causa).
+  const overlay = L.imageOverlay.rotated(dataUrl, cantosGeo.topleft, cantosGeo.topright, cantosGeo.bottomleft, { opacity: 1 }).addTo(map);
   // dataUrl guardado pra poder recriar a camada (plana ou rotacionada, ver alinharOrtofoto) sem
   // precisar reler o arquivo original.
   _ortofotoLocal = {
-    overlay, bounds, larguraPx: w, alturaPx: h, dataUrl, rotacionada: false,
+    overlay, bounds, larguraPx: w, alturaPx: h, dataUrl, rotacionada: true,
+    cantoTL: cantosGeo.topleft, cantoTR: cantosGeo.topright, cantoBL: cantosGeo.bottomleft,
     cantosPx: areaReal ? areaReal.cantos : null, hullPx: areaReal ? areaReal.hull : null,
     anguloManualGraus: 0 // v4.62: mostrador de giro manual acumulado — zera numa importação nova
   };
