@@ -343,7 +343,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.66 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.67 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -473,9 +473,14 @@ body.layout-lateral #status{grid-area:status;}
             <div id="tiffOrtoStatus" style="font-size:10px;color:var(--panel-text-dim);max-width:190px;white-space:normal;"></div>
             <button class="rbtn-sm clr" id="btnRemoverOrtofotoLocal" style="display:none;" onclick="removerOrtofotoLocal()">&#10005; Remover Ortofoto Local</button>
             <button class="rbtn-sm" id="btnMoverOrtofotoManual" style="display:none;" onclick="alternarMoverOrtofotoManualmente()" title="Clique para ativar, depois clique e arraste a ortofoto no mapa pra reposicionar na mão; clique de novo pra desativar">&#9995; Mover Ortofoto Manualmente</button>
+            <div class="rdiv" style="margin:4px 0;width:100%;height:1px;align-self:auto;"></div>
+            <button class="rbtn-sm" onclick="$('inputDemLocal').click()" title="DEM = Digital Elevation Model, o raster de elevação real exportado pelo Metashape/Pix4D/DroneDeploy (célula a célula, não interpolado de curvas). Prioridade MÁXIMA de elevação — acima até das curvas de nível.">&#127756; Importar DEM (Elevação Real, .tif)</button>
+            <input type="file" id="inputDemLocal" accept=".tif,.tiff" style="display:none" onchange="if(this.files[0]){importarDemLocal(this.files[0]);this.value='';}">
+            <div id="demLocalStatus" style="font-size:10px;color:var(--panel-text-dim);max-width:190px;white-space:normal;"></div>
+            <button class="rbtn-sm clr" id="btnRemoverDemLocal" style="display:none;" onclick="removerDemLocal()">&#10005; Remover DEM Local</button>
           </div>
         </div>
-        <div class="rgroup-title">Dados Locais — Ortofoto (TIFF) + Curvas de Nível (DXF)</div>
+        <div class="rgroup-title">Dados Locais — Ortofoto (TIFF) + Curvas de Nível (DXF) + DEM</div>
       </div>
     </div>
 
@@ -2511,6 +2516,48 @@ body.layout-lateral #status{grid-area:status;}
 //    do talhão. Corrigido conferindo a geometria de verdade (turf.booleanPointInPolygon) antes de
 //    agir. Testado (test_v466_autolock_click_fora.js, test_v466_click_fora_talhao.js): clique
 //    DENTRO nunca desativa nada; clique FORA sempre desseleciona/trava, nos dois cenários.
+// v4.67: usuário mostrou uma ferramenta de referência (vídeo
+// gravado por ele) com um "Simulador" de chuva/operação/escoamento que importa um DEM (raster de
+// elevação real, .tif) e calcula os caminhos REAIS de escoamento célula a célula — pediu pra usar
+// isso como base pra construir algo parecido no nosso app, começando pela importação do DEM +
+// escoamento. O app já tinha toda a hidrologia de grade (D8 + acúmulo de fluxo, priority-flood)
+// usada pelo Mapa de Escoamento/Risco de Erosão/Vazão de Pico — só faltava uma fonte de elevação
+// de alta resolução de verdade (curvas de nível são só um TIN interpolado de contornos esparsos;
+// fontes online são grade grossa, cara por ponto).
+// Implementado: importarDemLocal() lê um DEM .tif/.tiff (mesma pipeline de georreferência da
+// ortofoto — image.getBoundingBox()/GeoKeys, 4 cantos reais, overlay ROTACIONADO desde a
+// importação), guardado em _demLocal com prioridade de elevação MÁXIMA (acima até das curvas
+// locais) em _buscarElevacaoFundida — _calcularHidrologiaTalhao eleva automaticamente a
+// resolução da grade (piso 150, contra os ~40 de fontes online) quando o DEM está ativo, já que
+// não tem mais custo por ponto — beneficia Mapa de Escoamento, Risco de Erosão e Vazão de Pico ao
+// mesmo tempo, sem precisar mudar cada um.
+// Pré-requisito necessário: _preencherDepressoes usava fila de prioridade por busca LINEAR O(n)
+// por operação — inofensivo nas grades pequenas de antes (≤60×60), mas inviabilizaria qualquer
+// grade maior vinda de um DEM (O(n²) no total). Trocado por um heap binário real O(log n) —
+// mesmo resultado (validado bit a bit contra a implementação antiga numa grade de teste),
+// suportando grades de centenas de milhares de células sem travar.
+// TRÊS bugs reais achados e corrigidos testando com um DEM real do usuário (610MB,
+// Vanessa Moreno/dtm.tif, EPSG:32723): (1) e (2) as OVERVIEWS internas de um GeoTIFF gerado por
+// GDAL (comum em DEM/DTM — gdaladdo ou equivalente do processador fotogramétrico) não carregam
+// NENHUMA tag de georreferência própria — nem GeoKeys, nem ModelPixelScale/ModelTiepoint, nem
+// GDAL_NODATA — só a imagem PRINCIPAL (índice 0, resolução nativa) tem isso. _escolherMelhorOverview
+// (compartilhada com a ortofoto) escolhia a overview só pelo TAMANHO, então lendo pixels de uma
+// overview sem essas tags: _lerSistemaCoordDoGeoTiff falhava ("não consegui identificar o sistema
+// de coordenadas") e image.getBoundingBox() lançava "The image does not have an affine
+// transformation.". Corrigido fazendo _escolherMelhorOverview devolver TAMBÉM a imagem principal
+// (sempre a mesma, índice 0), usada como fallback de GeoKeys e como única fonte do bbox/NODATA —
+// o bbox real (extensão geográfica) é o mesmo em qualquer resolução, overview só tem menos
+// pixels cobrindo a mesma área. Corrigido nos dois importadores (DEM e ortofoto), já que é o
+// mesmo bug latente — só não tinha se manifestado ainda na ortofoto porque os arquivos testados
+// até aqui tinham overviews com as tags completas. (3) resample para um tamanho MUITO perto do
+// nativo da overview escolhida (ex.: 3026px reduzindo pra 3000px, ~1% de diferença) — não chegou
+// a ser a causa real (só um sintoma disfarçado dos bugs (1)/(2) acima, que só se manifestavam
+// dentro do fluxo completo), mas foi investigado e descartado explicitamente antes de achar a
+// causa verdadeira.
+// Validado com o DEM real: mínimo de elevação bateu EXATO com a referência lida por fora (rasterio,
+// 640.0889...m) e a elevação amostrada num ponto conhecido do meio do raster ficou a 0,195m da
+// referência (diferença esperada, vem só do downsample pra caber na memória do navegador) —
+// reimportou a ortofoto real também, sem mudança nenhuma no resultado (mesmos 4 cantos de sempre).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -4397,9 +4444,12 @@ async function _buscarOpenTopoData(pontos, dataset, proxyBase) {
 // mas em PARALELO com Google e Open-Meteo (destinos diferentes, sem esse risco).
 async function _buscarElevacaoFundida(pontos) {
   if(!pontos.length) return { valores: [], sigmaMedio: null, fontesUsadas: [] };
-  // v4.46: curvas de nível locais (DXF) têm prioridade absoluta — nem Google, nem Open-Meteo,
-  // nem o proxy SRTM/Mapzen/ASTER são consultados enquanto elas estiverem ativas (ponto de
-  // entrada único: qualquer função do app que busque elevação passa por aqui).
+  // v4.67: DEM local importado tem prioridade MÁXIMA — acima até das curvas de nível (um raster
+  // nativo é sempre mais fiel que um TIN interpolado de contornos esparsos).
+  if(_demLocalDisponivel()) return _buscarElevacaoViaDemLote(pontos);
+  // v4.46: curvas de nível locais (DXF) têm prioridade absoluta sobre fontes online — nem Google,
+  // nem Open-Meteo, nem o proxy SRTM/Mapzen/ASTER são consultados enquanto elas estiverem ativas
+  // (ponto de entrada único: qualquer função do app que busque elevação passa por aqui).
   if(_elevacaoLocalDisponivel()) return _buscarElevacaoLocal(pontos);
   const temGoogle = !!(window.google && window.google.maps && google.maps.ElevationService);
 
@@ -4579,20 +4629,45 @@ const _ESCOAMENTO_DIRS = [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]]
 // plano) até a borda da grade — sem isso, ruído nos dados de elevação cria "poços" artificiais que
 // quebram a continuidade do escoamento, e isso piora justamente quando a grade fica mais fina
 // (célula menor → diferença real de cota entre vizinhos menor → mais perto do ruído dos dados).
-// Fila de prioridade por busca linear (não uma heap de verdade) — grades desse app são pequenas
-// (≤60×60 = 3600 células), então isso continua rápido sem a complexidade de uma heap real.
+// v4.67: até aqui, fila de prioridade por busca linear (não uma heap de verdade) — OK enquanto as
+// grades desse app eram pequenas (≤60×60 = 3600 células, vindas de fontes online cobradas por
+// ponto). Um DEM local importado (v4.67) não tem esse limite de custo e pode chegar a centenas de
+// milhares/milhões de células — busca linear é O(n) por pop, então o algoritmo inteiro viraria
+// O(n²) (por ex.: 250.000 células ao quadrado é inviável). Trocado por um HEAP BINÁRIO real
+// (array-based, sift-up no push / sift-down no pop, ambos O(log n)) — mesmo resultado, mas
+// O(n log n) no total, a mesma complexidade assintótica do algoritmo priority-flood de verdade.
 function _preencherDepressoes(elev, n) {
   const filled = elev.map(row => row.slice());
   const visited = Array.from({ length: n }, () => new Array(n).fill(false));
   const heap = [];
-  const push = (r, c, z) => heap.push([z, r, c]);
+  const push = (r, c, z) => {
+    heap.push([z, r, c]);
+    let i = heap.length - 1;
+    while(i > 0) {
+      const pai = (i - 1) >> 1;
+      if(heap[i][0] >= heap[pai][0]) break;
+      const tmp = heap[i]; heap[i] = heap[pai]; heap[pai] = tmp;
+      i = pai;
+    }
+  };
   const popMin = () => {
-    let bi = 0;
-    for(let i = 1; i < heap.length; i++) if(heap[i][0] < heap[bi][0]) bi = i;
-    const v = heap[bi];
-    heap[bi] = heap[heap.length - 1];
-    heap.pop();
-    return v;
+    const topo = heap[0];
+    const ultimo = heap.pop();
+    if(heap.length) {
+      heap[0] = ultimo;
+      let i = 0;
+      const len = heap.length;
+      while(true) {
+        const e = i * 2 + 1, d = e + 1;
+        let menor = i;
+        if(e < len && heap[e][0] < heap[menor][0]) menor = e;
+        if(d < len && heap[d][0] < heap[menor][0]) menor = d;
+        if(menor === i) break;
+        const tmp = heap[i]; heap[i] = heap[menor]; heap[menor] = tmp;
+        i = menor;
+      }
+    }
+    return topo;
   };
   // "Epsilon-fill": incremento infinitesimal (bem abaixo da precisão real de qualquer fonte de
   // elevação) somado a cada passo do avanço da inundação a partir da borda. Sem isso, o
@@ -4624,6 +4699,215 @@ function _preencherDepressoes(elev, n) {
   return filled;
 }
 
+// ── Dados Locais: DEM (raster de elevação real) — prioridade MÁXIMA de elevação ─────────────
+// v4.67: pedido do usuário — base de um "Simulador" (chuva/operação/escoamento) inspirado numa
+// ferramenta de referência que ele usa (importa um DEM .tif e calcula os caminhos REAIS de
+// escoamento célula a célula, ao contrário de curvas de nível — que são só um TIN interpolado de
+// contornos esparsos — ou de fontes online — grade grossa, cara por ponto). Um DEM (Digital
+// Elevation Model) é o raster de elevação exportado direto do Metashape/Pix4D/DroneDeploy: cada
+// pixel já É uma cota real medida, sem interpolação nenhuma de curva. Prioridade ACIMA até das
+// curvas locais (_elevacaoLocalDisponivel) — quando os dois estão presentes, o raster nativo é
+// sempre mais fiel que um TIN interpolado de contornos.
+const DEM_MAX_PX = 3000; // teto do lado maior armazenado — mesma ordem de grandeza da ferramenta
+                          // de referência do usuário (~4,5 milhões de células) sem estourar a
+                          // memória do navegador (3000×3000×4 bytes ≈ 36MB, tranquilo).
+let _demLocal = null; // { valores:Float32Array (NaN=sem dado), nx, ny, minZ, maxZ, cantoTL/TR/BL, bounds, overlay }
+function _demLocalDisponivel() { return !!(_demLocal && _demLocal.valores); }
+
+async function importarDemLocal(file) {
+  if(!file) return;
+  if(!window.GeoTIFF) { setStatus('Biblioteca de leitura de GeoTIFF não carregou (verifique sua conexão) — não é possível importar o DEM agora.', 'err'); return; }
+  setStatus('Lendo DEM TIFF — arquivos grandes podem levar de alguns segundos a um minuto…', 'info');
+  const st = $('demLocalStatus'); if(st) st.textContent = 'Processando…';
+
+  let tiff, image, imagemPrincipal;
+  try {
+    tiff = await GeoTIFF.fromBlob(file);
+    ({ imagem: image, imagemPrincipal } = await _escolherMelhorOverview(tiff, DEM_MAX_PX));
+  } catch(e) {
+    setStatus('Não consegui ler o arquivo como GeoTIFF (confira se é um TIFF georreferenciado válido).', 'err');
+    if(st) st.textContent = '';
+    return;
+  }
+
+  // v4.67: se a overview escolhida (só por tamanho) não carregar GeoKeys, cai pra imagem
+  // principal (idx 0) — comum em overviews geradas por GDAL (ex.: gdaladdo, DEM/DTM real do
+  // usuário), que não repetem o CRS em cada nível.
+  const sistema = _lerSistemaCoordDoGeoTiff(image) || _lerSistemaCoordDoGeoTiff(imagemPrincipal);
+  if(!sistema) {
+    setStatus('Não consegui identificar o sistema de coordenadas do DEM (GeoKeys ausentes, ou fora das zonas UTM SIRGAS2000/WGS84 do Brasil). Reprojete o TIFF antes de importar.', 'err');
+    if(st) st.textContent = '';
+    return;
+  }
+
+  let w = image.getWidth(), h = image.getHeight();
+  const maiorLado = Math.max(w, h);
+  const foiReduzido = maiorLado > DEM_MAX_PX;
+  if(foiReduzido) {
+    const escala = DEM_MAX_PX / maiorLado;
+    w = Math.max(1, Math.round(w * escala));
+    h = Math.max(1, Math.round(h * escala));
+  }
+
+  let raster, bbox, noData;
+  try {
+    // 'nearest', não 'bilinear' — um DEM real quase sempre tem NODATA (ex.: -9999) nas bordas/
+    // buracos sem dado; um resample bilinear misturaria isso com pixels de elevação REAL
+    // vizinhos, criando uma média sem sentido. 'nearest' nunca mistura valores de origem
+    // diferentes, só escolhe o pixel mais próximo — o NODATA que sobra fica isolado e é
+    // filtrado abaixo, não contamina vizinho nenhum.
+    raster = await image.readRasters({ width: w, height: h, resampleMethod: 'nearest' });
+    // v4.67: achado com o DEM real do usuário — overview do GeoTIFF (gerada por GDAL) não carrega
+    // NENHUMA tag de georreferência própria (nem ModelPixelScale/ModelTiepoint, nem GDAL_NODATA),
+    // só a imagem PRINCIPAL (idx 0) tem isso — chamar getBoundingBox() na overview lança "The
+    // image does not have an affine transformation." O bbox real (extensão geográfica) é o MESMO
+    // em qualquer resolução (overview só tem menos pixels cobrindo a mesma área), então sempre
+    // pega da imagem principal, nunca da overview escolhida pra leitura dos pixels.
+    bbox = imagemPrincipal.getBoundingBox();
+    const fileDirPrincipal = imagemPrincipal.getFileDirectory ? imagemPrincipal.getFileDirectory() : null;
+    noData = fileDirPrincipal && fileDirPrincipal.GDAL_NODATA != null ? parseFloat(fileDirPrincipal.GDAL_NODATA) : null;
+  } catch(e) {
+    setStatus('Erro ao decodificar os pixels do DEM (formato de compressão pode não ser suportado pelo navegador).', 'err');
+    if(st) st.textContent = '';
+    return;
+  }
+
+  // v4.65: converte os 4 cantos do retângulo UTM individualmente (não só SW/NE) — mesma função
+  // já usada pra ortofoto, genérica (só depende do bbox+sistema de coordenadas, não do conteúdo).
+  const cantosGeo = _bboxParaCantosOrtofoto(bbox, sistema);
+  const bounds = _boundsDe3Cantos(cantosGeo.topleft, cantosGeo.topright, cantosGeo.bottomleft);
+  if(_spanBoundsGraus(bounds) > _LIMITE_SPAN_GRAUS) {
+    setStatus(`O DEM cobriria uma área maior que qualquer fazenda (mais de ${_LIMITE_SPAN_GRAUS}° de extensão) — o sistema de coordenadas detectado no arquivo pode estar incorreto ou não suportado. Confira o TIFF antes de importar.`, 'err');
+    if(st) st.textContent = '';
+    return;
+  }
+  if(!_dentroDoBrasilAprox(bounds)) {
+    setStatus('O DEM cairia fora do território brasileiro — o sistema de coordenadas detectado no arquivo pode estar incorreto. Confira o TIFF antes de importar.', 'err');
+    if(st) st.textContent = '';
+    return;
+  }
+
+  const banda = raster[0]; // 1 banda só (elevação) — readRasters sem interleave devolve [banda0, banda1, ...]
+  const valores = new Float32Array(w * h);
+  let minZ = Infinity, maxZ = -Infinity, numValidas = 0;
+  for(let i = 0; i < banda.length; i++) {
+    const v = banda[i];
+    const invalido = !isFinite(v) || (noData != null && Math.abs(v - noData) < 1e-6);
+    if(invalido) { valores[i] = NaN; continue; }
+    valores[i] = v;
+    numValidas++;
+    if(v < minZ) minZ = v;
+    if(v > maxZ) maxZ = v;
+  }
+  if(numValidas < 8) {
+    setStatus('O DEM não tem pixels de elevação válidos suficientes (só NODATA?). Confira o arquivo.', 'err');
+    if(st) st.textContent = '';
+    return;
+  }
+
+  if(_demLocal && _demLocal.overlay) map.removeLayer(_demLocal.overlay);
+  const overlay = _construirOverlayDem(valores, w, h, minZ, maxZ, cantosGeo);
+
+  _demLocal = {
+    valores, nx: w, ny: h, minZ, maxZ, noData,
+    cantoTL: cantosGeo.topleft, cantoTR: cantosGeo.topright, cantoBL: cantosGeo.bottomleft,
+    bounds, overlay, sampler: null
+  };
+  _atualizarIndicadorFonteElevacao();
+  _garantirCurvasNoTopo();
+
+  const numCelulasM = (w * h / 1e6).toFixed(1);
+  if(st) st.innerHTML = `✓ ${w}×${h}px (${numCelulasM}M células) · cotas ${minZ.toFixed(1)}–${maxZ.toFixed(1)}m${foiReduzido ? ' · reduzido do original pra caber com folga na memória do navegador' : ''}`;
+  const btnRem = $('btnRemoverDemLocal'); if(btnRem) btnRem.style.display = 'flex';
+  setStatus(`✓ DEM importado — a partir de agora, a elevação de todo o app vem exclusivamente dele (${w}×${h}px, ${numCelulasM} milhões de células, prioridade acima das curvas de nível).`, 'ok');
+  try { map.fitBounds(bounds, { padding: [20,20] }); } catch(e) {}
+}
+
+// Visualização rápida do DEM importado — pinta cada pixel por elevação (verde=mais baixo,
+// vermelho=mais alto, mesma paleta de _corPorElevacao) num overlay ROTACIONADO (forma geométrica
+// real, igual à ortofoto desde a v4.65). Usa uma tabela de 256 cores pré-calculada (LUT) em vez
+// de chamar _hslParaHex por pixel — um DEM de alguns milhões de pixels faria isso ficar bem lento.
+function _construirOverlayDem(valores, w, h, minZ, maxZ, cantosGeo) {
+  const lut = new Uint8Array(256 * 3);
+  for(let i = 0; i < 256; i++) {
+    const hex = _hslParaHex(120 - (i / 255) * 120, 65, 40); // 0=verde (baixo) → 255=vermelho (alto)
+    lut[i*3] = parseInt(hex.slice(1, 3), 16);
+    lut[i*3+1] = parseInt(hex.slice(3, 5), 16);
+    lut[i*3+2] = parseInt(hex.slice(5, 7), 16);
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  const imgData = ctx.createImageData(w, h);
+  const out = imgData.data;
+  const span = Math.max(1e-6, maxZ - minZ);
+  for(let i = 0; i < valores.length; i++) {
+    const v = valores[i], idx = i * 4;
+    if(Number.isNaN(v)) { out[idx+3] = 0; continue; } // sem dado: transparente
+    const t = Math.max(0, Math.min(255, Math.round((v - minZ) / span * 255)));
+    out[idx] = lut[t*3]; out[idx+1] = lut[t*3+1]; out[idx+2] = lut[t*3+2]; out[idx+3] = 210;
+  }
+  ctx.putImageData(imgData, 0, 0);
+  const dataUrl = canvas.toDataURL('image/png');
+  return L.imageOverlay.rotated(dataUrl, cantosGeo.topleft, cantosGeo.topright, cantosGeo.bottomleft, { opacity: .85 }).addTo(map);
+}
+
+// Amostrador bilinear do DEM local — projeta (lat,lng) no paralelogramo real definido pelos 3
+// cantos (topleft/topright/bottomleft; o 4º é dedutível — mesma álgebra de paralelogramo do
+// _boundsDe3Cantos) pra achar a fração (u,v) dentro dele, e daí a célula da grade. Funciona
+// mesmo quando o DEM está levemente rotacionado (convergência de grade UTM, ver v4.65) — uma
+// bbox axis-aligned simples erraria a posição nesse caso.
+function _construirAmostradorDem(dem) {
+  const { cantoTL, cantoTR, cantoBL, nx, ny, valores } = dem;
+  const mLat = 111320, mLng = Math.cos(cantoTL.lat * Math.PI / 180) * mLat;
+  const paraM = p => [(p.lng - cantoTL.lng) * mLng, (p.lat - cantoTL.lat) * mLat];
+  const [ex, ey] = paraM(cantoTR); // vetor da borda de cima (topleft→topright) = eixo das colunas
+  const [fx, fy] = paraM(cantoBL); // vetor da borda da esquerda (topleft→bottomleft) = eixo das linhas
+  const e2 = ex * ex + ey * ey, f2 = fx * fx + fy * fy;
+  return function(lat, lng) {
+    const [px, py] = paraM({ lat, lng });
+    const u = (px * ex + py * ey) / e2, v = (px * fx + py * fy) / f2;
+    if(u < 0 || u > 1 || v < 0 || v > 1) return null; // fora do retângulo real do DEM
+    const fc = u * (nx - 1), fr = v * (ny - 1);
+    const c0 = Math.floor(fc), r0 = Math.floor(fr);
+    const c1 = Math.min(nx - 1, c0 + 1), r1 = Math.min(ny - 1, r0 + 1);
+    const tc = fc - c0, tr = fr - r0;
+    const g = (r, c) => valores[r * nx + c];
+    const a = g(r0, c0), b = g(r0, c1), cc = g(r1, c0), d = g(r1, c1);
+    if(Number.isNaN(a) || Number.isNaN(b) || Number.isNaN(cc) || Number.isNaN(d)) return null; // vizinhança tem NODATA
+    const topo = a * (1 - tc) + b * tc, base = cc * (1 - tc) + d * tc;
+    return topo * (1 - tr) + base * tr;
+  };
+}
+// Ponto de entrada de elevação via DEM local — mesmo formato de retorno de _buscarElevacaoLocal
+// (curvas), pra ser intercambiável em _buscarElevacaoFundida.
+function _buscarElevacaoViaDemLote(pontos) {
+  if(!_demLocal.sampler) _demLocal.sampler = _construirAmostradorDem(_demLocal);
+  let fora = 0;
+  const valores = pontos.map(p => {
+    const v = _demLocal.sampler(p.lat, p.lng);
+    if(v == null) fora++;
+    return v;
+  });
+  if(fora > 0) {
+    setStatus(`⚠ ${fora} ponto(s) fora da área coberta pelo DEM importado — sem dado ali (DEM local ativo, não busca online). Importe um DEM que cubra toda a região se precisar.`, 'err');
+  }
+  return { valores, sigmaMedio: 0, fontesUsadas: ['DEM Local (importado)'] };
+}
+
+function _removerDemLocalSemUndo() {
+  if(_demLocal && _demLocal.overlay) map.removeLayer(_demLocal.overlay);
+  _demLocal = null;
+  const st = $('demLocalStatus'); if(st) st.innerHTML = '';
+  const btnRem = $('btnRemoverDemLocal'); if(btnRem) btnRem.style.display = 'none';
+  _atualizarIndicadorFonteElevacao();
+}
+function removerDemLocal() {
+  if(_demLocal) _capturarEstadoParaUndo('remoção do DEM local');
+  _removerDemLocalSemUndo();
+  setStatus('DEM local removido — a elevação volta a vir das curvas de nível (se importadas) ou das fontes online.', 'info');
+}
+
 // ── Dados Locais: Curvas de Nível (DXF) — substitui a busca online de elevação ──────────────
 // v4.46: importação de curvas de nível em DXF (Civil3D/AgroCAD), a pedido do usuário. Quando
 // ativa, TODA busca de elevação do app (perfil, declividade, mapa de escoamento, vista 3D,
@@ -4641,8 +4925,13 @@ function _elevacaoLocalDisponivel() { return !!(_curvasLocais && _curvasLocais.i
 // ignorando esse seletor por completo — ver _buscarElevacaoFundida), sem nenhum jeito de saber
 // isso olhando só a aba Início. Desabilita o seletor e mostra um aviso fixo enquanto durar.
 function _atualizarIndicadorFonteElevacao() {
-  const ativo = _elevacaoLocalDisponivel();
-  const aviso = $('avisoElevacaoLocal'); if(aviso) aviso.style.display = ativo ? 'block' : 'none';
+  const ativo = _demLocalDisponivel() || _elevacaoLocalDisponivel();
+  const aviso = $('avisoElevacaoLocal');
+  if(aviso) {
+    aviso.style.display = ativo ? 'block' : 'none';
+    if(_demLocalDisponivel()) aviso.innerHTML = '&#9989; DEM local ativo — esse seletor está sendo ignorado (elevação vem só do DEM importado, prioridade máxima)';
+    else if(_elevacaoLocalDisponivel()) aviso.innerHTML = '&#9989; Curvas de nível locais ativas — esse seletor está sendo ignorado (elevação vem só das curvas importadas)';
+  }
   const sel = $('elevacaoModo'); if(sel) sel.disabled = ativo;
 }
 
@@ -5310,6 +5599,14 @@ function _bboxParaCantosOrtofoto(bbox, sistema) {
 
 // Escolhe a overview (imagem interna do TIFF) de menor resolução que ainda seja >= alvoPx no lado
 // maior; se nenhuma alcançar o alvo (arquivo pequeno), usa a de maior resolução disponível.
+// v4.67: achado usando um DEM real do usuário — overviews internas geradas por GDAL (ex.:
+// gdaladdo, comum em DEM/DTM exportado por processadores fotogramétricos) não repetem os
+// GeoKeys em cada sub-IFD — só a imagem PRINCIPAL (idx 0, sempre a resolução nativa) carrega o
+// sistema de coordenadas completo, por convenção do próprio formato (overview herda o CRS da
+// principal, sem precisar duplicar). Se a overview ESCOLHIDA (só por tamanho) não tiver GeoKeys,
+// _lerSistemaCoordDoGeoTiff nela sozinha falha mesmo o arquivo sendo perfeitamente válido — por
+// isso agora também devolve a imagem principal, pra servir de fallback de georreferência (ver
+// importarOrtofotoTiff/importarDemLocal).
 async function _escolherMelhorOverview(tiff, alvoPx) {
   const n = await tiff.getImageCount();
   const candidatos = [];
@@ -5317,10 +5614,12 @@ async function _escolherMelhorOverview(tiff, alvoPx) {
     const img = await tiff.getImage(idx);
     candidatos.push({ img, tamanho: Math.max(img.getWidth(), img.getHeight()) });
   }
+  const imagemPrincipal = candidatos[0].img; // idx 0 é sempre a resolução nativa, nunca uma overview
   const acimaDoAlvo = candidatos.filter(c => c.tamanho >= alvoPx);
-  if(acimaDoAlvo.length) { acimaDoAlvo.sort((a,b) => a.tamanho - b.tamanho); return acimaDoAlvo[0].img; }
-  candidatos.sort((a,b) => b.tamanho - a.tamanho);
-  return candidatos[0].img;
+  let imagem;
+  if(acimaDoAlvo.length) { acimaDoAlvo.sort((a,b) => a.tamanho - b.tamanho); imagem = acimaDoAlvo[0].img; }
+  else { candidatos.sort((a,b) => b.tamanho - a.tamanho); imagem = candidatos[0].img; }
+  return { imagem, imagemPrincipal };
 }
 
 function _rasterParaCanvas(raster, width, height, samplesPerPixel) {
@@ -5347,17 +5646,19 @@ async function importarOrtofotoTiff(file) {
   setStatus('Lendo ortofoto TIFF — arquivos grandes podem levar de alguns segundos a um minuto…', 'info');
   const st = $('tiffOrtoStatus'); if(st) st.textContent = 'Processando…';
 
-  let tiff, image;
+  let tiff, image, imagemPrincipal;
   try {
     tiff = await GeoTIFF.fromBlob(file);
-    image = await _escolherMelhorOverview(tiff, ORTOFOTO_ALVO_PX);
+    ({ imagem: image, imagemPrincipal } = await _escolherMelhorOverview(tiff, ORTOFOTO_ALVO_PX));
   } catch(e) {
     setStatus('Não consegui ler o arquivo como GeoTIFF (confira se é um TIFF georreferenciado válido).', 'err');
     if(st) st.textContent = '';
     return;
   }
 
-  const sistema = _lerSistemaCoordDoGeoTiff(image);
+  // v4.67: se a overview escolhida (só por tamanho) não carregar GeoKeys, cai pra imagem
+  // principal (idx 0) — comum em overviews geradas por GDAL, que não repetem o CRS em cada nível.
+  const sistema = _lerSistemaCoordDoGeoTiff(image) || _lerSistemaCoordDoGeoTiff(imagemPrincipal);
   if(!sistema) {
     setStatus('Não consegui identificar o sistema de coordenadas da ortofoto (GeoKeys ausentes, ou fora das zonas UTM SIRGAS2000/WGS84 do Brasil). Reprojete o TIFF antes de importar.', 'err');
     if(st) st.textContent = '';
@@ -5377,7 +5678,11 @@ async function importarOrtofotoTiff(file) {
   try {
     samplesPerPixel = image.getSamplesPerPixel();
     raster = await image.readRasters({ width: w, height: h, interleave: true, resampleMethod: 'bilinear' });
-    bbox = image.getBoundingBox();
+    // v4.67: mesmo bug achado no DEM — uma overview gerada por GDAL não carrega tag de
+    // georreferência própria (nem ModelPixelScale/Tiepoint), só a imagem principal (idx 0). O
+    // bbox real (extensão geográfica) é o mesmo em qualquer resolução, então sempre pega da
+    // imagem principal, nunca da overview escolhida pra leitura dos pixels.
+    bbox = imagemPrincipal.getBoundingBox();
   } catch(e) {
     setStatus('Erro ao decodificar os pixels da ortofoto (formato de compressão pode não ser suportado pelo navegador).', 'err');
     if(st) st.textContent = '';
@@ -5613,6 +5918,13 @@ function _traceFlowPath(sampler, lat0, lng0, mLat, mLng, stepM, maxSteps, bounds
 // a mesma busca de elevação/cálculo duas vezes. Devolve null se algo faltar (sem API, contorno
 // inválido etc.) — quem chamar já cuida da mensagem de erro apropriada pro contexto.
 async function _calcularHidrologiaTalhao(t, n) {
+  // v4.67: a grade de até ~60×60 pedida pelos seletores da UI existe pra limitar o CUSTO de
+  // consultar fontes online por ponto — um DEM local não tem esse custo (é matemática local
+  // instantânea, ver _buscarElevacaoViaDemLote), então usar a mesma grade pequena desperdiçaria
+  // o detalhe real que o DEM oferece. Eleva o piso pra 150 quando o DEM está ativo (ponto único —
+  // beneficia Mapa de Escoamento, Risco de Erosão e Vazão de Pico ao mesmo tempo, sem precisar
+  // mudar cada chamador). _preencherDepressoes já suporta essa escala (heap binário real, v4.67).
+  if(_demLocalDisponivel()) n = Math.max(n, 150);
   const ring = [...t.polyPts.map(p => [p.lng, p.lat]), [t.polyPts[0].lng, t.polyPts[0].lat]];
   let poly;
   try { poly = turf.polygon([ring]); turf.rewind(poly, {mutate:true}); }
@@ -7686,7 +7998,7 @@ function _capturarEstadoParaUndo(descricao) {
     curvaPolyPts: [...curvaPolyPts], curvaPolyLayer, turfCurvaPoly, turfCurvaBound,
     carreadorLayers: [...carreadorLayers],
     talhaoSelecionadoUid,
-    _curvasLocais, _ortofotoLocal
+    _curvasLocais, _ortofotoLocal, _demLocal
   };
   const btn = $('btnDesfazer'); if(btn) btn.style.display = 'flex';
 }
@@ -7732,7 +8044,7 @@ function desfazerUltimaExclusao() {
   curvaPolyPts = s.curvaPolyPts; curvaPolyLayer = s.curvaPolyLayer; turfCurvaPoly = s.turfCurvaPoly; turfCurvaBound = s.turfCurvaBound;
   carreadorLayers = s.carreadorLayers;
   talhaoSelecionadoUid = s.talhaoSelecionadoUid;
-  _curvasLocais = s._curvasLocais; _ortofotoLocal = s._ortofotoLocal;
+  _curvasLocais = s._curvasLocais; _ortofotoLocal = s._ortofotoLocal; _demLocal = s._demLocal;
 
   talhoesArquivados.forEach(t => {
     if(t.polyLayer && !map.hasLayer(t.polyLayer)) t.polyLayer.addTo(map);
@@ -7750,17 +8062,20 @@ function desfazerUltimaExclusao() {
   carreadorLayers.forEach(l => { if(!map.hasLayer(l)) l.addTo(map); });
   if(_curvasLocais && _curvasLocais.layerPreview && !map.hasLayer(_curvasLocais.layerPreview)) _curvasLocais.layerPreview.addTo(map);
   if(_ortofotoLocal && _ortofotoLocal.overlay && !map.hasLayer(_ortofotoLocal.overlay)) _ortofotoLocal.overlay.addTo(map);
+  if(_demLocal && _demLocal.overlay && !map.hasLayer(_demLocal.overlay)) _demLocal.overlay.addTo(map);
   _garantirCurvasNoTopo();
 
   $('iArea').textContent = polyPts.length >= 3 ? areaHaAtual.toFixed(2) + ' ha' : '—';
   $('btnTravarTalhao').style.display = (polyPts.length >= 3 && talhaoSelecionadoUid === null) ? 'flex' : 'none';
   $('btnLimparArquivados').style.display = talhoesArquivados.length ? '' : 'none';
   renumerarTalhoes(); // reaplica idx/rótulos + atualiza o contador #iTalhoes
-  const stDxf = $('dxfCurvasStatus'), stTiff = $('tiffOrtoStatus');
+  const stDxf = $('dxfCurvasStatus'), stTiff = $('tiffOrtoStatus'), stDem = $('demLocalStatus');
   if(stDxf) stDxf.innerHTML = _curvasLocais ? `✓ ${_curvasLocais.numContornos} curva(s) importada(s) · cotas ${_curvasLocais.elevMin.toFixed(1)}–${_curvasLocais.elevMax.toFixed(1)} m` : '';
   if(stTiff) stTiff.innerHTML = _ortofotoLocal ? `✓ ${_ortofotoLocal.larguraPx}×${_ortofotoLocal.alturaPx}px` : '';
+  if(stDem) stDem.innerHTML = _demLocal ? `✓ ${_demLocal.nx}×${_demLocal.ny}px · cotas ${_demLocal.minZ.toFixed(1)}–${_demLocal.maxZ.toFixed(1)}m` : '';
   const btnRemC = $('btnRemoverCurvasLocais'); if(btnRemC) btnRemC.style.display = _curvasLocais ? 'flex' : 'none';
   const btnRemO = $('btnRemoverOrtofotoLocal'); if(btnRemO) btnRemO.style.display = _ortofotoLocal ? 'flex' : 'none';
+  const btnRemD = $('btnRemoverDemLocal'); if(btnRemD) btnRemD.style.display = _demLocal ? 'flex' : 'none';
   _atualizarBotaoAlinharOrtofoto();
   _atualizarIndicadorFonteElevacao();
 
@@ -7782,6 +8097,7 @@ function limparTudo() {
   // no mapa. Ambos entram na limpeza igual qualquer outro elemento do projeto agora.
   if(_ortofotoLocal) _removerOrtofotoLocalSemUndo();
   if(_curvasLocais) _removerCurvasLocaisSemUndo();
+  if(_demLocal) _removerDemLocalSemUndo();
   if(multiSelectMode) cancelarMultiSelect();
   _modoPickLinha = null; // sem isso o cursor ficava travado em crosshair se Perfil/Carreador de Linha estivesse ativo
   modo='idle'; map.getContainer().style.cursor='';
@@ -7804,7 +8120,7 @@ function limparTudo() {
 function _existeConteudoNoProjeto() {
   return talhoesArquivados.length > 0 || polyPts.length >= 3 || linhas.length > 0 ||
          curvaLayers.length > 0 || curvaPolyPts.length >= 3 || carreadorLayers.length > 0 ||
-         !!_ortofotoLocal || !!_curvasLocais;
+         !!_ortofotoLocal || !!_curvasLocais || !!_demLocal;
 }
 function novoProjeto() {
   if(!_existeConteudoNoProjeto()) { _executarNovoProjeto(); return; }
@@ -9308,7 +9624,8 @@ const _CAMADAS = {
   vazao:         { label: 'Vazão de Pico',                get: () => talhoesArquivados.flatMap(t => t.vazaoMarkers || []) },
   mapaTematico:  { label: 'Mapa Temático (Otimizar Cenário)', get: () => talhoesArquivados.map(t => t.mapaTematicoOverlay).filter(Boolean) },
   ortofotoLocal: { label: 'Ortofoto Local (TIFF importado)', get: () => _ortofotoLocal ? [_ortofotoLocal.overlay] : [] },
-  curvasLocais:  { label: 'Curvas de Nível Locais (DXF importado)', get: () => _curvasLocais && _curvasLocais.layerPreview ? [_curvasLocais.layerPreview] : [] }
+  curvasLocais:  { label: 'Curvas de Nível Locais (DXF importado)', get: () => _curvasLocais && _curvasLocais.layerPreview ? [_curvasLocais.layerPreview] : [] },
+  demLocal:      { label: 'DEM Local (TIFF importado)', get: () => _demLocal && _demLocal.overlay ? [_demLocal.overlay] : [] }
 };
 const _camadaVisivel = {}; // id -> bool (true = visível) — tudo ligado por padrão, ver _initCamadas()
 
