@@ -343,7 +343,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.65 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.66 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -472,19 +472,7 @@ body.layout-lateral #status{grid-area:status;}
             <input type="file" id="inputOrtofotoTiff" accept=".tif,.tiff" style="display:none" onchange="if(this.files[0]){importarOrtofotoTiff(this.files[0]);this.value='';}">
             <div id="tiffOrtoStatus" style="font-size:10px;color:var(--panel-text-dim);max-width:190px;white-space:normal;"></div>
             <button class="rbtn-sm clr" id="btnRemoverOrtofotoLocal" style="display:none;" onclick="removerOrtofotoLocal()">&#10005; Remover Ortofoto Local</button>
-            <button class="rbtn-sm" id="btnAlinharOrtofoto" style="display:none;" onclick="alinharOrtofoto()" title="Corrige automaticamente uma pequena diferença de registro entre a ortofoto e um polígono de referência (o talhão importado via 'Importar Polígono' tem prioridade; sem ele, usa a cobertura das curvas de nível) — sem precisar arrastar nada na mão">&#128736; Alinhar Ortofoto Automaticamente</button>
             <button class="rbtn-sm" id="btnMoverOrtofotoManual" style="display:none;" onclick="alternarMoverOrtofotoManualmente()" title="Clique para ativar, depois clique e arraste a ortofoto no mapa pra reposicionar na mão; clique de novo pra desativar">&#9995; Mover Ortofoto Manualmente</button>
-            <button class="rbtn-sm" id="btnGirarOrtofotoManual" style="display:none;" onclick="alternarGirarOrtofotoManualmente()" title="Clique para ativar, depois clique e arraste a ortofoto no mapa pra girá-la em torno do próprio centro; clique de novo pra desativar">&#128260; Girar Ortofoto Manualmente</button>
-            <div id="girarOrtofotoStepper" style="display:none;align-items:center;gap:3px;flex-wrap:wrap;margin-top:2px;" title="Giro em incrementos exatos, pra saber precisamente quantos graus foram necessários (mostrador ao lado)">
-              <button class="rbtn-sm" style="padding:3px 6px;min-width:auto;flex:none;" onclick="girarOrtofotoIncremento(-5)">&minus;5&deg;</button>
-              <button class="rbtn-sm" style="padding:3px 6px;min-width:auto;flex:none;" onclick="girarOrtofotoIncremento(-1)">&minus;1&deg;</button>
-              <button class="rbtn-sm" style="padding:3px 6px;min-width:auto;flex:none;" onclick="girarOrtofotoIncremento(-0.1)">&minus;0,1&deg;</button>
-              <span id="anguloManualOrtofotoLabel" style="font-size:11px;font-weight:700;min-width:50px;text-align:center;color:var(--acc2);">0,0&deg;</span>
-              <button class="rbtn-sm" style="padding:3px 6px;min-width:auto;flex:none;" onclick="girarOrtofotoIncremento(0.1)">+0,1&deg;</button>
-              <button class="rbtn-sm" style="padding:3px 6px;min-width:auto;flex:none;" onclick="girarOrtofotoIncremento(1)">+1&deg;</button>
-              <button class="rbtn-sm" style="padding:3px 6px;min-width:auto;flex:none;" onclick="girarOrtofotoIncremento(5)">+5&deg;</button>
-              <button class="rbtn-sm clr" style="padding:3px 6px;min-width:auto;flex:none;" onclick="zerarAnguloManualOrtofoto()" title="Zera só o mostrador (não desfaz o giro já aplicado) — útil pra contar a partir de um encaixe que já ficou bom">Zerar</button>
-            </div>
           </div>
         </div>
         <div class="rgroup-title">Dados Locais — Ortofoto (TIFF) + Curvas de Nível (DXF)</div>
@@ -2499,6 +2487,30 @@ body.layout-lateral #status{grid-area:status;}
 // confirmando que o teste pega a regressão se o bug antigo voltar); testado com a ortofoto+curvas
 // REAIS do usuário SEM nenhum alinhamento manual/automático aplicado — reservatório, tanque e
 // lago batem com precisão nas curvas já na importação pura (ver screenshots do processo).
+// v4.66: dois pedidos do usuário depois do fix da v4.65:
+// 1) "remova a parte de girar a foto e posicionamento automático da imagem" — como a ortofoto já
+//    nasce na posição/rotação geometricamente corretas desde a importação (v4.65), "Alinhar
+//    Ortofoto Automaticamente" (ICP/ajuste afim contra um polígono de referência) e "Girar
+//    Ortofoto Manualmente" (arrasto + mostrador de incrementos) eram remendos que deixaram de
+//    fazer sentido — removidos por completo (botões, funções: alinharOrtofoto,
+//    _obterPoligonoReferenciaAlinhamento, _pontoMaisProximoNoPoligono, _resolverAfim,
+//    _acharCantosReaisOrtofoto, _hullConvexo, _retanguloAreaMinima,
+//    alternarGirarOrtofotoManualmente, _cantosAtuaisOrtofoto, _girarOrtofotoPorAngulo,
+//    _anguloMouseEmRelacaoAoPivot, girarOrtofotoIncremento, zerarAnguloManualOrtofoto,
+//    _atualizarLabelAnguloManual, e os campos cantosPx/hullPx/anguloManualGraus de
+//    _ortofotoLocal). "Mover Ortofoto Manualmente" (translação) continua — ainda serve pra um
+//    ajuste fino numa eventual pequena diferença de registro entre a ortofoto e o restante dos
+//    dados, sem precisar de rotação/ajuste automático nenhum.
+// 2) "quando eu clicar fora do talhão ele seja deselecionado e trave de forma automática" —
+//    implementado no listener global map.on('click', ...): clique fora de um talhão SELECIONADO
+//    (já travado) desseleciona; clique fora de um talhão ATIVO (desenhado, ainda não travado)
+//    trava automaticamente (mesmo padrão já usado em cancelarGuia()). Achado importante ao
+//    implementar: layers interativas do Leaflet (bubblingMouseEvents é true por padrão) fazem o
+//    clique borbulhar pro evento 'click' do MAPA mesmo quando cai DENTRO do próprio polígono — só
+//    checar "o evento chegou no mapa" travaria/desselecionaria errado até num clique bem no meio
+//    do talhão. Corrigido conferindo a geometria de verdade (turf.booleanPointInPolygon) antes de
+//    agir. Testado (test_v466_autolock_click_fora.js, test_v466_click_fora_talhao.js): clique
+//    DENTRO nunca desativa nada; clique FORA sempre desseleciona/trava, nos dois cenários.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -3026,6 +3038,26 @@ function resampleCurveByStep(pts, stepM, min = 100, max = 1200) {
 // ── Eventos do mapa ───────────────────────────────────────────────────────────
 map.on('click', e => {
   if(modo === 'idle' && _mapaTematicoAtivo) { _inspecionarMapaTematico(e.latlng); return; }
+  // v4.66: pedido do usuário — clicar FORA do talhão desseleciona um já travado que estivesse
+  // selecionado, e trava automaticamente um talhão ainda ativo/desenhado (mesmo padrão já usado
+  // em cancelarGuia(), que também trava de volta ao cancelar a guia). IMPORTANTE: layers
+  // interativas do Leaflet (o próprio polígono do talhão) fazem esse clique BORBULHAR pro evento
+  // 'click' do mapa também (bubblingMouseEvents é true por padrão) — ou seja, um clique DENTRO do
+  // polígono também chega aqui, não só um clique numa área vazia. Por isso confere a geometria de
+  // verdade (turf.booleanPointInPolygon) em vez de assumir "chegou no mapa = é fora" (isso travava/
+  // desselecionava errado até num clique bem no meio do próprio talhão). Ignorado durante picking
+  // de linha (_modoPickLinha, ex.: Perfil de Elevação/Carreador a partir de Linha) pra não
+  // interferir num clique que errou o traço fino da linha.
+  if(modo === 'idle' && !_modoPickLinha) {
+    const pt = turf.point([e.latlng.lng, e.latlng.lat]);
+    const dentroDoPoly = poly => { try { return !!poly && turf.booleanPointInPolygon(pt, poly); } catch(err) { return false; } };
+    if(talhaoSelecionadoUid !== null) {
+      const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
+      if(!dentroDoPoly(t && t.turfPoly)) { desselecionarTalhao(); return; }
+    } else if(polyPts.length >= 3) {
+      if(!dentroDoPoly(turfPoly)) { arquivarTalhaoAtual(); setStatus('Talhão travado automaticamente ✓ — clique nele para selecionar.', 'ok'); return; }
+    }
+  }
   if(modo === 'poly') addPolyPt(e.latlng);
   else if(modo === 'guide') {
     // Modo Reta: máximo 2 pontos
@@ -5291,89 +5323,6 @@ async function _escolherMelhorOverview(tiff, alvoPx) {
   return candidatos[0].img;
 }
 
-// v4.56: retângulo de ÁREA MÍNIMA (rotating calipers) que envolve um conjunto de pontos 2D — a
-// faixa fotografada por um voo de drone quase nunca é alinhada ao norte (aqui, ~17° de rotação);
-// o retângulo alinhado ao norte (bounding box simples) sobra até 40% de área vazia nos cantos,
-// o que faz qualquer alinhamento baseado nele (centro/escala) ficar impreciso ou até piorar as
-// coisas (bug relatado: "o alinhamento piorou o deslocamento"). Recebe pontos [x,y] já no plano
-// (metros locais ou pixels, tanto faz) e devolve os 4 cantos do retângulo que realmente envolve a
-// forma real, na mesma ordem ao redor (não fechado).
-function _hullConvexo(pontos) {
-  try {
-    const hull = turf.convex(turf.featureCollection(pontos.map(p => turf.point(p))));
-    return hull ? hull.geometry.coordinates[0] : null; // fechado (primeiro === último)
-  } catch(e) { return null; }
-}
-// v4.58: aceita um hull JÁ CALCULADO (hullPronto) pra não repetir o turf.convex quando o mesmo
-// hull também é usado por fora (ver alinhamento por ICP, que precisa do hull cru, não só do
-// retângulo).
-function _retanguloAreaMinima(pontos, hullPronto) {
-  const hullPts = hullPronto || _hullConvexo(pontos);
-  if(!hullPts || hullPts.length < 3) return null;
-  let melhor = { ang: 0, area: Infinity };
-  for(let i = 0; i < hullPts.length - 1; i++) {
-    const dx = hullPts[i+1][0] - hullPts[i][0], dy = hullPts[i+1][1] - hullPts[i][1];
-    const ang = Math.atan2(dy, dx);
-    const c = Math.cos(-ang), s = Math.sin(-ang);
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for(let j = 0; j < hullPts.length; j++) {
-      const x = hullPts[j][0], y = hullPts[j][1];
-      const rx = x*c - y*s, ry = x*s + y*c;
-      if(rx < minX) minX = rx; if(rx > maxX) maxX = rx;
-      if(ry < minY) minY = ry; if(ry > maxY) maxY = ry;
-    }
-    const area = (maxX - minX) * (maxY - minY);
-    if(area < melhor.area) melhor = { ang, area, minX, maxX, minY, maxY };
-  }
-  const c = Math.cos(melhor.ang), s = Math.sin(melhor.ang);
-  const cantosLocais = [[melhor.minX, melhor.minY], [melhor.maxX, melhor.minY], [melhor.maxX, melhor.maxY], [melhor.minX, melhor.maxY]];
-  const cantos = cantosLocais.map(([lx, ly]) => [lx*c - ly*s, lx*s + ly*c]);
-  // ordena os 4 cantos por ângulo ao redor do próprio centro — dá uma ordem CONSISTENTE
-  // (sempre "sentido anti-horário a partir da direita") independente de qual aresta do hull
-  // originou o retângulo, essencial pra depois casar canto-a-canto com outro retângulo.
-  const cx = cantos.reduce((s,p)=>s+p[0],0)/4, cy = cantos.reduce((s,p)=>s+p[1],0)/4;
-  cantos.sort((a,b) => Math.atan2(a[1]-cy, a[0]-cx) - Math.atan2(b[1]-cy, b[0]-cx));
-  return cantos;
-}
-
-// Acha os 4 cantos REAIS (retângulo de área mínima) da área fotografada dentro do raster —
-// amostra o canal alfa (transparência) numa grade esparsa pra achar só os pixels com conteúdo de
-// verdade, ignorando a moldura vazia/transparente que sobra em qualquer imagem de voo diagonal
-// dentro de um TIFF retangular. Retorna os cantos em coordenada de PIXEL (não lat/lng) — a
-// conversão pra lat/lng usa sempre os bounds ATUAIS (_ortofotoLocal.bounds), pra continuar válido
-// depois de um realinhamento.
-function _acharCantosReaisOrtofoto(raster, w, h, samplesPerPixel) {
-  if(samplesPerPixel < 4) return null; // sem canal alfa não dá pra separar conteúdo real da moldura
-  const passo = Math.max(1, Math.round(Math.max(w, h) / 300));
-  // v4.57: pixel de imagem tem Y crescendo PRA BAIXO (linha 0 = topo/norte), mas lat/lng (usado
-  // pro polígono das curvas) tem Y (latitude) crescendo PRA CIMA (norte = valor maior) — mesmo
-  // eixo físico, sentido invertido. _retanguloAreaMinima ordena os 4 cantos por ângulo (sentido
-  // matemático padrão, Y pra cima); chamando ela direto com pixel (Y pra baixo) sem inverter, os
-  // 4 cantos saem em sentido de giro CONTRÁRIO ao dos cantos das curvas — o ajuste casava o canto
-  // errado com o errado (mesma contagem de vértices, ordem invertida), o que produz uma reflexão
-  // escondida dentro do ajuste afim e estica/borra a imagem em vez de só girar (bug relatado, com
-  // print, depois do 1º "Alinhar Ortofoto às Curvas" da v4.56). Corrigido guardando -py em vez de
-  // py antes de achar o retângulo, e desfazendo a inversão no resultado — assim os cantos saem no
-  // MESMO sentido de giro que os das curvas, e o ajuste casa canto certo com canto certo.
-  const pontosPx = [];
-  for(let py = 0; py < h; py += passo) {
-    for(let px = 0; px < w; px += passo) {
-      const idx = (py * w + px) * samplesPerPixel;
-      if(raster[idx + 3] > 200) pontosPx.push([px, -py]);
-    }
-  }
-  if(pontosPx.length < 8) return null;
-  const hull = _hullConvexo(pontosPx);
-  if(!hull) return null;
-  const cantos = _retanguloAreaMinima(pontosPx, hull);
-  // desfaz a inversão de Y nos dois resultados antes de devolver — hull cru (pro ajuste fino por
-  // ICP, ver alinharOrtofoto) e o retângulo de área mínima (pro chute inicial).
-  return {
-    hull: hull.map(([x, y]) => [x, -y]),
-    cantos: cantos ? cantos.map(([x, y]) => [x, -y]) : null
-  };
-}
-
 function _rasterParaCanvas(raster, width, height, samplesPerPixel) {
   const canvas = document.createElement('canvas');
   canvas.width = width; canvas.height = height;
@@ -5451,28 +5400,20 @@ async function importarOrtofotoTiff(file) {
   }
 
   const canvas = _rasterParaCanvas(raster, w, h, samplesPerPixel);
-  // Área real fotografada (hull cru do canal alfa + retângulo de área mínima dele) — em pixel,
-  // não em lat/lng, pra continuar válida depois de um realinhamento (ver alinharOrtofoto e
-  // _acharCantosReaisOrtofoto). null se a imagem não tiver canal alfa (sem como separar conteúdo
-  // real da moldura vazia — nesse caso o alinhamento automático não fica disponível).
-  const areaReal = _acharCantosReaisOrtofoto(raster, w, h, samplesPerPixel);
 
   if(_ortofotoLocal && _ortofotoLocal.overlay) map.removeLayer(_ortofotoLocal.overlay);
   const dataUrl = canvas.toDataURL('image/png');
   // v4.65: SEMPRE via L.imageOverlay.rotated, com os cantos geometricamente corretos calculados
-  // acima — antes, a ortofoto sempre nascia "forçada" a ficar reta (L.imageOverlay comum), mesmo
-  // quando a conversão UTM→lat/lng dizia o contrário, e só um alinhamento automático/manual
-  // POSTERIOR corrigia isso (remendo em cima do erro de origem, não a causa).
+  // acima — a ortofoto nasce com a forma geométrica real desde a importação, sem precisar de
+  // nenhum alinhamento automático/manual posterior (removidos na v4.66 — ver comentário no topo
+  // do arquivo).
   const overlay = L.imageOverlay.rotated(dataUrl, cantosGeo.topleft, cantosGeo.topright, cantosGeo.bottomleft, { opacity: 1 }).addTo(map);
-  // dataUrl guardado pra poder recriar a camada (plana ou rotacionada, ver alinharOrtofoto) sem
+  // dataUrl guardado pra poder recriar a camada (usada por "Mover Ortofoto Manualmente") sem
   // precisar reler o arquivo original.
   _ortofotoLocal = {
     overlay, bounds, larguraPx: w, alturaPx: h, dataUrl, rotacionada: true,
-    cantoTL: cantosGeo.topleft, cantoTR: cantosGeo.topright, cantoBL: cantosGeo.bottomleft,
-    cantosPx: areaReal ? areaReal.cantos : null, hullPx: areaReal ? areaReal.hull : null,
-    anguloManualGraus: 0 // v4.62: mostrador de giro manual acumulado — zera numa importação nova
+    cantoTL: cantosGeo.topleft, cantoTR: cantosGeo.topright, cantoBL: cantosGeo.bottomleft
   };
-  _atualizarLabelAnguloManual(0);
   // Reafirma as curvas de nível por cima, caso já estivessem importadas antes da ortofoto (senão a
   // ortofoto, adicionada depois, cobriria elas — bug relatado: "curvas não aparecem na ortofoto").
   _garantirCurvasNoTopo();
@@ -5498,186 +5439,17 @@ function removerOrtofotoLocal() {
   setStatus('Ortofoto local removida — o satélite online volta a aparecer nessa área.', 'info');
 }
 
-// v4.58: botão "Alinhar Ortofoto" só faz sentido com a ortofoto E alguma referência (talhão
-// importado/travado OU curvas de nível) importados ao mesmo tempo. "Mover Manualmente" só
-// precisa da ortofoto.
+// v4.66: "Alinhar Ortofoto Automaticamente" e "Girar Ortofoto Manualmente" foram removidos —
+// desde o fix da v4.65 (conversão dos 4 cantos UTM na importação), a ortofoto já nasce na
+// orientação/posição geometricamente correta, então esses remendos deixaram de ser necessários e
+// o usuário pediu pra tirar essa complexidade da UI. "Mover Manualmente" continua — corrige uma
+// eventual pequena diferença de registro (translação) entre a ortofoto e o restante dos dados.
 function _atualizarBotaoAlinharOrtofoto() {
-  const btn = $('btnAlinharOrtofoto');
-  if(btn) btn.style.display = (_ortofotoLocal && _obterPoligonoReferenciaAlinhamento()) ? 'flex' : 'none';
   const btnMover = $('btnMoverOrtofotoManual');
   if(btnMover) btnMover.style.display = _ortofotoLocal ? 'flex' : 'none';
-  const btnGirar = $('btnGirarOrtofotoManual');
-  if(btnGirar) btnGirar.style.display = _ortofotoLocal ? 'flex' : 'none';
-  const stepper = $('girarOrtofotoStepper');
-  if(stepper) stepper.style.display = _ortofotoLocal ? 'flex' : 'none';
 }
-// v4.58: pega o polígono a usar como referência pro alinhamento — usuário pediu explicitamente
-// pra dar prioridade a um polígono importado com a forma exata do recorte da ortofoto (via
-// "Importar Polígono", que já existia pra outra finalidade — reaproveitado aqui), em vez de
-// depender só do hull das curvas de nível (que é só uma APROXIMAÇÃO convexa da área real,
-// podendo não ter a mesma forma exata do recorte da foto). Ordem de prioridade: talhão ativo
-// (ainda não travado) > talhão selecionado > último talhão travado > cobertura das curvas.
-function _obterPoligonoReferenciaAlinhamento() {
-  if(polyPts && polyPts.length >= 3) return { pontosLatLng: polyPts.map(p => ({ lat: p.lat, lng: p.lng })), origem: 'talhão ativo' };
-  if(talhaoSelecionadoUid !== null) {
-    const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
-    if(t && t.polyPts && t.polyPts.length >= 3) return { pontosLatLng: t.polyPts.map(p => ({ lat: p.lat, lng: p.lng })), origem: 'talhão selecionado' };
-  }
-  if(talhoesArquivados.length) {
-    const t = talhoesArquivados[talhoesArquivados.length - 1];
-    if(t.polyPts && t.polyPts.length >= 3) return { pontosLatLng: t.polyPts.map(p => ({ lat: p.lat, lng: p.lng })), origem: `Talhão ${t.idx}` };
-  }
-  if(_elevacaoLocalDisponivel() && _curvasLocais.coberturaPoly) {
-    const hull = _curvasLocais.coberturaPoly.geometry.coordinates[0];
-    return { pontosLatLng: hull.slice(0, -1).map(([lng, lat]) => ({ lat, lng })), origem: 'cobertura das curvas de nível' };
-  }
-  return null;
-}
-// Ponto mais próximo de (px,py) em QUALQUER LUGAR da borda de um polígono fechado (não só nos
-// vértices dele) — projeção ponto-segmento em cada aresta, mantendo a menor distância. Usado pelo
-// ICP abaixo pra achar o alvo de cada ponto do contorno da ortofoto.
-function _pontoMaisProximoNoPoligono(px, py, poligonoFechado) {
-  let melhorDist = Infinity, melhorX = px, melhorY = py;
-  for(let i = 0; i < poligonoFechado.length - 1; i++) {
-    const [ax, ay] = poligonoFechado[i], [bx, by] = poligonoFechado[i + 1];
-    const dx = bx - ax, dy = by - ay;
-    const len2 = dx*dx + dy*dy;
-    let t = len2 > 1e-12 ? ((px - ax)*dx + (py - ay)*dy) / len2 : 0;
-    t = Math.max(0, Math.min(1, t));
-    const cx = ax + t*dx, cy = ay + t*dy;
-    const d = (px - cx)*(px - cx) + (py - cy)*(py - cy);
-    if(d < melhorDist) { melhorDist = d; melhorX = cx; melhorY = cy; }
-  }
-  return [melhorX, melhorY];
-}
-
-// v4.55→v4.57: histórico da correção de registro ortofoto×curvas (centro+escala do retângulo
-// norte → ajuste afim 4 cantos → fix de espelhamento) — ver detalhes no changelog no topo do
-// arquivo. v4.58: usuário pediu pra usar um POLÍGONO DE REFERÊNCIA (com a forma exata do recorte
-// da foto, importado via "Importar Polígono") em vez de só a cobertura das curvas — e, como um
-// polígono desenhado à mão raramente é um paralelogramo perfeito, o ajuste de 4 cantos (que só
-// captura translação+rotação+escala, não a forma toda) deixou de ser suficiente. Trocado por
-// ICP (Iterative Closest Point, algoritmo padrão pra alinhar duas formas parecidas sem
-// correspondência exata de vértice): usa o ajuste de 4 cantos só como CHUTE INICIAL, depois
-// refina iterativamente casando cada ponto do contorno real da ortofoto com o ponto mais próximo
-// em QUALQUER LUGAR da borda do polígono de referência (não só nos vértices dele,
-// _pontoMaisProximoNoPoligono) e resolvendo um novo ajuste afim a cada rodada — converge pra um
-// encaixe bem mais fiel à forma real de ambos.
-function _resolverAfim(pxs, pys, alvos) {
-  // resolve [a;b;c] no sistema normal 3x3 de mínimos quadrados pra alvo = a*px + b*py + c
-  const n = pxs.length;
-  let Sxx=0,Sxy=0,Sx=0,Syy=0,Sy=0,Sxz=0,Syz=0,Sz=0;
-  for(let i=0;i<n;i++){ const x=pxs[i],y=pys[i],z=alvos[i]; Sxx+=x*x;Sxy+=x*y;Sx+=x;Syy+=y*y;Sy+=y;Sxz+=x*z;Syz+=y*z;Sz+=z; }
-  const A = [[Sxx,Sxy,Sx],[Sxy,Syy,Sy],[Sx,Sy,n]], B = [Sxz,Syz,Sz];
-  for(let i=0;i<3;i++){
-    const piv = A[i][i]; if(Math.abs(piv) < 1e-12) return null;
-    for(let j=i;j<3;j++) A[i][j]/=piv; B[i]/=piv;
-    for(let k=0;k<3;k++) if(k!==i){ const f=A[k][i]; for(let j=i;j<3;j++) A[k][j]-=f*A[i][j]; B[k]-=f*B[i]; }
-  }
-  return { a: B[0], b: B[1], c: B[2] };
-}
-function alinharOrtofoto() {
-  if(!_ortofotoLocal) { setStatus('Importe a ortofoto antes de alinhar.', 'err'); return; }
-  if(!_ortofotoLocal.hullPx) { setStatus('Essa ortofoto não tem canal de transparência (alfa) — não dá pra separar a área real fotografada da moldura vazia pra alinhar automaticamente. Use "Mover Ortofoto Manualmente".', 'err'); return; }
-  const ref = _obterPoligonoReferenciaAlinhamento();
-  if(!ref) { setStatus('Importe um polígono de referência (botão "Importar Polígono", com a forma exata do recorte da foto) ou curvas de nível antes de alinhar.', 'err'); return; }
-
-  // Referência em metros locais (plano, em torno do 1º ponto) — fechado (1º === último), pra usar
-  // como sequência de arestas no ICP.
-  const refPts = ref.pontosLatLng;
-  const latRef0 = refPts[0].lat, mLat = 111320, mLng = Math.cos(latRef0 * Math.PI / 180) * mLat;
-  const refM = refPts.map(p => [(p.lng - refPts[0].lng) * mLng, (p.lat - refPts[0].lat) * mLat]);
-  refM.push(refM[0]);
-  const paraLatLng = ([x, y]) => ({ lat: refPts[0].lat + y / mLat, lng: refPts[0].lng + x / mLng });
-  const paraMetros = (lat, lng) => [(lng - refPts[0].lng) * mLng, (lat - refPts[0].lat) * mLat];
-
-  // Casa os 4 cantos do retângulo de área mínima de cada lado. v4.60: ACHADA a causa real do
-  // cisalhamento (v4.55-v4.59): _ortofotoLocal.hullPx é guardado em pixel CRU (Y crescendo pra
-  // baixo, convenção da imagem), de propósito, pra poder virar (px,py) direto no ajuste afim
-  // depois. Mas _retanguloAreaMinima ordena os 4 cantos por ÂNGULO (sentido matemático padrão, Y
-  // pra cima) — chamar ela direto com hullPx (Y pra baixo) sem inverter faz os 4 cantos da
-  // ortofoto saírem numa ordem angular DIFERENTE da dos cantos da referência (que estão em
-  // lat/lng, Y pra cima de verdade) — o mesmo bug de v4.56/v4.57 (espelhamento), só que
-  // reintroduzido num lugar novo depois da refatoração do v4.58 pra dar suporte a um hull
-  // completo (ICP, removido no v4.59). Medido com o polígono de referência REAL do usuário: os 4
-  // cantos calculados assim tinham 57° de diferença de orientação em relação aos cantos da
-  // referência — óbvio que precisava de cisalhamento pra "encaixar" isso. Corrigido usando
-  // _ortofotoLocal.cantosPx (já calculado do jeito certo dentro de _acharCantosReaisOrtofoto, que
-  // inverte o Y ANTES de achar os cantos e desfaz a inversão só depois — exatamente como v4.57
-  // fazia) em vez de recalcular do hull cru.
-  const cantosRefM = _retanguloAreaMinima(refM);
-  const cantosOrtoPx = _ortofotoLocal.cantosPx;
-  if(!cantosRefM || !cantosOrtoPx) { setStatus('Não consegui calcular o contorno de referência pra alinhar — tente reimportá-lo.', 'err'); return; }
-  const cantosRefLatLng = cantosRefM.map(paraLatLng);
-  const fitLng = _resolverAfim(cantosOrtoPx.map(p => p[0]), cantosOrtoPx.map(p => p[1]), cantosRefLatLng.map(p => p.lng));
-  const fitLat = _resolverAfim(cantosOrtoPx.map(p => p[0]), cantosOrtoPx.map(p => p[1]), cantosRefLatLng.map(p => p.lat));
-  if(!fitLng || !fitLat) { setStatus('Não consegui calcular o alinhamento (geometria degenerada) — tente reimportar a ortofoto ou a referência.', 'err'); return; }
-  const transformar = (px, py) => ({ lng: fitLng.a*px + fitLng.b*py + fitLng.c, lat: fitLat.a*px + fitLat.b*py + fitLat.c });
-
-  // Estado ANTERIOR (pra Desfazer) — guarda o suficiente pra recriar a camada EXATAMENTE como
-  // estava, seja ela plana (import normal) ou já rotacionada (um 2º alinhamento em cima do 1º).
-  const estadoAntigo = _ortofotoLocal.rotacionada
-    ? { rotacionada: true, topleft: _ortofotoLocal.cantoTL, topright: _ortofotoLocal.cantoTR, bottomleft: _ortofotoLocal.cantoBL }
-    : { rotacionada: false, bounds: _ortofotoLocal.bounds };
-  const anguloManualAntesGraus = _ortofotoLocal.anguloManualGraus || 0;
-
-  // Novos cantos da imagem TODA (0,0)/(w,0)/(0,h) — topleft/topright/bottomleft, exatamente o que
-  // L.imageOverlay.rotated pede (o 4º canto é deduzido automaticamente como paralelogramo).
-  const w = _ortofotoLocal.larguraPx, h = _ortofotoLocal.alturaPx;
-  const novoTL = transformar(0, 0), novoTR = transformar(w, 0), novoBL = transformar(0, h);
-
-  map.removeLayer(_ortofotoLocal.overlay);
-  const novoOverlay = L.imageOverlay.rotated(_ortofotoLocal.dataUrl, novoTL, novoTR, novoBL, { opacity: 1 }).addTo(map);
-  const novosBoundsAprox = L.latLngBounds([novoTL, novoTR, novoBL, transformar(w, h)]);
-
-  _capturarOverlayParaUndo('alinhamento da ortofoto', () => {
-    map.removeLayer(_ortofotoLocal.overlay);
-    if(estadoAntigo.rotacionada) {
-      _ortofotoLocal.overlay = L.imageOverlay.rotated(_ortofotoLocal.dataUrl, estadoAntigo.topleft, estadoAntigo.topright, estadoAntigo.bottomleft, { opacity: 1 }).addTo(map);
-      _ortofotoLocal.cantoTL = estadoAntigo.topleft; _ortofotoLocal.cantoTR = estadoAntigo.topright; _ortofotoLocal.cantoBL = estadoAntigo.bottomleft;
-      _ortofotoLocal.bounds = _boundsDe3Cantos(estadoAntigo.topleft, estadoAntigo.topright, estadoAntigo.bottomleft);
-    } else {
-      _ortofotoLocal.overlay = L.imageOverlay(_ortofotoLocal.dataUrl, estadoAntigo.bounds, { opacity: 1 }).addTo(map);
-      _ortofotoLocal.bounds = estadoAntigo.bounds;
-    }
-    _ortofotoLocal.rotacionada = estadoAntigo.rotacionada;
-    _ortofotoLocal.anguloManualGraus = anguloManualAntesGraus;
-    _atualizarLabelAnguloManual(0);
-    _garantirCurvasNoTopo();
-  });
-
-  _ortofotoLocal.overlay = novoOverlay;
-  _ortofotoLocal.bounds = novosBoundsAprox;
-  _ortofotoLocal.rotacionada = true;
-  _ortofotoLocal.cantoTL = novoTL; _ortofotoLocal.cantoTR = novoTR; _ortofotoLocal.cantoBL = novoBL;
-  // v4.62: zera o mostrador de giro manual — esse alinhamento automático é o novo "ponto de
-  // partida", o mostrador passa a medir só o giro manual adicionado A PARTIR de agora.
-  _ortofotoLocal.anguloManualGraus = 0;
-  _atualizarLabelAnguloManual(0);
-  _garantirCurvasNoTopo();
-
-  // Resíduo médio (todo o contorno, não só 4 cantos) DEPOIS do ajuste — quão bem a borda real da
-  // ortofoto encostou na borda do polígono de referência (só pra INFORMAR — não usado pra
-  // refinar o ajuste, ver comentário acima sobre o ICP ter sido descartado).
-  const hullOrtoPx = _ortofotoLocal.hullPx.slice(0, -1);
-  let residuoM = 0;
-  for(const [px, py] of hullOrtoPx) {
-    const p = transformar(px, py);
-    const [xM, yM] = paraMetros(p.lat, p.lng);
-    const [cx, cy] = _pontoMaisProximoNoPoligono(xM, yM, refM);
-    residuoM += haversineM(p, paraLatLng([cx, cy]));
-  }
-  residuoM /= hullOrtoPx.length;
-
-  // v4.60: cisalhamento causado pelo bug de handedness (ver comentário acima) foi confirmado
-  // eliminado — testado com a ortofoto e o polígono de referência REAIS do usuário, cantos e
-  // textura das linhas de cultivo saem retos, sem espelhar/esticar. O resíduo que sobra aqui é
-  // só o desalinhamento normal de um polígono de referência desenhado à mão (poucos metros a
-  // poucas dezenas de metros) — não é mais sinal de bug. Mesmo assim mantemos a sugestão de
-  // "Mover Ortofoto Manualmente" pra ajuste fino, já que o polígono de referência nunca vai ser
-  // tão preciso quanto o próprio levantamento.
-  setStatus(`✓ Ortofoto realinhada com base no contorno de referência (${ref.origem}) — resíduo médio ao longo da borda: ${residuoM.toFixed(2)}m. Se quiser um ajuste fino além disso, use "Mover Ortofoto Manualmente".`, 'ok');
-}
+// v4.66: alinhamento automático (ICP/ajuste afim) e giro manual removidos — ver comentário em
+// _atualizarBotaoAlinharOrtofoto() e no changelog no topo do arquivo.
 
 // v4.58: alinhamento manual (arrastar) — pedido explícito do usuário como alternativa/complemento
 // ao automático. Ativa um modo onde clicar e arrastar em qualquer lugar do mapa desloca a
@@ -5688,7 +5460,6 @@ let _movOrtofotoInicioLatLng = null;
 let _movOrtofotoEstadoBase = null;
 function alternarMoverOrtofotoManualmente() {
   if(!_ortofotoLocal) { setStatus('Importe a ortofoto antes.', 'err'); return; }
-  if(_girandoOrtofotoManualmente) alternarGirarOrtofotoManualmente(); // v4.61: só um modo manual ativo por vez
   _movendoOrtofotoManualmente = !_movendoOrtofotoManualmente;
   const btn = $('btnMoverOrtofotoManual');
   if(_movendoOrtofotoManualmente) {
@@ -5762,169 +5533,9 @@ map.on('mouseup', e => {
   _movOrtofotoInicioLatLng = null;
 });
 
-// v4.61: usuário reportou (com prints) que, mesmo depois do fix de handedness (v4.60), a
-// ortofoto ainda aparece girada em relação às curvas/polígono de referência num caso real — ou
-// seja, ainda sobra ROTAÇÃO residual que "Alinhar Ortofoto Automaticamente" não está zerando
-// nesse caso, e "Mover Ortofoto Manualmente" (só translação) não resolve rotação. Solução
-// temporária pedida pelo usuário pra poder testar na hora: um botão de GIRAR manualmente, no
-// mesmo padrão do mover manualmente — clica, arrasta em qualquer ponto do mapa, e a ortofoto
-// gira em torno do próprio centro (geométrico, ponto médio da diagonal) proporcional ao ângulo
-// varrido pelo mouse a partir desse centro. Funciona tanto numa ortofoto ainda "reta" (nunca
-// alinhada — os 4 cantos são derivados dos bounds na hora) quanto numa já rotacionada por
-// alinharOrtofoto() ou por um giro manual anterior.
-let _girandoOrtofotoManualmente = false;
-let _girOrtofotoAnguloInicial = null;
-let _girOrtofotoEstadoBase = null;
-function alternarGirarOrtofotoManualmente() {
-  if(!_ortofotoLocal) { setStatus('Importe a ortofoto antes.', 'err'); return; }
-  if(_movendoOrtofotoManualmente) alternarMoverOrtofotoManualmente(); // só um modo manual ativo por vez
-  _girandoOrtofotoManualmente = !_girandoOrtofotoManualmente;
-  const btn = $('btnGirarOrtofotoManual');
-  if(_girandoOrtofotoManualmente) {
-    map.dragging.disable();
-    map.getContainer().style.cursor = 'crosshair';
-    if(btn) { btn.classList.add('active'); btn.innerHTML = '&#128260; Parar de Girar (clique pra sair)'; }
-    setStatus('Clique em qualquer ponto do mapa e arraste em círculo pra girar a ortofoto em torno do centro dela. Clique no botão de novo pra sair do modo.', 'info');
-  } else {
-    map.dragging.enable();
-    map.getContainer().style.cursor = '';
-    _girOrtofotoAnguloInicial = null;
-    if(btn) { btn.classList.remove('active'); btn.innerHTML = '&#128260; Girar Ortofoto Manualmente'; }
-    setStatus('', '');
-  }
-}
-// Sempre devolve os 3 cantos (topleft/topright/bottomleft) do estado atual da ortofoto, mesmo
-// que ela ainda esteja "reta" (L.imageOverlay comum, só bounds) — precisa disso pra poder girar
-// a partir de QUALQUER estado, não só de um que já passou por alinharOrtofoto() antes.
-function _cantosAtuaisOrtofoto() {
-  if(_ortofotoLocal.rotacionada) {
-    return { topleft: _ortofotoLocal.cantoTL, topright: _ortofotoLocal.cantoTR, bottomleft: _ortofotoLocal.cantoBL };
-  }
-  const b = _ortofotoLocal.bounds;
-  return {
-    topleft: L.latLng(b.getNorth(), b.getWest()),
-    topright: L.latLng(b.getNorth(), b.getEast()),
-    bottomleft: L.latLng(b.getSouth(), b.getWest())
-  };
-}
-// Gira os 3 cantos de estadoBase em torno do centro geométrico dele (ponto médio da diagonal
-// topright↔bottomleft, que pra um paralelogramo é o mesmo ponto médio de topleft↔bottomright)
-// por anguloRad, usando uma aproximação plana local (metros) — suficiente pro tamanho de uma
-// ortofoto. Sempre aplica via reposition() e marca rotacionada:true (uma vez girada na mão, a
-// ortofoto passa a ser tratada como rotacionada mesmo que o ângulo acabe ficando ~0).
-function _girarOrtofotoPorAngulo(estadoBase, anguloRad) {
-  const pivot = L.latLng((estadoBase.topright.lat + estadoBase.bottomleft.lat) / 2, (estadoBase.topright.lng + estadoBase.bottomleft.lng) / 2);
-  const mLat = 111320, mLng = Math.cos(pivot.lat * Math.PI / 180) * mLat;
-  const c = Math.cos(anguloRad), s = Math.sin(anguloRad);
-  const girar = p => {
-    const x = (p.lng - pivot.lng) * mLng, y = (p.lat - pivot.lat) * mLat;
-    const rx = x * c - y * s, ry = x * s + y * c;
-    return L.latLng(pivot.lat + ry / mLat, pivot.lng + rx / mLng);
-  };
-  const tl = girar(estadoBase.topleft), tr = girar(estadoBase.topright), bl = girar(estadoBase.bottomleft);
-  if(_ortofotoLocal.rotacionada) {
-    _ortofotoLocal.overlay.reposition(tl, tr, bl);
-  } else {
-    // 1ª vez sendo girada: troca o L.imageOverlay comum por um L.imageOverlay.rotated
-    // equivalente (mesmos 3 cantos, só que agora suporta ângulo) antes de reposicionar.
-    map.removeLayer(_ortofotoLocal.overlay);
-    _ortofotoLocal.overlay = L.imageOverlay.rotated(_ortofotoLocal.dataUrl, tl, tr, bl, { opacity: 1 }).addTo(map);
-    _garantirCurvasNoTopo();
-  }
-  _ortofotoLocal.rotacionada = true;
-  _ortofotoLocal.cantoTL = tl; _ortofotoLocal.cantoTR = tr; _ortofotoLocal.cantoBL = bl;
-  _ortofotoLocal.bounds = _boundsDe3Cantos(tl, tr, bl);
-}
-// Ângulo do mouse em relação ao pivô, em metros locais (mesma aproximação de _girarOrtofotoPorAngulo).
-function _anguloMouseEmRelacaoAoPivot(pivot, latlng) {
-  const mLat = 111320, mLng = Math.cos(pivot.lat * Math.PI / 180) * mLat;
-  return Math.atan2((latlng.lat - pivot.lat) * mLat, (latlng.lng - pivot.lng) * mLng);
-}
-// v4.62: usuário girou na mão e ficou visivelmente melhor ("norte parece desalinhado") — pediu um
-// MOSTRADOR com botões de incremento exato, pra sabermos precisamente quantos graus foram
-// necessários (dado que vai ajudar a achar a causa raiz — ex.: se for sempre ~mesmo valor e mesma
-// direção em arquivos diferentes, é sistemático; se variar, é por arquivo). Acumula em
-// _ortofotoLocal.anguloManualGraus (soma de TODO giro manual — arrasto livre OU botão — desde a
-// última importação/zerada), mostrado ao lado dos botões +5°/+1°/+0,1°/... Não conta a rotação
-// que "Alinhar Ortofoto Automaticamente" aplica (essa é um ajuste afim, não um ângulo puro).
-function _atualizarLabelAnguloManual(extraGraus) {
-  const lbl = $('anguloManualOrtofotoLabel');
-  if(!lbl || !_ortofotoLocal) return;
-  const total = (_ortofotoLocal.anguloManualGraus || 0) + (extraGraus || 0);
-  lbl.textContent = total.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '°';
-}
-function zerarAnguloManualOrtofoto() {
-  if(!_ortofotoLocal) return;
-  _ortofotoLocal.anguloManualGraus = 0;
-  _atualizarLabelAnguloManual(0);
-  setStatus('Mostrador de ângulo manual zerado (o giro já aplicado na imagem não foi desfeito — só o contador).', 'info');
-}
-// Giro em incremento exato (botões +5°/+1°/+0,1°/...) — mesma mecânica do arrasto livre
-// (_girarOrtofotoPorAngulo a partir do estado ATUAL), só que com um ângulo fixo em vez de
-// derivado do mouse. Integrado ao Desfazer e ao mostrador acumulado.
-function girarOrtofotoIncremento(deltaGraus) {
-  if(!_ortofotoLocal) { setStatus('Importe a ortofoto antes.', 'err'); return; }
-  const estadoBase = _cantosAtuaisOrtofoto();
-  const anguloAntesGraus = _ortofotoLocal.anguloManualGraus || 0;
-  _girarOrtofotoPorAngulo(estadoBase, deltaGraus * Math.PI / 180);
-  _ortofotoLocal.anguloManualGraus = anguloAntesGraus + deltaGraus;
-  _atualizarLabelAnguloManual(0);
-  _capturarOverlayParaUndo('girar ortofoto (incremento)', () => {
-    map.removeLayer(_ortofotoLocal.overlay);
-    _ortofotoLocal.overlay = L.imageOverlay.rotated(_ortofotoLocal.dataUrl, estadoBase.topleft, estadoBase.topright, estadoBase.bottomleft, { opacity: 1 }).addTo(map);
-    _ortofotoLocal.cantoTL = estadoBase.topleft; _ortofotoLocal.cantoTR = estadoBase.topright; _ortofotoLocal.cantoBL = estadoBase.bottomleft;
-    _ortofotoLocal.bounds = _boundsDe3Cantos(estadoBase.topleft, estadoBase.topright, estadoBase.bottomleft);
-    _ortofotoLocal.rotacionada = true;
-    _ortofotoLocal.anguloManualGraus = anguloAntesGraus;
-    _atualizarLabelAnguloManual(0);
-    _garantirCurvasNoTopo();
-  });
-  _garantirCurvasNoTopo();
-  setStatus(`✓ Ortofoto girada ${deltaGraus > 0 ? '+' : ''}${deltaGraus}° — total acumulado: ${_ortofotoLocal.anguloManualGraus.toFixed(1)}°.`, 'ok');
-}
-map.on('mousedown', e => {
-  if(!_girandoOrtofotoManualmente || !_ortofotoLocal) return;
-  _girOrtofotoEstadoBase = _cantosAtuaisOrtofoto();
-  const pivot = L.latLng((_girOrtofotoEstadoBase.topright.lat + _girOrtofotoEstadoBase.bottomleft.lat) / 2, (_girOrtofotoEstadoBase.topright.lng + _girOrtofotoEstadoBase.bottomleft.lng) / 2);
-  _girOrtofotoAnguloInicial = _anguloMouseEmRelacaoAoPivot(pivot, e.latlng);
-});
-map.on('mousemove', e => {
-  if(!_girandoOrtofotoManualmente || _girOrtofotoAnguloInicial === null) return;
-  const pivot = L.latLng((_girOrtofotoEstadoBase.topright.lat + _girOrtofotoEstadoBase.bottomleft.lat) / 2, (_girOrtofotoEstadoBase.topright.lng + _girOrtofotoEstadoBase.bottomleft.lng) / 2);
-  const anguloAtual = _anguloMouseEmRelacaoAoPivot(pivot, e.latlng);
-  const deltaGraus = (anguloAtual - _girOrtofotoAnguloInicial) * 180 / Math.PI;
-  _girarOrtofotoPorAngulo(_girOrtofotoEstadoBase, anguloAtual - _girOrtofotoAnguloInicial);
-  _atualizarLabelAnguloManual(deltaGraus); // mostrador em tempo real durante o arrasto
-});
-map.on('mouseup', e => {
-  if(!_girandoOrtofotoManualmente || _girOrtofotoAnguloInicial === null) return;
-  const pivot = L.latLng((_girOrtofotoEstadoBase.topright.lat + _girOrtofotoEstadoBase.bottomleft.lat) / 2, (_girOrtofotoEstadoBase.topright.lng + _girOrtofotoEstadoBase.bottomleft.lng) / 2);
-  const anguloFinal = _anguloMouseEmRelacaoAoPivot(pivot, e.latlng);
-  const deltaGraus = (anguloFinal - _girOrtofotoAnguloInicial) * 180 / Math.PI;
-  const anguloAntesGraus = _ortofotoLocal.anguloManualGraus || 0;
-  if(Math.abs(deltaGraus) > 0.05) {
-    const estadoBase = _girOrtofotoEstadoBase;
-    const delta = anguloFinal - _girOrtofotoAnguloInicial;
-    _girarOrtofotoPorAngulo(estadoBase, delta);
-    _ortofotoLocal.anguloManualGraus = anguloAntesGraus + deltaGraus;
-    _atualizarLabelAnguloManual(0);
-    _capturarOverlayParaUndo('girar ortofoto manualmente', () => {
-      map.removeLayer(_ortofotoLocal.overlay);
-      _ortofotoLocal.overlay = L.imageOverlay.rotated(_ortofotoLocal.dataUrl, estadoBase.topleft, estadoBase.topright, estadoBase.bottomleft, { opacity: 1 }).addTo(map);
-      _ortofotoLocal.cantoTL = estadoBase.topleft; _ortofotoLocal.cantoTR = estadoBase.topright; _ortofotoLocal.cantoBL = estadoBase.bottomleft;
-      _ortofotoLocal.bounds = _boundsDe3Cantos(estadoBase.topleft, estadoBase.topright, estadoBase.bottomleft);
-      _ortofotoLocal.rotacionada = true;
-      _ortofotoLocal.anguloManualGraus = anguloAntesGraus;
-      _atualizarLabelAnguloManual(0);
-      _garantirCurvasNoTopo();
-    });
-    _garantirCurvasNoTopo();
-    setStatus(`✓ Ortofoto girada ${deltaGraus.toFixed(1)}° na mão — total acumulado: ${_ortofotoLocal.anguloManualGraus.toFixed(1)}°.`, 'ok');
-  } else {
-    _atualizarLabelAnguloManual(0); // clique sem arrastar: mostrador volta pro valor confirmado
-  }
-  _girOrtofotoAnguloInicial = null;
-});
+// v4.66: "Girar Ortofoto Manualmente" (arrasto + mostrador com incrementos, v4.61/v4.62) foi
+// removido — desde o fix da v4.65, a ortofoto já nasce na rotação geometricamente correta, então
+// essa ferramenta deixou de ser necessária e o usuário pediu pra simplificar a UI.
 
 // v4.48: célula sem dado (fora da área coberta pelas curvas de nível locais — comum, já que a
 // grade de amostragem quase sempre tem uma margem além do talhão pra mostrar o entorno) virava
