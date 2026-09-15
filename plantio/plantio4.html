@@ -266,6 +266,15 @@ body.layout-lateral #status{grid-area:status;}
 #m3da-exag input[type=range]{width:120px;}
 #m3da-exagVal{min-width:34px;text-align:right;color:var(--acc2);font-weight:700;}
 #m3da-hint{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);color:#ffffff44;font-size:10px;letter-spacing:.6px;pointer-events:none;}
+#m3da-chuva{position:absolute;top:14px;left:14px;background:rgba(5,10,18,.75);border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:9px 12px;display:flex;flex-direction:column;gap:6px;color:#fff;font-size:11.5px;width:200px;}
+#m3da-chuva .m3da-chuvaRow{display:flex;align-items:center;gap:6px;}
+#m3da-chuva .m3da-chuvaRow span:first-child{flex:0 0 auto;white-space:nowrap;color:#ffffffcc;}
+#m3da-chuva input[type=range]{flex:1;width:auto;min-width:0;}
+#m3da-chuva .m3da-chuvaVal{min-width:56px;text-align:right;color:var(--acc2);font-weight:700;}
+#m3da-chuva .m3da-chuvaBtns{display:flex;gap:6px;margin-top:2px;}
+#m3da-chuva button{flex:1;background:rgba(255,255,255,.13);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:7px;padding:6px 8px;font-size:11.5px;font-weight:700;cursor:pointer;white-space:nowrap;}
+#m3da-chuva button:hover{background:rgba(255,255,255,.22);}
+#m3da-chuvaProgresso{font-size:10.5px;color:#ffffffcc;text-align:center;}
 #m3da-slopeLegend{display:none;position:absolute;bottom:14px;left:14px;background:rgba(5,10,18,.75);color:#ffffffcc;font-size:11px;line-height:2;padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.18);pointer-events:none;}
 #m3da-slopeLegend b{display:block;font-size:10px;letter-spacing:.08em;color:var(--panel-text);text-transform:uppercase;margin-bottom:3px;}
 #m3da-slopeLegend span.sw{display:inline-block;width:11px;height:11px;border-radius:2px;vertical-align:middle;margin-right:6px;}
@@ -343,7 +352,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.68 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.69 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1181,6 +1190,24 @@ body.layout-lateral #status{grid-area:status;}
     <span id="m3da-exagVal">2.0×</span>
   </div>
   <div id="m3da-hint">Arraste: rotacionar &nbsp;·&nbsp; Scroll: zoom &nbsp;·&nbsp; Botão direito: mover</div>
+  <div id="m3da-chuva">
+    <b style="font-size:10px;letter-spacing:.08em;color:var(--panel-text);text-transform:uppercase;">🌧️ Simulação de Chuva</b>
+    <div class="m3da-chuvaRow">
+      <span>Intensidade</span>
+      <input type="range" id="m3da-chuvaIntensidade" min="5" max="150" step="5" value="40" oninput="_3da_atualizarLabelIntensidadeChuva(this.value)">
+      <span class="m3da-chuvaVal" id="m3da-chuvaIntensidadeVal">40 mm/h</span>
+    </div>
+    <div class="m3da-chuvaRow">
+      <span>Duração</span>
+      <input type="range" id="m3da-chuvaDuracao" min="1" max="120" step="1" value="10" oninput="_3da_atualizarLabelDuracaoChuva(this.value)">
+      <span class="m3da-chuvaVal" id="m3da-chuvaDuracaoVal">10 min</span>
+    </div>
+    <div class="m3da-chuvaBtns">
+      <button id="m3da-btnChuvaIniciar" onclick="toggleChuva3DAnalise()">🌧️ Simular Chuva</button>
+      <button id="m3da-btnChuvaReset" onclick="reiniciarChuva3DAnalise()" style="display:none;">⟲ Reiniciar</button>
+    </div>
+    <div id="m3da-chuvaProgresso" style="display:none;"></div>
+  </div>
   <div id="m3da-slopeLegend">
     <b>Declividade</b>
     <span class="sw" style="background:#4CAF50;"></span>0–3% Mecanização total<br>
@@ -2581,6 +2608,26 @@ body.layout-lateral #status{grid-area:status;}
 //    elevação). Corrigido nas 11 ocorrências (+ mensagens de erro atualizadas pra mencionar o
 //    DEM como opção). Ambos os bugs testados nos dois sentidos (com DEM funciona, sem NENHUMA
 //    fonte continua bloqueando certo) — test_v468_escoamento_dem.js, test_v468_gates_dem.js.
+// v4.69: 1ª parte da "simulação de chuva" na Vista 3D (Análise) — inspirada num simulador de
+// referência que o usuário mostrou (gravação de tela de outro app do setor). Por pedido explícito,
+// SÓ a chuva por agora — sem o trator/simulação de operação percorrendo as linhas (fica pra depois).
+// Novo painel no canto superior esquerdo da Vista 3D: sliders de Intensidade (5–150 mm/h) e Duração
+// (1–120 min simulados) + botão único que alterna Simular/Pausar/Continuar Chuva + botão Reiniciar.
+// Cada gota (THREE.Points) nasce no topo da malha, cai em queda livre até tocar o relevo e passa a
+// ESCOAR sobre a superfície seguindo o gradiente descendente local (diferenças centrais amostradas
+// direto de _3da_mkMeshSampler — a mesma função que já colava linhas/curvas/talvegues no relevo
+// renderizado) até saltar pra fora da malha ou ficar tempo demais numa depressão/platô sem saída
+// (sai de cena nesses casos, pra não acumular gota "presa" pra sempre). Não reaproveita o D8 por
+// talhão (_calcularHidrologiaTalhao/flowTo) porque a malha 3D cobre uma área contínua bem maior,
+// incluindo entorno sem nenhum talhão desenhado — o gradiente local da própria malha é o que sempre
+// existe ali. Intensidade controla tanto a taxa de nascimento de gotas quanto a velocidade de queda/
+// escoamento (calibração visual/cênica, não física de infiltração). Duração usa compressão de tempo
+// (1 min simulado = 6s reais) pra não precisar esperar minutos reais numa chuva de 10-120 min.
+// Testado (test_v469_chuva.js, com sanity-check revertendo a checagem de pausa pra confirmar que o
+// teste pega a regressão de verdade): Vista 3D abre com a chuva parada; iniciar faz gotas nascerem/
+// caírem/escoarem e o timer avançar; pausar CONGELA as posições (nenhuma partícula move enquanto
+// pausado); continuar retoma sem resetar; reiniciar zera tudo (partículas e progresso). Sem erros de
+// página nas 3 suítes disponíveis (chuva + os 2 testes de DEM/escoamento da v4.68).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -9903,6 +9950,22 @@ let _3da_curvaMeshes = [], _3da_showCurvas = true, _3da_hasDeclLines = false;
 let _3da_talvegueMeshes = [], _3da_showTalvegues = true;
 const _3DA_NGT = 90;    // resolução da malha 3D (independente da grade de elevação buscada na API)
 
+// ── Simulação de chuva (Vista 3D) ───────────────────────────────────────────────────────────
+// v4.69: chuva caindo sobre o relevo 3D e escoando ladeira abaixo — SEM trator/simulação de
+// operação (combinado com o usuário, fica pra depois). O escoamento usa o gradiente descendente
+// amostrado direto da própria malha renderizada (_3da_mkMeshSampler), não o D8 por talhão
+// (_calcularHidrologiaTalhao) — a malha 3D cobre uma área contínua maior, incluindo entorno sem
+// nenhum talhão desenhado, então o gradiente local da malha é o que sempre existe ali.
+let _3da_NGTX = 0, _3da_NGTY = 0, _3da_halfW = 0, _3da_halfH = 0;
+let _3da_chuvaAtiva = false, _3da_chuvaPausada = false;
+let _3da_chuvaPontos = null; // {pontos:THREE.Points, geo, pos:Float32Array, N}
+let _3da_chuvaEstado = null, _3da_chuvaVidaFluxo = null, _3da_chuvaSample = null;
+let _3da_chuvaMaxRaw = 0, _3da_chuvaUltimoTs = 0;
+let _3da_chuvaIntensidade = 40, _3da_chuvaDuracaoMin = 10;
+let _3da_chuvaElapsedS = 0, _3da_chuvaTotalSimS = 0;
+const _3DA_CHUVA_NPONTOS = 3500;
+const _3DA_CHUVA_SEGXMIN = 6; // compressão de tempo: 1 minuto simulado de chuva = 6s reais na tela
+
 // Em vez de buscar uma foto de satélite separada (com zoom/projeção calculados por este código,
 // independente do resto do app), captura a imagem que o PRÓPRIO MAPA 2D (Leaflet — já correto,
 // testado e é o que o usuário está olhando o tempo todo) está mostrando pra essa área. Elimina de
@@ -10143,6 +10206,7 @@ function fecharVista3DAnalise() {
   _3da_curvaMeshes = []; _3da_hasDeclLines = false; _3da_showCurvas = true;
   _3da_talvegueMeshes = []; _3da_showTalvegues = true;
   _3da_bgMode = 'solid';
+  _3da_resetChuvaEstado();
   const btnOrtho = $('m3da-btnOrtho'); if(btnOrtho) btnOrtho.textContent = '📐 Vista de Cima';
   const btnCurvas = $('m3da-btnCurvas'); if(btnCurvas) { btnCurvas.textContent = '🗺️ Ocultar Curvas'; btnCurvas.style.display = 'none'; }
   const btnTalvegues = $('m3da-btnTalvegues'); if(btnTalvegues) { btnTalvegues.textContent = '🌊 Ocultar Talvegues'; btnTalvegues.style.display = 'none'; }
@@ -10285,12 +10349,172 @@ function capturarImagem3DAnalise() {
   document.body.appendChild(a); a.click(); a.remove();
 }
 
+// ══════════════════ Simulação de chuva (Vista 3D) ══════════════════════════════════════════
+// Cada "gota" (ponto de um THREE.Points) passa por 3 estados: 0=inativa (esperando nascer),
+// 1=caindo do céu em queda livre, 2=escoando sobre a superfície da malha, seguindo o gradiente
+// descendente local (diferenças centrais em torno do ponto — não usa o D8 por talhão porque a
+// malha cobre uma área contínua maior, incluindo entorno sem talhão nenhum desenhado). Sai de
+// cena (volta a inativa) ao sair dos limites da malha ou ao ficar tempo demais numa depressão/
+// platô sem gradiente (evita gota "presa" pra sempre num mínimo local).
+function _3da_atualizarLabelIntensidadeChuva(v) {
+  _3da_chuvaIntensidade = parseFloat(v) || 40;
+  $('m3da-chuvaIntensidadeVal').textContent = _3da_chuvaIntensidade.toFixed(0) + ' mm/h';
+}
+function _3da_atualizarLabelDuracaoChuva(v) {
+  _3da_chuvaDuracaoMin = parseFloat(v) || 10;
+  $('m3da-chuvaDuracaoVal').textContent = _3da_chuvaDuracaoMin.toFixed(0) + ' min';
+}
+
+// Reseta todo o estado da chuva (sem depender de _3da_scene existir) — chamado ao abrir uma Vista
+// 3D nova e ao fechar a Vista 3D, pra nunca vazar estado "chovendo" de uma sessão pra outra.
+function _3da_resetChuvaEstado() {
+  if(_3da_chuvaPontos && _3da_scene) { try { _3da_scene.remove(_3da_chuvaPontos.pontos); } catch(e) {} }
+  if(_3da_chuvaPontos) { try { _3da_chuvaPontos.geo.dispose(); } catch(e) {} }
+  _3da_chuvaPontos = null; _3da_chuvaEstado = null; _3da_chuvaVidaFluxo = null; _3da_chuvaSample = null;
+  _3da_chuvaAtiva = false; _3da_chuvaPausada = false; _3da_chuvaElapsedS = 0; _3da_chuvaTotalSimS = 0;
+  const btn = $('m3da-btnChuvaIniciar'); if(btn) btn.textContent = '🌧️ Simular Chuva';
+  const btnReset = $('m3da-btnChuvaReset'); if(btnReset) btnReset.style.display = 'none';
+  const prog = $('m3da-chuvaProgresso'); if(prog) { prog.style.display = 'none'; prog.textContent = ''; }
+}
+
+function _3da_construirPontosChuva() {
+  const N = _3DA_CHUVA_NPONTOS;
+  const pos = new Float32Array(N * 3);
+  for(let i = 0; i < N; i++) pos[i * 3 + 1] = -99999; // escondida (bem abaixo da cena) até nascer
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const mat = new THREE.PointsMaterial({ color: 0x9fd8ff, size: 2.2, transparent: true, opacity: .85, sizeAttenuation: true, depthWrite: false });
+  const pontos = new THREE.Points(geo, mat);
+  pontos.frustumCulled = false;
+  return { pontos, geo, pos, N };
+}
+
+// Botão único: nasce a chuva do zero / pausa / continua, dependendo do estado atual.
+function toggleChuva3DAnalise() {
+  if(!_3da_scene || !_3da_terrRaw) { setStatus('Abra a Vista 3D antes de simular a chuva.', 'err'); return; }
+  const btn = $('m3da-btnChuvaIniciar');
+  if(_3da_chuvaAtiva && !_3da_chuvaPausada) { // pausar
+    _3da_chuvaPausada = true;
+    if(btn) btn.textContent = '▶ Continuar Chuva';
+    return;
+  }
+  if(_3da_chuvaAtiva && _3da_chuvaPausada) { // continuar de onde parou
+    _3da_chuvaPausada = false;
+    _3da_chuvaUltimoTs = performance.now();
+    if(btn) btn.textContent = '⏸ Pausar Chuva';
+    return;
+  }
+  // nascer do zero
+  if(_3da_chuvaPontos) { try { _3da_scene.remove(_3da_chuvaPontos.pontos); _3da_chuvaPontos.geo.dispose(); } catch(e) {} }
+  _3da_chuvaPontos = _3da_construirPontosChuva();
+  _3da_scene.add(_3da_chuvaPontos.pontos);
+  _3da_chuvaEstado = new Uint8Array(_3da_chuvaPontos.N);
+  _3da_chuvaVidaFluxo = new Float32Array(_3da_chuvaPontos.N);
+  _3da_chuvaSample = _3da_mkMeshSampler(_3da_terrRaw, _3da_NGTX, _3da_NGTY, _3da_bcx, _3da_bcy, _3da_halfW, _3da_halfH);
+  _3da_chuvaMaxRaw = 0;
+  for(let i = 0; i < _3da_terrRaw.length; i++) if(_3da_terrRaw[i] > _3da_chuvaMaxRaw) _3da_chuvaMaxRaw = _3da_terrRaw[i];
+  _3da_chuvaElapsedS = 0;
+  _3da_chuvaTotalSimS = _3da_chuvaDuracaoMin * 60;
+  _3da_chuvaAtiva = true; _3da_chuvaPausada = false;
+  _3da_chuvaUltimoTs = performance.now();
+  if(btn) btn.textContent = '⏸ Pausar Chuva';
+  $('m3da-btnChuvaReset').style.display = '';
+  $('m3da-chuvaProgresso').style.display = 'block';
+}
+
+// Descarta a chuva atual (partículas e progresso) sem fechar a Vista 3D — pra começar de novo com
+// outra intensidade/duração sem precisar reabrir o modal inteiro.
+function reiniciarChuva3DAnalise() {
+  _3da_resetChuvaEstado();
+}
+
+// Chamado a cada frame do loop de renderização da Vista 3D (ver animate() em gerarVista3DAnalise) —
+// avança a queda/escoamento de cada gota. Não faz nada se a chuva não estiver ativa (custo ~zero).
+function _3da_tickChuva() {
+  if(!_3da_chuvaAtiva || !_3da_chuvaPontos) return;
+  const agora = performance.now();
+  let dt = (agora - _3da_chuvaUltimoTs) / 1000;
+  _3da_chuvaUltimoTs = agora;
+  if(_3da_chuvaPausada) return;
+  dt = Math.min(Math.max(dt, 0), 0.1); // evita saltos gigantes (aba em segundo plano, etc.)
+  if(dt <= 0) return;
+
+  const aindaChovendo = _3da_chuvaElapsedS < _3da_chuvaTotalSimS;
+  if(aindaChovendo) _3da_chuvaElapsedS += dt * _3DA_CHUVA_SEGXMIN;
+
+  const { pos, N, geo } = _3da_chuvaPontos;
+  const estado = _3da_chuvaEstado, vidaFluxo = _3da_chuvaVidaFluxo, sample = _3da_chuvaSample;
+  const bcx = _3da_bcx, bcy = _3da_bcy, halfW = _3da_halfW, halfH = _3da_halfH, exag = _3da_exag;
+  const topoY = _3da_chuvaMaxRaw * exag + Math.max(halfW, halfH) * 0.15 + 20;
+
+  // Densidade de gotas ativas escala com a intensidade (mm/h) — não é física de verdade, é uma
+  // taxa "cênica" calibrada pra ficar visualmente proporcional (mais intensidade = mais gotas
+  // caindo ao mesmo tempo, chuva mais forte visualmente e escoamento mais rápido ladeira abaixo).
+  const taxaNascimentoAlvo = aindaChovendo ? (_3da_chuvaIntensidade / 40) * (N * 0.35) : 0; // gotas/s
+  const probNascer = Math.min(1, (taxaNascimentoAlvo * dt) / N);
+  const velQueda = 55 + _3da_chuvaIntensidade * 0.9;
+  const velFluxo = 3.5 + _3da_chuvaIntensidade * 0.06;
+  const passoGrad = Math.max(halfW, halfH) * 0.006;
+
+  for(let i = 0; i < N; i++) {
+    const idx = i * 3;
+    if(estado[i] === 0) {
+      if(probNascer > 0 && Math.random() < probNascer) {
+        const gx = bcx + (Math.random() * 2 - 1) * halfW;
+        const gy = bcy + (Math.random() * 2 - 1) * halfH;
+        pos[idx] = gx; pos[idx + 1] = topoY * (0.7 + Math.random() * 0.3); pos[idx + 2] = -gy;
+        estado[i] = 1;
+      }
+      continue;
+    }
+    const gx = pos[idx], gy = -pos[idx + 2];
+    if(estado[i] === 1) { // caindo em queda livre
+      pos[idx + 1] -= velQueda * dt;
+      const terrenoY = sample(gx, gy) * exag;
+      if(pos[idx + 1] <= terrenoY + 0.3) { pos[idx + 1] = terrenoY + 0.3; estado[i] = 2; vidaFluxo[i] = 0; }
+      continue;
+    }
+    // estado 2: escoando sobre o relevo — segue o gradiente descendente (diferenças centrais)
+    vidaFluxo[i] += dt;
+    const d = passoGrad;
+    const hE = sample(Math.min(bcx + halfW, gx + d), gy), hW = sample(Math.max(bcx - halfW, gx - d), gy);
+    const hN = sample(gx, Math.min(bcy + halfH, gy + d)), hS = sample(gx, Math.max(bcy - halfH, gy - d));
+    let dx = -(hE - hW), dy = -(hN - hS); // aponta pra onde o relevo desce
+    const mag = Math.hypot(dx, dy);
+    let saiu = false;
+    if(mag < 1e-5 || vidaFluxo[i] > 40) {
+      saiu = true; // platô/depressão sem escoamento, ou já escoou tempo demais nessa gota
+    } else {
+      dx /= mag; dy /= mag;
+      const novoGx = gx + dx * velFluxo * dt, novoGy = gy + dy * velFluxo * dt;
+      if(Math.abs(novoGx - bcx) > halfW || Math.abs(novoGy - bcy) > halfH) saiu = true;
+      else { pos[idx] = novoGx; pos[idx + 2] = -novoGy; pos[idx + 1] = sample(novoGx, novoGy) * exag + 0.3; }
+    }
+    if(saiu) { estado[i] = 0; pos[idx + 1] = -99999; }
+  }
+  geo.attributes.position.needsUpdate = true;
+
+  const prog = $('m3da-chuvaProgresso');
+  if(!aindaChovendo) {
+    let algumaAtiva = false;
+    for(let i = 0; i < N; i++) if(estado[i] !== 0) { algumaAtiva = true; break; }
+    if(!algumaAtiva) {
+      _3da_chuvaAtiva = false;
+      const btn = $('m3da-btnChuvaIniciar'); if(btn) btn.textContent = '🌧️ Simular Chuva';
+      if(prog) prog.textContent = 'Chuva finalizada (' + _3da_chuvaDuracaoMin.toFixed(0) + ' min simulados) — Reiniciar pra rodar de novo.';
+      return;
+    }
+  }
+  if(prog) prog.textContent = 'Chuva: ' + (Math.min(_3da_chuvaElapsedS, _3da_chuvaTotalSimS) / 60).toFixed(1) + ' / ' + _3da_chuvaDuracaoMin.toFixed(0) + ' min simulados';
+}
+
 async function gerarVista3DAnalise() {
   if(!window.google?.maps?.ElevationService && !_elevacaoLocalDisponivel() && !_demLocalDisponivel()) {
     setStatus('Ative o Google Maps (chave API) ou importe um DEM/curvas de nível locais para gerar a Vista 3D — precisa de dados de elevação.', 'err');
     return;
   }
   if(typeof THREE === 'undefined') { setStatus('Three.js não carregou — verifique a conexão com a internet.', 'err'); return; }
+  _3da_resetChuvaEstado();
 
   // Multiplicador de espessura das fitas (linhas/contorno/curvas/carreadores/talvegues) — lido uma
   // vez aqui porque a largura é geometria de verdade (metros), não dá pra ajustar depois sem
@@ -10544,6 +10768,7 @@ async function gerarVista3DAnalise() {
     terrMesh.receiveShadow = true;
     scene.add(terrMesh);
     _3da_terrGeo = tGeo; _3da_terrRaw = terrRaw; _3da_matTerr = matTerr; _3da_matTerrSat = matTerrSat; _3da_terrMesh = terrMesh;
+    _3da_NGTX = NGTX; _3da_NGTY = NGTY; _3da_halfW = halfW; _3da_halfH = halfH;
     _3da_bgMode = 'solid'; // até a foto de satélite (assíncrona) chegar
     $('m3da-slopeLegend').style.display = 'none';
     _3da_slopeTex = _3da_buildSlopeTex(sampler, toLL, bcx, bcy, halfW, halfH);
@@ -10769,7 +10994,7 @@ async function gerarVista3DAnalise() {
     });
     // animate() lê _3da_camera/_3da_controls (globais, não as const locais) — assim o botão de vista
     // ortogonal pode trocar qual câmera está ativa sem precisar reiniciar o loop de render.
-    (function animate() { _3da_raf = requestAnimationFrame(animate); if(_3da_controls) _3da_controls.update(); if(_3da_camera) renderer.render(scene, _3da_camera); })();
+    (function animate() { _3da_raf = requestAnimationFrame(animate); if(_3da_controls) _3da_controls.update(); _3da_tickChuva(); if(_3da_camera) renderer.render(scene, _3da_camera); })();
 
     // ── Foto de satélite = a imagem capturada do próprio mapa 2D (mapTexPromise, disparada em
     // paralelo com a busca de elevação — ver _3da_captureMapTexture). A malha já aparece verde e a
