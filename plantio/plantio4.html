@@ -353,7 +353,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.72 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.73 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -433,7 +433,7 @@ body.layout-lateral #status{grid-area:status;}
           <button class="rbtn c-red" id="btnNovoProjeto" onclick="novoProjeto()" title="Recomeça do zero — se já houver algo desenhado, pergunta antes se você quer exportar."><span class="ico">&#128196;</span><span class="lbl">Novo Projeto</span></button>
           <button class="rbtn c-grey" onclick="$('inputKml').click()"><span class="ico">&#8599;</span><span class="lbl">Importar Projeto</span></button>
           <input type="file" id="inputKml" accept=".kml" style="display:none" onchange="if(this.files[0]){const r=new FileReader();r.onload=e=>_processarKMLImportado(e.target.result);r.readAsText(this.files[0]);this.value='';}">
-          <button class="rbtn c-green" onclick="$('inputKmlPoly').click()"><span class="ico">&#9671;</span><span class="lbl">Importar Polígono</span></button>
+          <button class="rbtn c-green" onclick="$('inputKmlPoly').click()" title="Importa 1 polígono do Google Earth como referência ativa (pronta pra travar/desenhar guia), ou VÁRIOS de uma vez (pasta/Folder com múltiplos polígonos) já como talhões travados."><span class="ico">&#9671;</span><span class="lbl">Importar Polígono</span></button>
           <input type="file" id="inputKmlPoly" accept=".kml" style="display:none" onchange="if(this.files[0]){const r=new FileReader();r.onload=e=>_importarPoligonoGoogleEarth(e.target.result);r.readAsText(this.files[0]);this.value='';}">
         </div>
         <div class="rgroup-title">Projeto</div>
@@ -2727,6 +2727,25 @@ body.layout-lateral #status{grid-area:status;}
 // página — test_v471 foi retirado da suíte (testava especificamente o mecanismo por partícula que
 // não existe mais; sua preocupação de fundo — contraste real, sem "cobrir tudo" — passou pro novo
 // teste do v4.72).
+// v4.73: usuário reportou não conseguir importar uma pasta KML com VÁRIOS polígonos dentro. Causa:
+// "Importar Polígono" (_importarPoligonoGoogleEarth) usava querySelector, que devolve só o PRIMEIRO
+// elemento que casa — sempre lia um único <Polygon> do arquivo, mesmo quando havia vários (comum ao
+// desenhar vários talhões de uma vez no Google Earth, numa pasta/Folder só), descartando os outros
+// SEM AVISO nenhum. ("Importar Projeto" — _processarKMLImportado — já suporta múltiplos talhões, mas
+// só reconhece a estrutura de pastas "Talhão N" que o PRÓPRIO app gera ao exportar; um KML genérico
+// desenhado no Google Earth, sem essa estrutura, era rejeitado ali com "Nenhum talhão encontrado".)
+// Corrigido: agora extrai TODOS os <Polygon> do arquivo (Array.from(getElementsByTagName), não
+// querySelector). Com exatamente 1 polígono, comportamento idêntico a antes (vira o polígono ATIVO,
+// pronto pra travar/desenhar guia ou servir de referência de alinhamento — extraído sem mudança
+// nenhuma pra _importarPoligonoUnicoAtivo). Com MAIS de 1, importa todos de uma vez já como talhões
+// TRAVADOS (nova _criarTalhaoArquivadoSimples, mesmo princípio de _processarKMLImportado mas sem
+// exigir a estrutura de pastas — aceita qualquer <Polygon>, de qualquer Placemark/Folder/origem),
+// pronto pra selecionar cada um e desenhar guia/linhas depois.
+// Testado (test_v473_kml_multi_poligono.js, com sanity-check confirmando que o teste pega a
+// regressão de verdade): KML sintético com 3 polígonos importa os 3 como talhões travados (áreas
+// corretas, nenhum fica no polígono ativo); KML com só 1 polígono continua no fluxo de sempre
+// (polígono ativo, "Travar Talhão" visível, nada em talhoesArquivados) — sem regredir o caso de
+// referência única. Regressão completa (6 suítes disponíveis) sem erros de página.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -7193,88 +7212,151 @@ function _ajustarSuavizacaoCurvaGuia() {
 }
 
 // ── Importar Polígono do Google Earth ─────────────────────────────────────────
+// v4.73: usuário reportou não conseguir importar uma pasta KML com VÁRIOS polígonos dentro — esta
+// função só pegava o PRIMEIRO polígono do arquivo (querySelector, que devolve só o 1º match), sempre
+// tratando como o polígono ATIVO (pra travar/desenhar guia ou servir de referência de alinhamento).
+// Se o KML trouxesse mais de um <Polygon> (comum ao desenhar vários talhões de uma vez no Google
+// Earth, numa pasta/Folder só), os outros eram descartados SEM AVISO nenhum. Agora: com exatamente 1
+// polígono, o comportamento é idêntico ao de sempre (fluxo de polígono ativo). Com MAIS de 1, importa
+// TODOS de uma vez como talhões já travados (mesmo princípio de _processarKMLImportado — "Importar
+// Projeto" —, mas sem exigir a estrutura de pastas "Talhão N" que só um KML exportado por este
+// próprio app tem: aqui aceita qualquer <Polygon>, de qualquer Placemark/Folder, de qualquer origem).
 function _importarPoligonoGoogleEarth(text) {
   try {
     const xml = new DOMParser().parseFromString(text, 'text/xml');
 
-    // Busca coordenadas do primeiro polígono encontrado no KML
-    let coordEl = xml.querySelector('Polygon outerBoundaryIs LinearRing coordinates');
-    if (!coordEl) coordEl = xml.querySelector('LinearRing coordinates');
-    if (!coordEl) coordEl = xml.querySelector('Polygon coordinates');
-    if (!coordEl) coordEl = xml.querySelector('coordinates');
-    if (!coordEl) {
+    // Extrai coordenadas de TODOS os <Polygon> do arquivo (não só o primeiro).
+    const poligonos = [];
+    Array.from(xml.getElementsByTagName('Polygon')).forEach(polyEl => {
+      let coordEl = polyEl.querySelector('outerBoundaryIs LinearRing coordinates')
+        || polyEl.querySelector('LinearRing coordinates')
+        || polyEl.querySelector('coordinates');
+      if(!coordEl) return;
+      // KML usa formato "lon,lat,alt" separado por espaços
+      const pts = coordEl.textContent.trim().split(/\s+/).filter(c => c.includes(',')).map(c => {
+        const p = c.split(',');
+        return L.latLng(parseFloat(p[1]), parseFloat(p[0]));
+      }).filter(p => !isNaN(p.lat) && !isNaN(p.lng));
+      if(pts.length < 3) return;
+      const f = pts[0], l = pts[pts.length - 1]; // remove ponto de fechamento se igual ao primeiro
+      if(Math.abs(l.lat - f.lat) < 1e-8 && Math.abs(l.lng - f.lng) < 1e-8) pts.pop();
+      if(pts.length >= 3) poligonos.push(pts);
+    });
+
+    if(!poligonos.length) {
       alert('Nenhum polígono encontrado no arquivo KML.\nExporte o polígono do Google Earth como arquivo .kml e tente novamente.');
       return;
     }
 
-    // KML usa formato "lon,lat,alt" separado por espaços
-    const pts = coordEl.textContent.trim()
-      .split(/\s+/)
-      .filter(c => c.includes(','))
-      .map(c => {
-        const p = c.split(',');
-        return L.latLng(parseFloat(p[1]), parseFloat(p[0]));
-      })
-      .filter(p => !isNaN(p.lat) && !isNaN(p.lng));
+    if(poligonos.length === 1) { _importarPoligonoUnicoAtivo(poligonos[0]); return; }
 
-    if (pts.length < 3) {
-      alert('Polígono inválido: menos de 3 pontos.');
-      return;
-    }
+    // Mais de 1 polígono — não dá pra ter vários "polígonos ativos" desenháveis ao mesmo tempo, então
+    // importa todos já travados (igual a uma importação de Projeto); o usuário seleciona cada um
+    // depois pra desenhar a guia/linhas normalmente.
+    let importados = 0;
+    poligonos.forEach(pts => { if(_criarTalhaoArquivadoSimples(pts)) importados++; });
+    if(!importados) { alert('Nenhum polígono válido encontrado no KML.'); return; }
 
-    // Remove ponto de fechamento se igual ao primeiro
-    const f = pts[0], l = pts[pts.length - 1];
-    if (Math.abs(l.lat - f.lat) < 1e-8 && Math.abs(l.lng - f.lng) < 1e-8) pts.pop();
+    renumerarTalhoes();
+    _updateLabelScale();
+    $('btnLimparArquivados').style.display = '';
+    $('btnDeclivTodos').disabled = false;
+    $('btnComprimentoTodos').disabled = false;
 
-    // Limpa estado atual (igual a iniciarPoligono)
-    limparLinhas(); limparGuia(); limparPoligono();
+    const allPts = [];
+    talhoesArquivados.slice(-importados).forEach(t => t.polyPts.forEach(p => allPts.push([p.lat, p.lng])));
+    if(allPts.length) map.fitBounds(allPts, { padding: [50, 50] });
 
-    // Popula polyPts e cria marcadores de vértice arrastáveis
-    polyPts = pts;
-    pts.forEach(ll => {
-      const mk = L.marker(ll, { icon: mkIcon('vertex-marker'), draggable: true }).addTo(map);
-      mk.on('drag',    () => updatePolyDisplay());
-      mk.on('dragend', () => rebuildPoly());
-      polyMarkers.push(mk);
-    });
-
-    // Cria camada do polígono (igual a fecharPoligono)
-    polyLayer = L.polygon(polyPts, {
-      color: '#42a5f5', fillColor: '#1565c0', fillOpacity: 0.08, weight: 2
-    }).addTo(map);
-
-    buildTurfPoly();
-
-    // Área e estado
-    const ha = areaHa(polyPts);
-    areaHaAtual = ha;
-    $('iArea').textContent = ha.toFixed(2) + ' ha';
-
-    // Estado: polígono fechado (modo idle)
-    modo = 'idle';
-    map.getContainer().style.cursor = '';
-    $('btnPoly').classList.remove('active');
-    $('btnFechar').style.display = 'none';
-    $('btnCurvas').disabled = false;
-
-    // Desativa arrastar vértices (igual a fecharPoligono)
-    polyMarkers.forEach(m => m.dragging && m.dragging.disable());
-
-    // Mostra "Travar Talhão"
-    $('btnTravarTalhao').style.display = 'flex';
-
-    map.fitBounds(polyLayer.getBounds());
-    setStatus('Polígono importado: ' + ha.toFixed(2) + ' ha. Trave o talhão, desenhe a guia ou use Carreador/Divisão.', 'ok');
-
-    // v4.60: sem isso, importar um polígono de referência (o caso de maior prioridade em
-    // _obterPoligonoReferenciaAlinhamento) não atualizava o botão "Alinhar Ortofoto Automaticamente"
-    // — ele só reaparecia depois de outra ação (travar talhão, importar curvas etc.) tocar essa função.
-    _atualizarBotaoAlinharOrtofoto();
-
+    setStatus(`${importados} polígono(s) importado(s) como talhões — selecione cada um pra desenhar a guia/linhas.`, 'ok');
   } catch (e) {
     alert('Erro ao importar polígono: ' + e.message);
     console.error(e);
   }
+}
+
+// Fluxo de sempre pra um único polígono importado: vira o polígono ATIVO (ainda não travado), pronto
+// pra travar/desenhar guia ou servir de referência de alinhamento — sem nenhuma mudança de
+// comportamento da versão original (só o parsing de coordenadas saiu pra fora, ver acima).
+function _importarPoligonoUnicoAtivo(pts) {
+  if(pts.length < 3) { alert('Polígono inválido: menos de 3 pontos.'); return; }
+
+  // Limpa estado atual (igual a iniciarPoligono)
+  limparLinhas(); limparGuia(); limparPoligono();
+
+  // Popula polyPts e cria marcadores de vértice arrastáveis
+  polyPts = pts;
+  pts.forEach(ll => {
+    const mk = L.marker(ll, { icon: mkIcon('vertex-marker'), draggable: true }).addTo(map);
+    mk.on('drag',    () => updatePolyDisplay());
+    mk.on('dragend', () => rebuildPoly());
+    polyMarkers.push(mk);
+  });
+
+  // Cria camada do polígono (igual a fecharPoligono)
+  polyLayer = L.polygon(polyPts, {
+    color: '#42a5f5', fillColor: '#1565c0', fillOpacity: 0.08, weight: 2
+  }).addTo(map);
+
+  buildTurfPoly();
+
+  // Área e estado
+  const ha = areaHa(polyPts);
+  areaHaAtual = ha;
+  $('iArea').textContent = ha.toFixed(2) + ' ha';
+
+  // Estado: polígono fechado (modo idle)
+  modo = 'idle';
+  map.getContainer().style.cursor = '';
+  $('btnPoly').classList.remove('active');
+  $('btnFechar').style.display = 'none';
+  $('btnCurvas').disabled = false;
+
+  // Desativa arrastar vértices (igual a fecharPoligono)
+  polyMarkers.forEach(m => m.dragging && m.dragging.disable());
+
+  // Mostra "Travar Talhão"
+  $('btnTravarTalhao').style.display = 'flex';
+
+  map.fitBounds(polyLayer.getBounds());
+  setStatus('Polígono importado: ' + ha.toFixed(2) + ' ha. Trave o talhão, desenhe a guia ou use Carreador/Divisão.', 'ok');
+
+  // v4.60: sem isso, importar um polígono de referência (o caso de maior prioridade em
+  // _obterPoligonoReferenciaAlinhamento) não atualizava o botão "Alinhar Ortofoto Automaticamente"
+  // — ele só reaparecia depois de outra ação (travar talhão, importar curvas etc.) tocar essa função.
+  _atualizarBotaoAlinharOrtofoto();
+}
+
+// Cria um talhão já travado (arquivado) a partir de um polígono simples, sem linhas de plantio —
+// usado pela importação em lote de vários polígonos de uma vez (KML genérico com mais de 1
+// <Polygon>, ver _importarPoligonoGoogleEarth). Retorna true se criou com sucesso.
+function _criarTalhaoArquivadoSimples(pts) {
+  if(pts.length < 3) return false;
+  const ring = [...pts.map(p => [p.lng, p.lat]), [pts[0].lng, pts[0].lat]];
+  let haArea = 0;
+  try { haArea = turf.area(turf.polygon([ring])) / 10000; } catch(e) { return false; }
+
+  const uid = nextTalhaoUid++;
+  const idxN = talhoesArquivados.length;
+  const cor = CORES_TALHAO[idxN % CORES_TALHAO.length];
+  const polyLyr = L.polygon(pts, { color: cor, fillColor: cor, fillOpacity: .06, weight: 2 }).addTo(map);
+
+  let infoMk = null;
+  try {
+    const c = turf.centerOfMass(turf.polygon([ring])).geometry.coordinates;
+    const html = `<div class="poly-label"><div class="poly-label-head">&#9632; Talh&#227;o</div><div class="poly-label-body"><div class="poly-label-row"><span class="poly-label-lbl">&#193;rea</span><span class="poly-label-val">${haArea.toFixed(2)} ha</span></div></div></div>`;
+    infoMk = L.marker([c[1], c[0]], { icon: L.divIcon({ html, className: '', iconAnchor: [84, 58] }), interactive: false, zIndexOffset: 500 }).addTo(map);
+  } catch(e) {}
+
+  talhoesArquivados.push({
+    uid, idx: idxN + 1, cor, corLinha: '#FFD600',
+    areaHa: haArea, spacing: 0, count: 0, metrosLin: 0,
+    polyLayer: polyLyr, polyPts: pts,
+    linhas: [], linhasDecl: [],
+    infoMarker: infoMk, baseLabelZoom: map.getZoom(),
+    turfPoly: null
+  });
+  polyLyr.on('click', () => { if(modo === 'idle') selecionarTalhao(uid); });
+  return true;
 }
 
 // ── Importar KML ──────────────────────────────────────────────────────────────
