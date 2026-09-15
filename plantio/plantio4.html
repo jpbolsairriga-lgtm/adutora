@@ -353,7 +353,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.73 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.74 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -2746,6 +2746,30 @@ body.layout-lateral #status{grid-area:status;}
 // corretas, nenhum fica no polígono ativo); KML com só 1 polígono continua no fluxo de sempre
 // (polígono ativo, "Travar Talhão" visível, nada em talhoesArquivados) — sem regredir o caso de
 // referência única. Regressão completa (6 suítes disponíveis) sem erros de página.
+// v4.74: usuário reportou (com prints em sequência) que "Confirmar Divisão" estava DELETANDO parte
+// de um talhão real — um pedaço de área desaparecia sem erro nenhum depois da divisão. Causa raiz em
+// _executarDivisaoTalhao (compartilhada por "Traçar Divisão" e "Carreador a partir de Linha"):
+// turf.difference(talhaoTurf, carreadorBuf) devolve um MultiPolygon com uma parte por região
+// desconectada — o código fazia `.slice(0,2)` assumindo que uma divisão sempre produz no máximo 2
+// partes reais (o resto seria ruído numérico, por isso o filtro de área >10m² já existia). Isso vale
+// pra um talhão CONVEXO, mas o talhão relatado é CÔNCAVO (reentrâncias/pontas estreitas seguindo
+// borda de mata — visível nos prints), e a faixa do carreador pode cruzar esse contorno em MAIS de 2
+// pontos, gerando 3+ partes REAIS e razoavelmente grandes (não sliver de precisão). O `.slice(0,2)`
+// descartava tudo além das "2 maiores" SILENCIOSAMENTE — dava exatamente a sensação de "sumiu um
+// pedaço do talhão do nada" relatada. Corrigido: removido o `.slice(0,2)` — mantém TODAS as partes
+// que passam do filtro de ruído numérico (>10m²); o resto da função já cria um talhão por parte
+// genericamente (partes.forEach), então nenhuma mudança extra foi necessária ali.
+// Também adicionado: _executarDivisaoTalhao nunca tinha captura de undo — uma divisão ruim (linha
+// autointersectante, ou justamente esse bug) não tinha como ser desfeita, só reimportando um KML
+// exportado antes (se existisse). Agora chama _capturarEstadoParaUndo antes de mutar, então "↩
+// Desfazer" (mesmo botão já usado por Excluir Talhão) recupera o talhão original intacto.
+// Testado (test_v474_divisao_concava.js, com sanity-check confirmando que o teste pega a regressão
+// de verdade reintroduzindo o slice(0,2)): talhão sintético em "U" (base + 2 braços, aberto no topo)
+// dividido por uma linha reta acima da base gera as 3 partes reais esperadas (base+braços por baixo
+// + topo de cada braço), com a ÁREA TOTAL batendo exatamente com o esperado (nada some) — com o bug
+// de volta, 0,308 ha (um braço inteiro) desaparece silenciosamente, confirmando a causa raiz. Undo
+// recupera o talhão original intacto (mesma área, 1 único talhão). Regressão completa (7 suítes
+// disponíveis) sem erros de página.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -8983,11 +9007,26 @@ function _executarDivisaoTalhao(uid, lineCoordsLngLat, largura, opts) {
   catch(e) { return { ok: false, erro: 'Erro ao dividir: ' + e.message }; }
   if(!resto) return { ok: false, erro: 'Divisão falhou — a linha não cruza o talhão completamente.' };
 
+  // v4.74: NÃO cortar em ".slice(0,2)" — turf.difference(talhaoTurf, carreadorBuf) devolve um
+  // MultiPolygon com uma parte por região desconectada, e num talhão CÔNCAVO (reentrâncias/pontas
+  // estreitas, comum em contorno seguindo borda de mata/curva de rio — exatamente o caso relatado
+  // pelo usuário) a faixa do carreador pode cruzar o contorno em mais de 2 pontos, gerando 3+ partes
+  // de verdade (não ruído numérico). Manter só as "2 maiores" descartava essas partes extras
+  // SILENCIOSAMENTE — o usuário via um pedaço real do talhão desaparecer depois de "Confirmar
+  // Divisão", sem erro nem aviso nenhum (bug relatado com prints: área inteira faltando depois da
+  // divisão). O resto da função já cria um novoTalhao por parte genericamente (partes.forEach),
+  // então basta não descartar nada além do filtro de ruído numérico (<10m², sliver de precisão de
+  // ponto flutuante, não uma área real).
   let partes = [];
   if(resto.geometry.type === 'MultiPolygon') resto.geometry.coordinates.forEach(c => partes.push(turf.polygon(c)));
   else partes.push(resto);
-  partes = partes.filter(p => turf.area(p) > 10).sort((a, b) => turf.area(b) - turf.area(a)).slice(0, 2);
+  partes = partes.filter(p => turf.area(p) > 10).sort((a, b) => turf.area(b) - turf.area(a));
   if(partes.length < 2) return { ok: false, erro: 'A linha não gerou 2 partes — certifique-se que ela atravessa o talhão de lado a lado.' };
+
+  // v4.74: divisão nunca tinha captura de undo — uma linha de corte ruim (autointersectante, cruzando
+  // uma reentrância do contorno mais de uma vez) não tinha como ser desfeita, só reimportando um KML
+  // exportado antes (se existisse). Agora dá pra "↩ Desfazer" (mesmo botão/mecanismo de excluirTalhaoSelecionado).
+  _capturarEstadoParaUndo(`divisão do Talhão ${t.idx}`);
 
   // Recorta as linhas de plantio já existentes em vez de apagá-las: tira só o pedaço que cai dentro
   // da faixa do carreador e distribui o restante para o novo talhão (parte) correspondente. Usado
