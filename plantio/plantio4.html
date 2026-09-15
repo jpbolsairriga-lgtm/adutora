@@ -353,7 +353,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.70 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.71 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -2666,6 +2666,30 @@ body.layout-lateral #status{grid-area:status;}
 // umidade numa célula real (soma>0, várias células com mancha, mesh na cena) depois de 2s de chuva
 // — tudo limpo no Reiniciar. Regressão dos testes de chuva/DEM/escoamento anteriores (v4.68/v4.69)
 // continua passando, sem erros de página em nenhuma das 4 suítes.
+// v4.71: usuário testou a v4.70 na prática — "a mancha de molhado cobre tudo... pensei em deixar só
+// os pontos de correr água e um pequeno entorno e áreas de acúmulo, algo igual o vídeo [de
+// referência]". Causa raiz: como as gotas nascem espalhadas por TODA a bbox (não já nos canais) e
+// só convergem pro relevo real depois de alguns segundos, o halo 3×3 relativamente forte + decaimento
+// bem lento (~3,5%/s) da v4.70 "pintava" a malha quase inteira de um véu azul antes de conseguir
+// concentrar nos canais — bem diferente do vídeo de referência (revi os frames extraídos da gravação
+// "154311"), que mostra só LINHAS FINAS de escoamento sobre o relevo, sem nenhuma lavagem geral.
+// Correção: separou o rastro em DOIS canais independentes (_3da_chuvaRastro.wet e .acc):
+// - Fluxo (linha de passagem): raio 1 (halo bem fraco, peso de borda 0.12 em vez de 0.45),
+//   incremento bem menor e decaimento RÁPIDO (retém 15%/s, contra 96,5%/s antes) — uma célula
+//   visitada de raspão esmaece antes de "sujar" a vista; só um canal realmente concorrido (muitas
+//   gotas passando repetido) acumula o bastante pra ficar visível. Cor ciano fina (mesma família dos
+//   talvegues do Mapa de Escoamento 2D), opacidade máxima bem mais baixa que antes.
+// - Acúmulo (poça): marca SÓ onde a gota genuinamente PAROU por falta de gradiente (mag<1e-5 —
+//   platô/depressão de verdade), não mais no corte por tempo-de-vida esgotado (que não é acúmulo
+//   real, antes também sujava o rastro). Raio maior (2), decaimento bem mais lento (retém 75%/s —
+//   poça persiste), cor azul mais forte/opaca — lê como concentração de água, não como mais um
+//   trecho de linha. Removida também a marca de "respingo" no impacto da queda (contribuía pra
+//   lavagem geral, sem relação com canal real).
+// Testado (test_v471_rastro_contido.js, com sanity-check confirmando que o teste pega a regressão de
+// verdade revertendo o decaimento pro valor antigo): depois de 3s de chuva, a fração de células com
+// marca de fluxo fica bem contida (~34%, vs ~64% antes da correção — threshold de regressão em 40%)
+// e o canal de acúmulo existe separado do de fluxo. Regressão completa (5 suítes: v4.68 DEM/gates,
+// v4.69/v4.70 chuva, v4.71 rastro) passando sem erros de página.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -10504,7 +10528,11 @@ function _3da_construirRastroChuva() {
   geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   geo.setIndex(idxArr);
 
-  const wet = new Float32Array(W * H);
+  // Dois canais separados — ver comentário de _3da_splatRastro/_3da_atualizarTexturaRastro: "fluxo"
+  // (linha fina, marca só o pontinho de passagem + um halo bem pequeno, decai rápido) e "acumulo"
+  // (marca só onde a água realmente PARA de escoar por falta de gradiente — mancha maior, decai
+  // devagar, cor mais forte — representa poça/área de concentração de verdade).
+  const wet = new Float32Array(W * H), acc = new Float32Array(W * H);
   const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d');
   const imgData = ctx.createImageData(W, H);
@@ -10515,35 +10543,51 @@ function _3da_construirRastroChuva() {
   const mesh = new THREE.Mesh(geo, mat);
   const lineObjRef = { geo, raw: _3da_terrRaw, eps: 0.2 };
   _3da_lineObjs.push(lineObjRef);
-  return { wet, w: W, h: H, canvas, ctx, imgData, tex, geo, mesh, lineObjRef };
+  return { wet, acc, w: W, h: H, canvas, ctx, imgData, tex, geo, mesh, lineObjRef };
 }
 
-// Acumula "umidade" na célula da grade mais próxima de (gx,gy) — e num raio de 1 célula ao redor,
-// pra formar uma mancha com alguma largura (não uma linha matemática de 1px) — se aproximando da
-// faixa que o Mapa de Escoamento 2D também desenha.
-function _3da_splatRastro(r, gx, gy, qtd) {
+// v4.71: a v4.70 marcava um halo 3×3 relativamente forte a CADA FRAME de cada gota escoando, com
+// decaimento bem lento (~3,5%/s) — como as gotas nascem espalhadas por toda a bbox e só convergem
+// pros canais reais depois de alguns segundos, isso "pintava" quase a malha inteira de um véu azul
+// antes de conseguir concentrar nos canais (bug relatado com print: "a mancha de molhado cobre
+// tudo"). Agora o raio/peso/decaimento (por canal, ver chamadas em _3da_tickChuva) ficam bem mais
+// contidos — só quem passa MUITAS vezes pela mesma célula (um canal real) acumula o suficiente pra
+// aparecer visualmente; uma célula visitada de raspão por poucas gotas esmaece antes de "sujar" a
+// vista, igual ao vídeo de referência (linhas finas de escoamento, não uma lavagem geral).
+function _3da_splatRastro(arr, w, h, gx, gy, qtd, raio, pesoBorda, cap) {
   const stepX = (2 * _3da_halfW) / _3da_NGTX, stepY = (2 * _3da_halfH) / _3da_NGTY;
   const fi = (gx - (_3da_bcx - _3da_halfW)) / stepX, fj = (gy - (_3da_bcy - _3da_halfH)) / stepY;
   const ii = Math.round(fi), jj = Math.round(fj);
-  for(let dj = -1; dj <= 1; dj++) for(let di = -1; di <= 1; di++) {
+  for(let dj = -raio; dj <= raio; dj++) for(let di = -raio; di <= raio; di++) {
+    const dist = Math.hypot(di, dj);
+    if(dist > raio + 1e-6) continue;
     const nii = ii + di, njj = jj + dj;
-    if(nii < 0 || nii >= r.w || njj < 0 || njj >= r.h) continue;
-    const peso = (di === 0 && dj === 0) ? 1 : 0.45;
-    const idx = njj * r.w + nii;
-    r.wet[idx] = Math.min(60, r.wet[idx] + qtd * peso);
+    if(nii < 0 || nii >= w || njj < 0 || njj >= h) continue;
+    const peso = dist < 1e-6 ? 1 : pesoBorda;
+    const idx = njj * w + nii;
+    arr[idx] = Math.min(cap, arr[idx] + qtd * peso);
   }
 }
 
-// Decai lentamente (tempo REAL, não o simulado — a mancha "seca" no mesmo ritmo em qualquer
-// velocidade de simulação) e repinta o canvas a partir da grade de umidade atual.
+// Decai os dois canais (tempo REAL, não o simulado — a mancha "seca"/o fluxo esmaece no mesmo ritmo
+// em qualquer velocidade de simulação) e repinta o canvas: linha de fluxo em ciano (fino, igual à
+// cor dos talvegues do Mapa de Escoamento 2D) por baixo, poça de acúmulo em azul mais forte por
+// cima onde existir — pra ficar visualmente parecido com "linhas de escoamento + pontos de
+// concentração", não uma mancha única cobrindo tudo.
 function _3da_atualizarTexturaRastro(r, dt) {
-  const decai = Math.pow(0.965, dt);
+  const decaiFluxo = Math.pow(0.15, dt);   // esmaece rápido — só reforço contínuo (canal real) resiste
+  const decaiAcumulo = Math.pow(0.75, dt); // poça persiste bem mais que a linha de passagem
   const data = r.imgData.data;
   for(let i = 0; i < r.wet.length; i++) {
-    r.wet[i] *= decai;
-    const a = Math.min(235, Math.round((r.wet[i] / 60) * 235));
+    r.wet[i] *= decaiFluxo;
+    r.acc[i] *= decaiAcumulo;
+    const aFluxo = Math.min(1, r.wet[i] / 22), aAcc = Math.min(1, r.acc[i] / 70);
     const o = i * 4;
-    data[o] = 12; data[o + 1] = 46; data[o + 2] = 94; data[o + 3] = a;
+    if(aAcc > aFluxo) { // poça de acúmulo domina — azul mais escuro/opaco
+      data[o] = 8; data[o + 1] = 40; data[o + 2] = 110; data[o + 3] = Math.round(aAcc * 220);
+    } else { // linha de escoamento — ciano fino, bem menos opaco que a poça
+      data[o] = 0; data[o + 1] = 170; data[o + 2] = 210; data[o + 3] = Math.round(aFluxo * 130);
+    }
   }
   r.ctx.putImageData(r.imgData, 0, 0);
   r.tex.needsUpdate = true;
@@ -10625,7 +10669,14 @@ function _3da_tickChuva() {
   const velQueda = (55 + _3da_chuvaIntensidade * 0.9) * velFactor;
   const velFluxo = (3.5 + _3da_chuvaIntensidade * 0.06) * velFactor;
   const passoGrad = Math.max(halfW, halfH) * 0.006;
-  const qtdMancha = (10 + _3da_chuvaIntensidade * 0.2) * dt;
+  // Fluxo: marca só o pontinho de passagem + um halo mínimo (raio 1, borda bem fraca) — some rápido
+  // (ver decaiFluxo em _3da_atualizarTexturaRastro), só um canal realmente concorrido acumula o
+  // bastante pra ficar visível, igual à linha fina do vídeo de referência. Acúmulo: marca só onde a
+  // gota genuinamente PAROU por falta de gradiente (platô/depressão — mag<1e-5, não o corte por
+  // tempo demais escoando) — mancha maior (raio 2) e mais forte, pra ler como "poça"/concentração
+  // de água de verdade, não como mais um trecho de linha.
+  const qtdFluxo = 5 * dt;
+  const qtdAcumulo = 3 * dt;
 
   for(let i = 0; i < N; i++) {
     const idx = i * 3;
@@ -10639,13 +10690,10 @@ function _3da_tickChuva() {
       continue;
     }
     const gx = pos[idx], gy = -pos[idx + 2];
-    if(estado[i] === 1) { // caindo em queda livre
+    if(estado[i] === 1) { // caindo em queda livre (sem marcar rastro — só a partir de quando escoa)
       pos[idx + 1] -= velQueda * dt;
       const terrenoY = sample(gx, gy) * exag;
-      if(pos[idx + 1] <= terrenoY + 0.3) {
-        pos[idx + 1] = terrenoY + 0.3; estado[i] = 2; vidaFluxo[i] = 0;
-        if(rastro) _3da_splatRastro(rastro, gx, gy, qtdMancha * 3); // "respingo" mais forte no impacto
-      }
+      if(pos[idx + 1] <= terrenoY + 0.3) { pos[idx + 1] = terrenoY + 0.3; estado[i] = 2; vidaFluxo[i] = 0; }
       continue;
     }
     // estado 2: escoando sobre o relevo — segue o gradiente descendente (diferenças centrais)
@@ -10656,15 +10704,18 @@ function _3da_tickChuva() {
     let dx = -(hE - hW), dy = -(hN - hS); // aponta pra onde o relevo desce
     const mag = Math.hypot(dx, dy);
     let saiu = false;
-    if(mag < 1e-5 || vidaFluxo[i] > 40) {
-      saiu = true; // platô/depressão sem escoamento, ou já escoou tempo demais nessa gota
+    if(mag < 1e-5) {
+      saiu = true; // platô/depressão sem gradiente nenhum — água parou aqui de verdade: é acúmulo
+      if(rastro) _3da_splatRastro(rastro.acc, rastro.w, rastro.h, gx, gy, qtdAcumulo, 2, 0.5, 90);
+    } else if(vidaFluxo[i] > 40) {
+      saiu = true; // só o limite de tempo de vida da gota — não é acúmulo real, some sem marcar
     } else {
       dx /= mag; dy /= mag;
       const novoGx = gx + dx * velFluxo * dt, novoGy = gy + dy * velFluxo * dt;
       if(Math.abs(novoGx - bcx) > halfW || Math.abs(novoGy - bcy) > halfH) saiu = true;
       else {
         pos[idx] = novoGx; pos[idx + 2] = -novoGy; pos[idx + 1] = sample(novoGx, novoGy) * exag + 0.3;
-        if(rastro) _3da_splatRastro(rastro, novoGx, novoGy, qtdMancha);
+        if(rastro) _3da_splatRastro(rastro.wet, rastro.w, rastro.h, novoGx, novoGy, qtdFluxo, 1, 0.12, 22);
       }
     }
     if(saiu) { estado[i] = 0; pos[idx + 1] = -99999; }
