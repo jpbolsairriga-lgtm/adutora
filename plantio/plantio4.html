@@ -266,10 +266,11 @@ body.layout-lateral #status{grid-area:status;}
 #m3da-exag input[type=range]{width:120px;}
 #m3da-exagVal{min-width:34px;text-align:right;color:var(--acc2);font-weight:700;}
 #m3da-hint{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);color:#ffffff44;font-size:10px;letter-spacing:.6px;pointer-events:none;}
-#m3da-chuva{position:absolute;top:14px;left:14px;background:rgba(5,10,18,.75);border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:9px 12px;display:flex;flex-direction:column;gap:6px;color:#fff;font-size:11.5px;width:200px;}
+#m3da-chuva{position:absolute;bottom:72px;right:14px;background:rgba(5,10,18,.75);border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:9px 12px;display:flex;flex-direction:column;gap:6px;color:#fff;font-size:11.5px;width:210px;}
 #m3da-chuva .m3da-chuvaRow{display:flex;align-items:center;gap:6px;}
 #m3da-chuva .m3da-chuvaRow span:first-child{flex:0 0 auto;white-space:nowrap;color:#ffffffcc;}
 #m3da-chuva input[type=range]{flex:1;width:auto;min-width:0;}
+#m3da-chuva select{flex:1;background:rgba(255,255,255,.13);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:5px;padding:3px 4px;font-size:11px;}
 #m3da-chuva .m3da-chuvaVal{min-width:56px;text-align:right;color:var(--acc2);font-weight:700;}
 #m3da-chuva .m3da-chuvaBtns{display:flex;gap:6px;margin-top:2px;}
 #m3da-chuva button{flex:1;background:rgba(255,255,255,.13);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:7px;padding:6px 8px;font-size:11.5px;font-weight:700;cursor:pointer;white-space:nowrap;}
@@ -352,7 +353,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.69 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.70 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1201,6 +1202,18 @@ body.layout-lateral #status{grid-area:status;}
       <span>Duração</span>
       <input type="range" id="m3da-chuvaDuracao" min="1" max="120" step="1" value="10" oninput="_3da_atualizarLabelDuracaoChuva(this.value)">
       <span class="m3da-chuvaVal" id="m3da-chuvaDuracaoVal">10 min</span>
+    </div>
+    <div class="m3da-chuvaRow">
+      <span>Velocidade</span>
+      <select id="m3da-chuvaVelocidade" onchange="_3da_atualizarVelocidadeChuva(this.value)" title="Quanto tempo simulado passa por segundo real — ex.: 60x = 1 minuto de chuva simulado a cada 1 segundo na tela">
+        <option value="1">1× (tempo real)</option>
+        <option value="6" selected>6×</option>
+        <option value="15">15×</option>
+        <option value="30">30×</option>
+        <option value="60">60× (1 min = 1s)</option>
+        <option value="120">120×</option>
+        <option value="300">300×</option>
+      </select>
     </div>
     <div class="m3da-chuvaBtns">
       <button id="m3da-btnChuvaIniciar" onclick="toggleChuva3DAnalise()">🌧️ Simular Chuva</button>
@@ -2628,6 +2641,31 @@ body.layout-lateral #status{grid-area:status;}
 // caírem/escoarem e o timer avançar; pausar CONGELA as posições (nenhuma partícula move enquanto
 // pausado); continuar retoma sem resetar; reiniciar zera tudo (partículas e progresso). Sem erros de
 // página nas 3 suítes disponíveis (chuva + os 2 testes de DEM/escoamento da v4.68).
+// v4.70: 3 ajustes na simulação de chuva, pedidos pelo usuário depois de testar a v4.69 na prática
+// (sobrepôs o Mapa de Escoamento na Vista 3D pra comparar):
+// 1) Painel "Simulação de Chuva" caía EM CIMA do painel "ANÁLISE 3D — TERRENO" — os dois usavam o
+//    mesmo canto (top-left). Movido pro canto inferior direito, acima do controle de Exagero
+//    vertical (canto livre).
+// 2) "Os pingos ficam muito finos, a marca por onde passa a enxurrada deveria ficar mais
+//    destacada" — duas mudanças: (a) a gota agora usa um sprite com brilho radial (branco no
+//    centro, esmaece pra azul) + blending aditivo + tamanho maior, bem mais visível que o ponto
+//    liso de antes; (b) nova 2ª camada — um "rastro": uma textura de umidade pintada numa malha
+//    idêntica à do terreno (mesmo raw+eps de _3da_lineObjs, acompanha o exagero), que ACUMULA
+//    (não só passa) por onde a água escoou de verdade (_3da_splatRastro, num raio de 1 célula pra
+//    dar uma faixa com largura, não uma linha de 1px) e decai lentamente com o tempo real
+//    (~3.5%/s — "seca" devagar). Fica visível mesmo depois da gota já ter saído dali, e deve
+//    coincidir com os talvegues do Mapa de Escoamento (2D) sobrepostos.
+// 3) Nova "Velocidade" (seletor 1×/6×/15×/30×/60×/120×/300×) — antes a compressão de tempo era fixa
+//    (6×, só afetava o relógio da Duração). Agora acelera/desacelera a ANIMAÇÃO TODA (queda,
+//    escoamento, taxa de nascimento de gotas — não só o contador), normalizada por 6× (padrão) pra
+//    manter o visual já calibrado quando não alterada — pedido: "cada minuto de chuva equivale a 1
+//    segundo de simulação" = opção 60×.
+// Testado (test_v470_chuva_rastro.js, com sanity-check revertendo a posição do painel pra confirmar
+// que o teste pega a sobreposição de verdade): painéis não se sobrepõem (retângulos DOM sem
+// interseção), seletor de velocidade muda _3da_chuvaVelocidade de verdade, e o rastro acumula
+// umidade numa célula real (soma>0, várias células com mancha, mesh na cena) depois de 2s de chuva
+// — tudo limpo no Reiniciar. Regressão dos testes de chuva/DEM/escoamento anteriores (v4.68/v4.69)
+// continua passando, sem erros de página em nenhuma das 4 suítes.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -9956,15 +9994,26 @@ const _3DA_NGT = 90;    // resolução da malha 3D (independente da grade de ele
 // amostrado direto da própria malha renderizada (_3da_mkMeshSampler), não o D8 por talhão
 // (_calcularHidrologiaTalhao) — a malha 3D cobre uma área contínua maior, incluindo entorno sem
 // nenhum talhão desenhado, então o gradiente local da malha é o que sempre existe ali.
+// v4.70: gotas maiores/mais visíveis (sprite com brilho em vez de ponto liso) + RASTRO DA ENXURRADA
+// — uma textura de "umidade" que escurece/mancha o relevo por onde a água escoou de verdade (não só
+// os pontinhos passando), acumulando e clareando lentamente depois — pedido do usuário ao comparar
+// com o Mapa de Escoamento sobreposto ("os pingos ficam mto finos, a marca por onde passa a
+// enchurrada deveria ficar mais destacada"). Também: velocidade da simulação agora é um controle
+// (antes fixo em 6×) e o painel saiu de cima da legenda "ANÁLISE 3D — TERRENO" (mesmo canto
+// top-left, sobrepondo — bug relatado) pra um canto livre (bottom-right, acima do exagero vertical).
 let _3da_NGTX = 0, _3da_NGTY = 0, _3da_halfW = 0, _3da_halfH = 0;
 let _3da_chuvaAtiva = false, _3da_chuvaPausada = false;
-let _3da_chuvaPontos = null; // {pontos:THREE.Points, geo, pos:Float32Array, N}
+let _3da_chuvaPontos = null; // {pontos:THREE.Points, geo, pos:Float32Array, corA:Float32Array (0=caindo,1=escoando, usado pra brilho), N}
 let _3da_chuvaEstado = null, _3da_chuvaVidaFluxo = null, _3da_chuvaSample = null;
 let _3da_chuvaMaxRaw = 0, _3da_chuvaUltimoTs = 0;
-let _3da_chuvaIntensidade = 40, _3da_chuvaDuracaoMin = 10;
+let _3da_chuvaIntensidade = 40, _3da_chuvaDuracaoMin = 10, _3da_chuvaVelocidade = 6;
 let _3da_chuvaElapsedS = 0, _3da_chuvaTotalSimS = 0;
 const _3DA_CHUVA_NPONTOS = 3500;
-const _3DA_CHUVA_SEGXMIN = 6; // compressão de tempo: 1 minuto simulado de chuva = 6s reais na tela
+let _3da_chuvaSprite = null; // THREE.CanvasTexture (gota com brilho) — gerada uma vez, reaproveitada
+// Rastro da enxurrada: grade de "umidade" acumulada (mesma resolução da malha do terreno) pintada
+// numa textura e projetada como uma 2ª camada semi-transparente logo acima do relevo (mesmo
+// mecanismo de raw+eps já usado pras curvas/talvegues em _3da_lineObjs, pra acompanhar o exagero).
+let _3da_chuvaRastro = null; // { wet:Float32Array, w, h, canvas, ctx, imgData, tex, geo, mesh }
 
 // Em vez de buscar uma foto de satélite separada (com zoom/projeção calculados por este código,
 // independente do resto do app), captura a imagem que o PRÓPRIO MAPA 2D (Leaflet — já correto,
@@ -10356,6 +10405,13 @@ function capturarImagem3DAnalise() {
 // malha cobre uma área contínua maior, incluindo entorno sem talhão nenhum desenhado). Sai de
 // cena (volta a inativa) ao sair dos limites da malha ou ao ficar tempo demais numa depressão/
 // platô sem gradiente (evita gota "presa" pra sempre num mínimo local).
+// Junto da gota em si, uma 2ª camada ("rastro") acumula por onde a água ESCOEU de verdade — uma
+// textura de "umidade" pintada numa malha idêntica à do terreno, logo acima dele (mesmo esquema
+// raw+eps de _3da_lineObjs, acompanha o exagero vertical) — ver _3da_construirRastroChuva/
+// _3da_splatRastro/_3da_atualizarTexturaRastro. Sem isso, os pontinhos passando eram o único sinal
+// visual do escoamento (fino/efêmero); com o rastro, a enxurrada MANCHA o relevo por onde passou,
+// ficando visível mesmo depois da gota já ter saído dali — e a mancha deve coincidir com os
+// talvegues do Mapa de Escoamento (2D) sobrepostos na mesma Vista 3D.
 function _3da_atualizarLabelIntensidadeChuva(v) {
   _3da_chuvaIntensidade = parseFloat(v) || 40;
   $('m3da-chuvaIntensidadeVal').textContent = _3da_chuvaIntensidade.toFixed(0) + ' mm/h';
@@ -10364,6 +10420,14 @@ function _3da_atualizarLabelDuracaoChuva(v) {
   _3da_chuvaDuracaoMin = parseFloat(v) || 10;
   $('m3da-chuvaDuracaoVal').textContent = _3da_chuvaDuracaoMin.toFixed(0) + ' min';
 }
+// Velocidade da simulação — quanto tempo SIMULADO passa por segundo real (ex.: 60× = 1 minuto de
+// chuva simulado a cada 1s na tela). Controla tanto o relógio da Duração quanto a própria animação
+// (queda/escoamento/nascimento de gotas) — normalizado pelo valor padrão (6×), então escolher 6×
+// continua com o mesmo visual de antes; valores maiores fazem TUDO andar mais rápido (efeito
+// "acelerado", como um timelapse), valores menores deixam mais lento/realista.
+function _3da_atualizarVelocidadeChuva(v) {
+  _3da_chuvaVelocidade = parseFloat(v) || 6;
+}
 
 // Reseta todo o estado da chuva (sem depender de _3da_scene existir) — chamado ao abrir uma Vista
 // 3D nova e ao fechar a Vista 3D, pra nunca vazar estado "chovendo" de uma sessão pra outra.
@@ -10371,10 +10435,34 @@ function _3da_resetChuvaEstado() {
   if(_3da_chuvaPontos && _3da_scene) { try { _3da_scene.remove(_3da_chuvaPontos.pontos); } catch(e) {} }
   if(_3da_chuvaPontos) { try { _3da_chuvaPontos.geo.dispose(); } catch(e) {} }
   _3da_chuvaPontos = null; _3da_chuvaEstado = null; _3da_chuvaVidaFluxo = null; _3da_chuvaSample = null;
+  if(_3da_chuvaRastro) {
+    if(_3da_scene) { try { _3da_scene.remove(_3da_chuvaRastro.mesh); } catch(e) {} }
+    try { _3da_chuvaRastro.geo.dispose(); _3da_chuvaRastro.tex.dispose(); } catch(e) {}
+    const i = _3da_lineObjs.indexOf(_3da_chuvaRastro.lineObjRef);
+    if(i >= 0) _3da_lineObjs.splice(i, 1);
+  }
+  _3da_chuvaRastro = null;
   _3da_chuvaAtiva = false; _3da_chuvaPausada = false; _3da_chuvaElapsedS = 0; _3da_chuvaTotalSimS = 0;
   const btn = $('m3da-btnChuvaIniciar'); if(btn) btn.textContent = '🌧️ Simular Chuva';
   const btnReset = $('m3da-btnChuvaReset'); if(btnReset) btnReset.style.display = 'none';
   const prog = $('m3da-chuvaProgresso'); if(prog) { prog.style.display = 'none'; prog.textContent = ''; }
+}
+
+// Textura da gota — um brilho radial (branco no centro, esmaece pra azul transparente) em vez de um
+// ponto liso, com blending aditivo: fica bem mais visível/"brilhante" que um pixel sólido do mesmo
+// tamanho (pedido do usuário: "os pingos ficam muito finos"). Gerada uma vez e reaproveitada.
+function _3da_criarSpriteChuva() {
+  if(_3da_chuvaSprite) return _3da_chuvaSprite;
+  const s = 64;
+  const cv = document.createElement('canvas'); cv.width = cv.height = s;
+  const ctx = cv.getContext('2d');
+  const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+  g.addColorStop(0, 'rgba(255,255,255,1)');
+  g.addColorStop(.35, 'rgba(190,230,255,.95)');
+  g.addColorStop(1, 'rgba(120,190,255,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, s, s);
+  _3da_chuvaSprite = new THREE.CanvasTexture(cv);
+  return _3da_chuvaSprite;
 }
 
 function _3da_construirPontosChuva() {
@@ -10383,10 +10471,82 @@ function _3da_construirPontosChuva() {
   for(let i = 0; i < N; i++) pos[i * 3 + 1] = -99999; // escondida (bem abaixo da cena) até nascer
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  const mat = new THREE.PointsMaterial({ color: 0x9fd8ff, size: 2.2, transparent: true, opacity: .85, sizeAttenuation: true, depthWrite: false });
+  const mat = new THREE.PointsMaterial({
+    color: 0xcfe9ff, size: 5.5, map: _3da_criarSpriteChuva(), transparent: true, opacity: .95,
+    sizeAttenuation: true, depthWrite: false, blending: THREE.AdditiveBlending
+  });
   const pontos = new THREE.Points(geo, mat);
   pontos.frustumCulled = false;
   return { pontos, geo, pos, N };
+}
+
+// Malha idêntica à grade do terreno (mesmas posições X/Z, raw+eps=0.2 pra ficar coladinha acima do
+// relevo — fica embaixo das linhas/curvas/talvegues, que usam eps 0.4-0.6), texturizada com o canvas
+// de "umidade" (_3da_chuvaRastro.canvas/imgData) e registrada em _3da_lineObjs pra acompanhar o
+// exagero vertical igual a qualquer outra linha colada no terreno.
+function _3da_construirRastroChuva() {
+  const NGTX = _3da_NGTX, NGTY = _3da_NGTY, bcx = _3da_bcx, bcy = _3da_bcy, halfW = _3da_halfW, halfH = _3da_halfH;
+  const W = NGTX + 1, H = NGTY + 1;
+  const pos = new Float32Array(W * H * 3), uv = new Float32Array(W * H * 2);
+  for(let jj = 0; jj < H; jj++) for(let ii = 0; ii < W; ii++) {
+    const idx = jj * W + ii;
+    const gx = (bcx - halfW) + ii * (2 * halfW / NGTX), gy = (bcy - halfH) + jj * (2 * halfH / NGTY);
+    pos[idx * 3] = gx; pos[idx * 3 + 1] = _3da_terrRaw[idx] * _3da_exag + 0.2; pos[idx * 3 + 2] = -gy;
+    uv[idx * 2] = ii / NGTX; uv[idx * 2 + 1] = jj / NGTY;
+  }
+  const idxArr = [];
+  for(let jj = 0; jj < NGTY; jj++) for(let ii = 0; ii < NGTX; ii++) {
+    const a = jj * W + ii, b = a + 1, c = (jj + 1) * W + ii, d = c + 1;
+    idxArr.push(a, c, b, b, c, d);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geo.setIndex(idxArr);
+
+  const wet = new Float32Array(W * H);
+  const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  const imgData = ctx.createImageData(W, H);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter;
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: false });
+  const mesh = new THREE.Mesh(geo, mat);
+  const lineObjRef = { geo, raw: _3da_terrRaw, eps: 0.2 };
+  _3da_lineObjs.push(lineObjRef);
+  return { wet, w: W, h: H, canvas, ctx, imgData, tex, geo, mesh, lineObjRef };
+}
+
+// Acumula "umidade" na célula da grade mais próxima de (gx,gy) — e num raio de 1 célula ao redor,
+// pra formar uma mancha com alguma largura (não uma linha matemática de 1px) — se aproximando da
+// faixa que o Mapa de Escoamento 2D também desenha.
+function _3da_splatRastro(r, gx, gy, qtd) {
+  const stepX = (2 * _3da_halfW) / _3da_NGTX, stepY = (2 * _3da_halfH) / _3da_NGTY;
+  const fi = (gx - (_3da_bcx - _3da_halfW)) / stepX, fj = (gy - (_3da_bcy - _3da_halfH)) / stepY;
+  const ii = Math.round(fi), jj = Math.round(fj);
+  for(let dj = -1; dj <= 1; dj++) for(let di = -1; di <= 1; di++) {
+    const nii = ii + di, njj = jj + dj;
+    if(nii < 0 || nii >= r.w || njj < 0 || njj >= r.h) continue;
+    const peso = (di === 0 && dj === 0) ? 1 : 0.45;
+    const idx = njj * r.w + nii;
+    r.wet[idx] = Math.min(60, r.wet[idx] + qtd * peso);
+  }
+}
+
+// Decai lentamente (tempo REAL, não o simulado — a mancha "seca" no mesmo ritmo em qualquer
+// velocidade de simulação) e repinta o canvas a partir da grade de umidade atual.
+function _3da_atualizarTexturaRastro(r, dt) {
+  const decai = Math.pow(0.965, dt);
+  const data = r.imgData.data;
+  for(let i = 0; i < r.wet.length; i++) {
+    r.wet[i] *= decai;
+    const a = Math.min(235, Math.round((r.wet[i] / 60) * 235));
+    const o = i * 4;
+    data[o] = 12; data[o + 1] = 46; data[o + 2] = 94; data[o + 3] = a;
+  }
+  r.ctx.putImageData(r.imgData, 0, 0);
+  r.tex.needsUpdate = true;
 }
 
 // Botão único: nasce a chuva do zero / pausa / continua, dependendo do estado atual.
@@ -10413,6 +10573,9 @@ function toggleChuva3DAnalise() {
   _3da_chuvaSample = _3da_mkMeshSampler(_3da_terrRaw, _3da_NGTX, _3da_NGTY, _3da_bcx, _3da_bcy, _3da_halfW, _3da_halfH);
   _3da_chuvaMaxRaw = 0;
   for(let i = 0; i < _3da_terrRaw.length; i++) if(_3da_terrRaw[i] > _3da_chuvaMaxRaw) _3da_chuvaMaxRaw = _3da_terrRaw[i];
+  if(_3da_chuvaRastro) { try { _3da_scene.remove(_3da_chuvaRastro.mesh); } catch(e) {} }
+  _3da_chuvaRastro = _3da_construirRastroChuva();
+  _3da_scene.add(_3da_chuvaRastro.mesh);
   _3da_chuvaElapsedS = 0;
   _3da_chuvaTotalSimS = _3da_chuvaDuracaoMin * 60;
   _3da_chuvaAtiva = true; _3da_chuvaPausada = false;
@@ -10422,14 +10585,15 @@ function toggleChuva3DAnalise() {
   $('m3da-chuvaProgresso').style.display = 'block';
 }
 
-// Descarta a chuva atual (partículas e progresso) sem fechar a Vista 3D — pra começar de novo com
-// outra intensidade/duração sem precisar reabrir o modal inteiro.
+// Descarta a chuva atual (partículas, rastro e progresso) sem fechar a Vista 3D — pra começar de
+// novo com outra intensidade/duração/velocidade sem precisar reabrir o modal inteiro.
 function reiniciarChuva3DAnalise() {
   _3da_resetChuvaEstado();
 }
 
 // Chamado a cada frame do loop de renderização da Vista 3D (ver animate() em gerarVista3DAnalise) —
-// avança a queda/escoamento de cada gota. Não faz nada se a chuva não estiver ativa (custo ~zero).
+// avança a queda/escoamento de cada gota + a mancha de umidade. Não faz nada se a chuva não estiver
+// ativa (custo ~zero).
 function _3da_tickChuva() {
   if(!_3da_chuvaAtiva || !_3da_chuvaPontos) return;
   const agora = performance.now();
@@ -10440,21 +10604,28 @@ function _3da_tickChuva() {
   if(dt <= 0) return;
 
   const aindaChovendo = _3da_chuvaElapsedS < _3da_chuvaTotalSimS;
-  if(aindaChovendo) _3da_chuvaElapsedS += dt * _3DA_CHUVA_SEGXMIN;
+  if(aindaChovendo) _3da_chuvaElapsedS += dt * _3da_chuvaVelocidade;
 
   const { pos, N, geo } = _3da_chuvaPontos;
   const estado = _3da_chuvaEstado, vidaFluxo = _3da_chuvaVidaFluxo, sample = _3da_chuvaSample;
   const bcx = _3da_bcx, bcy = _3da_bcy, halfW = _3da_halfW, halfH = _3da_halfH, exag = _3da_exag;
   const topoY = _3da_chuvaMaxRaw * exag + Math.max(halfW, halfH) * 0.15 + 20;
+  const rastro = _3da_chuvaRastro;
 
-  // Densidade de gotas ativas escala com a intensidade (mm/h) — não é física de verdade, é uma
-  // taxa "cênica" calibrada pra ficar visualmente proporcional (mais intensidade = mais gotas
-  // caindo ao mesmo tempo, chuva mais forte visualmente e escoamento mais rápido ladeira abaixo).
-  const taxaNascimentoAlvo = aindaChovendo ? (_3da_chuvaIntensidade / 40) * (N * 0.35) : 0; // gotas/s
+  // A velocidade escolhida acelera/desacelera a ANIMAÇÃO TODA (queda, escoamento e nascimento de
+  // gotas) — não só o relógio da Duração — pra parecer de fato um timelapse acelerado/desacelerado,
+  // não só um contador correndo mais rápido enquanto as gotas se movem igual. Normalizado por 6
+  // (padrão) pra manter o visual já calibrado quando a velocidade não é alterada.
+  const velFactor = _3da_chuvaVelocidade / 6;
+  // Densidade de gotas ativas escala com a intensidade (mm/h) e a velocidade — não é física de
+  // verdade, é uma taxa "cênica" calibrada pra ficar visualmente proporcional (mais intensidade =
+  // mais gotas caindo ao mesmo tempo, chuva mais forte visualmente e escoamento mais rápido).
+  const taxaNascimentoAlvo = aindaChovendo ? (_3da_chuvaIntensidade / 40) * (N * 0.35) * velFactor : 0; // gotas/s
   const probNascer = Math.min(1, (taxaNascimentoAlvo * dt) / N);
-  const velQueda = 55 + _3da_chuvaIntensidade * 0.9;
-  const velFluxo = 3.5 + _3da_chuvaIntensidade * 0.06;
+  const velQueda = (55 + _3da_chuvaIntensidade * 0.9) * velFactor;
+  const velFluxo = (3.5 + _3da_chuvaIntensidade * 0.06) * velFactor;
   const passoGrad = Math.max(halfW, halfH) * 0.006;
+  const qtdMancha = (10 + _3da_chuvaIntensidade * 0.2) * dt;
 
   for(let i = 0; i < N; i++) {
     const idx = i * 3;
@@ -10471,7 +10642,10 @@ function _3da_tickChuva() {
     if(estado[i] === 1) { // caindo em queda livre
       pos[idx + 1] -= velQueda * dt;
       const terrenoY = sample(gx, gy) * exag;
-      if(pos[idx + 1] <= terrenoY + 0.3) { pos[idx + 1] = terrenoY + 0.3; estado[i] = 2; vidaFluxo[i] = 0; }
+      if(pos[idx + 1] <= terrenoY + 0.3) {
+        pos[idx + 1] = terrenoY + 0.3; estado[i] = 2; vidaFluxo[i] = 0;
+        if(rastro) _3da_splatRastro(rastro, gx, gy, qtdMancha * 3); // "respingo" mais forte no impacto
+      }
       continue;
     }
     // estado 2: escoando sobre o relevo — segue o gradiente descendente (diferenças centrais)
@@ -10488,11 +10662,15 @@ function _3da_tickChuva() {
       dx /= mag; dy /= mag;
       const novoGx = gx + dx * velFluxo * dt, novoGy = gy + dy * velFluxo * dt;
       if(Math.abs(novoGx - bcx) > halfW || Math.abs(novoGy - bcy) > halfH) saiu = true;
-      else { pos[idx] = novoGx; pos[idx + 2] = -novoGy; pos[idx + 1] = sample(novoGx, novoGy) * exag + 0.3; }
+      else {
+        pos[idx] = novoGx; pos[idx + 2] = -novoGy; pos[idx + 1] = sample(novoGx, novoGy) * exag + 0.3;
+        if(rastro) _3da_splatRastro(rastro, novoGx, novoGy, qtdMancha);
+      }
     }
     if(saiu) { estado[i] = 0; pos[idx + 1] = -99999; }
   }
   geo.attributes.position.needsUpdate = true;
+  if(rastro) _3da_atualizarTexturaRastro(rastro, dt);
 
   const prog = $('m3da-chuvaProgresso');
   if(!aindaChovendo) {
