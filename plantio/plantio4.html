@@ -343,7 +343,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.67 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.68 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -2558,6 +2558,29 @@ body.layout-lateral #status{grid-area:status;}
 // 640.0889...m) e a elevação amostrada num ponto conhecido do meio do raster ficou a 0,195m da
 // referência (diferença esperada, vem só do downsample pra caber na memória do navegador) —
 // reimportou a ortofoto real também, sem mudança nenhuma no resultado (mesmos 4 cantos de sempre).
+// v4.68: usuário importou polígono+DEM de verdade e testou as ferramentas — Mapa de Escoamento
+// falhou ("sem dados de elevação suficientes"), Risco de Erosão/Vazão de Pico/Declividade
+// funcionaram. Achados DOIS bugs reais:
+// 1) gerarMapaEscoamento() pedia uma resolução (n, do seletor da UI, ex.: 40) pra
+//    _calcularHidrologiaTalhao(), mas aquela função ELEVA a resolução de verdade internamente
+//    quando um DEM está ativo (piso 150, v4.67) e devolve os arrays (lats/lngs/elev/accum) JÁ
+//    nesse tamanho maior — só que o código depois continuava usando a variável de resolução
+//    PEDIDA (não a real, devolvida em hid.n) pra desenhar o canvas/percorrer a grade. Isso fazia
+//    o loop varrer só os primeiros ~40 de 150 índices (só ~27% da bbox, o canto sudoeste) — pra
+//    um talhão alongado/diagonal (comum em fazenda real, a bbox tem cantos vazios fora do
+//    polígono), esse canto quase sempre cai TODO fora do polígono real, e nenhuma célula é
+//    encontrada → "sem dados de elevação suficientes", mesmo com o DEM funcionando perfeitamente.
+//    Risco de Erosão não tinha esse bug (já pegava o `n` de volta do resultado); Vazão de Pico
+//    nem usa essa variável (só acessa os arrays pelo próprio hid). Corrigido: gerarMapaEscoamento
+//    agora também pega `n` de volta de hid.n.
+// 2) ONZE checagens espalhadas pelo app ("Ative o Google Maps... ou importe curvas de nível
+//    locais") nunca consideravam _demLocalDisponivel() — bloqueavam a ferramenta mesmo com um DEM
+//    local ativo e funcionando, exigindo Google OU curvas mesmo que o DEM sozinho já bastasse
+//    (Declividade do Terreno, Mapa de Escoamento, Risco de Erosão, Vazão de Pico, Perfil de
+//    Elevação da Guia/da Linha de Plantio, Vista 3D, geração de curvas de nível a partir de
+//    elevação). Corrigido nas 11 ocorrências (+ mensagens de erro atualizadas pra mencionar o
+//    DEM como opção). Ambos os bugs testados nos dois sentidos (com DEM funciona, sem NENHUMA
+//    fonte continua bloqueando certo) — test_v468_escoamento_dem.js, test_v468_gates_dem.js.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -4511,7 +4534,7 @@ async function _buscarElevacaoFundida(pontos) {
 // como uma imagem sobreposta ao mapa — não precisa ter linhas de plantio geradas.
 async function classificarDeclividadeTerreno() {
   if(talhaoSelecionadoUid === null) { setStatus('Selecione um talhão primeiro.', 'err'); return; }
-  if(!window.google?.maps && !_elevacaoLocalDisponivel()) { setStatus('Ative o Google Maps (chave API) ou importe curvas de nível locais para classificar a declividade do terreno.', 'err'); return; }
+  if(!window.google?.maps && !_elevacaoLocalDisponivel() && !_demLocalDisponivel()) { setStatus('Ative o Google Maps (chave API) ou importe um DEM/curvas de nível locais para classificar a declividade do terreno.', 'err'); return; }
   const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
   if(!t) return;
 
@@ -5995,7 +6018,7 @@ function _calcularD8Acumulo(elev, n, dxM, dyM) {
 
 async function gerarMapaEscoamento() {
   if(talhaoSelecionadoUid === null) { setStatus('Selecione um talhão primeiro.', 'err'); return; }
-  if(!window.google?.maps && !_elevacaoLocalDisponivel()) { setStatus('Ative o Google Maps (chave API) ou importe curvas de nível locais para o mapa de escoamento.', 'err'); return; }
+  if(!window.google?.maps && !_elevacaoLocalDisponivel() && !_demLocalDisponivel()) { setStatus('Ative o Google Maps (chave API) ou importe um DEM/curvas de nível locais para o mapa de escoamento.', 'err'); return; }
   const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
   if(!t) return;
 
@@ -6003,10 +6026,18 @@ async function gerarMapaEscoamento() {
   $('btnEscoamento').disabled = true;
   setStatus('Buscando elevações do terreno para o mapa de escoamento…', 'info');
 
-  const n = parseInt($('escoamentoGrid').value) || 40;
-  const hid = await _calcularHidrologiaTalhao(t, n);
+  // v4.68: pedido usado pra chamar _calcularHidrologiaTalhao — mas quando um DEM local está
+  // ativo, aquela função ELEVA a resolução de verdade internamente (piso 150, ver v4.67) e
+  // devolve os arrays (lats/lngs/elev/accum) já nesse tamanho MAIOR. Usar essa variável (n
+  // PEDIDO, não a real) pra desenhar o canvas/percorrer a grade abaixo fazia o loop varrer só um
+  // canto pequeno da bbox (os primeiros ~40 de 150 índices), quase sempre fora do polígono real
+  // de um talhão alongado/diagonal — "sem dados de elevação suficientes" mesmo com o DEM
+  // funcionando perfeitamente. Por isso agora pega o `n` de VOLTA do resultado (hid.n É a
+  // resolução real usada) em vez de reusar essa variável.
+  const nPedido = parseInt($('escoamentoGrid').value) || 40;
+  const hid = await _calcularHidrologiaTalhao(t, nPedido);
   if(!hid) { $('btnEscoamento').disabled = false; setStatus('Erro ao processar o polígono do talhão.', 'err'); return; }
-  const { poly, minLat, maxLat, minLng, maxLng, lats, lngs, elev, dxM, dyM, mLat, mLngLocal, accum } = hid;
+  const { poly, minLat, maxLat, minLng, maxLng, lats, lngs, elev, dxM, dyM, mLat, mLngLocal, accum, n } = hid;
 
   // ── Mapa de calor (acúmulo em escala log — a distribuição é MUITO assimétrica: a maioria das
   // células tem acúmulo baixo, poucos "canais" concentram muito) ──────────────────────────────
@@ -6211,7 +6242,7 @@ function _corRiscoErosao(A) {
 
 async function gerarRiscoErosao() {
   if(talhaoSelecionadoUid === null) { setStatus('Selecione um talhão primeiro.', 'err'); return; }
-  if(!window.google?.maps && !_elevacaoLocalDisponivel()) { setStatus('Ative o Google Maps (chave API) ou importe curvas de nível locais para o risco de erosão.', 'err'); return; }
+  if(!window.google?.maps && !_elevacaoLocalDisponivel() && !_demLocalDisponivel()) { setStatus('Ative o Google Maps (chave API) ou importe um DEM/curvas de nível locais para o risco de erosão.', 'err'); return; }
   const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
   if(!t) return;
 
@@ -6354,7 +6385,7 @@ const _VAZAO_C_POR_COBERTURA = {
 
 async function gerarVazaoPico() {
   if(talhaoSelecionadoUid === null) { setStatus('Selecione um talhão primeiro.', 'err'); return; }
-  if(!window.google?.maps && !_elevacaoLocalDisponivel()) { setStatus('Ative o Google Maps (chave API) ou importe curvas de nível locais para a vazão de pico.', 'err'); return; }
+  if(!window.google?.maps && !_elevacaoLocalDisponivel() && !_demLocalDisponivel()) { setStatus('Ative o Google Maps (chave API) ou importe um DEM/curvas de nível locais para a vazão de pico.', 'err'); return; }
   const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
   if(!t) return;
 
@@ -6453,8 +6484,8 @@ function resampleLine(latlngs, spacingM) {
 // ── Declividade do talhão ATIVO (antes de travar) ────────────────────────────
 async function classificarDeclivAtivo() {
   if(!linhas.length) { setStatus('Gere as linhas primeiro.', 'err'); return; }
-  if(!window.google?.maps && !_elevacaoLocalDisponivel()) {
-    setStatus('Ative o Google Maps (chave API) ou importe curvas de nível locais para classificação.', 'err'); return;
+  if(!window.google?.maps && !_elevacaoLocalDisponivel() && !_demLocalDisponivel()) {
+    setStatus('Ative o Google Maps (chave API) ou importe um DEM/curvas de nível locais para classificação.', 'err'); return;
   }
   const spacingM = Math.max(5, parseFloat($('espacDeclivAtivo').value) || 25);
   setStatus('Classificando declividade do talhão ativo…', 'info');
@@ -6511,8 +6542,8 @@ function limparDeclivAtivo() {
 
 async function classificarTodosDeclividade() {
   if(!talhoesArquivados.length) { setStatus('Gere pelo menos um talhão primeiro.', 'err'); return; }
-  if(!window.google?.maps && !_elevacaoLocalDisponivel()) {
-    setStatus('Ative o Google Maps (chave API) ou importe curvas de nível locais para classificação de declividade.', 'err'); return;
+  if(!window.google?.maps && !_elevacaoLocalDisponivel() && !_demLocalDisponivel()) {
+    setStatus('Ative o Google Maps (chave API) ou importe um DEM/curvas de nível locais para classificação de declividade.', 'err'); return;
   }
 
   const spacingM = Math.max(5, parseFloat($('espacDecliv').value) || 25);
@@ -6815,7 +6846,7 @@ function marchingSquaresCurva(elev, lts, lns, level) {
 async function gerarCurvas() {
   const polyRef = turfCurvaPoly || turfPoly;
   if(!polyRef) { setStatus('Desenhe a área de curvas (ou o talhão) primeiro.', 'err'); return; }
-  if(!window.google?.maps && !_elevacaoLocalDisponivel()) { setStatus('Chave Google Maps necessária (ou importe curvas de nível locais) para gerar curvas de nível.','err'); return; }
+  if(!window.google?.maps && !_elevacaoLocalDisponivel() && !_demLocalDisponivel()) { setStatus('Chave Google Maps necessária (ou importe um DEM/curvas de nível locais) para gerar curvas de nível.','err'); return; }
 
   limparCurvas();
   $('btnCurvas').disabled = true;
@@ -9023,8 +9054,8 @@ function fecharTutorialChave() {
 // ── Perfil de Elevação da Linha Guia ──────────────────────────────────────────
 async function mostrarPerfilGuia() {
   if(guidePts.length < 2) { setStatus('Defina a linha guia primeiro.', 'err'); return; }
-  if(!window.google?.maps?.ElevationService && !_elevacaoLocalDisponivel()) {
-    alert('Perfil de elevação requer a chave Google Maps API (ou curvas de nível locais importadas). Ative-a nas configurações.');
+  if(!window.google?.maps?.ElevationService && !_elevacaoLocalDisponivel() && !_demLocalDisponivel()) {
+    alert('Perfil de elevação requer a chave Google Maps API, ou um DEM/curvas de nível locais importados. Ative a chave nas configurações, ou importe dados locais na aba Início.');
     return;
   }
   const rawPts = modoGuia === 'spline'
@@ -9108,8 +9139,8 @@ function _cliqueEmLinhaPlantio(pl) {
 }
 
 async function mostrarPerfilLinhaPlantio(pl) {
-  if(!window.google?.maps?.ElevationService && !_elevacaoLocalDisponivel()) {
-    alert('Perfil de elevação requer a chave Google Maps API (ou curvas de nível locais importadas). Ative-a nas configurações.');
+  if(!window.google?.maps?.ElevationService && !_elevacaoLocalDisponivel() && !_demLocalDisponivel()) {
+    alert('Perfil de elevação requer a chave Google Maps API, ou um DEM/curvas de nível locais importados. Ative a chave nas configurações, ou importe dados locais na aba Início.');
     return;
   }
   const rawPts = pl.getLatLngs().flat().map(p => ({ lat: p.lat, lng: p.lng }));
@@ -9199,8 +9230,8 @@ async function analisarCenariosPlantio() {
     if(!t) return;
     polyPtsRef = t.polyPts;
   }
-  if(!window.google?.maps?.ElevationService && !_elevacaoLocalDisponivel()) {
-    setStatus('Ative o Google Maps (chave API) ou importe curvas de nível locais pra essa análise — ela precisa de elevação real do terreno.', 'err');
+  if(!window.google?.maps?.ElevationService && !_elevacaoLocalDisponivel() && !_demLocalDisponivel()) {
+    setStatus('Ative o Google Maps (chave API) ou importe um DEM/curvas de nível locais pra essa análise — ela precisa de elevação real do terreno.', 'err');
     return;
   }
 
@@ -9516,9 +9547,11 @@ function _renderPerfilGuia(samples, elevs) {
     // selecionada de verdade (bug relatado: "não consigo mais selecionar uma linha") — na
     // verdade o clique funcionou, só que essa linha específica cai FORA da área coberta pelas
     // curvas locais (comum quando as curvas cobrem só parte do talhão/fazenda).
-    const motivo = _elevacaoLocalDisponivel()
-      ? 'essa linha cai fora da área coberta pelas curvas de nível importadas — importe curvas que cubram essa região, ou desenhe/escolha uma linha dentro da área já coberta.'
-      : 'nenhuma fonte de elevação respondeu (confira a chave do Google Maps).';
+    const motivo = _demLocalDisponivel()
+      ? 'essa linha cai fora da área coberta pelo DEM importado — importe um DEM que cubra essa região, ou desenhe/escolha uma linha dentro da área já coberta.'
+      : _elevacaoLocalDisponivel()
+        ? 'essa linha cai fora da área coberta pelas curvas de nível importadas — importe curvas que cubram essa região, ou desenhe/escolha uma linha dentro da área já coberta.'
+        : 'nenhuma fonte de elevação respondeu (confira a chave do Google Maps).';
     $('perfilContent').innerHTML = `<p style="color:var(--c-err);text-align:center;padding:20px">A linha foi selecionada, mas não consegui buscar elevação: ${motivo}</p>`;
     return;
   }
@@ -10253,8 +10286,8 @@ function capturarImagem3DAnalise() {
 }
 
 async function gerarVista3DAnalise() {
-  if(!window.google?.maps?.ElevationService && !_elevacaoLocalDisponivel()) {
-    setStatus('Ative o Google Maps (chave API) ou importe curvas de nível locais para gerar a Vista 3D — precisa de dados de elevação.', 'err');
+  if(!window.google?.maps?.ElevationService && !_elevacaoLocalDisponivel() && !_demLocalDisponivel()) {
+    setStatus('Ative o Google Maps (chave API) ou importe um DEM/curvas de nível locais para gerar a Vista 3D — precisa de dados de elevação.', 'err');
     return;
   }
   if(typeof THREE === 'undefined') { setStatus('Three.js não carregou — verifique a conexão com a internet.', 'err'); return; }
