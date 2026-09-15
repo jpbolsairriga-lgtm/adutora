@@ -353,7 +353,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.71 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.72 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -2690,6 +2690,43 @@ body.layout-lateral #status{grid-area:status;}
 // marca de fluxo fica bem contida (~34%, vs ~64% antes da correção — threshold de regressão em 40%)
 // e o canal de acúmulo existe separado do de fluxo. Regressão completa (5 suítes: v4.68 DEM/gates,
 // v4.69/v4.70 chuva, v4.71 rastro) passando sem erros de página.
+// v4.72: usuário mandou 2 vídeos NOVOS de referência ("Gravando 1"/"Gravando 2") e apontou que os
+// canais de enxurrada deles têm uma estética de animação bem superior à v4.71 — analisando os
+// frames: são canais de LARGURA VARIÁVEL com borda suave/borrada, mais fortes/largos exatamente onde
+// vários braços convergem (afunilando rio abaixo), claramente uma malha de escoamento CALCULADA, não
+// pontos de partícula deixando rastro aos poucos (que é o que a v4.70/v4.71 faziam). Reconstrução
+// completa do mecanismo do rastro:
+// - Removido por completo o esquema "por partícula" (_3da_splatRastro/_3da_atualizarTexturaRastro,
+//   canais wet/acc acumulados quadro a quadro com decaimento).
+// - Novo: hidrologia real sobre a malha 3D INTEIRA (não só um talhão) — preenchimento de depressões
+//   (_3da_preencherDepressoesRect) + D8 e acumulação de fluxo (_3da_calcularD8AcumuloRect), ambos
+//   generalizando pra grade RETANGULAR (a malha 3D quase nunca é quadrada) os mesmos algoritmos já
+//   usados no Mapa de Escoamento 2D por talhão (_preencherDepressoes/_calcularD8Acumulo — mesmo
+//   princípio "priority-flood + epsilon" de Barnes et al. 2014, mesmo D8 8-conectado).
+// - Canal de fluxo: log(acumulação) normalizado pelo máximo real da malha, com limiar (corta área de
+//   contribuição insignificante) e um box-blur (_3da_blurCampo, 3×3, 1 passe) pra borda suave em vez
+//   de uma linha de 1 célula serrilhada — dá exatamente o afunilamento/glow dos vídeos.
+// - Canal de acúmulo (poça): profundidade de preenchimento (filled-raw) — onde o algoritmo precisou
+//   "levantar" a cota é onde não havia saída natural (platô/depressão real) — com piso absoluto de
+//   10cm (evita ruído de interpolação/downsample do DEM virar "poça" depois do blur) e normalização
+//   numa faixa física razoável (até 2,5m — validado contra o DEM real do usuário: uma célula com
+//   ~40m de profundidade de preenchimento bateu exatamente com um reservatório grande em escavação
+//   visível na foto de satélite da mesma área, confirmando que o cálculo está identificando
+//   depressões genuínas, não artefato).
+// - Textura calculada UMA VEZ (determinística — não depende de quantas gotas passaram), com um
+//   fade-in de ~1,2s ao clicar "Simular Chuva" (revelado, _3da_pintarRastro) só pra não aparecer tudo
+//   de repente — nenhum custo por frame depois disso.
+// Validado com terreno sintético (vale estreito — gera contraste real: ~38% da malha com canal forte,
+// ~22% com fluxo quase nenhum) E com o DEM real do usuário (importado via GeoTIFF de verdade,
+// screenshot comparado com a foto de satélite da mesma área — canal fino convergindo e poça batendo
+// com o reservatório real visível na foto). Testado (test_v472_rastro_calculado.js, com sanity-check
+// confirmando que o teste pega a regressão de verdade zerando o limiar de fluxo): fade-in sobe de
+// baixo pra ~1, canal é detectado, contraste real existe (não cobre a malha inteira, sobra área
+// "limpa"), e as funções antigas de splat por partícula foram mesmo removidas. Regressão completa (4
+// suítes disponíveis: DEM/gates v4.68, chuva v4.69/v4.70, rastro calculado v4.72) sem erros de
+// página — test_v471 foi retirado da suíte (testava especificamente o mecanismo por partícula que
+// não existe mais; sua preocupação de fundo — contraste real, sem "cobrir tudo" — passou pro novo
+// teste do v4.72).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -10429,13 +10466,13 @@ function capturarImagem3DAnalise() {
 // malha cobre uma área contínua maior, incluindo entorno sem talhão nenhum desenhado). Sai de
 // cena (volta a inativa) ao sair dos limites da malha ou ao ficar tempo demais numa depressão/
 // platô sem gradiente (evita gota "presa" pra sempre num mínimo local).
-// Junto da gota em si, uma 2ª camada ("rastro") acumula por onde a água ESCOEU de verdade — uma
-// textura de "umidade" pintada numa malha idêntica à do terreno, logo acima dele (mesmo esquema
-// raw+eps de _3da_lineObjs, acompanha o exagero vertical) — ver _3da_construirRastroChuva/
-// _3da_splatRastro/_3da_atualizarTexturaRastro. Sem isso, os pontinhos passando eram o único sinal
-// visual do escoamento (fino/efêmero); com o rastro, a enxurrada MANCHA o relevo por onde passou,
-// ficando visível mesmo depois da gota já ter saído dali — e a mancha deve coincidir com os
-// talvegues do Mapa de Escoamento (2D) sobrepostos na mesma Vista 3D.
+// Junto da gota em si, uma 2ª camada ("rastro") mostra os canais de enxurrada — uma textura pintada
+// numa malha idêntica à do terreno, logo acima dele (mesmo esquema raw+eps de _3da_lineObjs,
+// acompanha o exagero vertical). Diferente das versões anteriores (que acumulavam "por onde a gota
+// passou" quadro a quadro), o rastro agora é CALCULADO de uma vez por hidrologia real (D8 +
+// preenchimento de depressões sobre a malha inteira — ver _3da_construirRastroChuva/
+// _3da_preencherDepressoesRect/_3da_calcularD8AcumuloRect), com blur pra borda suave — canais mais
+// largos exatamente onde mais água converge, igual à estética dos vídeos de referência.
 function _3da_atualizarLabelIntensidadeChuva(v) {
   _3da_chuvaIntensidade = parseFloat(v) || 40;
   $('m3da-chuvaIntensidadeVal').textContent = _3da_chuvaIntensidade.toFixed(0) + ' mm/h';
@@ -10504,10 +10541,115 @@ function _3da_construirPontosChuva() {
   return { pontos, geo, pos, N };
 }
 
-// Malha idêntica à grade do terreno (mesmas posições X/Z, raw+eps=0.2 pra ficar coladinha acima do
-// relevo — fica embaixo das linhas/curvas/talvegues, que usam eps 0.4-0.6), texturizada com o canvas
-// de "umidade" (_3da_chuvaRastro.canvas/imgData) e registrada em _3da_lineObjs pra acompanhar o
-// exagero vertical igual a qualquer outra linha colada no terreno.
+// v4.72: a v4.71 (linha fina "por partícula", stocástica) ainda não bateu com a qualidade dos
+// vídeos de referência (novos, enviados pelo usuário: "Gravando 1"/"Gravando 2") — ali os canais de
+// enxurrada são uma malha de escoamento CALCULADA (largura variável, borda suave/borrada, mais forte
+// onde vários braços convergem), não pontos de partícula deixando rastro aos poucos. Reconstruído do
+// zero: em vez de acumular "onde as gotas passaram" quadro a quadro, calcula-se DE UMA VEZ (D8 +
+// preenchimento de depressões — o MESMO algoritmo hidrológico já usado no Mapa de Escoamento 2D
+// por talhão, aqui generalizado pra uma grade RETANGULAR cobrindo a malha 3D inteira, não só um
+// talhão) o quanto de água cada célula da malha realmente recebe de montante ("acúmulo de fluxo") —
+// e pinta isso como uma textura só, com um blur (box blur em 2 passes) pra dar a borda suave/glow
+// dos vídeos de referência em vez de uma linha de 1px serrilhada. Onde o algoritmo precisou
+// "preencher" de verdade (platô/depressão sem saída natural) marca como poça de acúmulo, numa cor
+// separada. Resultado: canais mais largos exatamente onde mais água converge (afunilando rio
+// abaixo), preservando a forma real do relevo — a mesma leitura visual dos vídeos.
+function _3da_preencherDepressoesRect(elevFlat, W, H) {
+  const filled = Float32Array.from(elevFlat);
+  const visited = new Uint8Array(W * H);
+  const heap = [];
+  const push = (idx, z) => {
+    heap.push([z, idx]);
+    let i = heap.length - 1;
+    while(i > 0) { const pai = (i - 1) >> 1; if(heap[i][0] >= heap[pai][0]) break; const t = heap[i]; heap[i] = heap[pai]; heap[pai] = t; i = pai; }
+  };
+  const popMin = () => {
+    const topo = heap[0], ultimo = heap.pop();
+    if(heap.length) {
+      heap[0] = ultimo; let i = 0; const len = heap.length;
+      while(true) {
+        const e = i * 2 + 1, d = e + 1; let menor = i;
+        if(e < len && heap[e][0] < heap[menor][0]) menor = e;
+        if(d < len && heap[d][0] < heap[menor][0]) menor = d;
+        if(menor === i) break;
+        const t = heap[i]; heap[i] = heap[menor]; heap[menor] = t; i = menor;
+      }
+    }
+    return topo;
+  };
+  const EPS = 0.0002; // mesmo "priority-flood + epsilon" de _preencherDepressoes (Barnes et al. 2014)
+  for(let r = 0; r < H; r++) for(let c = 0; c < W; c++) {
+    if(r === 0 || r === H - 1 || c === 0 || c === W - 1) { const idx = r * W + c; visited[idx] = 1; push(idx, filled[idx]); }
+  }
+  while(heap.length) {
+    const [z, idx] = popMin();
+    const r = (idx / W) | 0, c = idx % W;
+    for(let k = 0; k < _ESCOAMENTO_DIRS.length; k++) {
+      const nr = r + _ESCOAMENTO_DIRS[k][0], nc = c + _ESCOAMENTO_DIRS[k][1];
+      if(nr < 0 || nr >= H || nc < 0 || nc >= W) continue;
+      const nidx = nr * W + nc;
+      if(visited[nidx]) continue;
+      visited[nidx] = 1;
+      filled[nidx] = Math.max(filled[nidx], z + EPS);
+      push(nidx, filled[nidx]);
+    }
+  }
+  return filled;
+}
+
+// D8 + acumulação de fluxo (mesmo algoritmo de _calcularD8Acumulo), generalizado pra grade
+// retangular W×H e Float32Array plano (idx=r*W+c, mesmo layout de _3da_terrRaw).
+function _3da_calcularD8AcumuloRect(filled, W, H, dx, dy) {
+  const N = W * H;
+  const flowTo = new Int32Array(N).fill(-1);
+  for(let r = 0; r < H; r++) for(let c = 0; c < W; c++) {
+    const idx = r * W + c;
+    let bestSlope = 0, bestK = -1;
+    for(let k = 0; k < _ESCOAMENTO_DIRS.length; k++) {
+      const nr = r + _ESCOAMENTO_DIRS[k][0], nc = c + _ESCOAMENTO_DIRS[k][1];
+      if(nr < 0 || nr >= H || nc < 0 || nc >= W) continue;
+      const distM = Math.hypot(_ESCOAMENTO_DIRS[k][0] * dy, _ESCOAMENTO_DIRS[k][1] * dx);
+      const slope = (filled[idx] - filled[nr * W + nc]) / distM;
+      if(slope > bestSlope) { bestSlope = slope; bestK = k; }
+    }
+    flowTo[idx] = bestK;
+  }
+  const ordem = Array.from({ length: N }, (_, i) => i);
+  ordem.sort((a, b) => filled[b] - filled[a]);
+  const accum = new Float32Array(N).fill(1);
+  for(let i = 0; i < ordem.length; i++) {
+    const idx = ordem[i], k = flowTo[idx];
+    if(k < 0) continue;
+    const r = (idx / W) | 0, c = idx % W;
+    accum[(r + _ESCOAMENTO_DIRS[k][0]) * W + (c + _ESCOAMENTO_DIRS[k][1])] += accum[idx];
+  }
+  return accum;
+}
+
+// Box blur separável (3×3, `iter` passes) num Float32Array plano W×H — dá a borda suave/"glow" dos
+// canais no vídeo de referência, em vez de uma linha de 1 célula com corte duro.
+function _3da_blurCampo(arr, W, H, iter) {
+  let a = arr, b = new Float32Array(W * H);
+  for(let it = 0; it < iter; it++) {
+    for(let r = 0; r < H; r++) for(let c = 0; c < W; c++) {
+      let soma = 0, n = 0;
+      for(let dr = -1; dr <= 1; dr++) for(let dc = -1; dc <= 1; dc++) {
+        const nr = r + dr, nc = c + dc;
+        if(nr < 0 || nr >= H || nc < 0 || nc >= W) continue;
+        soma += a[nr * W + nc]; n++;
+      }
+      b[r * W + c] = soma / n;
+    }
+    const t = a; a = b; b = t;
+  }
+  if(a !== arr) arr.set(a);
+}
+
+// Malha idêntica à grade do terreno (mesmas posições X/Z, raw+eps=0.2 — fica colada acima do relevo,
+// embaixo das linhas/curvas/talvegues que usam eps 0.4-0.6), texturizada com o canal de fluxo
+// (calculado, ver acima) + o de acúmulo, registrada em _3da_lineObjs pra acompanhar o exagero. A
+// textura é pintada UMA VEZ (determinística — não depende de quantas gotas passaram) e só se repinta
+// enquanto o fade-in de revelação (r.revelado, ver _3da_tickChuva) ainda não chegou a 1.
 function _3da_construirRastroChuva() {
   const NGTX = _3da_NGTX, NGTY = _3da_NGTY, bcx = _3da_bcx, bcy = _3da_bcy, halfW = _3da_halfW, halfH = _3da_halfH;
   const W = NGTX + 1, H = NGTY + 1;
@@ -10528,11 +10670,45 @@ function _3da_construirRastroChuva() {
   geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   geo.setIndex(idxArr);
 
-  // Dois canais separados — ver comentário de _3da_splatRastro/_3da_atualizarTexturaRastro: "fluxo"
-  // (linha fina, marca só o pontinho de passagem + um halo bem pequeno, decai rápido) e "acumulo"
-  // (marca só onde a água realmente PARA de escoar por falta de gradiente — mancha maior, decai
-  // devagar, cor mais forte — representa poça/área de concentração de verdade).
-  const wet = new Float32Array(W * H), acc = new Float32Array(W * H);
+  // ── Hidrologia da malha inteira: preenche depressões, calcula D8+acumulação ────────────────
+  const dx = (2 * halfW) / NGTX, dy = (2 * halfH) / NGTY;
+  const filled = _3da_preencherDepressoesRect(_3da_terrRaw, W, H);
+  const accum = _3da_calcularD8AcumuloRect(filled, W, H, dx, dy);
+
+  // Canal de fluxo: log(acumulação) normalizado pelo máximo real da malha — canais concorridos
+  // (muita área de montante) ficam bem mais fortes/largos que um trecho de encosta isolado, igual
+  // ao afunilamento visto nos vídeos. Limiar corta ruído de encosta (área de contribuição mínima).
+  let maxAccum = 1;
+  for(let i = 0; i < accum.length; i++) if(accum[i] > maxAccum) maxAccum = accum[i];
+  const logMax = Math.log(maxAccum + 1);
+  const LIMIAR_FLUXO = 6;
+  const aFluxo = new Float32Array(W * H);
+  for(let i = 0; i < accum.length; i++) {
+    if(accum[i] < LIMIAR_FLUXO || logMax < 1e-6) continue;
+    aFluxo[i] = Math.min(1, Math.log(accum[i] + 1) / logMax);
+  }
+  _3da_blurCampo(aFluxo, W, H, 1); // borda suave em vez de linha de 1 célula (sem borrar demais)
+
+  // Canal de acúmulo: profundidade de preenchimento (filled-raw) — onde o algoritmo precisou
+  // "levantar" a cota pra escoar é justamente onde não havia saída natural (platô/depressão de
+  // verdade) — uma poça/área de concentração real, não um trecho qualquer de canal. Piso absoluto
+  // de 10cm (não relativo ao máximo) — sem ele, ruído de interpolação/downsample do DEM (bolhas de
+  // poucos cm, sem significado hidrológico nenhum) virava "poça" enorme depois do blur sempre que a
+  // depressão real mais profunda da malha era pequena (normalização toda relativa a ela amplificava
+  // o ruído). Escala num intervalo físico razoável (até ~2,5m) em vez de sempre "o máximo da malha".
+  const aAcc = new Float32Array(W * H);
+  const DEPTH_MIN = 0.10;
+  let maxDepth = 0;
+  for(let i = 0; i < filled.length; i++) { const d = filled[i] - _3da_terrRaw[i]; if(d > maxDepth) maxDepth = d; }
+  if(maxDepth > DEPTH_MIN) {
+    const escalaAcc = Math.max(0.4, Math.min(maxDepth, 2.5));
+    for(let i = 0; i < filled.length; i++) {
+      const d = filled[i] - _3da_terrRaw[i];
+      aAcc[i] = d <= DEPTH_MIN ? 0 : Math.min(1, (d - DEPTH_MIN) / (escalaAcc - DEPTH_MIN));
+    }
+    _3da_blurCampo(aAcc, W, H, 1);
+  }
+
   const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d');
   const imgData = ctx.createImageData(W, H);
@@ -10543,51 +10719,21 @@ function _3da_construirRastroChuva() {
   const mesh = new THREE.Mesh(geo, mat);
   const lineObjRef = { geo, raw: _3da_terrRaw, eps: 0.2 };
   _3da_lineObjs.push(lineObjRef);
-  return { wet, acc, w: W, h: H, canvas, ctx, imgData, tex, geo, mesh, lineObjRef };
+  const r = { aFluxo, aAcc, w: W, h: H, canvas, ctx, imgData, tex, geo, mesh, lineObjRef, revelado: 0 };
+  _3da_pintarRastro(r);
+  return r;
 }
 
-// v4.71: a v4.70 marcava um halo 3×3 relativamente forte a CADA FRAME de cada gota escoando, com
-// decaimento bem lento (~3,5%/s) — como as gotas nascem espalhadas por toda a bbox e só convergem
-// pros canais reais depois de alguns segundos, isso "pintava" quase a malha inteira de um véu azul
-// antes de conseguir concentrar nos canais (bug relatado com print: "a mancha de molhado cobre
-// tudo"). Agora o raio/peso/decaimento (por canal, ver chamadas em _3da_tickChuva) ficam bem mais
-// contidos — só quem passa MUITAS vezes pela mesma célula (um canal real) acumula o suficiente pra
-// aparecer visualmente; uma célula visitada de raspão por poucas gotas esmaece antes de "sujar" a
-// vista, igual ao vídeo de referência (linhas finas de escoamento, não uma lavagem geral).
-function _3da_splatRastro(arr, w, h, gx, gy, qtd, raio, pesoBorda, cap) {
-  const stepX = (2 * _3da_halfW) / _3da_NGTX, stepY = (2 * _3da_halfH) / _3da_NGTY;
-  const fi = (gx - (_3da_bcx - _3da_halfW)) / stepX, fj = (gy - (_3da_bcy - _3da_halfH)) / stepY;
-  const ii = Math.round(fi), jj = Math.round(fj);
-  for(let dj = -raio; dj <= raio; dj++) for(let di = -raio; di <= raio; di++) {
-    const dist = Math.hypot(di, dj);
-    if(dist > raio + 1e-6) continue;
-    const nii = ii + di, njj = jj + dj;
-    if(nii < 0 || nii >= w || njj < 0 || njj >= h) continue;
-    const peso = dist < 1e-6 ? 1 : pesoBorda;
-    const idx = njj * w + nii;
-    arr[idx] = Math.min(cap, arr[idx] + qtd * peso);
-  }
-}
-
-// Decai os dois canais (tempo REAL, não o simulado — a mancha "seca"/o fluxo esmaece no mesmo ritmo
-// em qualquer velocidade de simulação) e repinta o canvas: linha de fluxo em ciano (fino, igual à
-// cor dos talvegues do Mapa de Escoamento 2D) por baixo, poça de acúmulo em azul mais forte por
-// cima onde existir — pra ficar visualmente parecido com "linhas de escoamento + pontos de
-// concentração", não uma mancha única cobrindo tudo.
-function _3da_atualizarTexturaRastro(r, dt) {
-  const decaiFluxo = Math.pow(0.15, dt);   // esmaece rápido — só reforço contínuo (canal real) resiste
-  const decaiAcumulo = Math.pow(0.75, dt); // poça persiste bem mais que a linha de passagem
-  const data = r.imgData.data;
-  for(let i = 0; i < r.wet.length; i++) {
-    r.wet[i] *= decaiFluxo;
-    r.acc[i] *= decaiAcumulo;
-    const aFluxo = Math.min(1, r.wet[i] / 22), aAcc = Math.min(1, r.acc[i] / 70);
+// Pinta o canvas a partir dos campos já calculados (aFluxo/aAcc) × o fator de revelação atual
+// (fade-in — ver _3da_tickChuva). Cor ciano/azul-clara pro canal de fluxo (mesma família das linhas
+// de talvegue do Mapa de Escoamento 2D), azul mais escuro/opaco pra poça de acúmulo onde ela domina.
+function _3da_pintarRastro(r) {
+  const data = r.imgData.data, rev = r.revelado;
+  for(let i = 0; i < r.aFluxo.length; i++) {
+    const aF = r.aFluxo[i] * rev, aA = r.aAcc[i] * rev;
     const o = i * 4;
-    if(aAcc > aFluxo) { // poça de acúmulo domina — azul mais escuro/opaco
-      data[o] = 8; data[o + 1] = 40; data[o + 2] = 110; data[o + 3] = Math.round(aAcc * 220);
-    } else { // linha de escoamento — ciano fino, bem menos opaco que a poça
-      data[o] = 0; data[o + 1] = 170; data[o + 2] = 210; data[o + 3] = Math.round(aFluxo * 130);
-    }
+    if(aA > aF * 0.6) { data[o] = 6; data[o + 1] = 35; data[o + 2] = 105; data[o + 3] = Math.round(aA * 235); }
+    else { data[o] = 4; data[o + 1] = 130; data[o + 2] = 185; data[o + 3] = Math.round(aF * 220); }
   }
   r.ctx.putImageData(r.imgData, 0, 0);
   r.tex.needsUpdate = true;
@@ -10669,14 +10815,14 @@ function _3da_tickChuva() {
   const velQueda = (55 + _3da_chuvaIntensidade * 0.9) * velFactor;
   const velFluxo = (3.5 + _3da_chuvaIntensidade * 0.06) * velFactor;
   const passoGrad = Math.max(halfW, halfH) * 0.006;
-  // Fluxo: marca só o pontinho de passagem + um halo mínimo (raio 1, borda bem fraca) — some rápido
-  // (ver decaiFluxo em _3da_atualizarTexturaRastro), só um canal realmente concorrido acumula o
-  // bastante pra ficar visível, igual à linha fina do vídeo de referência. Acúmulo: marca só onde a
-  // gota genuinamente PAROU por falta de gradiente (platô/depressão — mag<1e-5, não o corte por
-  // tempo demais escoando) — mancha maior (raio 2) e mais forte, pra ler como "poça"/concentração
-  // de água de verdade, não como mais um trecho de linha.
-  const qtdFluxo = 5 * dt;
-  const qtdAcumulo = 3 * dt;
+
+  // O canal de fluxo/acúmulo (rastro) é CALCULADO de uma vez (ver _3da_construirRastroChuva) — não
+  // marcado gota a gota. Só falta o fade-in de revelação (~1.2s), pra não "aparecer tudo de repente"
+  // ao clicar em Simular Chuva.
+  if(rastro && rastro.revelado < 1) {
+    rastro.revelado = Math.min(1, rastro.revelado + dt / 1.2);
+    _3da_pintarRastro(rastro);
+  }
 
   for(let i = 0; i < N; i++) {
     const idx = i * 3;
@@ -10704,24 +10850,17 @@ function _3da_tickChuva() {
     let dx = -(hE - hW), dy = -(hN - hS); // aponta pra onde o relevo desce
     const mag = Math.hypot(dx, dy);
     let saiu = false;
-    if(mag < 1e-5) {
-      saiu = true; // platô/depressão sem gradiente nenhum — água parou aqui de verdade: é acúmulo
-      if(rastro) _3da_splatRastro(rastro.acc, rastro.w, rastro.h, gx, gy, qtdAcumulo, 2, 0.5, 90);
-    } else if(vidaFluxo[i] > 40) {
-      saiu = true; // só o limite de tempo de vida da gota — não é acúmulo real, some sem marcar
+    if(mag < 1e-5 || vidaFluxo[i] > 40) {
+      saiu = true; // platô/depressão sem gradiente, ou tempo de vida esgotado
     } else {
       dx /= mag; dy /= mag;
       const novoGx = gx + dx * velFluxo * dt, novoGy = gy + dy * velFluxo * dt;
       if(Math.abs(novoGx - bcx) > halfW || Math.abs(novoGy - bcy) > halfH) saiu = true;
-      else {
-        pos[idx] = novoGx; pos[idx + 2] = -novoGy; pos[idx + 1] = sample(novoGx, novoGy) * exag + 0.3;
-        if(rastro) _3da_splatRastro(rastro.wet, rastro.w, rastro.h, novoGx, novoGy, qtdFluxo, 1, 0.12, 22);
-      }
+      else { pos[idx] = novoGx; pos[idx + 2] = -novoGy; pos[idx + 1] = sample(novoGx, novoGy) * exag + 0.3; }
     }
     if(saiu) { estado[i] = 0; pos[idx + 1] = -99999; }
   }
   geo.attributes.position.needsUpdate = true;
-  if(rastro) _3da_atualizarTexturaRastro(rastro, dt);
 
   const prog = $('m3da-chuvaProgresso');
   if(!aindaChovendo) {
