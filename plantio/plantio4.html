@@ -353,7 +353,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.74 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.75 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -2770,6 +2770,30 @@ body.layout-lateral #status{grid-area:status;}
 // de volta, 0,308 ha (um braço inteiro) desaparece silenciosamente, confirmando a causa raiz. Undo
 // recupera o talhão original intacto (mesma área, 1 único talhão). Regressão completa (7 suítes
 // disponíveis) sem erros de página.
+// v4.75: usuário disse "continua sem poder importar vários talhões" e mandou o KML real
+// ("Jair Renato Nascimento - 1.kml", uma pasta do Google Earth com 4 polígonos soltos, SEM a
+// estrutura "Talhão N/Contorno/Linhas de Plantio" que só um export deste próprio app tem) — mesmo
+// depois da v4.73 (que corrigiu exatamente esse caso, mas só no botão "Importar Polígono"). Causa:
+// tem DOIS botões de importar KML de talhão — "Importar Projeto" (_processarKMLImportado) e
+// "Importar Polígono" (_importarPoligonoGoogleEarth) — e o usuário usou o primeiro, que SÓ
+// reconhece a estrutura própria do app e recusa qualquer outro KML de cara ("Nenhum talhão
+// encontrado... Importe um arquivo exportado por este app"), sem nem tentar o caminho genérico que
+// o outro botão já tinha. Confirmado reproduzindo com o arquivo real do usuário via Playwright:
+// "Importar Polígono" já aceitava (4 talhões, áreas corretas); "Importar Projeto" recusava de cara.
+// Corrigido: extraída a lógica de achar todos os <Polygon> do arquivo (_extrairPoligonosDoKML) e de
+// importar uma lista deles como talhões travados (_importarPoligonosComoTalhoes), reaproveitadas
+// tanto por _importarPoligonoGoogleEarth quanto por _processarKMLImportado — agora, quando esse
+// último não acha nenhuma pasta "Talhão N" (KML de origem externa, sem a estrutura do app), cai pro
+// MESMO caminho genérico em vez de recusar. Os dois botões passam a aceitar o mesmo KML,
+// independente de qual o usuário clicar. O caminho PRIMÁRIO (KML exportado por este app, com
+// Contorno+Linhas de Plantio) continua funcionando exatamente como antes — só entra no fallback
+// quando não acha nenhuma pasta "Talhão N".
+// Testado (test_v475_importar_projeto_generico.js, com sanity-check confirmando que o teste pega a
+// regressão de verdade): KML genérico (pasta "Polígonos", 3 polígonos soltos) importado via
+// "Importar Projeto" agora funciona (3 talhões, áreas corretas); KML na estrutura própria do app
+// continua pelo caminho primário (2 linhas de plantio preservadas — se tivesse caído no fallback
+// genérico por engano, teria perdido as linhas, já que ele só reconstrói o contorno). Regressão
+// completa (8 suítes disponíveis) sem erros de página.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -7235,6 +7259,51 @@ function _ajustarSuavizacaoCurvaGuia() {
   $('btnPerfilGuia').style.display = 'flex';
 }
 
+// Extrai as coordenadas de TODOS os <Polygon> de um KML já parseado (qualquer Placemark/Folder,
+// qualquer origem — não exige nenhuma estrutura especial) — usado tanto por
+// _importarPoligonoGoogleEarth (KML solto, botão "Importar Polígono") quanto como fallback de
+// _processarKMLImportado (botão "Importar Projeto") quando o arquivo não é um export deste app.
+function _extrairPoligonosDoKML(xml) {
+  const poligonos = [];
+  Array.from(xml.getElementsByTagName('Polygon')).forEach(polyEl => {
+    let coordEl = polyEl.querySelector('outerBoundaryIs LinearRing coordinates')
+      || polyEl.querySelector('LinearRing coordinates')
+      || polyEl.querySelector('coordinates');
+    if(!coordEl) return;
+    // KML usa formato "lon,lat,alt" separado por espaços
+    const pts = coordEl.textContent.trim().split(/\s+/).filter(c => c.includes(',')).map(c => {
+      const p = c.split(',');
+      return L.latLng(parseFloat(p[1]), parseFloat(p[0]));
+    }).filter(p => !isNaN(p.lat) && !isNaN(p.lng));
+    if(pts.length < 3) return;
+    const f = pts[0], l = pts[pts.length - 1]; // remove ponto de fechamento se igual ao primeiro
+    if(Math.abs(l.lat - f.lat) < 1e-8 && Math.abs(l.lng - f.lng) < 1e-8) pts.pop();
+    if(pts.length >= 3) poligonos.push(pts);
+  });
+  return poligonos;
+}
+
+// Importa uma lista de polígonos (lat/lng) como talhões já travados de uma vez — usado quando um
+// KML trouxe mais de 1 polígono (não dá pra ter vários "polígonos ativos" desenháveis ao mesmo
+// tempo). Devolve o número de talhões criados com sucesso; já deixa o mapa/UI no estado certo
+// (fitBounds, botões, renumeração) — só falta o setStatus final, que cada chamador personaliza.
+function _importarPoligonosComoTalhoes(poligonos) {
+  let importados = 0;
+  poligonos.forEach(pts => { if(_criarTalhaoArquivadoSimples(pts)) importados++; });
+  if(!importados) return 0;
+
+  renumerarTalhoes();
+  _updateLabelScale();
+  $('btnLimparArquivados').style.display = '';
+  $('btnDeclivTodos').disabled = false;
+  $('btnComprimentoTodos').disabled = false;
+
+  const allPts = [];
+  talhoesArquivados.slice(-importados).forEach(t => t.polyPts.forEach(p => allPts.push([p.lat, p.lng])));
+  if(allPts.length) map.fitBounds(allPts, { padding: [50, 50] });
+  return importados;
+}
+
 // ── Importar Polígono do Google Earth ─────────────────────────────────────────
 // v4.73: usuário reportou não conseguir importar uma pasta KML com VÁRIOS polígonos dentro — esta
 // função só pegava o PRIMEIRO polígono do arquivo (querySelector, que devolve só o 1º match), sempre
@@ -7248,24 +7317,7 @@ function _ajustarSuavizacaoCurvaGuia() {
 function _importarPoligonoGoogleEarth(text) {
   try {
     const xml = new DOMParser().parseFromString(text, 'text/xml');
-
-    // Extrai coordenadas de TODOS os <Polygon> do arquivo (não só o primeiro).
-    const poligonos = [];
-    Array.from(xml.getElementsByTagName('Polygon')).forEach(polyEl => {
-      let coordEl = polyEl.querySelector('outerBoundaryIs LinearRing coordinates')
-        || polyEl.querySelector('LinearRing coordinates')
-        || polyEl.querySelector('coordinates');
-      if(!coordEl) return;
-      // KML usa formato "lon,lat,alt" separado por espaços
-      const pts = coordEl.textContent.trim().split(/\s+/).filter(c => c.includes(',')).map(c => {
-        const p = c.split(',');
-        return L.latLng(parseFloat(p[1]), parseFloat(p[0]));
-      }).filter(p => !isNaN(p.lat) && !isNaN(p.lng));
-      if(pts.length < 3) return;
-      const f = pts[0], l = pts[pts.length - 1]; // remove ponto de fechamento se igual ao primeiro
-      if(Math.abs(l.lat - f.lat) < 1e-8 && Math.abs(l.lng - f.lng) < 1e-8) pts.pop();
-      if(pts.length >= 3) poligonos.push(pts);
-    });
+    const poligonos = _extrairPoligonosDoKML(xml);
 
     if(!poligonos.length) {
       alert('Nenhum polígono encontrado no arquivo KML.\nExporte o polígono do Google Earth como arquivo .kml e tente novamente.');
@@ -7277,20 +7329,8 @@ function _importarPoligonoGoogleEarth(text) {
     // Mais de 1 polígono — não dá pra ter vários "polígonos ativos" desenháveis ao mesmo tempo, então
     // importa todos já travados (igual a uma importação de Projeto); o usuário seleciona cada um
     // depois pra desenhar a guia/linhas normalmente.
-    let importados = 0;
-    poligonos.forEach(pts => { if(_criarTalhaoArquivadoSimples(pts)) importados++; });
+    const importados = _importarPoligonosComoTalhoes(poligonos);
     if(!importados) { alert('Nenhum polígono válido encontrado no KML.'); return; }
-
-    renumerarTalhoes();
-    _updateLabelScale();
-    $('btnLimparArquivados').style.display = '';
-    $('btnDeclivTodos').disabled = false;
-    $('btnComprimentoTodos').disabled = false;
-
-    const allPts = [];
-    talhoesArquivados.slice(-importados).forEach(t => t.polyPts.forEach(p => allPts.push([p.lat, p.lng])));
-    if(allPts.length) map.fitBounds(allPts, { padding: [50, 50] });
-
     setStatus(`${importados} polígono(s) importado(s) como talhões — selecione cada um pra desenhar a guia/linhas.`, 'ok');
   } catch (e) {
     alert('Erro ao importar polígono: ' + e.message);
@@ -7423,7 +7463,24 @@ function _processarKMLImportado(text) {
     const topFolders = childrenByTag(docEl, 'Folder');
     const talhaoFolders = topFolders.filter(f => directName(f).startsWith('Talhão'));
     if(!talhaoFolders.length) {
-      alert('Nenhum talhão encontrado no KML.\nImporte um arquivo exportado por este app.'); return;
+      // v4.75: usuário reportou (com um KML real do Google Earth — pasta com vários polígonos,
+      // sem a estrutura "Talhão N/Contorno" que só um export deste app tem) continuar sem conseguir
+      // importar múltiplos talhões — porque ele usou justamente ESTE botão ("Importar Projeto"),
+      // que só reconhecia a estrutura própria do app e recusava qualquer outro KML de cara, mesmo
+      // quando "Importar Polígono" (outro botão, já corrigido na v4.73) teria aceitado o mesmo
+      // arquivo sem problema. Em vez de recusar direto, cai pro mesmo caminho genérico de
+      // "Importar Polígono" — extrai qualquer <Polygon> do arquivo (_extrairPoligonosDoKML) e
+      // importa cada um como talhão travado — assim os dois botões aceitam o mesmo KML, sem o
+      // usuário precisar adivinhar qual dos dois usar.
+      const poligonos = _extrairPoligonosDoKML(doc);
+      if(!poligonos.length) {
+        alert('Nenhum talhão encontrado no KML.\nImporte um arquivo exportado por este app, ou um KML com polígono(s) desenhado(s) no Google Earth.');
+        return;
+      }
+      const importadosGenerico = _importarPoligonosComoTalhoes(poligonos);
+      if(!importadosGenerico) { alert('Nenhum polígono válido encontrado no KML.'); return; }
+      setStatus(`${importadosGenerico} polígono(s) importado(s) como talhões — selecione cada um pra desenhar a guia/linhas.`, 'ok');
+      return;
     }
 
     let importados = 0;
