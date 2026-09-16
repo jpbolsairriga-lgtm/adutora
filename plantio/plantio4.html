@@ -353,7 +353,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.75 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.76 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -2794,6 +2794,29 @@ body.layout-lateral #status{grid-area:status;}
 // continua pelo caminho primário (2 linhas de plantio preservadas — se tivesse caído no fallback
 // genérico por engano, teria perdido as linhas, já que ele só reconstrói o contorno). Regressão
 // completa (8 suítes disponíveis) sem erros de página.
+// v4.76: usuário reportou "quando importo vários kml, não consigo selecionar os talhões" — depois
+// de importar (via Importar Projeto ou Importar Polígono, ambos corrigidos na v4.73/v4.75), clicar
+// num talhão pra selecioná-lo não fazia nada. Causa raiz: talhão criado por importação de KML (nos
+// dois caminhos) e por Unificar Talhões sempre gravava turfPoly:null no PRÓPRIO objeto do talhão
+// (t.turfPoly) e nada preenchia depois — só a variável GLOBAL `turfPoly` (usada pra outra coisa,
+// geração de linhas de plantio) era atualizada em selecionarTalhao(). O clique no polígono BORBULHA
+// pro 'click' do próprio mapa NO MESMO EVENTO (bubblingMouseEvents padrão do Leaflet — comentário
+// já existente em map.on('click',...) já alertava pra isso, mas só cobria o caso de clicar FORA),
+// e aquele handler usa exatamente t.turfPoly pra confirmar que o clique de seleção caiu DENTRO do
+// talhão — com t.turfPoly sempre null, ele sempre concluía "clique fora" e desselecionava na hora,
+// no mesmíssimo clique que tinha acabado de selecionar. Talhões criados desenhando na hora e
+// travando, ou pela Divisão (que grava turfPoly certo), não tinham esse problema — só quem vinha de
+// KML/Unificar.
+// Corrigido no lugar certo, de uma vez pra sempre: selecionarTalhao() agora também grava o polígono
+// recém-calculado em t.turfPoly (não só na variável global) — como TODA seleção passa por ali, isso
+// corrige o problema pra qualquer talhão, independente de como foi criado, sem precisar caçar e
+// corrigir cada função de criação (KML import ×2, Unificar) uma por uma.
+// Testado (test_v476_selecionar_talhao_importado.js, com sanity-check confirmando que o teste pega
+// a regressão de verdade): importa um KML com 3 polígonos, clica com um MOUSE CLICK DE VERDADE
+// (page.mouse.click — só um clique real reproduz o bubbling polígono→mapa; um .fire() sintético
+// não) num ponto dentro do 1º talhão, confirma que a seleção permanece (talhaoSelecionadoUid não
+// volta a null) e que t.turfPoly ficou preenchido. Regressão completa (9 suítes disponíveis) sem
+// erros de página.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -8749,6 +8772,17 @@ function selecionarTalhao(uid) {
   try {
     turfPoly = turf.polygon([ring]); turf.rewind(turfPoly, {mutate:true});
     turfBound = turf.polygonToLine(turfPoly);
+    // v4.76: mantém t.turfPoly (do PRÓPRIO objeto talhão, não só a variável global turfPoly)
+    // sincronizado com o polígono atual — o clique no mapa borbulha do polígono pro 'click' do
+    // mapa (map.on('click', ...) — ver mais acima) NO MESMO EVENTO, e aquele handler usa
+    // t.turfPoly pra confirmar que o clique de seleção caiu DENTRO do talhão (senão desseleciona
+    // na hora). Vários caminhos de criação de talhão (importação de KML — Importar Projeto/
+    // Importar Polígono — e Unificar Talhões) sempre deixavam t.turfPoly como null e nunca
+    // preenchiam depois, então SELECIONAR um talhão desses desselecionava no mesmo clique (bug
+    // relatado: "quando importo vários kml, não consigo selecionar os talhões"). Recalcular aqui,
+    // sempre que qualquer talhão é selecionado, corrige isso pra qualquer talhão, independente de
+    // como ele foi criado — sem precisar caçar/corrigir cada função de criação uma por uma.
+    t.turfPoly = turfPoly;
   } catch(e) {}
 
   $('divSelInfo').innerHTML = '';
