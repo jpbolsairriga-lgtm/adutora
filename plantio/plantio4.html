@@ -353,7 +353,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.76 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.77 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -2817,6 +2817,33 @@ body.layout-lateral #status{grid-area:status;}
 // não) num ponto dentro do 1º talhão, confirma que a seleção permanece (talhaoSelecionadoUid não
 // volta a null) e que t.turfPoly ficou preenchido. Regressão completa (9 suítes disponíveis) sem
 // erros de página.
+// v4.77: usuário relatou 2 problemas na Divisão de talhão (Traçar Divisão):
+// 1) "a linha parece estender de forma infinita e acaba cruzando com o restante do talhão,
+//    cortando também onde não deveria — o corte deve ser feito apenas na área que a linha
+//    contempla". Causa: _extenderLinha sempre empurrava cada ponta 4× o tamanho do bbox do talhão
+//    na MESMA direção, incondicionalmente — mesmo quando a ponta já estava fora do contorno. Num
+//    talhão CÔNCAVO (2 lóbulos/braços separados por um vão, ligados só em outro ponto — o caso
+//    relatado), uma linha desenhada TODA DENTRO de um dos lóbulos, depois de "esticada" nessa
+//    distância fixa e enorme, podia atravessar o vão reto e cortar o lóbulo OPOSTO também, sem
+//    ligação nenhuma com o traçado real do usuário. Corrigido: agora só estende quando a ponta
+//    ainda está DENTRO do talhão (turf.booleanPointInPolygon) — e nesse caso empurra só até o
+//    cruzamento MAIS PRÓXIMO com o contorno (turf.lineIntersect, pega a saída imediata — nunca uma
+//    reentrância distante) mais uma margem pequena. Se a ponta já estiver fora, não estende nada.
+//    Aplicado nos 2 lugares que usavam a extensão antiga: _executarDivisaoTalhao (Divisão manual e
+//    Carreador a partir de Linha) e _ladoMenorAreaDaLinha (decide de que lado abrir o carreador).
+// 2) "o app está criando polígonos marrom da divisão, esses objetos não interessam, devem ser
+//    eliminados ou nem aparecer". Removida a criação do polígono marrom (carreador visível) nos
+//    3 lugares que ainda desenhavam: _executarDivisaoTalhao (usado pela Divisão manual — o Carreador
+//    a partir de Linha já não desenhava) e _calcularDivisaoPorDistorcao (divisão automática por
+//    distorção da guia). O afastamento real entre os talhões resultantes continua exatamente igual
+//    (já vem da própria geometria do turf.difference) — só a visualização extra do polígono em si
+//    foi removida, nada na divisão em si muda.
+// Testado (test_v477_extensao_linha_divisao.js, com sanity-check confirmando que o teste pega a
+// regressão de verdade): no mesmo talhão em "U" dos testes anteriores, uma linha de corte curta
+// desenhada toda dentro do braço esquerdo agora corta SÓ esse braço (2 partes; o braço direito,
+// 0,8 ha, sobra inteiro dentro da maior parte) — com o bug de volta, vira 3 partes (o braço direito
+// perde um pedaço de 0,188 ha pra extensão que vazou). Confirma também que nenhum carreadorLayers é
+// criado. Regressão completa (10 suítes disponíveis) sem erros de página.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -4090,17 +4117,11 @@ function _calcularDivisaoPorDistorcao(turfPolyAlvo, sg, tan, resultado, rowBrgGl
   const boaPiece = partes.find(p => turf.booleanPointInPolygon(startPt, p)) || partes[0];
   const restoPiece = partes.find(p => p !== boaPiece) || partes[1];
 
-  // ─ Desenha a faixa de afastamento (carreador), igual ao da Divisão manual ─
-  try {
-    const carreadorGeom = turf.intersect(buf, turfPolyAlvo);
-    if(carreadorGeom) {
-      const geoms = carreadorGeom.geometry.type === 'MultiPolygon' ? carreadorGeom.geometry.coordinates : [carreadorGeom.geometry.coordinates];
-      geoms.forEach(polyCoords => {
-        const layer = L.polygon(polyCoords[0].map(([lng,lat]) => [lat,lng]), {color:'#795548', fillColor:'#795548', fillOpacity:.55, weight:1.5, interactive:false}).addTo(map);
-        carreadorLayers.push(layer);
-      });
-    }
-  } catch(e) {}
+  // v4.77: removida a faixa marrom (carreador visível) — usuário pediu explicitamente pra
+  // eliminar esse polígono em qualquer divisão, manual ou automática (esta função é a divisão
+  // automática por distorção da guia). O afastamento real entre os dois pedaços já existe na
+  // própria geometria (turf.difference acima já removeu a faixa do meio) — só a visualização
+  // extra do polígono em si foi removida.
 
   return { boaPiece, restoPiece };
 }
@@ -9073,7 +9094,6 @@ function _clipLinhaForaDoCarreador(coordsLngLat, carreadorBuf) {
 // status/limpeza de tela conforme o próprio fluxo).
 function _executarDivisaoTalhao(uid, lineCoordsLngLat, largura, opts) {
   const clipLinhas = !opts || opts.clipLinhas !== false; // padrão true (comportamento antigo, usado pela Divisão manual)
-  const criarCarreadorVisivel = !opts || opts.criarCarreadorVisivel !== false; // padrão true (Divisão manual mostra a faixa marrom)
   const idx = talhoesArquivados.findIndex(t => t.uid === uid);
   if(idx < 0) return { ok: false, erro: 'Talhão não encontrado.' };
   const t = talhoesArquivados[idx];
@@ -9083,15 +9103,12 @@ function _executarDivisaoTalhao(uid, lineCoordsLngLat, largura, opts) {
   try { talhaoTurf = turf.polygon([ring]); turf.rewind(talhaoTurf, {mutate:true}); }
   catch(e) { return { ok: false, erro: 'Erro ao processar o polígono.' }; }
 
-  const extCoords = _extenderLinha(lineCoordsLngLat, turf.bbox(talhaoTurf));
+  const extCoords = _extenderLinha(lineCoordsLngLat, talhaoTurf);
   const divLine = turf.lineString(extCoords);
 
   let carreadorBuf;
   try { carreadorBuf = turf.buffer(divLine, largura / 2, {units:'meters'}); }
   catch(e) { return { ok: false, erro: 'Erro ao criar buffer do carreador: ' + e.message }; }
-
-  let carreadorGeom = null;
-  try { carreadorGeom = turf.intersect(carreadorBuf, talhaoTurf); } catch(e) {}
 
   let resto;
   try { resto = turf.difference(talhaoTurf, carreadorBuf); }
@@ -9164,20 +9181,11 @@ function _executarDivisaoTalhao(uid, lineCoordsLngLat, largura, opts) {
   limparMapaTematico(t);
   talhoesArquivados.splice(idx, 1);
 
-  // Desenha carreador visível — Carreador a partir de Linha (opts.criarCarreadorVisivel=false) não
-  // mostra a faixa marrom: o próprio afastamento entre os dois talhões já deixa a separação visível
-  // no mapa, e o usuário pediu explicitamente pra tirar o polígono marrom desse fluxo específico.
-  if(carreadorGeom && criarCarreadorVisivel) {
-    const geoms = carreadorGeom.geometry.type === 'MultiPolygon'
-      ? carreadorGeom.geometry.coordinates
-      : [carreadorGeom.geometry.coordinates];
-    geoms.forEach(polyCoords => {
-      const layer = L.polygon(polyCoords[0].map(([lng,lat]) => [lat,lng]), {
-        color:'#795548', fillColor:'#795548', fillOpacity:.55, weight:1.5, interactive:false
-      }).addTo(map);
-      carreadorLayers.push(layer);
-    });
-  }
+  // v4.77: removida a faixa marrom (carreador visível) — usuário pediu explicitamente pra
+  // eliminar esse polígono, tanto na Divisão manual quanto no Carreador a partir de Linha (que já
+  // não mostrava mesmo). O afastamento real entre os dois talhões resultantes já existe na própria
+  // geometria (turf.difference já removeu a faixa do meio, ver carreadorBuf acima) — só a
+  // VISUALIZAÇÃO extra do polígono em si foi removida, a divisão em si não muda em nada.
 
   // Cria os novos talhões arquivados, com as linhas de plantio recortadas já dentro
   partes.forEach((parte, pIdx) => {
@@ -9272,7 +9280,7 @@ function _ladoMenorAreaDaLinha(pts, talhaoTurf) {
   const perp = brg + 90;
   let partes;
   try {
-    const extCoords = _extenderLinha(pts.map(p => [p.lng, p.lat]), turf.bbox(talhaoTurf));
+    const extCoords = _extenderLinha(pts.map(p => [p.lng, p.lat]), talhaoTurf);
     const testBuf = turf.buffer(turf.lineString(extCoords), 0.05, {units:'meters'});
     const resto = turf.difference(talhaoTurf, testBuf);
     if(!resto) return perp;
@@ -9312,7 +9320,7 @@ function _criarCarreadorDeLinhaPlantio(pl) {
   const offsetDistKm = (afastamento + largura / 2) / 1000;
   const offsetCoords = pts.map(p => turf.destination(turf.point([p.lng, p.lat]), offsetDistKm, lado, {units:'kilometers'}).geometry.coordinates);
 
-  const r = _executarDivisaoTalhao(uid, offsetCoords, largura, { clipLinhas: false, criarCarreadorVisivel: false });
+  const r = _executarDivisaoTalhao(uid, offsetCoords, largura, { clipLinhas: false });
   if(!r.ok) { setStatus(r.erro, 'err'); return; }
 
   talhaoSelecionadoUid = null;
@@ -9384,19 +9392,57 @@ function _criarInfoMarkerParaTalhao(t) {
 }
 
 // Extende a linha de divisão para além dos limites do polígono
-function _extenderLinha(coords, bbox) {
+// v4.77: usuário relatou (com prints) que a linha de corte da Divisão "parece estender de forma
+// infinita e acaba cruzando com o restante do talhão, cortando também onde não deveria" — antes,
+// cada ponta da linha era simplesmente empurrada 4× o tamanho do bbox do talhão na mesma direção,
+// SEMPRE, mesmo quando a ponta já estava fora do contorno. Num talhão CÔNCAVO (reentrâncias,
+// lóbulos ligados por "pescoços" estreitos — o caso relatado), esse raio comprido na mesma direção
+// podia varrer reto por cima de uma parte bem distante do MESMO contorno (outro lóbulo) e cortar
+// ali também, sem ligação nenhuma com o traçado real do usuário. Corrigido: só estende quando a
+// ponta da linha ainda está DENTRO do talhão (o usuário não arrastou até sair de verdade) — nesse
+// caso empurra só até o cruzamento MAIS PRÓXIMO com o contorno (a saída imediata) mais uma margem
+// pequena, nunca além disso. Se a ponta já está fora, não estende nada — "o corte só na área que a
+// linha contempla", como pedido.
+function _extenderLinha(coords, bboxOuTalhao) {
   if(coords.length < 2) return coords;
   const n = coords.length;
+  // Aceita tanto o bbox antigo (array [minX,minY,maxX,maxY], sem talhão pra testar — comportamento
+  // antigo, mantido só de fallback) quanto o polígono do talhão (turf.Feature) — a partir dele
+  // deriva o próprio bbox pro raio de teste.
+  const talhaoTurf = bboxOuTalhao && bboxOuTalhao.type === 'Feature' ? bboxOuTalhao : null;
+  const bbox = talhaoTurf ? turf.bbox(talhaoTurf) : bboxOuTalhao;
   const bboxSize = Math.max(bbox[2]-bbox[0], bbox[3]-bbox[1]) || 0.01;
-  const extDist  = bboxSize * 4; // 4× o tamanho do bbox → garante cruzar o polígono
+  const extDist  = bboxSize * 4; // raio de teste "bem além" — só usado pra achar a saída, nunca fica no resultado final
+  const margem   = bboxSize * 0.01;
+
+  let boundaryLine = null;
+  if(talhaoTurf) { try { boundaryLine = turf.polygonToLine(talhaoTurf); } catch(e) {} }
+
+  function pontoDeParada(origem, dirX, dirY) {
+    if(!boundaryLine) return [origem[0] + dirX*extDist, origem[1] + dirY*extDist]; // sem talhão pra testar — mantém o raio antigo
+    let dentro = false;
+    try { dentro = turf.booleanPointInPolygon(turf.point(origem), talhaoTurf); } catch(e) {}
+    if(!dentro) return origem; // ponta já fora do talhão — não estende (evita varrer território alheio)
+    const alvo = [origem[0] + dirX*extDist, origem[1] + dirY*extDist];
+    let inter;
+    try { inter = turf.lineIntersect(turf.lineString([origem, alvo]), boundaryLine); } catch(e) { return alvo; }
+    if(!inter.features.length) return alvo; // não devia acontecer (origem está dentro) — mantém o raio antigo como fallback
+    let melhor = null, melhorDist = Infinity;
+    inter.features.forEach(f => {
+      const c = f.geometry.coordinates;
+      const d = Math.hypot(c[0]-origem[0], c[1]-origem[1]);
+      if(d < melhorDist) { melhorDist = d; melhor = c; } // saída mais PRÓXIMA — nunca uma reentrância distante
+    });
+    return [melhor[0] + dirX*margem, melhor[1] + dirY*margem];
+  }
 
   const [x0,y0] = coords[0];   const [x1,y1] = coords[1];
   const dx0 = x0-x1, dy0 = y0-y1, len0 = Math.sqrt(dx0*dx0+dy0*dy0)||1e-9;
-  const extStart = [x0+(dx0/len0)*extDist, y0+(dy0/len0)*extDist];
+  const extStart = pontoDeParada([x0,y0], dx0/len0, dy0/len0);
 
   const [xN,yN] = coords[n-1]; const [xn1,yn1] = coords[n-2];
   const dxN = xN-xn1, dyN = yN-yn1, lenN = Math.sqrt(dxN*dxN+dyN*dyN)||1e-9;
-  const extEnd = [xN+(dxN/lenN)*extDist, yN+(dyN/lenN)*extDist];
+  const extEnd = pontoDeParada([xN,yN], dxN/lenN, dyN/lenN);
 
   return [extStart, ...coords, extEnd];
 }
