@@ -353,7 +353,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.77 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.78 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -2844,6 +2844,32 @@ body.layout-lateral #status{grid-area:status;}
 // 0,8 ha, sobra inteiro dentro da maior parte) — com o bug de volta, vira 3 partes (o braço direito
 // perde um pedaço de 0,188 ha pra extensão que vazou). Confirma também que nenhum carreadorLayers é
 // criado. Regressão completa (10 suítes disponíveis) sem erros de página.
+// v4.78: usuário reportou 3 problemas de UI:
+// 1) "as opções de exportar sumiram, tem que voltar, tanto pra kml como pra dxf" — a importação em
+//    lote de KML (_importarPoligonosComoTalhoes, nova na v4.73/v4.75) nunca ligava $('btnKml')/
+//    $('btnDxf') — todo OUTRO fluxo de criar/travar talhão já fazia isso, só esse ficou de fora.
+//    Corrigido: mostra os dois botões ao final da importação em lote, igual aos demais fluxos.
+// 2) "sempre que eu clicar em algum elemento do mapa eu nunca mudar de ribbon de forma automática,
+//    isso deve ser 100% manual". Havia 2 trocas automáticas de aba: (a) um MutationObserver em
+//    #divCarreadorOps que trocava pra aba "Carreador" toda vez que esse painel aparecia — ou seja,
+//    todo clique de SELEÇÃO de talhão (que mostra esse painel) trocava de aba sozinho, "como uma
+//    aba contextual do AutoCAD" (comentário antigo, mas o usuário não quer esse comportamento); (b)
+//    usarCurvaComoGuia() chamava ativarRibbon('rp-guia') direto depois de usar uma curva como guia.
+//    Ambos removidos — a troca de aba agora só acontece pelo clique direto numa aba.
+// 3) "sempre que eu mudar de ribbons... qualquer ferramenta que estiver selecionada do ribbon
+//    anterior deve ser abandonada". Nova _abandonarFerramentaAtiva(), chamada de dentro de
+//    ativarRibbon() sempre que a aba de fato muda (antes de trocar): cancela qualquer modo
+//    interativo em uso (desenhar contorno/guia/área de curvas/régua, divisão em andamento, picking
+//    de linha pra perfil/carreador, multi-seleção, escolha de curva como guia) — usando as MESMAS
+//    funções de cancelar que os botões dedicados de cada ferramenta já chamavam. Só cancela o que
+//    está de fato EM USO agora; nunca apaga dados já prontos (um contorno fechado esperando "Travar
+//    Talhão", por exemplo, continua intacto).
+// Testado (test_v478_ribbon_exportar.js, com sanity-check nos 3 itens confirmando que o teste pega
+// cada regressão de verdade — revertida e testada uma por vez): botões de exportar aparecem depois
+// da importação em lote; selecionar um talhão clicando nele NÃO troca de aba (a aba manual
+// escolhida antes continua ativa, mas a seleção funciona normalmente); iniciar "Desenhar Guia" e
+// trocar de aba manualmente cancela a guia (modo volta a 'idle', botão Cancelar Guia esconde).
+// Regressão completa (11 suítes disponíveis) sem erros de página.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -7270,7 +7296,6 @@ function usarCurvaComoGuia(pl) {
   setModoGuia('spline');
   simples.forEach(p => addGuidePt(L.latLng(p.lat, p.lng)));
   finalizarGuia();
-  ativarRibbon('rp-guia');
 
   _curvaGuiaOriginal = curvaOriginal;
   const maxSlider = Math.max(alvo, Math.min(40, pts.length));
@@ -7341,6 +7366,12 @@ function _importarPoligonosComoTalhoes(poligonos) {
   $('btnLimparArquivados').style.display = '';
   $('btnDeclivTodos').disabled = false;
   $('btnComprimentoTodos').disabled = false;
+  // v4.78: faltava mostrar os botões de exportação aqui — usuário relatou "as opções de exportar
+  // sumiram" depois de importar vários talhões de uma vez (o caminho de importação em lote, novo na
+  // v4.73/v4.75, nunca ligava esses botões; qualquer outro fluxo de criar/travar talhão já fazia
+  // isso, só este ficou de fora).
+  $('btnKml').style.display = 'flex';
+  $('btnDxf').style.display = 'flex';
 
   const allPts = [];
   talhoesArquivados.slice(-importados).forEach(t => t.polyPts.forEach(p => allPts.push([p.lat, p.lng])));
@@ -10104,10 +10135,35 @@ setModoDivisaoGuia('reta');
 
 <!-- ── v4.0: ribbon (abas + troca de painel) — só UI, não mexe na lógica acima ── -->
 <script>
+// v4.78: troca de aba tinha 2 comportamentos automáticos que o usuário pediu pra tirar — (1) trocar
+// de aba sozinha ao clicar num elemento do mapa (ver o MutationObserver que existia aqui, e a
+// chamada em usarCurvaComoGuia — ambos removidos): a troca agora é 100% manual, só pelo clique na
+// própria aba. (2) Nada abandonava a ferramenta ativa da aba anterior ao trocar manualmente — uma
+// guia/divisão/régua/etc. em andamento continuava "armada" escutando cliques no mapa mesmo depois
+// de trocar de aba, o que confundia (clique na aba nova, mas o mapa ainda reagia como se estivesse
+// na ferramenta antiga). Agora toda troca de aba manual cancela a ferramenta ativa primeiro.
 function ativarRibbon(panelId) {
+  const atual = document.querySelector('.rtab.active')?.dataset.panel;
+  if(atual && atual !== panelId) _abandonarFerramentaAtiva();
   document.querySelectorAll('.rtab').forEach(t => t.classList.toggle('active', t.dataset.panel === panelId));
   document.querySelectorAll('.rpanel').forEach(p => p.classList.toggle('active', p.id === panelId));
   _atualizarDicaRolagem();
+}
+
+// Cancela qualquer ferramenta interativa que ainda esteja "armada" (esperando clique/ação no mapa)
+// — chamado sempre que o usuário troca de aba manualmente (ver ativarRibbon). Só cancela o que está
+// de fato EM USO agora; nunca apaga dados já prontos (um contorno já fechado esperando "Travar
+// Talhão", por exemplo, continua intacto — só o modo de desenho ATIVO é interrompido).
+function _abandonarFerramentaAtiva() {
+  if(modo === 'poly') limparPoligono();
+  else if(modo === 'guide') cancelarGuia();
+  else if(modo === 'curvapoly') limparPoligonoCurva();
+  else if(modo === 'regua') limparRegua();
+  if(modoDivisao || modo === 'divisao') cancelarDivisaoUsuario();
+  if(_modoPickLinha === 'perfil') cancelarPerfilLinhaPlantio();
+  else if(_modoPickLinha === 'carreador') cancelarCarreadorDeLinha();
+  if(multiSelectMode) cancelarMultiSelect();
+  if(_pickingCurvaGuia) cancelarEscolhaCurvaGuia();
 }
 
 // "Tem mais ferramentas escondidas" — sem isso, um grupo que só cabe rolando pra direita (ex:
@@ -10128,19 +10184,6 @@ function _atualizarDicaRolagem() {
   const rp = document.getElementById('ribbonPanels');
   if(rp) obs.observe(rp, {attributes:true, attributeFilter:['style'], subtree:true});
   setTimeout(_atualizarDicaRolagem, 300); // após o layout inicial assentar
-})();
-
-// Ao selecionar um talhão travado (aparecem as opções de carreador/divisão),
-// muda automaticamente para a aba "Carreador" — como uma aba contextual do AutoCAD.
-(function() {
-  const alvo = document.getElementById('divCarreadorOps');
-  if(!alvo) return;
-  const obs = new MutationObserver(() => {
-    if(alvo.style.display !== 'none') {
-      ativarRibbon('rp-carreador');
-    }
-  });
-  obs.observe(alvo, {attributes:true, attributeFilter:['style']});
 })();
 
 // "Travar Talhão" existe em dois lugares (aba Talhão + aba Guia & Linhas de Plantio, pra não
