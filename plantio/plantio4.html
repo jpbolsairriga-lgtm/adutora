@@ -353,7 +353,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.81 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.82 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -926,6 +926,8 @@ body.layout-lateral #status{grid-area:status;}
             <input type="text" id="monitorFazenda" class="rfield wide" placeholder="Nome da fazenda">
           </div>
           <button class="rbtn c-green" id="btnExportarMonitor" onclick="exportarMonitorGPS()"><span class="ico">&#128668;</span><span class="lbl">Exportar p/ Monitor GPS</span></button>
+          <button class="rbtn c-blue" onclick="$('inputMonitorGPS').click()" title="Aceita um .zip da pasta AgGPS (Trimble) ou Gen4 (John Deere) — a mesma que vem do pendrive do monitor."><span class="ico">&#128194;</span><span class="lbl">Importar do Monitor GPS</span></button>
+          <input type="file" id="inputMonitorGPS" accept=".zip" style="display:none" onchange="if(this.files[0]){importarMonitorGPS(this.files[0]);this.value='';}">
           <div id="avisoMonitorGPS" style="font-size:10px;color:var(--panel-text-dim);max-width:220px;white-space:normal;"></div>
         </div>
         <div class="rgroup-title">Monitor GPS (Trator)</div>
@@ -2980,6 +2982,30 @@ body.layout-lateral #status{grid-area:status;}
 // os .gjson têm a geometria/propriedades esperadas (Polygon fechado com signaltype=5131 igual ao
 // arquivo real; MultiLineString com uma sub-lista por linha de plantio). Regressão completa (8
 // suítes centrais re-verificadas) sem erros de página.
+// v4.82: novo botão "Importar do Monitor GPS" — caminho inverso das exportações Trimble (v4.79) e
+// John Deere (v4.81): pega o mesmo .zip (pasta AgGPS ou Gen4, a que se copia do pendrive) e
+// recria os talhões (contorno + linhas de plantio) no app. Detecta a marca automaticamente pelo
+// conteúdo do zip (presença de "AgGPS/Data/.../Boundary.shp" ou de um "MasterData.xml").
+// Trimble: leitor de Shapefile próprio (_lerShp) — o inverso byte a byte de _gerarShpShx (mesmo
+// cabeçalho de 100 bytes, mesmo layout de registro) — lê Boundary.shp (usa a maior parte como
+// anel externo, ignora buracos) e LineFeature.shp (cada parte de cada registro = 1 linha de
+// plantio). John Deere: parseia o MasterData.xml (DOMParser) e, pra cada <Field>, acha o
+// <OperationalBoundary>/<AdaptiveCurve> ligado a ele (por TaggedEntity = StringGuid do Field) e lê
+// os .gjson referenciados (JSON.parse — GeoJSON puro, não precisa de leitor binário).
+// Validado em 2 frentes: (1) ROUND-TRIP — exporta um talhão sintético pros dois formatos, importa
+// de volta, confere que área/linhas batem com o original; (2) ARQUIVO REAL — importa o AgGPS.zip
+// real do usuário (mesmo arquivo usado pra validar a exportação Trimble na v4.79) e confere que a
+// GEOMETRIA do TH-01 (26 pontos do contorno, 1º e último ponto) bate EXATAMENTE, ponto a ponto,
+// com o que o pyshp lê direto do Boundary.shp original — prova de que o leitor binário está
+// correto contra dados reais, não só contra o que a própria ferramenta gera.
+// Nota sobre área: a área comparada no teste é GEOMETRIA (coordenadas), não o valor numérico de
+// área — o campo "Area" do .dbf do AgroCAD usa um método de cálculo (provavelmente planar/UTM)
+// que difere ~0,4% da área geodésica que turf.area calcula sobre o MESMO anel; isso é uma
+// diferença de método de cálculo, não um erro de importação (confirmado comparando com
+// pyproj.Geod, que também diverge do valor do .dbf por um valor parecido).
+// Testado (test_v482_importar_monitor_gps.js, com sanity-check confirmando que o teste pega a
+// regressão de verdade trocando lat/lng na leitura do contorno): as 2 partes acima passam sem
+// erros de página. Regressão completa (9 suítes centrais re-verificadas) sem erros.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -8588,6 +8614,216 @@ async function _exportarJohnDeereSetupFile(produtor, fazenda, fontes) {
   const blob = await zip.generateAsync({ type: 'blob' });
   baixarArquivo(blob, `Gen4_${produtor}_${fazenda}.zip`, 'application/zip');
   setStatus(`✓ Exportado pra John Deere (Gen4 Setup File) — ${nTalhoes} talhão(ões). Extraia o .zip e copie a pasta "Gen4" pra raiz do pendrive — no display, use Importar Dados e selecione o perfil "Gen4".`, 'ok');
+}
+
+// ── Importar do Monitor GPS (Trator) — caminho inverso da exportação acima ──────────────────
+// v4.82: pedido do usuário — importar de volta um .zip vindo do monitor (a mesma pasta AgGPS/Gen4
+// que se copia do pendrive), detectando a marca automaticamente pelo conteúdo do zip. Reaproveita
+// o conhecimento exato dos dois formatos já validado nas exportações (v4.79 Trimble/v4.81 John
+// Deere) — o leitor de Shapefile (_lerShp) é o inverso byte a byte de _gerarShpShx.
+
+// Lê um .shp (ArrayBuffer) e devolve { shapeType, registros: [{ partes: [[[x,y],...], ...] }] } —
+// inverso de _gerarShpShx: cabeçalho de 100 bytes, depois um registro por feature, cada um com
+// bbox + numParts + numPoints + índices das partes + pontos X/Y (little-endian).
+function _lerShp(buf) {
+  const dv = new DataView(buf);
+  const shapeType = dv.getInt32(32, true);
+  const registros = [];
+  let pos = 100;
+  while(pos + 8 <= buf.byteLength) {
+    const contentWords = dv.getInt32(pos + 4, false); // record header: content length em words de 16 bits (big-endian)
+    const contentBytes = contentWords * 2;
+    const contentStart = pos + 8;
+    const tipoRegistro = dv.getInt32(contentStart, true);
+    if(tipoRegistro === 0 || contentBytes < 44) { pos = contentStart + Math.max(contentBytes, 0); continue; } // null shape
+    const numParts = dv.getInt32(contentStart + 36, true);
+    const numPoints = dv.getInt32(contentStart + 40, true);
+    const partsStart = contentStart + 44;
+    const partsIdx = [];
+    for(let i = 0; i < numParts; i++) partsIdx.push(dv.getInt32(partsStart + i * 4, true));
+    const pointsStart = partsStart + numParts * 4;
+    const pontos = [];
+    for(let i = 0; i < numPoints; i++) {
+      pontos.push([dv.getFloat64(pointsStart + i * 16, true), dv.getFloat64(pointsStart + i * 16 + 8, true)]);
+    }
+    const partes = partsIdx.map((inicio, i) => pontos.slice(inicio, i + 1 < partsIdx.length ? partsIdx[i + 1] : numPoints));
+    registros.push({ partes });
+    pos = contentStart + contentBytes;
+  }
+  return { shapeType, registros };
+}
+async function _lerShpDoZipEntry(entry) {
+  if(!entry) return null;
+  try { return _lerShp(await entry.async('arraybuffer')); } catch(e) { return null; }
+}
+
+// Remove o ponto de fechamento (1º = último) que tanto Shapefile quanto o GeoJSON de contorno
+// sempre trazem — polyPts do app não guarda esse fechamento (é reconstruído na hora de usar).
+function _semPontoDeFechamento(pts) {
+  if(pts.length > 1) {
+    const f = pts[0], l = pts[pts.length - 1];
+    if(Math.abs(f.lat - l.lat) < 1e-9 && Math.abs(f.lng - l.lng) < 1e-9) return pts.slice(0, -1);
+  }
+  return pts;
+}
+
+// Acha, dentro do .zip, todas as pastas de talhão da Trimble (qualquer "Boundary.shp" dentro de
+// uma pasta "AgGPS/Data/.../<Talhão>/") e lê contorno + linhas de plantio de cada uma.
+async function _importarTrimbleAgGpsZip(zip) {
+  const caminhos = Object.keys(zip.files).filter(p => !zip.files[p].dir);
+  const boundaries = caminhos.filter(p => /\/Boundary\.shp$/i.test(p) && /AgGPS/i.test(p));
+  const fontes = [];
+  for(const caminhoBoundary of boundaries) {
+    const pastaTalhao = caminhoBoundary.slice(0, caminhoBoundary.length - 'Boundary.shp'.length);
+    const segPasta = pastaTalhao.split('/').filter(Boolean);
+    const nomeTalhao = segPasta[segPasta.length - 1] || 'Talhão importado';
+
+    const boundaryLida = await _lerShpDoZipEntry(zip.files[caminhoBoundary]);
+    if(!boundaryLida || !boundaryLida.registros.length || !boundaryLida.registros[0].partes.length) continue;
+    // maior parte (mais pontos) = anel externo do contorno — buracos/partes menores são ignorados
+    const partes = boundaryLida.registros[0].partes;
+    const anel = partes.reduce((a, b) => (b.length > a.length ? b : a), partes[0]);
+    if(anel.length < 3) continue;
+    const polyPts = _semPontoDeFechamento(anel.map(([x, y]) => ({ lat: y, lng: x })));
+    if(polyPts.length < 3) continue;
+
+    const linhasCoords = [];
+    const lineLida = await _lerShpDoZipEntry(zip.files[pastaTalhao + 'LineFeature.shp']);
+    if(lineLida) lineLida.registros.forEach(r => r.partes.forEach(parte => {
+      if(parte.length >= 2) linhasCoords.push(parte.map(([x, y]) => ({ lat: y, lng: x })));
+    }));
+
+    fontes.push({ nome: nomeTalhao, polyPts, linhasCoords });
+  }
+  return fontes;
+}
+
+// Acha, dentro do .zip, o MasterData.xml da John Deere, e pra cada <Field> lê o
+// <OperationalBoundary>/<AdaptiveCurve> ligados a ele (por TaggedEntity) nos .gjson referenciados.
+async function _importarJohnDeereGen4Zip(zip) {
+  const caminhos = Object.keys(zip.files).filter(p => !zip.files[p].dir);
+  const caminhoMaster = caminhos.find(p => /MasterData\.xml$/i.test(p));
+  if(!caminhoMaster) return [];
+  const xmlTexto = await zip.files[caminhoMaster].async('text');
+  const doc = new DOMParser().parseFromString(xmlTexto, 'application/xml');
+  if(doc.getElementsByTagName('parsererror').length) return [];
+  const pastaSpatial = caminhoMaster.slice(0, caminhoMaster.lastIndexOf('/') + 1) + 'SpatialFiles/';
+
+  const arquivoDe = el => { const fn = el.getElementsByTagName('FilenameWithExtension')[0]; return fn ? fn.textContent.trim() : null; };
+  const fields = Array.from(doc.getElementsByTagName('Field')).map(el => ({ guid: el.getAttribute('StringGuid'), nome: el.getAttribute('Name') || 'Talhão importado' }));
+  const boundaries = Array.from(doc.getElementsByTagName('OperationalBoundary'));
+  const curvas = Array.from(doc.getElementsByTagName('AdaptiveCurve'));
+
+  const fontes = [];
+  for(const f of fields) {
+    const boundaryEl = boundaries.find(b => b.getAttribute('TaggedEntity') === f.guid);
+    const nomeArqBoundary = boundaryEl && arquivoDe(boundaryEl);
+    const entryBoundary = nomeArqBoundary && zip.files[pastaSpatial + nomeArqBoundary];
+    if(!entryBoundary) continue;
+    let boundaryJson; try { boundaryJson = JSON.parse(await entryBoundary.async('text')); } catch(e) { continue; }
+    const anel = boundaryJson.features && boundaryJson.features[0] && boundaryJson.features[0].geometry && boundaryJson.features[0].geometry.coordinates && boundaryJson.features[0].geometry.coordinates[0];
+    if(!anel || anel.length < 3) continue;
+    const polyPts = _semPontoDeFechamento(anel.map(([x, y]) => ({ lat: y, lng: x })));
+    if(polyPts.length < 3) continue;
+
+    const linhasCoords = [];
+    const curvaEl = curvas.find(c => c.getAttribute('TaggedEntity') === f.guid);
+    const nomeArqCurva = curvaEl && arquivoDe(curvaEl);
+    const entryCurva = nomeArqCurva && zip.files[pastaSpatial + nomeArqCurva];
+    if(entryCurva) {
+      try {
+        const curvaJson = JSON.parse(await entryCurva.async('text'));
+        (curvaJson.geometry && curvaJson.geometry.coordinates || []).forEach(linha => {
+          if(linha.length >= 2) linhasCoords.push(linha.map(([x, y]) => ({ lat: y, lng: x })));
+        });
+      } catch(e) {}
+    }
+    fontes.push({ nome: f.nome, polyPts, linhasCoords });
+  }
+  return fontes;
+}
+
+// Cria um talhão já travado, com contorno E linhas de plantio (diferente de
+// _criarTalhaoArquivadoSimples, que só faz o contorno) — usado pela importação do monitor GPS.
+function _criarTalhaoArquivadoComLinhas(nome, polyPts, linhasCoords) {
+  if(!polyPts || polyPts.length < 3) return false;
+  const ring = [...polyPts.map(p => [p.lng, p.lat]), [polyPts[0].lng, polyPts[0].lat]];
+  let haArea = 0;
+  try { haArea = turf.area(turf.polygon([ring])) / 10000; } catch(e) { return false; }
+
+  const uid = nextTalhaoUid++;
+  const idxN = talhoesArquivados.length;
+  const cor = CORES_TALHAO[idxN % CORES_TALHAO.length];
+  const polyLyr = L.polygon(polyPts.map(p => [p.lat, p.lng]), { color: cor, fillColor: cor, fillOpacity: .06, weight: 2 }).addTo(map);
+
+  const corLinha = '#FFD600';
+  const novasLinhas = (linhasCoords || []).filter(c => c.length >= 2).map(coordsLL => {
+    const pl = L.polyline(coordsLL.map(p => [p.lat, p.lng]), { color: corLinha, weight: 1.5, opacity: .95 }).addTo(map);
+    pl.on('click', () => { if(_modoPickLinha) _cliqueEmLinhaPlantio(pl); });
+    return pl;
+  });
+  let metrosLin = 0;
+  novasLinhas.forEach(pl => { const pts = pl.getLatLngs().flat(); for(let i = 0; i < pts.length - 1; i++) metrosLin += haversineM(pts[i], pts[i + 1]); });
+
+  let infoMk = null;
+  try {
+    const c = turf.centerOfMass(turf.polygon([ring])).geometry.coordinates;
+    const html = `<div class="poly-label"><div class="poly-label-head">&#9632; Talh&#227;o</div><div class="poly-label-body"><div class="poly-label-row"><span class="poly-label-lbl">&#193;rea</span><span class="poly-label-val">${haArea.toFixed(2)} ha</span></div>${novasLinhas.length ? `<div class="poly-label-row"><span class="poly-label-lbl">Linhas</span><span class="poly-label-val">${novasLinhas.length}</span></div>` : ''}</div></div>`;
+    infoMk = L.marker([c[1], c[0]], { icon: L.divIcon({ html, className: '', iconAnchor: [84, 58] }), interactive: false, zIndexOffset: 500 }).addTo(map);
+  } catch(e) {}
+
+  talhoesArquivados.push({
+    uid, idx: idxN + 1, cor, corLinha,
+    areaHa: haArea, spacing: 0, count: novasLinhas.length, metrosLin,
+    polyLayer: polyLyr, polyPts, linhas: novasLinhas, linhasDecl: [],
+    infoMarker: infoMk, baseLabelZoom: map.getZoom(), turfPoly: null
+  });
+  polyLyr.on('click', () => { if(modo === 'idle') selecionarTalhao(uid); });
+  return true;
+}
+
+// Ponto de entrada do botão "Importar do Monitor GPS" — detecta a marca pelo conteúdo do .zip
+// (pasta "AgGPS/Data" → Trimble; "MasterData.xml" → John Deere) e chama o leitor certo.
+async function importarMonitorGPS(file) {
+  if(typeof JSZip === 'undefined') { setStatus('Biblioteca de compactação (JSZip) não carregou — verifique sua conexão com a internet.', 'err'); return; }
+  setStatus('Lendo arquivo do monitor GPS…', 'info');
+  let zip;
+  try { zip = await JSZip.loadAsync(file); }
+  catch(e) { alert('Não consegui abrir o arquivo como .zip: ' + e.message); return; }
+
+  const caminhos = Object.keys(zip.files);
+  const ehTrimble = caminhos.some(p => /AgGPS\/Data\//i.test(p) && /Boundary\.shp$/i.test(p));
+  const ehJohnDeere = !ehTrimble && caminhos.some(p => /MasterData\.xml$/i.test(p));
+
+  try {
+    let fontes = [];
+    if(ehTrimble) fontes = await _importarTrimbleAgGpsZip(zip);
+    else if(ehJohnDeere) fontes = await _importarJohnDeereGen4Zip(zip);
+    else { setStatus('Não reconheci o formato do .zip — esperado uma pasta "AgGPS" (Trimble) ou "Gen4" (John Deere, com MasterData.xml).', 'err'); return; }
+
+    if(!fontes.length) { setStatus('Nenhum talhão com contorno válido encontrado no arquivo.', 'err'); return; }
+
+    let importados = 0;
+    fontes.forEach(f => { if(_criarTalhaoArquivadoComLinhas(f.nome, f.polyPts, f.linhasCoords)) importados++; });
+    if(!importados) { setStatus('Nenhum talhão válido encontrado no arquivo.', 'err'); return; }
+
+    renumerarTalhoes();
+    _updateLabelScale();
+    $('btnLimparArquivados').style.display = '';
+    $('btnDeclivTodos').disabled = false;
+    $('btnComprimentoTodos').disabled = false;
+    $('btnKml').style.display = 'flex';
+    $('btnDxf').style.display = 'flex';
+
+    const allPts = [];
+    talhoesArquivados.slice(-importados).forEach(t => t.polyPts.forEach(p => allPts.push([p.lat, p.lng])));
+    if(allPts.length) map.fitBounds(allPts, { padding: [50, 50] });
+
+    setStatus(`✓ ${importados} talhão(ões) importado(s) do monitor ${ehTrimble ? 'Trimble' : 'John Deere'}.`, 'ok');
+  } catch(e) {
+    alert('Erro ao importar do monitor GPS: ' + e.message);
+    console.error(e);
+  }
 }
 
 // ── Helpers PDF: projeção Mercator (igual ao módulo Curvas de Nível) ───────────
