@@ -2,8 +2,19 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>ETP Diária & Balanço Hídrico v1.14.1 — Agrolâmina</title>
+
+<!-- PWA -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1f4e4c">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Agrolâmina">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png" type="image/png">
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -171,6 +182,29 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
 #geracaoOverlay .spinner{width:22px;height:22px;border:3px solid var(--teal-light);border-top-color:var(--teal-dark);border-radius:50%;animation:girar .8s linear infinite;flex-shrink:0;}
 @keyframes girar{to{transform:rotate(360deg);}}
 #geracaoOverlay .txt{font-size:.85rem;color:var(--ink);font-weight:600;}
+
+/* ── Banner de instalação (PWA) ── */
+#installBanner{display:none;position:fixed;left:12px;right:12px;bottom:12px;z-index:9400;
+  background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 34px rgba(20,40,40,.22);
+  padding:12px 14px;align-items:center;gap:12px;max-width:460px;margin:0 auto;}
+#installBanner.aberto{display:flex;}
+#installBanner img{width:40px;height:40px;border-radius:9px;flex-shrink:0;}
+#installBanner .ib-txt{flex:1;min-width:0;}
+#installBanner .ib-txt b{display:block;font-size:.82rem;color:var(--ink);}
+#installBanner .ib-txt span{display:block;font-size:.72rem;color:var(--slate);margin-top:1px;}
+#installBanner .ib-btns{display:flex;align-items:center;gap:6px;flex-shrink:0;}
+#installBanner button{white-space:nowrap;}
+#installBanner .ib-close{background:none;color:#9aa6a5;font-size:1.1rem;line-height:1;padding:4px 6px;}
+#installBanner .ib-close:hover{color:var(--ink);}
+
+/* ── Tutorial iOS (Adicionar à Tela de Início) ── */
+#iosInstallTip{display:none;position:fixed;inset:0;z-index:9600;background:rgba(20,30,30,.55);align-items:flex-end;justify-content:center;}
+#iosInstallTip.aberto{display:flex;}
+#iosInstallTip .caixa{background:#fff;border-radius:16px 16px 0 0;padding:20px 22px 26px;max-width:460px;width:100%;box-shadow:0 -10px 40px rgba(0,0,0,.3);}
+#iosInstallTip h3{margin:0 0 10px;font-size:.95rem;color:var(--teal-dark);}
+#iosInstallTip ol{margin:0 0 14px;padding-left:18px;font-size:.82rem;color:var(--ink);line-height:1.9;}
+#iosInstallTip .ib-icon{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;background:var(--teal-light);color:var(--teal-dark);border-radius:5px;font-weight:700;margin:0 3px;vertical-align:middle;}
+#iosInstallTip button{width:100%;}
 </style>
 </head>
 <body>
@@ -182,6 +216,27 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
 
 <div id="geracaoOverlay">
   <div class="caixa"><div class="spinner"></div><div class="txt">Gerando relat&#243;rio...</div></div>
+</div>
+
+<div id="installBanner">
+  <img src="icon-192.png" alt="">
+  <div class="ib-txt"><b>Instalar o Agrolâmina</b><span>Acesse como um app, direto da tela inicial</span></div>
+  <div class="ib-btns">
+    <button class="btn-primary" id="installBtn" onclick="acionarInstalacao()">Instalar</button>
+    <button class="ib-close" onclick="fecharInstallBanner()" title="Fechar" aria-label="Fechar">&times;</button>
+  </div>
+</div>
+
+<div id="iosInstallTip" onclick="if(event.target===this)fecharTipIOS()">
+  <div class="caixa">
+    <h3>Instalar o Agrolâmina no iPhone/iPad</h3>
+    <ol>
+      <li>Toque no ícone de compartilhar <span class="ib-icon">&uarr;</span> na barra do Safari</li>
+      <li>Escolha <b>"Adicionar à Tela de Início"</b></li>
+      <li>Toque em <b>"Adicionar"</b> — pronto, o app fica na sua tela</li>
+    </ol>
+    <button class="btn-primary" onclick="fecharTipIOS()">Entendi</button>
+  </div>
 </div>
 
 <header>
@@ -1622,6 +1677,62 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
 
   render();
 })();
+</script>
+
+<script>
+(function(){
+  const LS_KEY='agrolamina_install_dismissed';
+  const banner=document.getElementById('installBanner');
+  const tipIOS=document.getElementById('iosInstallTip');
+  const btnInstalar=document.getElementById('installBtn');
+
+  const jaInstalado = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+  function dispensadoRecentemente(){
+    const t = localStorage.getItem(LS_KEY);
+    if (!t) return false;
+    return (Date.now() - Number(t)) < 1000*60*60*24*14; // 14 dias
+  }
+
+  window.fecharInstallBanner = function(){
+    banner.classList.remove('aberto');
+    try{ localStorage.setItem(LS_KEY, String(Date.now())); }catch(e){}
+  };
+  window.fecharTipIOS = function(){ tipIOS.classList.remove('aberto'); };
+
+  let deferredPrompt = null;
+  window.acionarInstalacao = function(){
+    if (deferredPrompt){
+      deferredPrompt.prompt();
+      deferredPrompt.userChoice.finally(()=>{ deferredPrompt=null; window.fecharInstallBanner(); });
+    } else if (isIOS){
+      tipIOS.classList.add('aberto');
+    }
+  };
+
+  if (jaInstalado || dispensadoRecentemente()) return;
+
+  if (isIOS){
+    // Safari iOS não expõe beforeinstallprompt — mostra o banner direto, orientando o passo a passo manual
+    banner.classList.add('aberto');
+  } else {
+    window.addEventListener('beforeinstallprompt', (e)=>{
+      e.preventDefault();
+      deferredPrompt = e;
+      banner.classList.add('aberto');
+    });
+  }
+
+  window.addEventListener('appinstalled', ()=>{ banner.classList.remove('aberto'); });
+})();
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(console.error);
+  });
+}
 </script>
 </body>
 </html>
