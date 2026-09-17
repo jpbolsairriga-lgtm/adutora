@@ -359,7 +359,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.88 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.89 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1000,6 +1000,16 @@ body.layout-lateral #status{grid-area:status;}
   <button class="modal-close" onclick="cancelarCenarioCurvas()">&#10005;</button>
   <h2 style="font-size:14px;font-weight:700;color:var(--acc2);margin:0 0 10px;">&#127760; Otimizar Cenário (Curvas)</h2>
   <div id="cenariosCurvasResumo" style="font-size:12px;color:var(--panel-text-dim);margin:0 0 12px;"></div>
+  <div style="margin:0 0 14px;">
+    <label style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--panel-text);margin-bottom:4px;">
+      <span>Curvatura da linha mestra</span>
+      <span id="curvaturaCenarioCurvasValor">100%</span>
+    </label>
+    <input type="range" id="curvaturaCenarioCurvas" min="0" max="100" value="100" step="5" style="width:100%;" oninput="ajustarCurvaturaCenarioCurvas(this.value)" title="100% segue o relevo por completo; valores menores 'fecham' a curvatura em direção a uma linha reta — ajuste até a pré-visualização ficar sem distorções indesejadas.">
+    <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--panel-text-dim);margin-top:2px;">
+      <span>Reta</span><span>Segue o relevo</span>
+    </div>
+  </div>
   <p style="font-size:11.5px;color:var(--panel-text-dim);margin:0 0 14px;">Pré-visualização tracejada em ciano no mapa — mova/dê zoom livremente pra conferir antes de confirmar.</p>
   <div style="display:flex;gap:8px;">
     <button class="rbtn-sm clr" style="flex:1;justify-content:center;" onclick="cancelarCenarioCurvas()">&#10005; Cancelar</button>
@@ -3222,6 +3232,26 @@ body.layout-lateral #status{grid-area:status;}
 // geradas), ZERO cruzamentos em 50,8 milhões de pares de segmentos testados — melhor ainda que a
 // v4.87 no mesmo teste; (D) painel de confirmação continua flutuante. Regressão completa (17
 // suítes centrais re-verificadas) sem erros de página.
+// v4.89: usuário aprovou a v4.88 ("ficou mto bom") mas notou que várias linhas ainda têm
+// distorções em trechos de relevo mais irregular, e pediu um controle no próprio painel de
+// pré-visualização pra ajustar isso — "abrindo mais ou fechando a linha", com a pré-visualização
+// em azul atualizando em tempo real. Adicionado um slider "Curvatura da linha mestra" (0% a 100%)
+// dentro do painel flutuante: _blendCurvaMestra(curva, fator) mistura cada ponto da mestra com o
+// ponto correspondente (mesma fração de percurso ao longo do comprimento) numa RETA ligando o
+// início ao fim — fator 100% = curva original (segue o relevo suavizado por completo), fator 0% =
+// reta pura, valores intermediários "fecham" a curvatura proporcionalmente. É uma mistura
+// point-a-point instantânea (não precisa re-caminhar o relevo nem buscar elevação de novo), então
+// _atualizarPreviewCenarioCurvas() só reaplica o campo de distância (_curvasPorCampoDeDistancia,
+// sem mudança) sobre a mestra ajustada e redesenha a pré-visualização — rápido o bastante pra
+// responder ao slider (debounce de 180ms, curto o suficiente pra parecer "tempo real" sem
+// recalcular a cada pixel arrastado).
+// Testado (test_v489_slider_curvatura.js, com sanity-check confirmando que o teste pega a
+// regressão de verdade fazendo _blendCurvaMestra ignorar o fator): fator 100% reproduz a curva
+// original ponto a ponto; fator 0% produz uma reta matematicamente exata (desvio < 1×10⁻⁹m de
+// qualquer ponto); fator 50% fica exatamente a meio caminho entre as duas (desvio da reta = 50%
+// do desvio original, num relevo com colina real de curvatura acentuada); mover o slider de
+// verdade recalcula e redesenha a pré-visualização (o número de linhas e a cobertura estimada
+// mudam de acordo). Regressão completa (18 suítes centrais re-verificadas) sem erros de página.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -11117,11 +11147,66 @@ async function otimizarCenarioCurvas() {
   let metrosLin = 0;
   melhor.curvas.forEach(pts => { for(let i = 0; i < pts.length - 1; i++) metrosLin += haversineM(pts[i], pts[i+1]); });
 
-  _cenariosCurvas = { curvas: melhor.curvas, spacing, talhaoUid: modoAtivo ? null : t.uid, modoAtivo, previewLayers };
+  _cenariosCurvas = { curvas: melhor.curvas, curvaMestraOriginal: melhor.curvaMestra, tPolyT, spacing, talhaoUid: modoAtivo ? null : t.uid, modoAtivo, previewLayers, fatorCurvatura: 1 };
   const coberturaPct = Math.round((1 - melhor.fracaoDescoberta) * 100);
   $('cenariosCurvasResumo').textContent = `${melhor.curvas.length} linha(s) derivadas de 1 linha mestra suavizada · ${Math.round(metrosLin)} m lineares · cobertura estimada: ${coberturaPct}%.`;
+  $('curvaturaCenarioCurvas').value = 100;
+  $('curvaturaCenarioCurvasValor').textContent = '100%';
   $('modalCenariosCurvas').classList.add('open');
   setStatus(`Linha mestra traçada e derivada por campo de distância (cobertura estimada ${coberturaPct}%) — confira a pré-visualização e confirme.`, 'ok');
+}
+
+// v4.89: pedido do usuário — "mtas linhas ainda possuem distorções... adicionar um lugar no
+// pop-up pra eu ajustar o ângulo, abrindo mais ou fechando a linha, com a visualização em azul em
+// tempo real". A linha mestra segue o relevo suavizado, mas em terrenos irregulares ainda pode
+// curvar mais do que o desejável em alguns trechos — em vez de a app tentar adivinhar o "tanto"
+// certo de curvatura, um slider deixa o usuário decidir visualmente. Mistura CADA PONTO da mestra
+// com o ponto correspondente (mesma fração de percurso ao longo do comprimento) numa RETA ligando
+// o início ao fim da mestra — fator 100% = curva original (segue o relevo por completo), fator 0%
+// = reta pura; valores intermediários "fecham" a curvatura proporcionalmente, sem distorcer o
+// trecho já reto nem precisar re-caminhar o relevo (instantâneo, resposta em tempo real no slider).
+function _blendCurvaMestra(curvaMestra, fator) {
+  if(fator >= 0.999) return curvaMestra;
+  const n = curvaMestra.length;
+  const acc = [0];
+  for(let i = 1; i < n; i++) acc.push(acc[i-1] + haversineM(curvaMestra[i-1], curvaMestra[i]));
+  const total = acc[n-1] || 1;
+  const start = curvaMestra[0], end = curvaMestra[n-1];
+  return curvaMestra.map((p, i) => {
+    const f = acc[i] / total;
+    const sLat = start.lat + f * (end.lat - start.lat), sLng = start.lng + f * (end.lng - start.lng);
+    return { lat: sLat + fator * (p.lat - sLat), lng: sLng + fator * (p.lng - sLng) };
+  });
+}
+
+// Recalcula e redesenha a pré-visualização com o fator de curvatura atual — só refaz o offset por
+// campo de distância (geometria pura, rápido) a partir da mestra já traçada, sem buscar elevação
+// nem re-caminhar o relevo de novo.
+function _atualizarPreviewCenarioCurvas(fatorPct) {
+  if(!_cenariosCurvas) return;
+  const { tPolyT, curvaMestraOriginal, spacing, previewLayers } = _cenariosCurvas;
+  const fator = Math.max(0, Math.min(100, fatorPct)) / 100;
+  const mestraAjustada = _blendCurvaMestra(curvaMestraOriginal, fator);
+  const curvas = _curvasPorCampoDeDistancia(tPolyT, mestraAjustada, spacing);
+
+  previewLayers.forEach(l => l.remove());
+  const novosPreview = curvas.map(pts => L.polyline(pts.map(p => [p.lat, p.lng]), { color: '#26c6da', weight: 2, opacity: .85, dashArray: '4,5' }).addTo(map));
+  let metrosLin = 0;
+  curvas.forEach(pts => { for(let i = 0; i < pts.length - 1; i++) metrosLin += haversineM(pts[i], pts[i+1]); });
+  const fracaoDescoberta = curvas.length ? _fracaoDescobertaDoTalhao(tPolyT, curvas, spacing) : 1;
+  const coberturaPct = Math.round((1 - fracaoDescoberta) * 100);
+
+  _cenariosCurvas.curvas = curvas;
+  _cenariosCurvas.previewLayers = novosPreview;
+  _cenariosCurvas.fatorCurvatura = fator;
+  $('cenariosCurvasResumo').textContent = `${curvas.length} linha(s) derivadas de 1 linha mestra suavizada · ${Math.round(metrosLin)} m lineares · cobertura estimada: ${coberturaPct}%.`;
+}
+
+let _debounceCurvaturaCenarioCurvas = null;
+function ajustarCurvaturaCenarioCurvas(valor) {
+  $('curvaturaCenarioCurvasValor').textContent = valor + '%';
+  clearTimeout(_debounceCurvaturaCenarioCurvas);
+  _debounceCurvaturaCenarioCurvas = setTimeout(() => _atualizarPreviewCenarioCurvas(parseFloat(valor)), 180);
 }
 
 function _cancelarPreviewCenarioCurvas() {
