@@ -353,7 +353,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.84 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.85 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -985,6 +985,20 @@ body.layout-lateral #status{grid-area:status;}
       </label>
       <div style="flex:1;"></div>
       <button class="rbtn-sm ok" id="btnUsarCenarioEscolhido" onclick="usarCenarioEscolhido()" disabled>&#10003; Usar Ângulo Selecionado</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal: Otimizar Cenário de Plantio (Curvas) ── -->
+<div class="modal-bg" id="modalCenariosCurvas" onclick="if(event.target===this)cancelarCenarioCurvas()">
+  <div class="modal" style="max-width:480px;">
+    <button class="modal-close" onclick="cancelarCenarioCurvas()">&#10005;</button>
+    <h2>&#127760; Otimizar Cenário de Plantio (Curvas)</h2>
+    <div id="cenariosCurvasResumo" style="font-size:12px;color:var(--panel-text-dim);margin:6px 0 14px;"></div>
+    <p style="font-size:11.5px;color:var(--panel-text-dim);margin:0 0 14px;">As linhas já aparecem no mapa em pré-visualização (tracejado ciano) — confira se cobrem bem o talhão, inclusive reentrâncias, antes de confirmar.</p>
+    <div style="display:flex;gap:8px;">
+      <button class="rbtn-sm clr" style="flex:1;justify-content:center;" onclick="cancelarCenarioCurvas()">&#10005; Cancelar</button>
+      <button class="rbtn-sm ok" style="flex:1;justify-content:center;" onclick="usarCenarioCurvasEscolhido()">&#10003; Usar Estas Linhas</button>
     </div>
   </div>
 </div>
@@ -3054,6 +3068,39 @@ body.layout-lateral #status{grid-area:status;}
 // (Curvas)" gera a curva/linhas corretamente SEM nunca ter chamado "Otimizar Cenário (Retas)"
 // antes, e "Otimizar Cenário (Retas)" continua funcionando isolado, sem nenhuma referência cruzada
 // entre os dois. Regressão completa (8 suítes centrais re-verificadas) sem erros de página.
+// v4.85: usuário testou "Otimizar Cenário (Curvas)" num talhão real (11ha, declive de norte a sul)
+// e reportou 3 problemas: (1) várias linhas não cobriam o polígono inteiro — uma reentrância do
+// talhão ficou totalmente sem linha; (2) linhas saindo da faixa/contorno do talhão; (3) as linhas
+// ficaram com bastante quina/ângulo, quando o esperado era uma curva suave (mesmo que o rumo mude
+// ao longo do talhão — sem problema nenhum nisso). Causa raiz: a v4.83/v4.84 traçava só UMA curva
+// central e gerava as linhas paralelas por OFFSET PERPENDICULAR FIXO através da mesma engine
+// "Suave" das guias desenhadas à mão (reamostra pra poucos pontos-chave, reconstrói por spline
+// catmullRom, remove auto-cruzamento, corta no contorno) — o offset se afasta do relevo real quanto
+// mais longe da curva central, nunca alcança uma reentrância fora do alcance dela, e o corte no
+// contorno côncavo é o que introduzia as quinas.
+// Correção: eliminados o offset e a engine de guia por completo. _tracarGradeDeCurvasDeNivel()
+// agora semeia pontos de partida numa GRADE regular cobrindo TODO o retângulo do talhão (célula do
+// tamanho do espaçamento pedido, semeada no CENTRO da célula pra não coincidir com a borda de
+// talhões retangulares) — cada ponto de partida ainda dentro do talhão numa célula "não coberta"
+// dispara seu PRÓPRIO caminhar independente (_tracarCurvaDeNivel, agora generalizada pra aceitar
+// um ponto de partida à escolha, não só o centro do talhão). Cada caminhar já é suave por natureza
+// (passo de 3m seguindo o gradiente local) e já garante nunca sair do talhão — desenhado DIRETO no
+// mapa sem reamostragem/reconstrução/corte nenhum, então não sobra de onde vir quina. A grade
+// alcança reentrâncias porque os pontos de partida cobrem o retângulo inteiro, não só uma faixa
+// central; células já percorridas por uma curva ficam marcadas, afastando as curvas vizinhas
+// naturalmente ~espaçamento umas das outras, sem impor nenhum valor de offset de fora.
+// Somado a isso, um passo de confirmação novo (modalCenariosCurvas): a curva agora aparece em
+// PRÉ-VISUALIZAÇÃO tracejada antes de alterar o talhão de verdade — só aplica ao clicar "Usar Estas
+// Linhas" (usarCenarioCurvasEscolhido()), dando a mesma chance de revisar que a tabela de retas já
+// dava (o usuário só percebeu os 3 problemas porque o resultado ruim já tinha sido aplicado direto).
+// Testado (test_v485_curvas_grade_cobertura.js, com sanity-check confirmando que o teste pega a
+// regressão de verdade voltando a gerar 1 curva só): num talhão em "U" (base + 2 braços separados
+// por um vão — o braço fora do alcance do centro geométrico é a reentrância que ficava sem linha
+// nenhuma antes) com DEM sintético de inclinação pura, as 25 curvas geradas cobrem os 3 trechos do
+// "U" (base + os 2 braços), NENHUM ponto de nenhuma curva cai fora do talhão, e não há quebra de
+// rumo abrupta entre segmentos consecutivos (sem quinas). Regressão completa (16 suítes centrais
+// re-verificadas, incluindo test_v483/test_v484 atualizados pro novo fluxo com confirmação) sem
+// erros de página.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -10691,25 +10738,38 @@ function usarCenarioEscolhido() {
   setStatus(`Linhas geradas no ângulo ${angulo}° (${_rumoCardinal(angulo)}) — ${novasLinhas.length} linha(s), ${Math.round(metrosLin)} m.${modoAtivo ? ' Trave o talhão quando estiver satisfeito.' : ''}`, 'ok');
 }
 
-// ── Otimizar Cenário (Curvas) — traça uma curva de nível sozinha, sem desenhar à mão ─────────
+// ── Otimizar Cenário (Curvas) — traça VÁRIAS curvas de nível sozinho, sem desenhar à mão ─────
 // v4.83: pedido do usuário — dentro do Otimizar Cenário de Plantio, uma opção que desenha
 // automaticamente uma linha que "anda em nível" (acompanha o relevo em cota aproximadamente
-// constante) e já gera as linhas de plantio em curva a partir dela — a técnica mais eficaz contra
-// erosão. Reaproveita a engine de offset "Suave" que já existia pra guias desenhadas à mão
-// (gerarLinhas() em modoGuia='spline') — a única peça nova é o traçado automático da curva.
-// v4.84: virou botão PRÓPRIO no ribbon ("Otimizar Cenário (Curvas)"), buscando sua própria grade de
-// elevação em vez de depender de _cenariosPlantio (que só existia depois de rodar a análise de
-// retas) — antes, pra gerar a curva era preciso passar pelo modal de retas primeiro, misturando os
-// dois fluxos numa tabela/tela só; agora cada botão analisa e busca elevação de forma independente.
-//
-// Anda perpendicular ao GRADIENTE de elevação (não ao longo dele) — perpendicular ao declive é,
-// por definição, a direção que não sobe nem desce (nível constante). A cada passo pequeno (3m),
-// reamostra o gradiente local e escolhe, das duas perpendiculares possíveis, a mais parecida com o
-// rumo do passo anterior — sem isso, a linha ficaria invertendo de lado a cada passo em vez de
-// seguir num sentido só. Terreno local chapado (gradiente ~0) mantém o rumo anterior em vez de
-// girar sem direção definida. Anda nos dois sentidos a partir de um ponto de partida garantido
-// dentro do talhão (turf.pointOnFeature — mais seguro que o centróide, que pode cair fora do
-// polígono num talhão bem côncavo) até sair do talhão de cada lado.
+// constante) — a técnica mais eficaz contra erosão em terreno com declive.
+// v4.84: virou botão PRÓPRIO no ribbon, buscando sua própria grade de elevação em vez de depender
+// de _cenariosPlantio (a curva só funcionava depois de rodar a análise de retas primeiro).
+// v4.85: a v4.83/v4.84 traçava UMA curva central e depois gerava as linhas paralelas OFERTANDO-A
+// (offset perpendicular fixo) através da mesma engine "Suave" usada por guias desenhadas à mão
+// (gerarLinhas() em modoGuia='spline', com reamostragem pra poucos pontos-chave + reconstrução por
+// catmullRom + remoção de auto-cruzamento + corte no contorno). Em campo real isso deu 3 problemas
+// reportados pelo usuário: (1) o offset fixo se afasta do relevo verdadeiro conforme a distância da
+// curva central aumenta, then não seguia mais "em nível" de fato nas bordas do talhão; (2) talhões
+// com lóbulos/reentrâncias (ex: uma "orelha" no canto) ficavam sem NENHUMA linha nessas áreas,
+// porque só existia uma linha-base pra ofertar a partir do centro; (3) a reamostragem+reconstrução
+// por spline + corte no contorno concavo introduzia quinas visíveis, em vez da curva suave que o
+// caminhar original já produzia.
+// Correção: eliminado o offset e a engine de guia por completo. Agora _tracarGradeDeCurvasDeNivel()
+// semeia pontos de partida numa GRADE regular cobrindo TODO o retângulo do talhão (não só ao longo
+// de uma linha perpendicular à curva central) — cada ponto de partida ainda dentro do talhão e
+// numa célula "não coberta" dispara seu PRÓPRIO caminhar independente (reaproveita
+// _tracarCurvaDeNivel, generalizada pra aceitar um ponto de partida à escolha em vez de só o
+// centro). Cada caminhar já é uma curva suave por natureza (passo de 3m seguindo o gradiente local)
+// e já garante nunca sair do talhão (checa turf.booleanPointInPolygon a cada passo) — desenhada
+// DIRETO no mapa sem reamostragem/reconstrução/corte nenhum, então não tem de onde vir quina. A
+// grade cobre lóbulos e reentrâncias porque os pontos de partida cobrem o retângulo inteiro, não só
+// uma faixa central. As células (do tamanho do espaçamento pedido) já percorridas por uma curva são
+// marcadas como cobertas, então curvas vizinhas nascem naturalmente ~espaçamento de distância umas
+// das outras, sem precisar de um valor de offset imposto de fora.
+// Some com isso um passo de confirmação (modalCenariosCurvas): a curva agora é desenhada em
+// PRÉ-VISUALIZAÇÃO (tracejada) antes de alterar o talhão de verdade — só aplica ao clicar "Usar
+// Estas Linhas", dando a mesma chance de revisar que a tabela de retas já dava (o usuário notou a
+// falta dessa revisão ao ver um resultado ruim já aplicado direto no talhão).
 function _gradienteElevacaoEm(lat, lng, sampler, passoM) {
   const mLat = 111320, mLng = Math.cos(lat * Math.PI / 180) * 111320;
   const dLatPasso = passoM / mLat, dLngPasso = passoM / mLng;
@@ -10721,9 +10781,14 @@ function _gradienteElevacaoEm(lat, lng, sampler, passoM) {
   return { leste: (hE - hW) / (2 * passoM), norte: (hN - hS) / (2 * passoM) };
 }
 
-function _tracarCurvaDeNivel(tPolyT, sampler) {
-  const startXY = turf.pointOnFeature(tPolyT).geometry.coordinates; // [lng,lat], garantido dentro
-  const start = { lat: startXY[1], lng: startXY[0] };
+// v4.85: aceita um ponto de partida explícito (pra poder semear várias curvas em vários pontos da
+// grade) — sem o 3º argumento, continua caindo no centro do talhão (turf.pointOnFeature), igual
+// antes, então quem ainda chamar com 2 argumentos não quebra.
+function _tracarCurvaDeNivel(tPolyT, sampler, startLatLng) {
+  const start = startLatLng || (() => {
+    const xy = turf.pointOnFeature(tPolyT).geometry.coordinates; // [lng,lat], garantido dentro
+    return { lat: xy[1], lng: xy[0] };
+  })();
   const passoM = 3, maxPassos = 4000;
 
   function tracarLado(sinalInicial) {
@@ -10757,32 +10822,131 @@ function _tracarCurvaDeNivel(tPolyT, sampler) {
   return curva.length >= 3 ? curva : null;
 }
 
+// v4.85: gera VÁRIAS curvas de nível independentes, semeadas numa grade que cobre o retângulo
+// inteiro do talhão (inclusive lóbulos/reentrâncias) — ver comentário acima da seção pra entender
+// por que isso substituiu o offset perpendicular de uma única curva central.
+function _tracarGradeDeCurvasDeNivel(tPolyT, sampler, spacingM) {
+  const [minLng, minLat, maxLng, maxLat] = turf.bbox(tPolyT);
+  const latMed = (minLat + maxLat) / 2;
+  const mLat = 111320, mLng = Math.cos(latMed * Math.PI / 180) * 111320;
+  const dLat = spacingM / mLat, dLng = spacingM / mLng;
+
+  // Cada célula da grade (do tamanho do espaçamento pedido) só pode originar UMA curva — isso é o
+  // que afasta as curvas vizinhas ~espaçamento umas das outras de forma natural, em vez de impor um
+  // offset fixo que não acompanha o relevo real.
+  const cobertos = new Set();
+  const chaveCelula = (lat, lng) => Math.floor((lat - minLat) / dLat) + '_' + Math.floor((lng - minLng) / dLng);
+  const marcarCelula = (lat, lng) => cobertos.add(chaveCelula(lat, lng));
+
+  const nRows = Math.max(1, Math.ceil((maxLat - minLat) / dLat));
+  const nCols = Math.max(1, Math.ceil((maxLng - minLng) / dLng));
+  const MAX_LINHAS = 400; // segurança — espaçamento minúsculo num talhão grande não trava o navegador
+
+  // Semeia no CENTRO de cada célula (r+0.5/c+0.5), não no canto — nasce no canto colidiria em cheio
+  // com talhões retangulares (ou com qualquer vértice caindo bem no bbox), onde o ponto de partida
+  // ficaria exatamente SOBRE a borda do polígono; turf.booleanPointInPolygon considera borda como
+  // "dentro" (correto), então esse ponto seria aceito e, num relevo sem curvatura nenhuma perto da
+  // borda, o caminhar sairia colado exatamente na borda em vez de entrar pro miolo do talhão.
+  const curvas = [];
+  for(let r = 0; r <= nRows && curvas.length < MAX_LINHAS; r++) {
+    const lat = minLat + (r + 0.5) * dLat;
+    for(let c = 0; c <= nCols && curvas.length < MAX_LINHAS; c++) {
+      const lng = minLng + (c + 0.5) * dLng;
+      const chave = chaveCelula(lat, lng);
+      if(cobertos.has(chave)) continue;
+      if(!turf.booleanPointInPolygon(turf.point([lng, lat]), tPolyT)) { cobertos.add(chave); continue; }
+      const curva = _tracarCurvaDeNivel(tPolyT, sampler, { lat, lng });
+      if(!curva) { cobertos.add(chave); continue; }
+      curva.forEach(p => marcarCelula(p.lat, p.lng));
+      curvas.push(curva);
+    }
+  }
+  return curvas;
+}
+
+let _cenariosCurvas = null; // {curvas, spacing, talhaoUid, modoAtivo, previewLayers} — pré-visualização pendente
+
 async function otimizarCenarioCurvas() {
-  setStatus('Buscando elevação do terreno pra traçar a curva de nível automaticamente…', 'info');
+  const spacing = Math.max(0.5, parseFloat($('espac').value) || 6);
+
+  setStatus('Buscando elevação do terreno pra traçar as curvas de nível…', 'info');
   $('btnOtimizarCenarioCurvas').disabled = true;
   const prep = await _prepararTalhaoParaOtimizacao();
   $('btnOtimizarCenarioCurvas').disabled = false;
   if(!prep) return;
-  const { tPolyT, sampler, modoAtivo } = prep;
+  const { tPolyT, sampler, modoAtivo, t } = prep;
 
-  if(!modoAtivo && talhaoSelecionadoUid !== null && polyPts.length < 3) ativarTalhaoParaEdicao();
-  if(!turfPoly || polyPts.length < 3) { setStatus('O contorno não está mais disponível — reabra/selecione o talhão e tente de novo.', 'err'); return; }
+  const curvas = _tracarGradeDeCurvasDeNivel(tPolyT, sampler, spacing);
+  if(!curvas.length) { setStatus('Não consegui traçar nenhuma curva de nível nesse talhão — desenhe a guia manualmente (Suave) em vez disso.', 'err'); return; }
 
-  const curva = _tracarCurvaDeNivel(tPolyT, sampler);
-  if(!curva) { setStatus('Não consegui traçar uma curva de nível automática nesse talhão — desenhe a guia manualmente (Suave) em vez disso.', 'err'); return; }
+  _cancelarPreviewCenarioCurvas();
+  const previewLayers = curvas.map(pts => L.polyline(pts.map(p => [p.lat, p.lng]), { color: '#26c6da', weight: 2, opacity: .85, dashArray: '4,5' }).addTo(map));
+  let metrosLin = 0;
+  curvas.forEach(pts => { for(let i = 0; i < pts.length - 1; i++) metrosLin += haversineM(pts[i], pts[i+1]); });
 
-  // Mesmo critério de reamostragem já usado em usarCurvaComoGuia() — a curva crua tem centenas/
-  // milhares de pontos (passo de 3m), viraria uma guia com marcador arrastável em cada um; o modo
-  // Suave (catmullRom) reconstrói a curva orgânica a partir de poucos pontos-chave.
-  const alvo = Math.max(6, Math.min(30, Math.round(curva.length / 20)));
-  const simples = resampleCurve(curva, alvo);
+  _cenariosCurvas = { curvas, spacing, talhaoUid: modoAtivo ? null : t.uid, modoAtivo, previewLayers };
+  $('cenariosCurvasResumo').textContent = `${curvas.length} linha(s) em curva de nível · ${Math.round(metrosLin)} m lineares · espaçamento alvo ${spacing} m.`;
+  $('modalCenariosCurvas').classList.add('open');
+  setStatus(`${curvas.length} curva(s) de nível traçada(s) — confira a pré-visualização tracejada no mapa e confirme.`, 'ok');
+}
 
-  limparGuia();
-  setModoGuia('spline');
-  simples.forEach(p => addGuidePt(L.latLng(p.lat, p.lng)));
-  finalizarGuia();
-  gerarLinhas();
-  setStatus(`Curva de nível traçada automaticamente e linhas de plantio geradas${modoAtivo ? ' — trave o talhão quando estiver satisfeito' : ''}.`, 'ok');
+function _cancelarPreviewCenarioCurvas() {
+  if(_cenariosCurvas) { _cenariosCurvas.previewLayers.forEach(l => l.remove()); _cenariosCurvas = null; }
+}
+
+function cancelarCenarioCurvas() {
+  _cancelarPreviewCenarioCurvas();
+  $('modalCenariosCurvas').classList.remove('open');
+}
+
+function usarCenarioCurvasEscolhido() {
+  if(!_cenariosCurvas) return;
+  const { modoAtivo, curvas, spacing, previewLayers } = _cenariosCurvas;
+  let t = null;
+  if(!modoAtivo) {
+    t = talhoesArquivados.find(x => x.uid === _cenariosCurvas.talhaoUid);
+    if(!t) { setStatus('Talhão não encontrado (foi excluído ou alterado?).', 'err'); cancelarCenarioCurvas(); return; }
+  } else if(!turfPoly || polyPts.length < 3) {
+    setStatus('O contorno ativo não existe mais.', 'err'); cancelarCenarioCurvas(); return;
+  }
+
+  const cor = $('corLinha')?.value || (t && t.corLinha) || corLinhaAtual || '#FFD600'; // sempre respeita a cor escolhida no seletor
+  const esp = parseFloat($('espess').value) || 1.5;
+  previewLayers.forEach(l => l.remove()); // some com a pré-visualização tracejada — a versão final é redesenhada com o estilo real
+  const novasLinhas = curvas.map(pts => {
+    const pl = L.polyline(pts.map(p => [p.lat, p.lng]), { color: cor, weight: esp, opacity: .95 }).addTo(map);
+    pl.on('click', () => { if(_modoPickLinha) _cliqueEmLinhaPlantio(pl); });
+    return pl;
+  });
+  let metrosLin = 0;
+  novasLinhas.forEach(pl => { const pts = pl.getLatLngs().flat(); for(let i = 0; i < pts.length - 1; i++) metrosLin += haversineM(pts[i], pts[i+1]); });
+
+  if(modoAtivo) {
+    // Mesmo estado final que "Gerar Linhas" comum deixa pronto (aparece "Travar Talhão",
+    // "Redesenhar Linhas" etc.) — igual ao fluxo já usado por usarCenarioEscolhido() nas retas.
+    linhas.forEach(l => l.remove()); linhas = novasLinhas;
+    linhasDecl.forEach(l => l.remove()); linhasDecl = [];
+    corLinhaAtual = cor; spacingAtual = spacing; countLinhasAtual = novasLinhas.length; metrosLinAtual = metrosLin;
+    const ha = areaHa(polyPts); areaHaAtual = ha;
+    $('iLinhas').textContent = novasLinhas.length;
+    $('iEspac').textContent = spacing + ' m';
+    mostrarLabel(ha, spacing, novasLinhas.length, metrosLin);
+    polyMarkers.forEach(m => m.dragging && m.dragging.disable());
+    $('btnTravarTalhao').style.display = 'flex';
+    $('btnRedesenharLinhas').style.display = 'flex';
+    $('divDeclivAtivo').style.display = '';
+  } else {
+    t.linhas.forEach(l => l.remove());
+    t.linhasDecl.forEach(l => l.remove());
+    t.linhas = novasLinhas; t.linhasDecl = [];
+    t.count = novasLinhas.length; t.metrosLin = metrosLin; t.spacing = spacing; t.corLinha = cor;
+    if(t.infoMarker) t.infoMarker.remove();
+    t.infoMarker = _criarInfoMarkerParaTalhao(t);
+  }
+
+  _cenariosCurvas = null;
+  $('modalCenariosCurvas').classList.remove('open');
+  setStatus(`Linhas em curva de nível geradas — ${novasLinhas.length} linha(s), ${Math.round(metrosLin)} m.${modoAtivo ? ' Trave o talhão quando estiver satisfeito.' : ''}`, 'ok');
 }
 
 // ── Mapa Temático (declividade longitudinal na direção escolhida) ────────────────────────────
