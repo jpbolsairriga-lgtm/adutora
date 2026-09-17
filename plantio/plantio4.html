@@ -353,7 +353,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.83 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.84 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -676,10 +676,11 @@ body.layout-lateral #status{grid-area:status;}
             <label>Passo angular (°)</label>
             <input type="number" id="otimPassoAng" class="rfield" value="10" min="1" max="90" step="1">
           </div>
-          <button class="rbtn c-purple" id="btnOtimizarCenarios" onclick="analisarCenariosPlantio()" title="Testa várias direções de plantio (0° a 180°, no passo angular escolhido) pro talhão ativo ou selecionado e mostra comprimento/manobras/declividade de cada uma — mesma ideia da ferramenta 'Otimização de Linhas Retas' do Civil3D/AgroCAD"><span class="ico">&#9881;</span><span class="lbl">Otimizar Cenário</span></button>
+          <button class="rbtn c-purple" id="btnOtimizarCenarios" onclick="analisarCenariosPlantio()" title="Testa várias direções de plantio (0° a 180°, no passo angular escolhido) pro talhão ativo ou selecionado e mostra comprimento/manobras/declividade de cada uma — mesma ideia da ferramenta 'Otimização de Linhas Retas' do Civil3D/AgroCAD"><span class="ico">&#9881;</span><span class="lbl">Otimizar Cenário (Retas)</span></button>
+          <button class="rbtn c-purple" id="btnOtimizarCenarioCurvas" onclick="otimizarCenarioCurvas()" title="Traça sozinho uma curva que acompanha o relevo em cota aproximadamente constante (anda perpendicular ao declive, sem precisar desenhar à mão) e já gera as linhas de plantio em curva a partir dela — a técnica mais eficaz contra erosão em terreno com declive. Análise independente da otimização de linhas retas — não usa a mesma tabela."><span class="ico">&#127760;</span><span class="lbl">Otimizar Cenário (Curvas)</span></button>
           <button class="rbtn-sm clr" id="btnLimparMapaTematico" style="display:none;" onclick="limparMapaTematico(talhoesArquivados.find(x=>x.mapaTematicoOverlay))">&#10005; Limpar Mapa Temático</button>
         </div>
-        <div class="rgroup-title">Otimizar Cenário de Plantio (talhão ativo ou selecionado)</div>
+        <div class="rgroup-title">Otimizar Cenário de Plantio (talhão ativo ou selecionado) — retas e curvas são analisadas separadamente, cada uma no seu botão</div>
       </div>
       <div class="rgroup" id="divDeclivAtivo" style="display:none;">
         <div class="rgroup-body">
@@ -973,7 +974,7 @@ body.layout-lateral #status{grid-area:status;}
 <div class="modal-bg" id="modalCenarios" onclick="if(event.target===this)fecharModalCenarios()">
   <div class="modal" style="max-width:960px;width:97%">
     <button class="modal-close" onclick="fecharModalCenarios()">&#10005;</button>
-    <h2>&#9881; Otimizar Cenário de Plantio</h2>
+    <h2>&#9881; Otimizar Cenário de Plantio (Linhas Retas)</h2>
     <div id="cenariosResumo" style="font-size:11px;color:var(--panel-text-dim);margin:4px 0 10px;"></div>
     <div style="overflow:auto;max-height:50vh;border:1px solid var(--panel-border);border-radius:6px;">
       <table id="tabelaCenarios" style="width:100%;border-collapse:collapse;font-size:11.5px;white-space:nowrap;"></table>
@@ -983,7 +984,6 @@ body.layout-lateral #status{grid-area:status;}
         <input type="checkbox" id="cenariosIncluirMapa" checked> Incluir mapa temático (áreas acima da declividade máxima)
       </label>
       <div style="flex:1;"></div>
-      <button class="rbtn-sm" id="btnGuiaEmNivelAuto" onclick="gerarGuiaEmNivelAutomatica()" title="Traça automaticamente uma linha que acompanha o relevo em cota aproximadamente constante (anda perpendicular ao declive, não precisa desenhar à mão) e já gera as linhas de plantio em curva a partir dela — a técnica mais eficaz contra erosão em terreno com declive.">&#127760; Gerar Guia em Nível Automaticamente</button>
       <button class="rbtn-sm ok" id="btnUsarCenarioEscolhido" onclick="usarCenarioEscolhido()" disabled>&#10003; Usar Ângulo Selecionado</button>
     </div>
   </div>
@@ -3037,6 +3037,23 @@ body.layout-lateral #status{grid-area:status;}
 // esperado) e a elevação varia menos de 0,001m ao longo de cada linha — confirma que a curva andou
 // mesmo em nível e perpendicular ao declive real. Regressão completa (7 suítes centrais
 // re-verificadas) sem erros de página.
+// v4.84: usuário reportou que a tabela de "Otimizar Cenário" parecia misturar retas e curvas —
+// causa real: a curva automática (v4.83) morava DENTRO do modal de retas e só rodava depois de
+// clicar "Otimizar Cenário" pra retas primeiro (reaproveitava a grade de elevação já buscada ali
+// via _cenariosPlantio), então os dois fluxos ficavam emaranhados numa tela/tabela só em vez de
+// serem análises separadas de verdade. Separado em DOIS botões no ribbon, no mesmo estilo visual:
+// "Otimizar Cenário (Retas)" (o modal com a tabela de ângulos, inalterado) e "Otimizar Cenário
+// (Curvas)" (novo — dispara a curva de nível automática direto, sem abrir modal nenhum). Removido
+// o botão "Gerar Guia em Nível Automaticamente" de dentro do modal de retas e a função
+// gerarGuiaEmNivelAutomatica() foi renomeada/reescrita como otimizarCenarioCurvas(), que agora busca
+// sua PRÓPRIA grade de elevação (fatorada num helper novo, _prepararTalhaoParaOtimizacao(), usado
+// pelos dois botões) em vez de depender de _cenariosPlantio — os dois botões agora são 100%
+// independentes: dá pra rodar um sem nunca ter rodado o outro.
+// Testado (test_v484_otimizar_cenarios_separados.js, com sanity-check confirmando que o teste pega
+// a regressão de verdade reintroduzindo a dependência de _cenariosPlantio): "Otimizar Cenário
+// (Curvas)" gera a curva/linhas corretamente SEM nunca ter chamado "Otimizar Cenário (Retas)"
+// antes, e "Otimizar Cenário (Retas)" continua funcionando isolado, sem nenhuma referência cruzada
+// entre os dois. Regressão completa (8 suítes centrais re-verificadas) sem erros de página.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -10428,41 +10445,38 @@ function _rumoCardinal(azimuteDeg) {
   return pontos[Math.round(a / 22.5) % 8];
 }
 
-let _cenariosPlantio = null; // {resultados, limiares, spacing, declMax, talhaoUid, sampler, tPolyT, anguloSelecionado}
+let _cenariosPlantio = null; // {resultados, limiares, spacing, declMax, talhaoUid, modoAtivo, anguloSelecionado} — só retas
 
-async function analisarCenariosPlantio() {
+// v4.84: "Otimizar Cenário (Retas)" e "Otimizar Cenário (Curvas)" eram uma coisa só — a curva
+// automática (v4.83) morava DENTRO do modal de retas e só funcionava depois de rodar a análise de
+// retas primeiro (reaproveitava _cenariosPlantio.tPolyT/sampler), o que misturava os dois fluxos na
+// mesma tela/tabela e obrigava passar por um pra chegar no outro. Agora cada botão do ribbon dispara
+// sua PRÓPRIA busca de elevação e sua própria análise, de forma totalmente independente — só o
+// trecho comum (achar o talhão ativo/selecionado, montar o polígono turf, buscar e interpolar a
+// grade de elevação) fica compartilhado aqui embaixo, sem nenhum estado global entre os dois.
+async function _prepararTalhaoParaOtimizacao() {
   // Funciona tanto no talhão ATIVO (contorno já fechado, ainda não travado — mesma situação de
   // "Gerar Linhas" comum) quanto num talhão já travado e selecionado. talhaoSelecionadoUid só
   // existe pra talhões travados; sem seleção, cai no contorno ativo (polyPts/turfPoly).
   const modoAtivo = talhaoSelecionadoUid === null;
   let t = null, polyPtsRef;
   if(modoAtivo) {
-    if(!turfPoly || polyPts.length < 3) { setStatus('Desenhe (e feche) o contorno do talhão primeiro, ou selecione um talhão já travado.', 'err'); return; }
+    if(!turfPoly || polyPts.length < 3) { setStatus('Desenhe (e feche) o contorno do talhão primeiro, ou selecione um talhão já travado.', 'err'); return null; }
     polyPtsRef = polyPts;
   } else {
     t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
-    if(!t) return;
+    if(!t) return null;
     polyPtsRef = t.polyPts;
   }
   if(!window.google?.maps?.ElevationService && !_elevacaoLocalDisponivel() && !_demLocalDisponivel()) {
     setStatus('Ative o Google Maps (chave API) ou importe um DEM/curvas de nível locais pra essa análise — ela precisa de elevação real do terreno.', 'err');
-    return;
+    return null;
   }
-
-  const spacing = Math.max(0.5, parseFloat($('espac').value) || 6);
-  const declMax = Math.max(0.1, parseFloat($('otimDeclMax').value) || 10);
-  const passoAng = Math.max(1, Math.min(90, parseFloat($('otimPassoAng').value) || 10));
-  const limiares = ($('otimFaixas').value || '')
-    .split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n) && n > 0).sort((a,b) => a-b);
-  if(!limiares.length) { setStatus('Informe pelo menos uma faixa de declividade válida (ex: 10,12,14).', 'err'); return; }
 
   const ring = [...polyPtsRef.map(p => [p.lng, p.lat]), [polyPtsRef[0].lng, polyPtsRef[0].lat]];
   let tPolyT, tBoundT;
   try { tPolyT = turf.polygon([ring]); turf.rewind(tPolyT, {mutate:true}); tBoundT = turf.polygonToLine(tPolyT); }
-  catch(e) { setStatus('Erro ao processar o polígono do talhão.', 'err'); return; }
-
-  setStatus('Buscando elevação do terreno pra testar os cenários…', 'info');
-  $('btnOtimizarCenarios').disabled = true;
+  catch(e) { setStatus('Erro ao processar o polígono do talhão.', 'err'); return null; }
 
   const bbox = turf.bbox(tPolyT);
   const n = 30; // resolução da grade de elevação — o sampler bilinear interpola entre células
@@ -10478,14 +10492,31 @@ async function analisarCenariosPlantio() {
     if(!elevFlat.some(v => v != null)) throw new Error('nenhuma fonte de elevação respondeu');
   } catch(e) {
     setStatus('Falha ao buscar elevação: ' + e.message, 'err');
-    $('btnOtimizarCenarios').disabled = false;
-    return;
+    return null;
   }
   // v4.50: preenchia buraco nulo com a média da grade inteira — funcionava (evita NaN), mas achata
   // a região sem dado num platô artificial na média, em vez de estender o relevo real mais
   // próximo (mesma correção do v4.48/v4.50 nos outros consumidores — ver _preencherGradeVazios).
   const elevGrid = _preencherGradeVazios(Array.from({length:n}, (_,r) => Array.from({length:n}, (_,c) => elevFlat[r*n+c])), n);
   const sampler = _mkEscoamentoSampler(elevGrid, lats, lngs, n);
+
+  return { modoAtivo, t, tPolyT, tBoundT, sampler };
+}
+
+async function analisarCenariosPlantio() {
+  const spacing = Math.max(0.5, parseFloat($('espac').value) || 6);
+  const declMax = Math.max(0.1, parseFloat($('otimDeclMax').value) || 10);
+  const passoAng = Math.max(1, Math.min(90, parseFloat($('otimPassoAng').value) || 10));
+  const limiares = ($('otimFaixas').value || '')
+    .split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n) && n > 0).sort((a,b) => a-b);
+  if(!limiares.length) { setStatus('Informe pelo menos uma faixa de declividade válida (ex: 10,12,14).', 'err'); return; }
+
+  setStatus('Buscando elevação do terreno pra testar os cenários de linhas retas…', 'info');
+  $('btnOtimizarCenarios').disabled = true;
+  const prep = await _prepararTalhaoParaOtimizacao();
+  $('btnOtimizarCenarios').disabled = false;
+  if(!prep) return;
+  const { modoAtivo, t, tPolyT, tBoundT, sampler } = prep;
 
   const resultados = [];
   for(let ang = 0; ang < 180; ang += passoAng) {
@@ -10522,7 +10553,6 @@ async function analisarCenariosPlantio() {
     });
   }
 
-  $('btnOtimizarCenarios').disabled = false;
   if(!resultados.length) { setStatus('Nenhum cenário gerou linhas válidas — confira o espaçamento.', 'err'); return; }
 
   _cenariosPlantio = { resultados, limiares, spacing, declMax, talhaoUid: modoAtivo ? null : t.uid, modoAtivo, sampler, tPolyT, anguloSelecionado: null };
@@ -10661,13 +10691,16 @@ function usarCenarioEscolhido() {
   setStatus(`Linhas geradas no ângulo ${angulo}° (${_rumoCardinal(angulo)}) — ${novasLinhas.length} linha(s), ${Math.round(metrosLin)} m.${modoAtivo ? ' Trave o talhão quando estiver satisfeito.' : ''}`, 'ok');
 }
 
-// ── Guia em Nível Automática (traça uma curva de nível sozinha, sem desenhar à mão) ──────────
+// ── Otimizar Cenário (Curvas) — traça uma curva de nível sozinha, sem desenhar à mão ─────────
 // v4.83: pedido do usuário — dentro do Otimizar Cenário de Plantio, uma opção que desenha
 // automaticamente uma linha que "anda em nível" (acompanha o relevo em cota aproximadamente
 // constante) e já gera as linhas de plantio em curva a partir dela — a técnica mais eficaz contra
-// erosão. Reaproveita a MESMA grade de elevação/sampler já buscados por analisarCenariosPlantio()
-// (sem consulta de rede nova) e a engine de offset "Suave" que já existia pra guias desenhadas à
-// mão (gerarLinhas() em modoGuia='spline') — a única peça nova é o traçado automático da curva.
+// erosão. Reaproveita a engine de offset "Suave" que já existia pra guias desenhadas à mão
+// (gerarLinhas() em modoGuia='spline') — a única peça nova é o traçado automático da curva.
+// v4.84: virou botão PRÓPRIO no ribbon ("Otimizar Cenário (Curvas)"), buscando sua própria grade de
+// elevação em vez de depender de _cenariosPlantio (que só existia depois de rodar a análise de
+// retas) — antes, pra gerar a curva era preciso passar pelo modal de retas primeiro, misturando os
+// dois fluxos numa tabela/tela só; agora cada botão analisa e busca elevação de forma independente.
 //
 // Anda perpendicular ao GRADIENTE de elevação (não ao longo dele) — perpendicular ao declive é,
 // por definição, a direção que não sobe nem desce (nível constante). A cada passo pequeno (3m),
@@ -10724,9 +10757,13 @@ function _tracarCurvaDeNivel(tPolyT, sampler) {
   return curva.length >= 3 ? curva : null;
 }
 
-function gerarGuiaEmNivelAutomatica() {
-  if(!_cenariosPlantio) { setStatus('Clique em "Analisar Cenários" primeiro — a guia automática reaproveita a grade de elevação já buscada ali.', 'err'); return; }
-  const { tPolyT, sampler, modoAtivo } = _cenariosPlantio;
+async function otimizarCenarioCurvas() {
+  setStatus('Buscando elevação do terreno pra traçar a curva de nível automaticamente…', 'info');
+  $('btnOtimizarCenarioCurvas').disabled = true;
+  const prep = await _prepararTalhaoParaOtimizacao();
+  $('btnOtimizarCenarioCurvas').disabled = false;
+  if(!prep) return;
+  const { tPolyT, sampler, modoAtivo } = prep;
 
   if(!modoAtivo && talhaoSelecionadoUid !== null && polyPts.length < 3) ativarTalhaoParaEdicao();
   if(!turfPoly || polyPts.length < 3) { setStatus('O contorno não está mais disponível — reabra/selecione o talhão e tente de novo.', 'err'); return; }
@@ -10744,8 +10781,8 @@ function gerarGuiaEmNivelAutomatica() {
   setModoGuia('spline');
   simples.forEach(p => addGuidePt(L.latLng(p.lat, p.lng)));
   finalizarGuia();
-  fecharModalCenarios();
   gerarLinhas();
+  setStatus(`Curva de nível traçada automaticamente e linhas de plantio geradas${modoAtivo ? ' — trave o talhão quando estiver satisfeito' : ''}.`, 'ok');
 }
 
 // ── Mapa Temático (declividade longitudinal na direção escolhida) ────────────────────────────
