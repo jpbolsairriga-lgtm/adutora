@@ -248,6 +248,12 @@ body.layout-lateral #status{grid-area:status;}
 .modal .step-url{display:block;background:var(--panel-bg-2);border-radius:5px;padding:6px 10px;font-size:11px;color:var(--acc-light);margin-top:4px;word-break:break-all;}
 .modal .note{background:var(--panel-bg-2);border-left:3px solid var(--acc2);border-radius:4px;padding:8px 10px;font-size:11px;color:var(--panel-text-dim);margin-top:12px;}
 
+/* v4.86: painel de confirmação da curva de nível — NÃO é modal (sem fundo escuro cobrindo o mapa),
+   fica ancorado num canto pra dar pra ver a pré-visualização inteira e mover/zoom o mapa livremente
+   antes de confirmar (usuário reclamou que o modal de tela cheia escondia o próprio talhão). */
+.floatpanel{display:none;position:fixed;right:16px;bottom:16px;z-index:9998;background:var(--panel-bg);border:1px solid var(--panel-border);border-radius:12px;padding:16px 18px;max-width:320px;width:88vw;color:var(--panel-text);font-size:12.5px;line-height:1.5;box-shadow:0 6px 28px rgba(0,0,0,.4);}
+.floatpanel.open{display:block;}
+
 /* ── Vista 3D — Análise do Terreno ── */
 #modal3dAnalise{display:none;position:fixed;inset:0;background:#0d1b2a;z-index:10000;}
 #modal3dAnalise.open{display:block;}
@@ -353,7 +359,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.85 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.86 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -989,17 +995,15 @@ body.layout-lateral #status{grid-area:status;}
   </div>
 </div>
 
-<!-- ── Modal: Otimizar Cenário de Plantio (Curvas) ── -->
-<div class="modal-bg" id="modalCenariosCurvas" onclick="if(event.target===this)cancelarCenarioCurvas()">
-  <div class="modal" style="max-width:480px;">
-    <button class="modal-close" onclick="cancelarCenarioCurvas()">&#10005;</button>
-    <h2>&#127760; Otimizar Cenário de Plantio (Curvas)</h2>
-    <div id="cenariosCurvasResumo" style="font-size:12px;color:var(--panel-text-dim);margin:6px 0 14px;"></div>
-    <p style="font-size:11.5px;color:var(--panel-text-dim);margin:0 0 14px;">As linhas já aparecem no mapa em pré-visualização (tracejado ciano) — confira se cobrem bem o talhão, inclusive reentrâncias, antes de confirmar.</p>
-    <div style="display:flex;gap:8px;">
-      <button class="rbtn-sm clr" style="flex:1;justify-content:center;" onclick="cancelarCenarioCurvas()">&#10005; Cancelar</button>
-      <button class="rbtn-sm ok" style="flex:1;justify-content:center;" onclick="usarCenarioCurvasEscolhido()">&#10003; Usar Estas Linhas</button>
-    </div>
+<!-- ── Painel (não-modal): Otimizar Cenário de Plantio (Curvas) ── -->
+<div class="floatpanel" id="modalCenariosCurvas">
+  <button class="modal-close" onclick="cancelarCenarioCurvas()">&#10005;</button>
+  <h2 style="font-size:14px;font-weight:700;color:var(--acc2);margin:0 0 10px;">&#127760; Otimizar Cenário (Curvas)</h2>
+  <div id="cenariosCurvasResumo" style="font-size:12px;color:var(--panel-text-dim);margin:0 0 12px;"></div>
+  <p style="font-size:11.5px;color:var(--panel-text-dim);margin:0 0 14px;">Pré-visualização tracejada em ciano no mapa — mova/dê zoom livremente pra conferir antes de confirmar.</p>
+  <div style="display:flex;gap:8px;">
+    <button class="rbtn-sm clr" style="flex:1;justify-content:center;" onclick="cancelarCenarioCurvas()">&#10005; Cancelar</button>
+    <button class="rbtn-sm ok" style="flex:1;justify-content:center;" onclick="usarCenarioCurvasEscolhido()">&#10003; Usar Estas Linhas</button>
   </div>
 </div>
 
@@ -3100,6 +3104,47 @@ body.layout-lateral #status{grid-area:status;}
 // "U" (base + os 2 braços), NENHUM ponto de nenhuma curva cai fora do talhão, e não há quebra de
 // rumo abrupta entre segmentos consecutivos (sem quinas). Regressão completa (16 suítes centrais
 // re-verificadas, incluindo test_v483/test_v484 atualizados pro novo fluxo com confirmação) sem
+// erros de página.
+// v4.86: usuário testou a v4.85 num talhão real e reportou o resultado "totalmente desorganizado"
+// (cada curva caminhava sozinha atrás do gradiente LOCAL — num DEM real, com ruído, pontos de
+// partida vizinhos podem divergir bastante de um passo pro outro e cruzar entre si; o plano
+// sintético dos testes automatizados não tinha esse ruído, por isso não pegou o problema). Pedido
+// específico do usuário: "criar uma linha única como linha mestra e ela derivar pra todo talhão...
+// a idéia é criar uma linha mestra, simular se ela cobre todo talhão sem erros, se não fizer ela
+// modifica os ângulos, até achar geometria correta que atenda". Reportou também que o modal de
+// confirmação (tela cheia) escondia a pré-visualização que ele queria conferir.
+// Eliminada a grade de curvas independentes por completo. Agora:
+// - _derivarLinhasDaMestra(): traça UMA curva mestra só (_tracarCurvaDeNivel, sem mudança) e deriva
+//   TODAS as outras por OFFSET GEOMÉTRICO de verdade (turf.lineOffset — o mesmo tipo de operação
+//   que um CAD faz pra "linha paralela", preserva a forma da mestra) em vez de cada linha calcular
+//   seu próprio caminhar — a família inteira sai coerente por construção, sem chance de divergir.
+//   Suaviza a mestra (turf.simplify, tolerância pequena) antes de ofertar, pra não amplificar
+//   ruído fino do relevo real nas cópias. O corte no contorno usa turf.lineSplit + checagem de
+//   ponto-dentro (a MESMA técnica de _linhasRetasSimples nas retas, nunca reclamada de quina).
+// - _fracaoDescobertaDoTalhao(): estima que fração da ÁREA do talhão fica sem nenhuma linha por
+//   perto (mais de 0,75× o espaçamento) — a "simulação" que o usuário pediu.
+// - _melhorCenarioDeCurvas(): tenta a curva mestra a partir de até 5 pontos de partida diferentes
+//   (o "ângulo" disponível pra uma linha que segue o relevo é onde ela nasce, já que o rumo em si é
+//   dado pelo terreno) e fica com a de menor fração descoberta — "modifica os ângulos até achar
+//   geometria correta que atenda", com early-exit se já achar uma cobertura muito boa (evita
+//   testar candidatas a mais quando a 1ª já resolveu).
+// - Painel de confirmação (modalCenariosCurvas) deixou de ser um modal de tela cheia (.modal-bg) e
+//   virou um painel FLUTUANTE ancorado no canto inferior-direito (.floatpanel, sem fundo escuro) —
+//   o mapa/pré-visualização fica sempre visível e dá pra mover/dar zoom livremente antes de
+//   confirmar. _abandonarFerramentaAtiva() agora cancela essa pré-visualização ao trocar de aba do
+//   ribbon (um modal de verdade bloquearia esse clique antes disso ser necessário; um painel
+//   flutuante não bloqueia mais nada).
+// Testado (test_v486_curva_mestra_derivada.js, com sanity-check confirmando que o teste pega a
+// regressão de verdade desativando as 4 candidatas extras — "trava na 1ª tentativa"): (A) num
+// talhão em "L" (concavidade realista — um recorte de canto só, ao contrário do "U" com 2 braços
+// separados usado no teste anterior, que exige formatos de linha diferentes em cada braço — fora
+// do que "derivar de 1 mestra" resolve por natureza, e não é o que foi pedido) com DEM inclinado, a
+// família derivada cobre bem todas as regiões (inclusive perto do recorte), fica dentro do
+// polígono (folga de 5cm pra arredondamento de ponto flutuante do próprio turf) e sem quinas; (B)
+// com a métrica de cobertura mockada numa sequência conhecida, _melhorCenarioDeCurvas testa as 5
+// candidatas e fica com a de MELHOR cobertura (não a 1ª), provando que a busca funciona de
+// verdade; (C) o painel de confirmação é flutuante, não tem mais a classe de modal antiga, e ocupa
+// menos de 50% da largura da tela. Regressão completa (16 suítes centrais re-verificadas) sem
 // erros de página.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
@@ -10822,46 +10867,131 @@ function _tracarCurvaDeNivel(tPolyT, sampler, startLatLng) {
   return curva.length >= 3 ? curva : null;
 }
 
-// v4.85: gera VÁRIAS curvas de nível independentes, semeadas numa grade que cobre o retângulo
-// inteiro do talhão (inclusive lóbulos/reentrâncias) — ver comentário acima da seção pra entender
-// por que isso substituiu o offset perpendicular de uma única curva central.
-function _tracarGradeDeCurvasDeNivel(tPolyT, sampler, spacingM) {
-  const [minLng, minLat, maxLng, maxLat] = turf.bbox(tPolyT);
-  const latMed = (minLat + maxLat) / 2;
-  const mLat = 111320, mLng = Math.cos(latMed * Math.PI / 180) * 111320;
-  const dLat = spacingM / mLat, dLng = spacingM / mLng;
+// v4.86: usuário testou a v4.85 (grade de curvas independentes) em campo real e o resultado ficou
+// "totalmente desorganizado" — cada curva caminha sozinha atrás do gradiente LOCAL, e num DEM real
+// (com ruído, ao contrário do plano sintético de teste) pontos de partida vizinhos podem convergir
+// pra rumos bem diferentes de um passo pro outro, cruzando entre si e virando uma bagunça visual.
+// Pedido do usuário: UMA linha mestra só, e todas as outras DERIVAM dela (em vez de cada uma
+// caminhar sozinha) — assim toda a família de linhas herda a mesma forma "desenhada", coerente,
+// sem risco de divergir. Além disso, simular se essa família cobre bem o talhão e, se não cobrir,
+// tentar outra geometria de partida até achar uma que cubra melhor.
+// _derivarLinhasDaMestra() gera as linhas por OFFSET GEOMÉTRICO de verdade (turf.lineOffset — o
+// mesmo tipo de operação que um CAD faz pra "linha paralela", preserva a forma da mestra em vez de
+// projetar reto) em vez de cada linha recalcular seu próprio caminhar; a família inteira sai
+// coerente por construção. O corte no contorno usa turf.lineSplit + checagem de ponto-dentro (a
+// MESMA técnica já usada por _linhasRetasSimples nas retas, nunca reclamada de quina) em vez da
+// engine de guia "Suave" (que cortava mal em contorno côncavo).
+function _derivarLinhasDaMestra(tPolyT, tBoundT, curvaMestra, spacingM) {
+  const coordsMestra = curvaMestra.map(p => [p.lng, p.lat]);
+  // Suaviza pequenos ruídos do caminhar (relevo real tem micro-variação ponto a ponto) ANTES de
+  // ofertar — ofertar uma linha "tremida" amplifica o tremor nas cópias, podendo até cruzar consigo
+  // mesma em curvas fechadas. Tolerância pequena (bem menor que o espaçamento) só tira o ruído fino,
+  // mantendo a forma geral da mestra.
+  let lineMestra;
+  try { lineMestra = turf.simplify(turf.lineString(coordsMestra), { tolerance: spacingM * 0.15 / 111320, highQuality: true }); }
+  catch(e) { lineMestra = turf.lineString(coordsMestra); }
 
-  // Cada célula da grade (do tamanho do espaçamento pedido) só pode originar UMA curva — isso é o
-  // que afasta as curvas vizinhas ~espaçamento umas das outras de forma natural, em vez de impor um
-  // offset fixo que não acompanha o relevo real.
-  const cobertos = new Set();
-  const chaveCelula = (lat, lng) => Math.floor((lat - minLat) / dLat) + '_' + Math.floor((lng - minLng) / dLng);
-  const marcarCelula = (lat, lng) => cobertos.add(chaveCelula(lat, lng));
+  function pedacosDentro(line) {
+    let partes;
+    try { const s = turf.lineSplit(line, tBoundT); partes = s.features.length ? s.features : [line]; }
+    catch(e) { partes = [line]; }
+    const dentro = [];
+    partes.forEach(f => {
+      const coords = f.geometry.coordinates;
+      if(coords.length < 2) return;
+      const meio = coords[Math.floor(coords.length / 2)];
+      if(turf.booleanPointInPolygon(turf.point(meio), tPolyT)) dentro.push(coords.map(c => ({ lat: c[1], lng: c[0] })));
+    });
+    return dentro;
+  }
 
-  const nRows = Math.max(1, Math.ceil((maxLat - minLat) / dLat));
-  const nCols = Math.max(1, Math.ceil((maxLng - minLng) / dLng));
-  const MAX_LINHAS = 400; // segurança — espaçamento minúsculo num talhão grande não trava o navegador
+  const bbox = turf.bbox(tPolyT);
+  const diagM = turf.distance(turf.point([bbox[0], bbox[1]]), turf.point([bbox[2], bbox[3]]), { units: 'kilometers' }) * 1000;
+  const nMax = Math.min(150, Math.ceil(diagM / spacingM / 2) + 2); // segurança — não deixa espaçamento minúsculo travar o navegador
 
-  // Semeia no CENTRO de cada célula (r+0.5/c+0.5), não no canto — nasce no canto colidiria em cheio
-  // com talhões retangulares (ou com qualquer vértice caindo bem no bbox), onde o ponto de partida
-  // ficaria exatamente SOBRE a borda do polígono; turf.booleanPointInPolygon considera borda como
-  // "dentro" (correto), então esse ponto seria aceito e, num relevo sem curvatura nenhuma perto da
-  // borda, o caminhar sairia colado exatamente na borda em vez de entrar pro miolo do talhão.
-  const curvas = [];
-  for(let r = 0; r <= nRows && curvas.length < MAX_LINHAS; r++) {
-    const lat = minLat + (r + 0.5) * dLat;
-    for(let c = 0; c <= nCols && curvas.length < MAX_LINHAS; c++) {
-      const lng = minLng + (c + 0.5) * dLng;
-      const chave = chaveCelula(lat, lng);
-      if(cobertos.has(chave)) continue;
-      if(!turf.booleanPointInPolygon(turf.point([lng, lat]), tPolyT)) { cobertos.add(chave); continue; }
-      const curva = _tracarCurvaDeNivel(tPolyT, sampler, { lat, lng });
-      if(!curva) { cobertos.add(chave); continue; }
-      curva.forEach(p => marcarCelula(p.lat, p.lng));
-      curvas.push(curva);
+  const curvas = [...pedacosDentro(lineMestra)];
+  for(let n = 1; n <= nMax; n++) {
+    for(const mult of [n, -n]) {
+      let off;
+      try { off = turf.lineOffset(lineMestra, mult * spacingM, { units: 'meters' }); }
+      catch(e) { continue; }
+      if(!off?.geometry?.coordinates?.length) continue;
+      curvas.push(...pedacosDentro(off));
     }
   }
   return curvas;
+}
+
+// Estima que fração da ÁREA do talhão fica "descoberta" (a mais de 0,75× o espaçamento de
+// qualquer linha) — pra comparar geometrias de partida diferentes e escolher a que cobre melhor.
+// Usa distância planar simples (bem mais rápida que a geodésica do turf) — precisão de sobra pra
+// essa comparação relativa, já que o talhão inteiro cabe em poucos km².
+function _fracaoDescobertaDoTalhao(tPolyT, curvas, spacingM) {
+  const [minLng, minLat, maxLng, maxLat] = turf.bbox(tPolyT);
+  const latMed = (minLat + maxLat) / 2;
+  const mLat = 111320, mLng = Math.cos(latMed * Math.PI / 180) * 111320;
+  const toXY = (lat, lng) => [(lng - minLng) * mLng, (lat - minLat) * mLat];
+
+  const ALVO_PTS = 15; // decima cada curva pra no máx. ~15 pontos — resolução de sobra pra medir distância
+  const curvasXY = curvas.map(c => {
+    const passo = Math.max(1, Math.floor(c.length / ALVO_PTS));
+    const pts = [];
+    for(let i = 0; i < c.length; i += passo) pts.push(toXY(c[i].lat, c[i].lng));
+    const last = toXY(c[c.length - 1].lat, c[c.length - 1].lng);
+    if(pts[pts.length - 1][0] !== last[0] || pts[pts.length - 1][1] !== last[1]) pts.push(last);
+    return pts;
+  });
+
+  function distPontoSegmento(px, py, ax, ay, bx, by) {
+    const dx = bx - ax, dy = by - ay, lenSq = dx * dx + dy * dy;
+    const t = lenSq > 1e-9 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq)) : 0;
+    return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+  }
+
+  const nGrid = 16, limiar = spacingM * 0.75;
+  let total = 0, descoberta = 0;
+  for(let r = 0; r < nGrid; r++) {
+    const lat = minLat + (r + 0.5) * (maxLat - minLat) / nGrid;
+    for(let c = 0; c < nGrid; c++) {
+      const lng = minLng + (c + 0.5) * (maxLng - minLng) / nGrid;
+      if(!turf.booleanPointInPolygon(turf.point([lng, lat]), tPolyT)) continue;
+      total++;
+      const [px, py] = toXY(lat, lng);
+      let minD = Infinity;
+      for(const pts of curvasXY) {
+        for(let i = 0; i + 1 < pts.length && minD > limiar; i++) minD = Math.min(minD, distPontoSegmento(px, py, pts[i][0], pts[i][1], pts[i+1][0], pts[i+1][1]));
+        if(minD <= limiar) break;
+      }
+      if(minD > limiar) descoberta++;
+    }
+  }
+  return total ? descoberta / total : 1;
+}
+
+// "simula se ela cobre todo talhão sem erros, se não fizer ela modifica os ângulos, até achar
+// geometria correta" — tenta a curva mestra a partir de vários pontos de partida (o "ângulo"
+// disponível pra uma curva que segue o relevo é onde ela nasce, já que o rumo em si é dado pelo
+// terreno) e fica com a geometria de melhor cobertura (para no primeiro resultado já muito bom).
+function _melhorCenarioDeCurvas(tPolyT, tBoundT, sampler, spacingM) {
+  const [minLng, minLat, maxLng, maxLat] = turf.bbox(tPolyT);
+  const centro = turf.pointOnFeature(tPolyT).geometry.coordinates; // [lng,lat]
+  const candidatos = [{ lat: centro[1], lng: centro[0] }];
+  [0.25, 0.75].forEach(fy => [0.25, 0.75].forEach(fx => {
+    const lat = minLat + fy * (maxLat - minLat), lng = minLng + fx * (maxLng - minLng);
+    if(turf.booleanPointInPolygon(turf.point([lng, lat]), tPolyT)) candidatos.push({ lat, lng });
+  }));
+
+  let melhor = null;
+  for(const partida of candidatos) {
+    const curvaMestra = _tracarCurvaDeNivel(tPolyT, sampler, partida);
+    if(!curvaMestra) continue;
+    const curvas = _derivarLinhasDaMestra(tPolyT, tBoundT, curvaMestra, spacingM);
+    if(!curvas.length) continue;
+    const fracaoDescoberta = _fracaoDescobertaDoTalhao(tPolyT, curvas, spacingM);
+    if(!melhor || fracaoDescoberta < melhor.fracaoDescoberta) melhor = { curvaMestra, curvas, fracaoDescoberta };
+    if(fracaoDescoberta < 0.03) break; // já achou uma geometria muito boa — não precisa testar as demais
+  }
+  return melhor;
 }
 
 let _cenariosCurvas = null; // {curvas, spacing, talhaoUid, modoAtivo, previewLayers} — pré-visualização pendente
@@ -10869,25 +10999,26 @@ let _cenariosCurvas = null; // {curvas, spacing, talhaoUid, modoAtivo, previewLa
 async function otimizarCenarioCurvas() {
   const spacing = Math.max(0.5, parseFloat($('espac').value) || 6);
 
-  setStatus('Buscando elevação do terreno pra traçar as curvas de nível…', 'info');
+  setStatus('Buscando elevação e testando geometrias de curva de nível…', 'info');
   $('btnOtimizarCenarioCurvas').disabled = true;
   const prep = await _prepararTalhaoParaOtimizacao();
   $('btnOtimizarCenarioCurvas').disabled = false;
   if(!prep) return;
-  const { tPolyT, sampler, modoAtivo, t } = prep;
+  const { tPolyT, tBoundT, sampler, modoAtivo, t } = prep;
 
-  const curvas = _tracarGradeDeCurvasDeNivel(tPolyT, sampler, spacing);
-  if(!curvas.length) { setStatus('Não consegui traçar nenhuma curva de nível nesse talhão — desenhe a guia manualmente (Suave) em vez disso.', 'err'); return; }
+  const melhor = _melhorCenarioDeCurvas(tPolyT, tBoundT, sampler, spacing);
+  if(!melhor || !melhor.curvas.length) { setStatus('Não consegui traçar uma curva de nível nesse talhão — desenhe a guia manualmente (Suave) em vez disso.', 'err'); return; }
 
   _cancelarPreviewCenarioCurvas();
-  const previewLayers = curvas.map(pts => L.polyline(pts.map(p => [p.lat, p.lng]), { color: '#26c6da', weight: 2, opacity: .85, dashArray: '4,5' }).addTo(map));
+  const previewLayers = melhor.curvas.map(pts => L.polyline(pts.map(p => [p.lat, p.lng]), { color: '#26c6da', weight: 2, opacity: .85, dashArray: '4,5' }).addTo(map));
   let metrosLin = 0;
-  curvas.forEach(pts => { for(let i = 0; i < pts.length - 1; i++) metrosLin += haversineM(pts[i], pts[i+1]); });
+  melhor.curvas.forEach(pts => { for(let i = 0; i < pts.length - 1; i++) metrosLin += haversineM(pts[i], pts[i+1]); });
 
-  _cenariosCurvas = { curvas, spacing, talhaoUid: modoAtivo ? null : t.uid, modoAtivo, previewLayers };
-  $('cenariosCurvasResumo').textContent = `${curvas.length} linha(s) em curva de nível · ${Math.round(metrosLin)} m lineares · espaçamento alvo ${spacing} m.`;
+  _cenariosCurvas = { curvas: melhor.curvas, spacing, talhaoUid: modoAtivo ? null : t.uid, modoAtivo, previewLayers };
+  const coberturaPct = Math.round((1 - melhor.fracaoDescoberta) * 100);
+  $('cenariosCurvasResumo').textContent = `${melhor.curvas.length} linha(s) derivadas de 1 linha mestra · ${Math.round(metrosLin)} m lineares · cobertura estimada: ${coberturaPct}%.`;
   $('modalCenariosCurvas').classList.add('open');
-  setStatus(`${curvas.length} curva(s) de nível traçada(s) — confira a pré-visualização tracejada no mapa e confirme.`, 'ok');
+  setStatus(`Linha mestra traçada e derivada (cobertura estimada ${coberturaPct}%) — confira a pré-visualização e confirme.`, 'ok');
 }
 
 function _cancelarPreviewCenarioCurvas() {
@@ -11231,6 +11362,10 @@ function _abandonarFerramentaAtiva() {
   else if(_modoPickLinha === 'carreador') cancelarCarreadorDeLinha();
   if(multiSelectMode) cancelarMultiSelect();
   if(_pickingCurvaGuia) cancelarEscolhaCurvaGuia();
+  // v4.86: a pré-visualização de "Otimizar Cenário (Curvas)" virou um painel flutuante (não bloqueia
+  // mais o mapa/ribbon como um modal) — então, ao trocar de aba, precisa ser cancelada explicitamente
+  // (um modal de verdade bloquearia o clique na aba antes disso ser necessário).
+  if(_cenariosCurvas) cancelarCenarioCurvas();
 }
 
 // "Tem mais ferramentas escondidas" — sem isso, um grupo que só cabe rolando pra direita (ex:
