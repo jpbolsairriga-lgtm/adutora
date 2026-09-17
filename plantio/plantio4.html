@@ -353,7 +353,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.80 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.81 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -914,7 +914,7 @@ body.layout-lateral #status{grid-area:status;}
             <label>Marca do monitor</label>
             <select id="monitorMarca" class="rfield wide" onchange="_atualizarAvisoMonitorGPS()">
               <option value="trimble">Trimble (AgGPS)</option>
-              <option value="johndeere">John Deere (ISO-XML)</option>
+              <option value="johndeere">John Deere (Gen4 Setup File)</option>
             </select>
           </div>
           <div class="rcol">
@@ -2953,6 +2953,33 @@ body.layout-lateral #status{grid-area:status;}
 // estrutura ISOXML está bem formada — elemento raiz com versão correta, PFD/PLN/LSG do contorno
 // com área/tipo/pontos certos, GGP/GPN das linhas de plantio com PatternType e largura (mm =
 // espaçamento em metros ×1000) corretos. Regressão completa (13 suítes disponíveis) sem erros.
+// v4.81: usuário conseguiu um arquivo REAL de export John Deere (pasta "Gen4", gerada pelo mesmo
+// AgroCAD, do MESMO talhão que já tínhamos exportado pra Trimble — as coordenadas do contorno
+// batem exatamente com o Boundary.shp da v4.79, ótima confirmação cruzada). Formato bem diferente
+// do que a documentação pública sugeria na v4.80 (ISO-XML/TASKDATA — que era só uma suposição
+// educada, sem arquivo pra confirmar): o real é o "Setup File" próprio dos displays Gen4
+// CommandCenter — um XML (Gen4/MasterData.xml, namespace "urn:schemas-johndeere-com:Setup") que
+// só referencia geometrias por nome de arquivo; contorno e linhas de plantio ficam em arquivos
+// GeoJSON separados (Gen4/SpatialFiles/*.gjson). Removida por completo a implementação ISO-XML
+// especulativa da v4.80 — substituída por esta, conferida byte a byte contra o arquivo real.
+// Estrutura conferida: <Client> (Produtor) → <Farm Client="..."> (Fazenda) → <Field><Farm>...
+// (um por talhão) — todos ligados por StringGuid (gerados aqui com crypto.randomUUID(), mesmo
+// formato do arquivo real). <Guidance><Tracks><AdaptiveCurve TaggedEntity="{field guid}"> aponta
+// pra um Boundary{guid}.gjson (GeoJSON Polygon, 1 por talhão) e <OperationalBoundary
+// TaggedEntity="{field guid}"> aponta pra um AdaptiveCurve{guid}.gjson (GeoJSON MultiLineString —
+// TODAS as linhas de plantio já traçadas do talhão numa lista só, 1 sub-lista de coordenadas por
+// linha — mesmo princípio do LineFeature da Trimble/v4.79: cada passada real exportada como está).
+// ReferenceLatitude/Longitude do AdaptiveCurve = o primeiro ponto da primeira linha (conferido,
+// bate com o padrão do arquivo real). Aviso na tela atualizado — não é mais o "⚠ sem validar" da
+// v4.80, agora mostra a mesma confiança da Trimble (testada contra export real).
+// Testado (test_v481_export_johndeere_gen4.js, com sanity-check confirmando que o teste pega a
+// regressão de verdade trocando o valor de "signaltype"): cria um talhão sintético, exporta,
+// intercepta o download real do .zip, extrai Gen4/MasterData.xml + Gen4/SpatialFiles/*.gjson, e
+// valida com parsers de verdade (Python xml.etree + json — não o parser da própria ferramenta)
+// que Client/Farm/Field/AdaptiveCurve/OperationalBoundary estão ligados pelos GUIDs certos, e que
+// os .gjson têm a geometria/propriedades esperadas (Polygon fechado com signaltype=5131 igual ao
+// arquivo real; MultiLineString com uma sub-lista por linha de plantio). Regressão completa (8
+// suítes centrais re-verificadas) sem erros de página.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -8390,7 +8417,7 @@ function _atualizarAvisoMonitorGPS() {
   if(marca === 'trimble') {
     el.textContent = 'Pasta AgGPS/Data (Boundary + LineFeature) — testada contra um export real do AgroCAD.';
   } else if(marca === 'johndeere') {
-    el.textContent = '⚠ TASKDATA.XML (ISO-XML) baseado só em documentação pública — sem arquivo real pra validar. Confira com o revendedor/monitor antes de confiar no trator.';
+    el.textContent = 'Pasta Gen4 (MasterData.xml + SpatialFiles) — testada contra um export real do AgroCAD (mesmo talhão da Trimble).';
   } else {
     el.textContent = '';
   }
@@ -8414,7 +8441,7 @@ async function exportarMonitorGPS() {
 
   try {
     if(marca === 'trimble') await _exportarTrimbleAgGPS(produtor, fazenda, fontes);
-    else if(marca === 'johndeere') await _exportarJohnDeereISOXML(produtor, fazenda, fontes);
+    else if(marca === 'johndeere') await _exportarJohnDeereSetupFile(produtor, fazenda, fontes);
     else setStatus('Marca de monitor ainda não suportada.', 'err');
   } catch(e) {
     alert('Erro ao gerar exportação pro monitor: ' + e.message);
@@ -8442,74 +8469,125 @@ async function _exportarTrimbleAgGPS(produtor, fazenda, fontes) {
   setStatus(`✓ Exportado pra Trimble AgGPS — ${algumTalhao} talhão(ões). Extraia o .zip e copie a pasta "AgGPS" pra raiz do pendrive.`, 'ok');
 }
 
-// ── Exportar para Monitor GPS (Trator) — John Deere (ISO-XML / TASKDATA) ─────────────────────
-// v4.80: usuário pediu John Deere sem ter um arquivo de referência pra conferir byte a byte (como
-// tivemos pra Trimble) — pesquisado na documentação pública do fabricante e no padrão aberto que a
-// própria John Deere usa pra troca de dados de contorno/linha de guia: ISO 11783-10 ("ISOXML"),
-// arquivo TASKDATA.XML dentro de uma pasta TASKDATA na raiz do pendrive. Diferente do AgGPS
-// (Shapefile binário), aqui é um XML — o "PFD" (Partfield) é o talhão, com um "PLN" (Polygon,
-// tipo 1 = contorno) pro contorno e um "GGP" (Guidance Group) com um "GPN" (Guidance Pattern) POR
-// LINHA DE PLANTIO JÁ TRAÇADA (mesmo princípio do LineFeature da Trimble — cada passada real
-// exportada como está, em vez de confiar no monitor pra recalcular os paralelismos a partir de só
-// 1 linha de referência + largura). AVISO IMPORTANTE mostrado ao usuário: sem um arquivo real pra
-// validar, essa exportação é baseada só em documentação pública — displays mais novos (Geração 4)
-// tendem a preferir importar isso pelo John Deere Operations Center (upload do arquivo) em vez de
-// ler direto de um pendrive; displays GS2/GS3/ISOBUS mais antigos costumam aceitar TASKDATA direto
-// do pendrive. Recomendado validar com o revendedor/monitor antes de confiar 100% no trator.
+// ── Exportar para Monitor GPS (Trator) — John Deere (Gen4 Setup File) ───────────────────────
+// v4.81: a v4.80 tinha implementado ISO-XML (TASKDATA) só com base em documentação pública, sem
+// arquivo real pra validar — o usuário depois conseguiu um export REAL (Gen4/MasterData.xml +
+// Gen4/SpatialFiles/*.gjson, gerado pelo mesmo AgroCAD, do MESMO talhão que a Trimble — as
+// coordenadas do contorno batem exatamente com o Boundary.shp da v4.79). Formato bem diferente do
+// que a documentação pública sugeria: não é ISO-XML — é o "Setup File" próprio dos displays Gen4
+// CommandCenter, um XML (MasterData.xml, namespace "urn:schemas-johndeere-com:Setup") que só
+// referencia geometrias por nome de arquivo — o contorno e as linhas de plantio ficam em arquivos
+// .gjson (GeoJSON) SEPARADOS dentro de SpatialFiles/. Removida a implementação ISO-XML especulativa
+// da v4.80 (substituída por esta, validada byte a byte contra o arquivo real).
+// Estrutura conferida no arquivo de referência:
+//   Gen4/
+//     MasterData.xml      — <SetupFile><Setup><Client/><Farm/><Field/>×N<Guidance><Tracks>
+//                            <AdaptiveCurve/>×N</Tracks></Guidance><OperationalBoundary/>×N...
+//     SpatialFiles/
+//       Boundary{guid}.gjson       — GeoJSON Polygon (1 por talhão)
+//       AdaptiveCurve{guid}.gjson  — GeoJSON MultiLineString: TODAS as linhas de plantio já
+//                                    traçadas do talhão, uma sub-lista de coordenadas por linha
+//                                    (mesmo princípio do LineFeature da Trimble/v4.79 — cada
+//                                    passada real exportada como está, não só 1 linha+largura)
+// Cada <Field> é ligado à <Farm> (que por sua vez referencia o <Client>) por StringGuid — gerados
+// aqui via crypto.randomUUID() (o mesmo formato de GUID usado no arquivo real). ReferenceLatitude/
+// Longitude de cada <AdaptiveCurve> = o primeiro ponto da primeira linha (conferido: bate com o
+// padrão do arquivo real).
 function _escaparXml(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&apos;' }[c]));
 }
 
-// Monta o(s) <PFD> (um por talhão) — contorno como <PLN>/<LSG>/<PNT> e cada linha de plantio já
-// traçada como um <GPN> dentro de um único <GGP> do talhão (ver comentário acima).
-function _gerarPfdIsoXml(f, idx) {
-  if(!f.polyPts || f.polyPts.length < 3) return '';
-  const pfdId = `PFD${idx + 1}`;
-  let areaM2 = 0;
-  try { areaM2 = turf.area(turf.polygon([[...f.polyPts.map(p => [p.lng, p.lat]), [f.polyPts[0].lng, f.polyPts[0].lat]]])); } catch(e) {}
-
-  const pontoXml = p => `<PNT A="2" C="${p.lat.toFixed(7)}" D="${p.lng.toFixed(7)}"/>`;
-  const anelFechado = [...f.polyPts, f.polyPts[0]];
-  let xml = `<PFD A="${pfdId}" C="${_escaparXml(f.nome)}" D="${Math.round(areaM2)}">\n`;
-  xml += `<PLN A="1">\n<LSG A="1">\n${anelFechado.map(pontoXml).join('\n')}\n</LSG>\n</PLN>\n`;
-
-  if(f.linhas && f.linhas.length) {
-    const larguraMm = f.spacing ? Math.round(f.spacing * 1000) : null;
-    xml += `<GGP A="GGP${idx + 1}" B="${_escaparXml('Linhas de Plantio - ' + f.nome)}">\n`;
-    let gpnN = 0;
-    f.linhas.forEach(pl => {
-      let pts; try { pts = pl.getLatLngs().flat(); } catch(e) { return; }
-      if(pts.length < 2) return;
-      gpnN++;
-      const larguraAttr = larguraMm ? ` C="${larguraMm}"` : '';
-      xml += `<GPN A="GPN${idx + 1}_${gpnN}" B="Linha ${gpnN}" C="3">\n<LSG A="5"${larguraAttr}>\n${pts.map(pontoXml).join('\n')}\n</LSG>\n</GPN>\n`;
-    });
-    xml += `</GGP>\n`;
+// Data/hora no formato .NET usado pelo MasterData.xml real ("2026-09-17T09:04:06.3460559-03:00" —
+// local, ou com "Z" pra UTC): 7 dígitos de fração de segundo + offset. Só um campo informativo
+// (LastModifiedDate/CreatedDateTime) — não afeta a geometria nem a identificação do talhão.
+function _isoJohnDeere(d, utc) {
+  const pad = (n, w = 2) => String(n).padStart(w, '0');
+  const frac7 = pad(d.getMilliseconds(), 3) + '0000';
+  if(utc) {
+    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}.${frac7}Z`;
   }
-  xml += `</PFD>\n`;
-  return xml;
+  const off = -d.getTimezoneOffset();
+  const sinal = off >= 0 ? '+' : '-';
+  const offAbs = Math.abs(off);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${frac7}${sinal}${pad(Math.floor(offAbs / 60))}:${pad(offAbs % 60)}`;
 }
 
-function _gerarTaskDataXml(fontes) {
-  let xml = `<?xml version="1.0" encoding="UTF-8"?>\n`;
-  xml += `<ISO11783_TaskData VersionMajor="4" VersionMinor="3" ManagementSoftwareManufacturer="Bolsa Irriga" ManagementSoftwareVersion="${$('verLabel') ? $('verLabel').textContent.trim() : ''}" DataTransferOrigin="1">\n`;
-  fontes.forEach((f, i) => { xml += _gerarPfdIsoXml(f, i); });
-  xml += `</ISO11783_TaskData>\n`;
-  return xml;
+// GeoJSON (RFC7946) exige anel EXTERIOR anti-horário — o oposto do Shapefile (ver
+// _garantirSentidoHorario, usado na Trimble/v4.79).
+function _garantirSentidoAntiHorario(pontosXY) {
+  return _areaComSinalXY(pontosXY) < 0 ? pontosXY.slice().reverse() : pontosXY;
 }
 
-async function _exportarJohnDeereISOXML(produtor, fazenda, fontes) {
+// Monta o Setup File (MasterData.xml + arquivos .gjson) de todos os talhões de uma vez — devolve
+// { masterXml, spatialFiles: {nomeArquivo: conteudoJSON} }.
+function _gerarSetupFileJohnDeere(produtor, fazenda, fontes) {
+  const agora = new Date();
+  const isoLocal = _isoJohnDeere(agora, false);
+  const clientGuid = crypto.randomUUID();
+  const farmGuid = crypto.randomUUID();
+  const spatialFiles = {};
+  let fieldsXml = '', curvesXml = '', boundariesXml = '';
+  let nTalhoes = 0;
+
+  fontes.forEach(f => {
+    if(!f.polyPts || f.polyPts.length < 3) return;
+    const fieldGuid = crypto.randomUUID();
+    fieldsXml += `<Field LastModifiedDate="${isoLocal}" Archived="false" StringGuid="${fieldGuid}" Name="${_escaparXml(f.nome)}"><Farm>${farmGuid}</Farm></Field>`;
+    nTalhoes++;
+
+    // Boundary — 1 polígono, sentido anti-horário (GeoJSON)
+    const boundaryGuid = crypto.randomUUID();
+    const anelXY = _garantirSentidoAntiHorario(f.polyPts.map(p => [p.lng, p.lat]));
+    const anelFechado = [...anelXY, anelXY[0]];
+    const boundaryGeoJson = JSON.stringify({
+      features: [{
+        geometry: { coordinates: [anelFechado], type: 'Polygon' }, id: 0,
+        properties: { boundarytype: 'Exterior', isactive: true, ispassable: true, name: null, offsetid: null, parent: null, signaltype: 5131 },
+        type: 'Feature'
+      }],
+      type: 'FeatureCollection'
+    });
+    spatialFiles[`Boundary${boundaryGuid}.gjson`] = boundaryGeoJson;
+    boundariesXml += `<OperationalBoundary LastModifiedDate="${isoLocal}" Archived="false" StringGuid="${boundaryGuid}" TaggedEntity="${fieldGuid}" Name="LIMITE EXTERNO"><SignalType Representation="dtSignalType" Value="dtiSignalTypeRTK" /><Geometry><FilenameWithExtension>Boundary${boundaryGuid}.gjson</FilenameWithExtension><Path>./SpatialFiles/</Path></Geometry><VersionDelimiter xmlns="urn:schemas-johndeere-com:SetupCore">Version 2.19</VersionDelimiter><VersionsEnd xmlns="urn:schemas-johndeere-com:SetupCore">End</VersionsEnd></OperationalBoundary>`;
+
+    // AdaptiveCurve — MultiLineString com TODAS as linhas de plantio já traçadas (1 sub-lista de
+    // coordenadas por linha — mesmo princípio do LineFeature da Trimble).
+    if(f.linhas && f.linhas.length) {
+      const linhasCoords = [];
+      f.linhas.forEach(pl => {
+        let pts; try { pts = pl.getLatLngs().flat(); } catch(e) { return; }
+        if(pts.length < 2) return;
+        linhasCoords.push(pts.map(p => [p.lng, p.lat, 0, 1]));
+      });
+      if(linhasCoords.length) {
+        const curveGuid = crypto.randomUUID();
+        spatialFiles[`AdaptiveCurve${curveGuid}.gjson`] = JSON.stringify({ geometry: { coordinates: linhasCoords, type: 'MultiLineString' }, type: 'Feature' });
+        const refPt = linhasCoords[0][0]; // [lng,lat,0,1] — bate com o padrão do arquivo real (1º ponto da 1ª linha)
+        curvesXml += `<AdaptiveCurve Archived="false" StringGuid="${curveGuid}" Name="CURVA" TaggedEntity="${fieldGuid}"><SignalType Representation="dtSignalType" Value="dtiSignalTypeUnknown" /><Geometry><FilenameWithExtension>AdaptiveCurve${curveGuid}.gjson</FilenameWithExtension><Path>./SpatialFiles/</Path></Geometry><SpatialProjection><ProjectionType Representation="dtProjectionType" Value="dtiProjectionDeere" /><ElevationReferencePoint Representation="vrElevation" Value="0" SourceUnit="m" /></SpatialProjection><ReferenceLatitude Representation="vrLatitude" Value="${refPt[1]}" SourceUnit="arcdeg" /><ReferenceLongitude Representation="vrLongitude" Value="${refPt[0]}" SourceUnit="arcdeg" /></AdaptiveCurve>`;
+      }
+    }
+  });
+
+  const masterXml = `<?xml version="1.0" encoding="utf-8"?><SetupFile xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns="urn:schemas-johndeere-com:Setup"><SourceApp minor="0" major="0" build="0" revision="0" nameSourceApp="" SourceAppClientId="" /><FileSchemaVersion nonProductionCode="0"><FileSchemaContentVersion major="2" minor="19" /><UnitOfMeasureVersion major="1" minor="8" /><RepresentationSystemVersion major="3" minor="13" /></FileSchemaVersion><Setup><Client Archived="false" StringGuid="${clientGuid}" Name="${_escaparXml(produtor)}" /><Farm LastModifiedDate="${isoLocal}" Archived="false" StringGuid="${farmGuid}" Name="${_escaparXml(fazenda)}" Client="${clientGuid}" />${fieldsXml}<Inputs><Products /></Inputs><Guidance><Tracks>${curvesXml}</Tracks></Guidance>${boundariesXml}<SourceInformation><DisplayName /><Version /><SourceApplication /></SourceInformation><CreatedDateTime>${_isoJohnDeere(agora, true)}</CreatedDateTime></Setup></SetupFile>`;
+
+  return { masterXml, spatialFiles, nTalhoes };
+}
+
+async function _exportarJohnDeereSetupFile(produtor, fazenda, fontes) {
   if(typeof JSZip === 'undefined') { setStatus('Biblioteca de compactação (JSZip) não carregou — verifique sua conexão com a internet.', 'err'); return; }
   const comTalhao = fontes.filter(f => f.polyPts && f.polyPts.length >= 3);
   if(!comTalhao.length) { setStatus('Nenhum talhão com contorno pra exportar.', 'err'); return; }
 
-  setStatus('Gerando pacote ISO-XML (TASKDATA) para o monitor John Deere…', 'info');
-  const xml = _gerarTaskDataXml(comTalhao.map(f => ({ ...f, nome: `${fazenda} — ${f.nome}` })));
+  setStatus('Gerando pacote Setup File (Gen4) para o monitor John Deere…', 'info');
+  const { masterXml, spatialFiles, nTalhoes } = _gerarSetupFileJohnDeere(produtor, fazenda, comTalhao);
   const zip = new JSZip();
-  zip.folder('TASKDATA').file('TASKDATA.XML', xml);
+  const pasta = zip.folder('Gen4');
+  pasta.file('MasterData.xml', masterXml);
+  const pastaSpatial = pasta.folder('SpatialFiles');
+  Object.entries(spatialFiles).forEach(([nome, conteudo]) => pastaSpatial.file(nome, conteudo));
   const blob = await zip.generateAsync({ type: 'blob' });
-  baixarArquivo(blob, `TASKDATA_${produtor}_${fazenda}.zip`, 'application/zip');
-  setStatus(`✓ Exportado pra John Deere (ISO-XML) — ${comTalhao.length} talhão(ões). Extraia o .zip e copie a pasta "TASKDATA" pra raiz do pendrive (displays mais novos: importe o TASKDATA.XML pelo John Deere Operations Center). Sem arquivo de referência pra validar — confira com o revendedor antes de confiar no trator.`, 'ok');
+  baixarArquivo(blob, `Gen4_${produtor}_${fazenda}.zip`, 'application/zip');
+  setStatus(`✓ Exportado pra John Deere (Gen4 Setup File) — ${nTalhoes} talhão(ões). Extraia o .zip e copie a pasta "Gen4" pra raiz do pendrive — no display, use Importar Dados e selecione o perfil "Gen4".`, 'ok');
 }
 
 // ── Helpers PDF: projeção Mercator (igual ao módulo Curvas de Nível) ───────────
