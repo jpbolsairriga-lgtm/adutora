@@ -1,6 +1,6 @@
-const CACHE = 'agrolamina-pwa-v1';
+const CACHE = 'agrolamina-pwa-v2';
 const APP_SHELL = [
-  './etp-pwa.html',
+  './etp.html',
   './manifest.json',
   './icon-192.png',
   './icon-512.png',

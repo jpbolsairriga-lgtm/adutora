@@ -183,6 +183,19 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
 @keyframes girar{to{transform:rotate(360deg);}}
 #geracaoOverlay .txt{font-size:.85rem;color:var(--ink);font-weight:600;}
 
+/* ── Ativação de licença ── */
+#modalLicenca{display:none;position:fixed;inset:0;z-index:9800;background:rgba(20,30,30,.72);align-items:center;justify-content:center;padding:16px;}
+#modalLicenca.aberto{display:flex;}
+#modalLicenca .caixa{background:#fff;border-radius:14px;padding:24px 26px;max-width:420px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.35);}
+#modalLicenca h2{margin:0 0 8px;font-size:1rem;color:var(--teal-dark);}
+#modalLicenca p{font-size:.8rem;color:var(--slate);line-height:1.6;margin:0 0 4px;}
+#modalLicenca label{margin-top:12px;}
+#modalLicenca .lic-code{background:var(--slate-light);border-radius:8px;padding:10px 12px;font-family:var(--mono);font-size:.78rem;color:var(--ink);word-break:break-all;user-select:all;margin-bottom:8px;}
+#modalLicenca textarea{width:100%;min-height:64px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:var(--mono);font-size:.78rem;resize:vertical;}
+#modalLicenca .lic-status{font-size:.76rem;margin-top:8px;min-height:16px;font-weight:600;}
+#modalLicenca .lic-status.ok{color:var(--green);}
+#modalLicenca .lic-status.err{color:var(--red);}
+
 /* ── Banner de instalação (PWA) ── */
 #installBanner{display:none;position:fixed;left:12px;right:12px;bottom:12px;z-index:9400;
   background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 34px rgba(20,40,40,.22);
@@ -216,6 +229,20 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
 
 <div id="geracaoOverlay">
   <div class="caixa"><div class="spinner"></div><div class="txt">Gerando relat&#243;rio...</div></div>
+</div>
+
+<div id="modalLicenca">
+  <div class="caixa">
+    <h2 id="licTitulo">Ativação — Agrolâmina</h2>
+    <p id="licTexto">Este aplicativo requer ativação vinculada a este aparelho/navegador. Funciona offline depois de ativado.</p>
+    <label style="display:block;font-size:.7rem;color:var(--slate);font-weight:600;text-transform:uppercase;letter-spacing:.03em;">Código deste dispositivo</label>
+    <div class="lic-code" id="licDeviceCode">—</div>
+    <button class="btn-secondary" onclick="copiarCodigoLicenca()" style="width:100%;margin-bottom:6px;">Copiar código e enviar ao suporte</button>
+    <label style="display:block;font-size:.7rem;color:var(--slate);font-weight:600;text-transform:uppercase;letter-spacing:.03em;">Chave de ativação recebida</label>
+    <textarea id="licChaveInput" placeholder="Cole aqui a chave recebida"></textarea>
+    <div class="lic-status" id="licStatus"></div>
+    <button class="btn-primary" onclick="ativarLicenca()" style="width:100%;margin-top:10px;">Ativar</button>
+  </div>
 </div>
 
 <div id="installBanner">
@@ -1676,6 +1703,122 @@ canvas{width:100%;height:220px;display:block;margin-top:14px;}
   atualizarSolo();
 
   render();
+})();
+</script>
+
+<script>
+// ── Licenciamento (ativação por dispositivo, offline, ECDSA P-256, com validade) ──
+// Chave PÚBLICA gerada especificamente pro Agrolâmina (independente do plantio3.html) — só
+// verifica assinaturas, não gera. A chave PRIVADA fica no ativador-agrolamina-admin.html, fora
+// do repo (.gitignore bloqueia qualquer "ativador-*-admin.html" de subir pro GitHub Pages).
+// A mensagem assinada é "deviceCode|exp" (exp = validade em epoch ms) — permite tanto licença
+// permanente (exp bem distante) quanto trial de N dias (exp = emissão + N dias), com o mesmo
+// mecanismo. A chave de ativação enviada ao cliente é "exp.assinaturaB64url".
+(function(){
+  const LIC_PUBLIC_JWK = {"key_ops":["verify"],"ext":true,"kty":"EC","x":"w_8BwPyjSbw9tWSLvSdE0tj-H4hTgIwz5Z6bHms6Y24","y":"A3hFkETPLKy1IvCcqD6JgfpThQ4jiZ8vYxZn9kSHUYU","crv":"P-256"};
+  const LIC_STORAGE_KEY = 'bi_agrolamina_licenca_v1';
+  const $lic = id => document.getElementById(id);
+  let _licDeviceCode = null;
+
+  function _licCanvasFP() {
+    try {
+      const c = document.createElement('canvas'); c.width = 220; c.height = 30;
+      const ctx = c.getContext('2d');
+      ctx.textBaseline = 'top'; ctx.font = '14px Arial';
+      ctx.fillStyle = '#f60'; ctx.fillRect(0, 0, 90, 18);
+      ctx.fillStyle = '#069'; ctx.fillText('BolsaIrriga-Agrolamina-Lic', 2, 2);
+      return c.toDataURL();
+    } catch (e) { return 'sem-canvas'; }
+  }
+
+  async function _licFingerprint() {
+    const partes = [
+      navigator.userAgent, navigator.platform || '', navigator.language,
+      navigator.hardwareConcurrency || '', screen.width + 'x' + screen.height + 'x' + screen.colorDepth,
+      Intl.DateTimeFormat().resolvedOptions().timeZone || '', _licCanvasFP()
+    ];
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(partes.join('|')));
+    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  function _licB64urlToBytes(s) {
+    s = s.trim().replace(/-/g, '+').replace(/_/g, '/');
+    while (s.length % 4) s += '=';
+    const bin = atob(s);
+    return Uint8Array.from(bin, c => c.charCodeAt(0));
+  }
+
+  async function _licVerificar(deviceCode, exp, sigB64) {
+    try {
+      const pub = await crypto.subtle.importKey('jwk', LIC_PUBLIC_JWK, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+      const sig = _licB64urlToBytes(sigB64);
+      const data = new TextEncoder().encode(deviceCode + '|' + exp);
+      return await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, pub, sig, data);
+    } catch (e) { return false; }
+  }
+
+  function _licParseChave(bruto) {
+    const partes = bruto.trim().replace(/\s+/g, '').split('.');
+    if (partes.length !== 2 || !/^\d+$/.test(partes[0])) return null;
+    return { exp: partes[0], sig: partes[1] };
+  }
+
+  function _licFormatarData(ms) {
+    return new Date(Number(ms)).toLocaleDateString('pt-BR');
+  }
+
+  async function checarLicenca() {
+    _licDeviceCode = await _licFingerprint();
+    const codeEl = $lic('licDeviceCode');
+    if (codeEl) codeEl.textContent = _licDeviceCode.match(/.{1,8}/g).join(' ');
+
+    let salvo = null;
+    try { salvo = JSON.parse(localStorage.getItem(LIC_STORAGE_KEY) || 'null'); } catch (e) {}
+
+    if (salvo && salvo.deviceCode === _licDeviceCode && await _licVerificar(_licDeviceCode, salvo.exp, salvo.sig)) {
+      if (Number(salvo.exp) > Date.now()) {
+        $lic('modalLicenca')?.classList.remove('aberto');
+        return true;
+      }
+      $lic('licTitulo').textContent = 'Licença expirada';
+      $lic('licTexto').innerHTML = `Sua licença expirou em <b>${_licFormatarData(salvo.exp)}</b>. Envie o código abaixo para renovar.`;
+      $lic('modalLicenca')?.classList.add('aberto');
+      return false;
+    }
+
+    $lic('licTitulo').textContent = 'Ativação — Agrolâmina';
+    $lic('licTexto').textContent = 'Este aplicativo requer ativação vinculada a este aparelho/navegador. Funciona offline depois de ativado.';
+    $lic('modalLicenca')?.classList.add('aberto');
+    return false;
+  }
+
+  window.ativarLicenca = async function(){
+    const bruto = ($lic('licChaveInput').value || '');
+    const statusEl = $lic('licStatus');
+    const parsed = _licParseChave(bruto);
+    if (!parsed) { statusEl.textContent = 'Chave em formato inválido — cole exatamente como recebida.'; statusEl.className = 'lic-status err'; return; }
+    statusEl.textContent = 'Verificando…'; statusEl.className = 'lic-status';
+    const ok = await _licVerificar(_licDeviceCode, parsed.exp, parsed.sig);
+    if (ok && Number(parsed.exp) > Date.now()) {
+      localStorage.setItem(LIC_STORAGE_KEY, JSON.stringify({ deviceCode: _licDeviceCode, exp: parsed.exp, sig: parsed.sig, ativadoEm: Date.now() }));
+      statusEl.textContent = 'Ativado com sucesso — válido até ' + _licFormatarData(parsed.exp) + '!'; statusEl.className = 'lic-status ok';
+      setTimeout(() => $lic('modalLicenca')?.classList.remove('aberto'), 600);
+    } else if (ok) {
+      statusEl.textContent = 'Essa chave já está expirada.'; statusEl.className = 'lic-status err';
+    } else {
+      statusEl.textContent = 'Chave inválida para este dispositivo.'; statusEl.className = 'lic-status err';
+    }
+  };
+
+  window.copiarCodigoLicenca = function(){
+    if (!_licDeviceCode) return;
+    navigator.clipboard?.writeText(_licDeviceCode).then(() => {
+      const statusEl = $lic('licStatus');
+      if (statusEl) { statusEl.textContent = 'Código copiado!'; statusEl.className = 'lic-status ok'; }
+    });
+  };
+
+  checarLicenca();
 })();
 </script>
 
