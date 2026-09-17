@@ -353,7 +353,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.79 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.80 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -912,8 +912,9 @@ body.layout-lateral #status{grid-area:status;}
         <div class="rgroup-body">
           <div class="rcol">
             <label>Marca do monitor</label>
-            <select id="monitorMarca" class="rfield wide">
+            <select id="monitorMarca" class="rfield wide" onchange="_atualizarAvisoMonitorGPS()">
               <option value="trimble">Trimble (AgGPS)</option>
+              <option value="johndeere">John Deere (ISO-XML)</option>
             </select>
           </div>
           <div class="rcol">
@@ -924,7 +925,8 @@ body.layout-lateral #status{grid-area:status;}
             <label>Fazenda</label>
             <input type="text" id="monitorFazenda" class="rfield wide" placeholder="Nome da fazenda">
           </div>
-          <button class="rbtn c-green" onclick="exportarMonitorGPS()" title="Gera uma pasta AgGPS/Data pronta pra copiar num pendrive — o monitor lê o contorno do talhão (Boundary) e cada linha de plantio já traçada como um percurso guiado (LineFeature)."><span class="ico">&#128668;</span><span class="lbl">Exportar p/ Monitor GPS</span></button>
+          <button class="rbtn c-green" id="btnExportarMonitor" onclick="exportarMonitorGPS()"><span class="ico">&#128668;</span><span class="lbl">Exportar p/ Monitor GPS</span></button>
+          <div id="avisoMonitorGPS" style="font-size:10px;color:var(--panel-text-dim);max-width:220px;white-space:normal;"></div>
         </div>
         <div class="rgroup-title">Monitor GPS (Trator)</div>
       </div>
@@ -2918,6 +2920,39 @@ body.layout-lateral #status{grid-area:status;}
 // o MESMO parser Python usado pra decifrar o arquivo de referência do AgroCAD — confirmando
 // shapeType/geometria/área/nome/comprimento corretos. Regressão completa (12 suítes disponíveis)
 // sem erros de página.
+// v4.80: 2ª marca na exportação pra Monitor GPS (Trator) — John Deere. Diferente da Trimble
+// (v4.79), o usuário não tinha um arquivo de referência real pra conferir byte a byte — pedido
+// explícito foi pesquisar a documentação pública do fabricante e implementar mesmo assim.
+// Pesquisado: (1) o formato "Data Profile" que o GS2/GS3 usa pra importar contorno+linhas de guia
+// é um binário proprietário (não documentado publicamente, gerado só pelo Apex ou outro display —
+// mesmo problema do .agf criptografado da Trimble, impossível gerar sem a ferramenta oficial). (2)
+// Shapefile no John Deere só serve pra PRESCRIÇÕES (Rx), não pra contorno/guia (confirmado no
+// manual oficial do GS3 2630 — "Import Data... does NOT import global prescriptions and
+// shapefiles" pra contorno/guia, que vêm só do Data Profile). (3) O caminho aberto e documentado
+// que a própria John Deere usa (e que vários softwares de terceiros/QGIS plugins usam) pra troca
+// de contorno + linha de guia é o ISO 11783-10 ("ISOXML") — arquivo TASKDATA.XML numa pasta
+// TASKDATA na raiz do pendrive. Confirmado na documentação da isoxml.tools os atributos exatos:
+// PFD (Partfield: A=Id, C=Designator, D=Area em m²), PLN (Polygon: A=1 é contorno de talhão), LSG
+// (LineString: A=1 é contorno externo, A=5 é linha de guia/GuidancePattern na v4.3, C=largura em
+// mm), PNT (Point: A=2 genérico, C=latitude, D=longitude — direto em graus decimais, sem conversão
+// nenhuma). GGP (GuidanceGroup) + GPN (GuidancePattern, C=3 é "Curve") — um GPN por linha de
+// plantio JÁ TRAÇADA (mesmo princípio do LineFeature da Trimble: exporta cada passada real, não
+// confia no monitor pra recalcular offsets a partir de só 1 linha de referência).
+// AVISO deixado bem visível na própria aba (não só escondido num changelog): como não há arquivo
+// real pra validar, um aviso amarelo aparece na tela ao escolher "John Deere (ISO-XML)" avisando
+// que é baseado só em documentação pública e recomendando confirmar com o revendedor/monitor antes
+// de confiar no trator — diferente da Trimble, que mostra que foi testada contra um export real.
+// Também documentado: displays Geração 4 mais novos tendem a preferir importar isso pelo John
+// Deere Operations Center (upload do arquivo) em vez de ler direto de um pendrive; displays GS2/
+// GS3/ISOBUS mais antigos costumam aceitar TASKDATA direto do pendrive — a mensagem final de
+// sucesso menciona os dois caminhos.
+// Testado (test_v480_export_johndeere.js, com sanity-check confirmando que o teste pega a
+// regressão de verdade trocando o PatternType/removendo a largura): cria um talhão sintético,
+// exporta, intercepta o download real do .zip, extrai TASKDATA/TASKDATA.XML, e valida com um
+// parser XML de verdade (Python xml.etree, diferente do parser da própria ferramenta) que a
+// estrutura ISOXML está bem formada — elemento raiz com versão correta, PFD/PLN/LSG do contorno
+// com área/tipo/pontos certos, GGP/GPN das linhas de plantio com PatternType e largura (mm =
+// espaçamento em metros ×1000) corretos. Regressão completa (13 suítes disponíveis) sem erros.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -8344,8 +8379,26 @@ function _gerarPastaAgGpsTalhao(polyPts, linhas) {
   return arquivos;
 }
 
-// Ponto de entrada do botão "Exportar p/ Monitor GPS" — hoje só Trimble (AgGPS); a marca escolhida
-// decide só o "empacotador" final (extrair talhões/linhas é igual pra qualquer marca futura).
+// Aviso abaixo do botão, específico da marca escolhida — sobretudo pra deixar claro que a Trimble
+// foi validada byte a byte contra um export real, mas a John Deere não (sem arquivo de referência
+// disponível — feita só com base na documentação pública do fabricante, ver comentário grande mais
+// abaixo em _exportarJohnDeereISOXML).
+function _atualizarAvisoMonitorGPS() {
+  const marca = $('monitorMarca').value;
+  const el = $('avisoMonitorGPS');
+  if(!el) return;
+  if(marca === 'trimble') {
+    el.textContent = 'Pasta AgGPS/Data (Boundary + LineFeature) — testada contra um export real do AgroCAD.';
+  } else if(marca === 'johndeere') {
+    el.textContent = '⚠ TASKDATA.XML (ISO-XML) baseado só em documentação pública — sem arquivo real pra validar. Confira com o revendedor/monitor antes de confiar no trator.';
+  } else {
+    el.textContent = '';
+  }
+}
+_atualizarAvisoMonitorGPS();
+
+// Ponto de entrada do botão "Exportar p/ Monitor GPS" — a marca escolhida decide só o
+// "empacotador" final (extrair talhões/linhas é igual pra qualquer marca).
 async function exportarMonitorGPS() {
   const marca = $('monitorMarca').value;
   if(!$('monitorProdutor').value.trim() || !$('monitorFazenda').value.trim()) {
@@ -8355,12 +8408,13 @@ async function exportarMonitorGPS() {
   const fazenda = _nomePastaSeguro($('monitorFazenda').value, 'Fazenda');
 
   // Mesmos talhões que o Exportar KML/DXF já reúne: arquivados + o ativo (se tiver contorno/linhas).
-  const fontes = talhoesArquivados.map(t => ({ nome: `Talhão ${t.idx}`, polyPts: t.polyPts, linhas: t.linhas }));
-  if(polyPts.length >= 3 || linhas.length) fontes.push({ nome: `Talhão ${talhoesArquivados.length + 1}`, polyPts, linhas });
+  const fontes = talhoesArquivados.map(t => ({ nome: `Talhão ${t.idx}`, polyPts: t.polyPts, linhas: t.linhas, spacing: t.spacing }));
+  if(polyPts.length >= 3 || linhas.length) fontes.push({ nome: `Talhão ${talhoesArquivados.length + 1}`, polyPts, linhas, spacing: spacingAtual });
   if(!fontes.length) { setStatus('Nenhum talhão desenhado ainda.', 'err'); return; }
 
   try {
     if(marca === 'trimble') await _exportarTrimbleAgGPS(produtor, fazenda, fontes);
+    else if(marca === 'johndeere') await _exportarJohnDeereISOXML(produtor, fazenda, fontes);
     else setStatus('Marca de monitor ainda não suportada.', 'err');
   } catch(e) {
     alert('Erro ao gerar exportação pro monitor: ' + e.message);
@@ -8386,6 +8440,76 @@ async function _exportarTrimbleAgGPS(produtor, fazenda, fontes) {
   const blob = await zip.generateAsync({ type: 'blob' });
   baixarArquivo(blob, `AgGPS_${produtor}_${fazenda}.zip`, 'application/zip');
   setStatus(`✓ Exportado pra Trimble AgGPS — ${algumTalhao} talhão(ões). Extraia o .zip e copie a pasta "AgGPS" pra raiz do pendrive.`, 'ok');
+}
+
+// ── Exportar para Monitor GPS (Trator) — John Deere (ISO-XML / TASKDATA) ─────────────────────
+// v4.80: usuário pediu John Deere sem ter um arquivo de referência pra conferir byte a byte (como
+// tivemos pra Trimble) — pesquisado na documentação pública do fabricante e no padrão aberto que a
+// própria John Deere usa pra troca de dados de contorno/linha de guia: ISO 11783-10 ("ISOXML"),
+// arquivo TASKDATA.XML dentro de uma pasta TASKDATA na raiz do pendrive. Diferente do AgGPS
+// (Shapefile binário), aqui é um XML — o "PFD" (Partfield) é o talhão, com um "PLN" (Polygon,
+// tipo 1 = contorno) pro contorno e um "GGP" (Guidance Group) com um "GPN" (Guidance Pattern) POR
+// LINHA DE PLANTIO JÁ TRAÇADA (mesmo princípio do LineFeature da Trimble — cada passada real
+// exportada como está, em vez de confiar no monitor pra recalcular os paralelismos a partir de só
+// 1 linha de referência + largura). AVISO IMPORTANTE mostrado ao usuário: sem um arquivo real pra
+// validar, essa exportação é baseada só em documentação pública — displays mais novos (Geração 4)
+// tendem a preferir importar isso pelo John Deere Operations Center (upload do arquivo) em vez de
+// ler direto de um pendrive; displays GS2/GS3/ISOBUS mais antigos costumam aceitar TASKDATA direto
+// do pendrive. Recomendado validar com o revendedor/monitor antes de confiar 100% no trator.
+function _escaparXml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&apos;' }[c]));
+}
+
+// Monta o(s) <PFD> (um por talhão) — contorno como <PLN>/<LSG>/<PNT> e cada linha de plantio já
+// traçada como um <GPN> dentro de um único <GGP> do talhão (ver comentário acima).
+function _gerarPfdIsoXml(f, idx) {
+  if(!f.polyPts || f.polyPts.length < 3) return '';
+  const pfdId = `PFD${idx + 1}`;
+  let areaM2 = 0;
+  try { areaM2 = turf.area(turf.polygon([[...f.polyPts.map(p => [p.lng, p.lat]), [f.polyPts[0].lng, f.polyPts[0].lat]]])); } catch(e) {}
+
+  const pontoXml = p => `<PNT A="2" C="${p.lat.toFixed(7)}" D="${p.lng.toFixed(7)}"/>`;
+  const anelFechado = [...f.polyPts, f.polyPts[0]];
+  let xml = `<PFD A="${pfdId}" C="${_escaparXml(f.nome)}" D="${Math.round(areaM2)}">\n`;
+  xml += `<PLN A="1">\n<LSG A="1">\n${anelFechado.map(pontoXml).join('\n')}\n</LSG>\n</PLN>\n`;
+
+  if(f.linhas && f.linhas.length) {
+    const larguraMm = f.spacing ? Math.round(f.spacing * 1000) : null;
+    xml += `<GGP A="GGP${idx + 1}" B="${_escaparXml('Linhas de Plantio - ' + f.nome)}">\n`;
+    let gpnN = 0;
+    f.linhas.forEach(pl => {
+      let pts; try { pts = pl.getLatLngs().flat(); } catch(e) { return; }
+      if(pts.length < 2) return;
+      gpnN++;
+      const larguraAttr = larguraMm ? ` C="${larguraMm}"` : '';
+      xml += `<GPN A="GPN${idx + 1}_${gpnN}" B="Linha ${gpnN}" C="3">\n<LSG A="5"${larguraAttr}>\n${pts.map(pontoXml).join('\n')}\n</LSG>\n</GPN>\n`;
+    });
+    xml += `</GGP>\n`;
+  }
+  xml += `</PFD>\n`;
+  return xml;
+}
+
+function _gerarTaskDataXml(fontes) {
+  let xml = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+  xml += `<ISO11783_TaskData VersionMajor="4" VersionMinor="3" ManagementSoftwareManufacturer="Bolsa Irriga" ManagementSoftwareVersion="${$('verLabel') ? $('verLabel').textContent.trim() : ''}" DataTransferOrigin="1">\n`;
+  fontes.forEach((f, i) => { xml += _gerarPfdIsoXml(f, i); });
+  xml += `</ISO11783_TaskData>\n`;
+  return xml;
+}
+
+async function _exportarJohnDeereISOXML(produtor, fazenda, fontes) {
+  if(typeof JSZip === 'undefined') { setStatus('Biblioteca de compactação (JSZip) não carregou — verifique sua conexão com a internet.', 'err'); return; }
+  const comTalhao = fontes.filter(f => f.polyPts && f.polyPts.length >= 3);
+  if(!comTalhao.length) { setStatus('Nenhum talhão com contorno pra exportar.', 'err'); return; }
+
+  setStatus('Gerando pacote ISO-XML (TASKDATA) para o monitor John Deere…', 'info');
+  const xml = _gerarTaskDataXml(comTalhao.map(f => ({ ...f, nome: `${fazenda} — ${f.nome}` })));
+  const zip = new JSZip();
+  zip.folder('TASKDATA').file('TASKDATA.XML', xml);
+  const blob = await zip.generateAsync({ type: 'blob' });
+  baixarArquivo(blob, `TASKDATA_${produtor}_${fazenda}.zip`, 'application/zip');
+  setStatus(`✓ Exportado pra John Deere (ISO-XML) — ${comTalhao.length} talhão(ões). Extraia o .zip e copie a pasta "TASKDATA" pra raiz do pendrive (displays mais novos: importe o TASKDATA.XML pelo John Deere Operations Center). Sem arquivo de referência pra validar — confira com o revendedor antes de confiar no trator.`, 'ok');
 }
 
 // ── Helpers PDF: projeção Mercator (igual ao módulo Curvas de Nível) ───────────
