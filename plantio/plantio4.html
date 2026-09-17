@@ -353,7 +353,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.82 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.83 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -983,6 +983,7 @@ body.layout-lateral #status{grid-area:status;}
         <input type="checkbox" id="cenariosIncluirMapa" checked> Incluir mapa temático (áreas acima da declividade máxima)
       </label>
       <div style="flex:1;"></div>
+      <button class="rbtn-sm" id="btnGuiaEmNivelAuto" onclick="gerarGuiaEmNivelAutomatica()" title="Traça automaticamente uma linha que acompanha o relevo em cota aproximadamente constante (anda perpendicular ao declive, não precisa desenhar à mão) e já gera as linhas de plantio em curva a partir dela — a técnica mais eficaz contra erosão em terreno com declive.">&#127760; Gerar Guia em Nível Automaticamente</button>
       <button class="rbtn-sm ok" id="btnUsarCenarioEscolhido" onclick="usarCenarioEscolhido()" disabled>&#10003; Usar Ângulo Selecionado</button>
     </div>
   </div>
@@ -3006,6 +3007,36 @@ body.layout-lateral #status{grid-area:status;}
 // Testado (test_v482_importar_monitor_gps.js, com sanity-check confirmando que o teste pega a
 // regressão de verdade trocando lat/lng na leitura do contorno): as 2 partes acima passam sem
 // erros de página. Regressão completa (9 suítes centrais re-verificadas) sem erros.
+// v4.83: pedido do usuário — dentro de "Otimizar Cenário de Plantio", uma opção que desenha
+// automaticamente uma linha que "anda em nível" (acompanha o relevo em cota aproximadamente
+// constante) e já gera as linhas de plantio em curva a partir dela, sem precisar desenhar a guia à
+// mão — plantio em curva de nível é a técnica mais eficaz contra erosão em terreno com declive.
+// Novo botão "🌐 Gerar Guia em Nível Automaticamente" no modal de cenários. Reaproveita a MESMA
+// grade de elevação/sampler já buscados por analisarCenariosPlantio() (sem consulta de rede nova)
+// e a engine de offset "Suave" que já existia pra guias desenhadas à mão (gerarLinhas() em
+// modoGuia='spline') — a única peça nova é o traçado automático da curva em si
+// (_tracarCurvaDeNivel/_gradienteElevacaoEm).
+// Como funciona: anda perpendicular ao GRADIENTE de elevação (não ao longo dele) — perpendicular
+// ao declive é, por definição, a direção que não sobe nem desce. A cada passo pequeno (3m),
+// reamostra o gradiente local (diferenças centrais, mesmo princípio já usado na simulação de
+// chuva da Vista 3D) e escolhe, das duas perpendiculares possíveis, a mais parecida com o rumo do
+// passo anterior — sem isso a linha ficaria invertendo de lado a cada passo em vez de seguir num
+// sentido só. Terreno local chapado (gradiente ~0) mantém o rumo anterior em vez de girar sem
+// direção definida. Anda nos dois sentidos a partir de um ponto garantido dentro do talhão
+// (turf.pointOnFeature — mais seguro que o centróide, que pode cair fora num talhão bem côncavo)
+// até sair do talhão de cada lado. Optei por essa abordagem (caminhada local) em vez de reaproveitar
+// o extrator de curvas de nível por marching squares que gerarCurvas() já usa — daria uma curva
+// matematicamente mais exata, mas exigiria escolher/recortar qual pedaço de contorno (podem sair
+// vários, em terrenos com mais de uma elevação igual) pertence ao talhão; a caminhada local sempre
+// produz UMA curva só, já garantida dentro do talhão, sem essa ambiguidade — troca aceitável de
+// exatidão teórica por robustez, já que "andar em nível" não precisa ser matematicamente perfeito
+// (um guia humano desenhando uma curva de nível à mão também não é).
+// Testado (test_v483_guia_nivel_automatica.js, com sanity-check confirmando que o teste pega a
+// regressão de verdade removendo a rotação perpendicular): num DEM sintético com inclinação pura
+// em Leste-Oeste, as 17 linhas geradas correm quase exatamente Norte-Sul (desvio de ~0,0002° do
+// esperado) e a elevação varia menos de 0,001m ao longo de cada linha — confirma que a curva andou
+// mesmo em nível e perpendicular ao declive real. Regressão completa (7 suítes centrais
+// re-verificadas) sem erros de página.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -10628,6 +10659,93 @@ function usarCenarioEscolhido() {
 
   fecharModalCenarios();
   setStatus(`Linhas geradas no ângulo ${angulo}° (${_rumoCardinal(angulo)}) — ${novasLinhas.length} linha(s), ${Math.round(metrosLin)} m.${modoAtivo ? ' Trave o talhão quando estiver satisfeito.' : ''}`, 'ok');
+}
+
+// ── Guia em Nível Automática (traça uma curva de nível sozinha, sem desenhar à mão) ──────────
+// v4.83: pedido do usuário — dentro do Otimizar Cenário de Plantio, uma opção que desenha
+// automaticamente uma linha que "anda em nível" (acompanha o relevo em cota aproximadamente
+// constante) e já gera as linhas de plantio em curva a partir dela — a técnica mais eficaz contra
+// erosão. Reaproveita a MESMA grade de elevação/sampler já buscados por analisarCenariosPlantio()
+// (sem consulta de rede nova) e a engine de offset "Suave" que já existia pra guias desenhadas à
+// mão (gerarLinhas() em modoGuia='spline') — a única peça nova é o traçado automático da curva.
+//
+// Anda perpendicular ao GRADIENTE de elevação (não ao longo dele) — perpendicular ao declive é,
+// por definição, a direção que não sobe nem desce (nível constante). A cada passo pequeno (3m),
+// reamostra o gradiente local e escolhe, das duas perpendiculares possíveis, a mais parecida com o
+// rumo do passo anterior — sem isso, a linha ficaria invertendo de lado a cada passo em vez de
+// seguir num sentido só. Terreno local chapado (gradiente ~0) mantém o rumo anterior em vez de
+// girar sem direção definida. Anda nos dois sentidos a partir de um ponto de partida garantido
+// dentro do talhão (turf.pointOnFeature — mais seguro que o centróide, que pode cair fora do
+// polígono num talhão bem côncavo) até sair do talhão de cada lado.
+function _gradienteElevacaoEm(lat, lng, sampler, passoM) {
+  const mLat = 111320, mLng = Math.cos(lat * Math.PI / 180) * 111320;
+  const dLatPasso = passoM / mLat, dLngPasso = passoM / mLng;
+  const hE = sampler(lat, lng + dLngPasso), hW = sampler(lat, lng - dLngPasso);
+  const hN = sampler(lat + dLatPasso, lng), hS = sampler(lat - dLatPasso, lng);
+  // elevação por metro em cada eixo (Leste/Norte) — mesma distância física nos dois lados da
+  // diferença central, então os dois componentes já saem na mesma escala (dá pra tratar como um
+  // vetor 2D de verdade, sem distorção de latitude).
+  return { leste: (hE - hW) / (2 * passoM), norte: (hN - hS) / (2 * passoM) };
+}
+
+function _tracarCurvaDeNivel(tPolyT, sampler) {
+  const startXY = turf.pointOnFeature(tPolyT).geometry.coordinates; // [lng,lat], garantido dentro
+  const start = { lat: startXY[1], lng: startXY[0] };
+  const passoM = 3, maxPassos = 4000;
+
+  function tracarLado(sinalInicial) {
+    const pts = [];
+    let atual = start, dirAnt = null; // dirAnt: {leste, norte} unitário do último passo
+    for(let i = 0; i < maxPassos; i++) {
+      const g = _gradienteElevacaoEm(atual.lat, atual.lng, sampler, passoM);
+      const mag = Math.hypot(g.leste, g.norte);
+      let dir;
+      if(mag < 1e-9) {
+        dir = dirAnt || { leste: sinalInicial, norte: 0 }; // sem declive local — mantém o rumo anterior
+      } else {
+        const p1 = { leste: -g.norte / mag, norte: g.leste / mag }; // perpendicular ao gradiente (90°)
+        const p2 = { leste: -p1.leste, norte: -p1.norte };          // a outra perpendicular (180° da 1ª)
+        if(!dirAnt) dir = sinalInicial >= 0 ? p1 : p2;
+        else dir = (p1.leste * dirAnt.leste + p1.norte * dirAnt.norte) >= (p2.leste * dirAnt.leste + p2.norte * dirAnt.norte) ? p1 : p2;
+      }
+      dirAnt = dir;
+      const mLat = 111320, mLng = Math.cos(atual.lat * Math.PI / 180) * 111320;
+      const prox = { lat: atual.lat + dir.norte * passoM / mLat, lng: atual.lng + dir.leste * passoM / mLng };
+      if(!turf.booleanPointInPolygon(turf.point([prox.lng, prox.lat]), tPolyT)) break;
+      pts.push(prox);
+      atual = prox;
+    }
+    return pts;
+  }
+
+  const frente = tracarLado(1);
+  const atras = tracarLado(-1).reverse();
+  const curva = [...atras, start, ...frente];
+  return curva.length >= 3 ? curva : null;
+}
+
+function gerarGuiaEmNivelAutomatica() {
+  if(!_cenariosPlantio) { setStatus('Clique em "Analisar Cenários" primeiro — a guia automática reaproveita a grade de elevação já buscada ali.', 'err'); return; }
+  const { tPolyT, sampler, modoAtivo } = _cenariosPlantio;
+
+  if(!modoAtivo && talhaoSelecionadoUid !== null && polyPts.length < 3) ativarTalhaoParaEdicao();
+  if(!turfPoly || polyPts.length < 3) { setStatus('O contorno não está mais disponível — reabra/selecione o talhão e tente de novo.', 'err'); return; }
+
+  const curva = _tracarCurvaDeNivel(tPolyT, sampler);
+  if(!curva) { setStatus('Não consegui traçar uma curva de nível automática nesse talhão — desenhe a guia manualmente (Suave) em vez disso.', 'err'); return; }
+
+  // Mesmo critério de reamostragem já usado em usarCurvaComoGuia() — a curva crua tem centenas/
+  // milhares de pontos (passo de 3m), viraria uma guia com marcador arrastável em cada um; o modo
+  // Suave (catmullRom) reconstrói a curva orgânica a partir de poucos pontos-chave.
+  const alvo = Math.max(6, Math.min(30, Math.round(curva.length / 20)));
+  const simples = resampleCurve(curva, alvo);
+
+  limparGuia();
+  setModoGuia('spline');
+  simples.forEach(p => addGuidePt(L.latLng(p.lat, p.lng)));
+  finalizarGuia();
+  fecharModalCenarios();
+  gerarLinhas();
 }
 
 // ── Mapa Temático (declividade longitudinal na direção escolhida) ────────────────────────────
