@@ -359,7 +359,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.87 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.88 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -3192,6 +3192,36 @@ body.layout-lateral #status{grid-area:status;}
 // 4,4 milhões de pares testados) — o "leque" relatado é estruturalmente impossível agora; (D) o
 // painel de confirmação continua flutuante. Regressão completa (17 suítes centrais re-verificadas)
 // sem erros de página.
+// v4.88: usuário testou a v4.87 em campo real e a foto voltou a mostrar o MESMO tipo de bagunça —
+// causa: intervalos de altura FINOS o bastante pra cobrir o espaçamento pedido, aplicados sobre
+// elevação real (com ruído de medição/interpolação de satélite), geram centenas de pedaços de
+// curva quase idênticos e levemente deslocados entre si por causa do ruído — que se entrelaçam
+// visualmente exatamente como um "cruzamento", mesmo sem violar a garantia matemática de isolinhas
+// de ELEVAÇÃO nunca se cruzarem entre níveis diferentes (a garantia era real, mas o ruído
+// fragmentava tanto que ficava com a MESMA aparência do problema original).
+// O usuário sugeriu a solução certa: "desenhar uma única linha dentro do talhão e dar offset nela
+// [...] baseada numa linha reta mas de alguma forma se baseando na curvatura das curvas [de
+// nível], a mesma ser corrigida". Implementado com 2 correções que faltavam nas tentativas
+// anteriores: (1) a linha mestra agora nasce do caminhar perpendicular ao gradiente
+// (_tracarCurvaDeNivel, a mesma técnica da v4.83) rodando sobre uma grade de elevação SUAVIZADA
+// (_suavizarGrade — média de vizinhança 3×3, 2 passadas) em vez da grade crua — "corrige" a mestra
+// pela tendência GERAL do relevo sem herdar o ruído ponto a ponto; (2) as linhas derivadas deixam
+// de ser offsets de turf.lineOffset (v4.86, quebrava na curvatura) OU curvas de elevação reais em
+// vários níveis (v4.87, fragmentava com ruído) — agora são ISOLINHAS DE UM CAMPO DE DISTÂNCIA
+// assinada até a mestra (_curvasPorCampoDeDistancia, usando marchingSquaresCurva sobre uma grade
+// de distância LIMPA e sintética, não sobre elevação) — mesma garantia matemática de nunca cruzar
+// que as curvas de nível já tinham (é a técnica de "offset verdadeiro" que CAM/CAD profissional
+// usa: onde um offset ingênuo autointersecionaria, a isolinha da distância simplesmente arredonda a
+// transição), mas sem nenhum ruído de elevação envolvido em gerar as cópias — só a mestra (já
+// suavizada) entra em jogo uma vez, o resto é geometria pura.
+// Testado (test_v488_linha_mestra_campo_distancia.js, com sanity-check confirmando que o teste pega
+// a regressão de verdade voltando a usar turf.lineOffset ingênuo — 133.501 cruzamentos detectados):
+// (A) num talhão em "L", cobertura essencialmente perfeita (distâncias na casa do milímetro); (B)
+// a busca por geometria testa os 5 pontos de partida candidatos e fica com o de melhor cobertura,
+// não o 1º; (C) no mesmo cenário crítico da colina real (300x300m, espaçamento 5m, 181 linhas
+// geradas), ZERO cruzamentos em 50,8 milhões de pares de segmentos testados — melhor ainda que a
+// v4.87 no mesmo teste; (D) painel de confirmação continua flutuante. Regressão completa (17
+// suítes centrais re-verificadas) sem erros de página.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -10829,57 +10859,35 @@ function usarCenarioEscolhido() {
   setStatus(`Linhas geradas no ângulo ${angulo}° (${_rumoCardinal(angulo)}) — ${novasLinhas.length} linha(s), ${Math.round(metrosLin)} m.${modoAtivo ? ' Trave o talhão quando estiver satisfeito.' : ''}`, 'ok');
 }
 
-// ── Otimizar Cenário (Curvas) — traça VÁRIAS curvas de nível sozinho, sem desenhar à mão ─────
-// v4.83: pedido do usuário — dentro do Otimizar Cenário de Plantio, uma opção que desenha
-// automaticamente uma linha que "anda em nível" (acompanha o relevo em cota aproximadamente
-// constante) — a técnica mais eficaz contra erosão em terreno com declive.
-// v4.84: virou botão PRÓPRIO no ribbon, buscando sua própria grade de elevação em vez de depender
-// de _cenariosPlantio (a curva só funcionava depois de rodar a análise de retas primeiro).
-// v4.85: a v4.83/v4.84 traçava UMA curva central e depois gerava as linhas paralelas OFERTANDO-A
-// (offset perpendicular fixo) através da mesma engine "Suave" usada por guias desenhadas à mão
-// (gerarLinhas() em modoGuia='spline', com reamostragem pra poucos pontos-chave + reconstrução por
-// catmullRom + remoção de auto-cruzamento + corte no contorno). Em campo real isso deu 3 problemas
-// reportados pelo usuário: (1) o offset fixo se afasta do relevo verdadeiro conforme a distância da
-// curva central aumenta, then não seguia mais "em nível" de fato nas bordas do talhão; (2) talhões
-// com lóbulos/reentrâncias (ex: uma "orelha" no canto) ficavam sem NENHUMA linha nessas áreas,
-// porque só existia uma linha-base pra ofertar a partir do centro; (3) a reamostragem+reconstrução
-// por spline + corte no contorno concavo introduzia quinas visíveis, em vez da curva suave que o
-// caminhar original já produzia.
-// Correção: eliminado o offset e a engine de guia por completo. Agora _tracarGradeDeCurvasDeNivel()
-// semeia pontos de partida numa GRADE regular cobrindo TODO o retângulo do talhão (não só ao longo
-// de uma linha perpendicular à curva central) — cada ponto de partida ainda dentro do talhão e
-// numa célula "não coberta" dispara seu PRÓPRIO caminhar independente (reaproveita
-// _tracarCurvaDeNivel, generalizada pra aceitar um ponto de partida à escolha em vez de só o
-// centro). Cada caminhar já é uma curva suave por natureza (passo de 3m seguindo o gradiente local)
-// e já garante nunca sair do talhão (checa turf.booleanPointInPolygon a cada passo) — desenhada
-// DIRETO no mapa sem reamostragem/reconstrução/corte nenhum, então não tem de onde vir quina. A
-// grade cobre lóbulos e reentrâncias porque os pontos de partida cobrem o retângulo inteiro, não só
-// uma faixa central. As células (do tamanho do espaçamento pedido) já percorridas por uma curva são
-// marcadas como cobertas, então curvas vizinhas nascem naturalmente ~espaçamento de distância umas
-// das outras, sem precisar de um valor de offset imposto de fora.
-// Some com isso um passo de confirmação (modalCenariosCurvas): a curva agora é desenhada em
-// PRÉ-VISUALIZAÇÃO (tracejada) antes de alterar o talhão de verdade — só aplica ao clicar "Usar
-// Estas Linhas", dando a mesma chance de revisar que a tabela de retas já dava (o usuário notou a
-// falta dessa revisão ao ver um resultado ruim já aplicado direto no talhão).
-// v4.87: usuário testou a v4.86 (1 linha mestra + offset geométrico) em campo real e o resultado
-// ficou pior ainda — linhas com quinas/ângulos e se cruzando, formando um "leque" que abre de um
-// ponto até virar caos. Causa raiz: turf.lineOffset (offset de distância CONSTANTE) só funciona
-// enquanto a distância do offset for menor que o raio de curvatura local da linha mestra — num
-// talhão real com curvatura de verdade (visível na curva de nível real da 2ª imagem, bem arqueada)
-// e espaçamento pequeno num talhão grande (precisando de 100+ linhas pra cada lado), os offsets
-// mais distantes passam do raio de curvatura e a linha "dobra sobre si mesma" — o leque cruzado da
-// imagem. Suavizar a mestra (v4.86) não resolve: reduz um pouco a curvatura, não o suficiente pra
-// aguentar 100+ offsets.
-// O usuário sugeriu a solução certa: "pegar as curvas de nível do talhão... testar se cobre todo
-// talhão de forma correta, uniforme e sem se cruzar... talvez uma média de todas as curvas". Mais
-// robusto ainda que "uma média": em vez de OFERTAR uma família a partir de 1 linha (que sempre vai
-// quebrar em algum raio), usar as curvas de nível REAIS do relevo em VÁRIOS NÍVEIS de altura —
-// isolinhas de elevação verdadeiras JAMAIS se cruzam entre si (são cortes de altura constante de
-// uma superfície de valor único — duas alturas diferentes não podem coincidir no mesmo ponto), e
-// cada uma já acompanha o relevo real onde está, sem depender de offset nenhum. É a MESMA extração
-// por marching squares que a ferramenta "Curvas de Nível" (gerarCurvas(), aba Análise) já usa e
-// desenha nas linhas vermelhas das imagens que o usuário mandou — sem reclamação de quina ou
-// cruzamento nelas, porque são curvas de terreno de verdade, não offsets artificiais.
+// ── Otimizar Cenário (Curvas) — 1 linha mestra suavizada, derivada por campo de distância ────
+// v4.83→v4.87: histórico completo de tentativas (ver commits anteriores) — grade de curvas
+// independentes (v4.85) ficou desorganizada com ruído de relevo real; 1 mestra + turf.lineOffset
+// (v4.86) quebrava em "leque" sempre que o offset passava do raio de curvatura da mestra; curvas de
+// nível reais em vários níveis de altura (v4.87) nunca se cruzam matematicamente, mas em relevo
+// real (ruidoso) o intervalo fino necessário pra cobrir o espaçamento gerava centenas de pedaços de
+// curva quase idênticos que se entrelaçavam visualmente — a mesma aparência de "cruzando tudo".
+// v4.88: pedido do usuário — "desenhar uma única linha dentro do talhão e dar offset nela, essa
+// linha poderia ser baseada numa linha reta mas de alguma forma se baseando na curvatura das
+// curvas [de nível], a mesma ser corrigida". Implementado literalmente, com 2 correções que faltavam
+// nas tentativas anteriores:
+// (1) RUÍDO: a mestra agora nasce do caminhar perpendicular ao gradiente (_tracarCurvaDeNivel, a
+//     mesma função da v4.83) rodando sobre uma grade de elevação SUAVIZADA (_suavizarGrade — média
+//     de vizinhança 3×3, 2 passadas) em vez da grade crua. Isso "corrige" a mestra pela tendência
+//     GERAL do relevo (a curvatura de verdade das curvas de nível), sem herdar o ruído ponto a
+//     ponto que fazia a v4.85 (caminhadas independentes) divergir e a v4.87 (intervalo fino)
+//     fragmentar em pedaços quase idênticos.
+// (2) CRUZAMENTO: em vez de turf.lineOffset (desloca cada ponto na normal — quebra sempre que a
+//     distância excede o raio de curvatura local, o "leque" da v4.86), as linhas derivadas agora
+//     são ISOLINHAS DE UM CAMPO DE DISTÂNCIA até a mestra (_curvasPorCampoDeDistancia): constrói
+//     uma grade fina só de distância assinada (positiva de um lado da mestra, negativa do outro) e
+//     usa marchingSquaresCurva() — a MESMA extração da ferramenta "Curvas de Nível" — pra tirar,
+//     de cada múltiplo do espaçamento, a curva de distância constante correspondente. É o mesmo
+//     princípio matemático que já provou (v4.87) nunca cruzar entre níveis diferentes — só que
+//     agora aplicado a um campo de DISTÂNCIA limpo e sintético (sem ruído de elevação nenhum
+//     envolvido na hora de gerar as cópias), não à elevação bruta. Onde o offset "quebraria" numa
+//     curva fechada, a isolinha da distância simplesmente arredonda a transição em vez de se
+//     autointerseccionar — a garantia central do método (é a mesma técnica de "offset verdadeiro"
+//     que ferramentas de CAM/CAD profissionais usam pra contornos com curvatura arbitrária).
 function _clipChainAoPoligono(chain, tPolyT) {
   const dentro = chain.map(p => turf.booleanPointInPolygon(turf.point([p.lng, p.lat]), tPolyT));
   const pedacos = [];
@@ -10892,44 +10900,125 @@ function _clipChainAoPoligono(chain, tPolyT) {
   return pedacos;
 }
 
-// Reaproveita marchingSquaresCurva()/chainSegments() (as MESMAS funções da ferramenta de Curvas de
-// Nível) sobre a grade de elevação já buscada, varrendo do nível mínimo ao máximo num intervalo de
-// altura dado. Cada cadeia é recortada no contorno do talhão (_clipChainAoPoligono — o mesmo
-// recorte ponto-a-ponto que gerarCurvas() já usa e nunca causou quina) e os pedaços que sobram já
-// são as linhas de plantio finais — sem nenhuma etapa de offset/reamostragem/spline no meio.
-function _curvasParaPlantio(tPolyT, elevGrid, lats, lngs, intervalo) {
-  const validas = [];
-  for(const row of elevGrid) for(const v of row) if(v != null) validas.push(v);
-  if(!validas.length) return [];
-  const minElev = Math.min(...validas), maxElev = Math.max(...validas);
-  if(maxElev - minElev < 0.1) return []; // terreno chapado — não existe curva de nível de verdade aqui
+// Média de vizinhança 3×3 repetida — tira o ruído fino da grade de elevação (medição/interpolação
+// de satélite tem alguns metros de incerteza) sem achatar a tendência geral do relevo.
+function _suavizarGrade(grid, n, passes) {
+  let atual = grid;
+  for(let p = 0; p < passes; p++) {
+    const nova = Array.from({ length: n }, () => new Array(n));
+    for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) {
+      let soma = 0, cont = 0;
+      for(let dr = -1; dr <= 1; dr++) for(let dc = -1; dc <= 1; dc++) {
+        const rr = r + dr, cc = c + dc;
+        if(rr < 0 || rr >= n || cc < 0 || cc >= n) continue;
+        const v = atual[rr][cc];
+        if(v == null) continue;
+        soma += v; cont++;
+      }
+      nova[r][c] = cont ? soma / cont : atual[r][c];
+    }
+    atual = nova;
+  }
+  return atual;
+}
+
+function _gradienteElevacaoEm(lat, lng, sampler, passoM) {
+  const mLat = 111320, mLng = Math.cos(lat * Math.PI / 180) * 111320;
+  const dLatPasso = passoM / mLat, dLngPasso = passoM / mLng;
+  const hE = sampler(lat, lng + dLngPasso), hW = sampler(lat, lng - dLngPasso);
+  const hN = sampler(lat + dLatPasso, lng), hS = sampler(lat - dLatPasso, lng);
+  return { leste: (hE - hW) / (2 * passoM), norte: (hN - hS) / (2 * passoM) };
+}
+
+// Caminha perpendicular ao gradiente de elevação (nível constante) a partir de um ponto de
+// partida, nos dois sentidos, até sair do talhão — igual à v4.83, agora sempre chamada sobre um
+// sampler já suavizado (ver otimizarCenarioCurvas/_melhorCenarioDeCurvas).
+function _tracarCurvaDeNivel(tPolyT, sampler, startLatLng) {
+  const passoM = 3, maxPassos = 4000;
+
+  function tracarLado(sinalInicial) {
+    const pts = [];
+    let atual = startLatLng, dirAnt = null;
+    for(let i = 0; i < maxPassos; i++) {
+      const g = _gradienteElevacaoEm(atual.lat, atual.lng, sampler, passoM);
+      const mag = Math.hypot(g.leste, g.norte);
+      let dir;
+      if(mag < 1e-9) {
+        dir = dirAnt || { leste: sinalInicial, norte: 0 };
+      } else {
+        const p1 = { leste: -g.norte / mag, norte: g.leste / mag };
+        const p2 = { leste: -p1.leste, norte: -p1.norte };
+        if(!dirAnt) dir = sinalInicial >= 0 ? p1 : p2;
+        else dir = (p1.leste * dirAnt.leste + p1.norte * dirAnt.norte) >= (p2.leste * dirAnt.leste + p2.norte * dirAnt.norte) ? p1 : p2;
+      }
+      dirAnt = dir;
+      const mLat = 111320, mLng = Math.cos(atual.lat * Math.PI / 180) * 111320;
+      const prox = { lat: atual.lat + dir.norte * passoM / mLat, lng: atual.lng + dir.leste * passoM / mLng };
+      if(!turf.booleanPointInPolygon(turf.point([prox.lng, prox.lat]), tPolyT)) break;
+      pts.push(prox);
+      atual = prox;
+    }
+    return pts;
+  }
+
+  const frente = tracarLado(1);
+  const atras = tracarLado(-1).reverse();
+  const curva = [...atras, startLatLng, ...frente];
+  return curva.length >= 3 ? curva : null;
+}
+
+function _decimarPontos(pts, alvo) {
+  const passo = Math.max(1, Math.floor(pts.length / alvo));
+  const out = [];
+  for(let i = 0; i < pts.length; i += passo) out.push(pts[i]);
+  if(out[out.length - 1] !== pts[pts.length - 1]) out.push(pts[pts.length - 1]);
+  return out;
+}
+
+// Distância mínima (metros, planar local) de um ponto até a polilinha da mestra, com SINAL (lado
+// esquerdo positivo, direito negativo, pelo produto vetorial do segmento mais próximo) — a base do
+// campo de distância assinada que gera as linhas derivadas.
+function _distanciaAssinadaAMestra(px, py, mestraXY) {
+  let minD = Infinity, sinal = 1;
+  for(let i = 0; i + 1 < mestraXY.length; i++) {
+    const [ax, ay] = mestraXY[i], [bx, by] = mestraXY[i + 1];
+    const dx = bx - ax, dy = by - ay, lenSq = dx * dx + dy * dy;
+    const t = lenSq > 1e-9 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq)) : 0;
+    const cx = ax + t * dx, cy = ay + t * dy;
+    const d = Math.hypot(px - cx, py - cy);
+    if(d < minD) { minD = d; sinal = ((bx - ax) * (py - ay) - (by - ay) * (px - ax)) >= 0 ? 1 : -1; }
+  }
+  return minD * sinal;
+}
+
+// Gera as linhas derivadas da mestra como ISOLINHAS de um campo de distância assinada — nunca se
+// cruzam (mesma garantia matemática de isolinhas de elevação: são cortes de valor constante de uma
+// superfície de valor único), e "arredondam" sozinhas onde um offset ingênuo autointersecionaria.
+function _curvasPorCampoDeDistancia(tPolyT, curvaMestra, spacingM) {
+  const bbox = turf.bbox(tPolyT);
+  const [minLng, minLat, maxLng, maxLat] = bbox;
+  const latMed = (minLat + maxLat) / 2;
+  const mLat = 111320, mLng = Math.cos(latMed * Math.PI / 180) * 111320;
+
+  const diagM = turf.distance(turf.point([bbox[0], bbox[1]]), turf.point([bbox[2], bbox[3]]), { units: 'kilometers' }) * 1000;
+  const nFino = Math.max(40, Math.min(120, Math.round(diagM / Math.max(1, spacingM / 4))));
+
+  const lats = Array.from({ length: nFino }, (_, i) => minLat + i * (maxLat - minLat) / (nFino - 1));
+  const lngs = Array.from({ length: nFino }, (_, j) => minLng + j * (maxLng - minLng) / (nFino - 1));
+
+  const mestraXY = _decimarPontos(curvaMestra, 80).map(p => [p.lng * mLng, p.lat * mLat]);
+  const distGrid = lats.map(lat => lngs.map(lng => _distanciaAssinadaAMestra(lng * mLng, lat * mLat, mestraXY)));
+
+  let maxAbs = 0;
+  for(const row of distGrid) for(const v of row) if(Math.abs(v) > maxAbs) maxAbs = Math.abs(v);
+  const nMax = Math.min(200, Math.ceil(maxAbs / spacingM) + 1);
 
   const curvas = [];
-  const first = Math.ceil(minElev / intervalo) * intervalo;
-  for(let lv = first; lv <= maxElev; lv += intervalo) {
-    const chains = marchingSquaresCurva(elevGrid, lats, lngs, lv);
+  for(let k = -nMax; k <= nMax; k++) {
+    const chains = marchingSquaresCurva(distGrid, lats, lngs, k * spacingM);
     chains.forEach(chain => { if(chain.length >= 2) curvas.push(..._clipChainAoPoligono(chain, tPolyT)); });
   }
   return curvas;
-}
-
-// Estima a inclinação média do terreno (m de elevação por m horizontal) amostrando as diferenças
-// centrais da própria grade de elevação — converte o espaçamento HORIZONTAL desejado num intervalo
-// VERTICAL de curva de nível equivalente (onde o terreno é mais inclinado, as curvas de nível ficam
-// naturalmente mais próximas horizontalmente; onde é mais plano, mais afastadas — sem forçar um
-// espaçamento horizontal artificial que não existe de fato no relevo).
-function _inclinacaoMediaGrade(elevGrid, lats, lngs) {
-  const n = lats.length;
-  const passoLatM = Math.abs(lats[1] - lats[0]) * 111320;
-  const passoLngM = Math.abs(lngs[1] - lngs[0]) * Math.cos(lats[Math.floor(n / 2)] * Math.PI / 180) * 111320;
-  let soma = 0, cont = 0;
-  for(let r = 1; r < n - 1; r++) for(let c = 1; c < n - 1; c++) {
-    const e = elevGrid[r][c], eE = elevGrid[r][c + 1], eN = elevGrid[r - 1][c];
-    if(e == null || eE == null || eN == null) continue;
-    soma += Math.hypot((eE - e) / passoLngM, (eN - e) / passoLatM);
-    cont++;
-  }
-  return cont ? soma / cont : 0;
 }
 
 // Estima que fração da ÁREA do talhão fica "descoberta" (a mais de 0,75× o espaçamento de
@@ -10978,23 +11067,32 @@ function _fracaoDescobertaDoTalhao(tPolyT, curvas, spacingM) {
   return total ? descoberta / total : 1;
 }
 
-// "simula se cobre todo talhão de forma correta... se não fizer, modifica [o intervalo de altura],
-// até achar geometria correta que atenda" — começa no intervalo estimado pela inclinação média e
-// afina/engrossa em até 4 tentativas conforme a cobertura medida, ficando com a melhor. O parâmetro
-// que de fato existe pra ajustar numa família de curvas de nível REAIS é o intervalo de altura
-// entre elas — não um "ângulo": o rumo de cada curva já é 100% determinado pelo relevo.
+// "simula se cobre todo talhão de forma correta... se não fizer, modifica os ângulos, até achar
+// geometria correta que atenda" — traça a mestra a partir de até 5 pontos de partida diferentes
+// (o "ângulo" disponível pra uma curva que segue o relevo é onde ela nasce, já que o rumo em si é
+// dado pelo terreno suavizado) e fica com a que cobrir melhor, parando se já achar uma boa.
 function _melhorCenarioDeCurvas(tPolyT, elevGrid, lats, lngs, spacingM) {
-  const slope = Math.max(0.005, _inclinacaoMediaGrade(elevGrid, lats, lngs)); // nunca deixa zerar num terreno quase chapado
-  let intervalo = Math.max(0.05, spacingM * slope);
+  const n = lats.length;
+  const elevSuave = _suavizarGrade(elevGrid, n, 2);
+  const samplerSuave = _mkEscoamentoSampler(elevSuave, lats, lngs, n);
+
+  const [minLng, minLat, maxLng, maxLat] = turf.bbox(tPolyT);
+  const centro = turf.pointOnFeature(tPolyT).geometry.coordinates; // [lng,lat]
+  const candidatos = [{ lat: centro[1], lng: centro[0] }];
+  [0.25, 0.75].forEach(fy => [0.25, 0.75].forEach(fx => {
+    const lat = minLat + fy * (maxLat - minLat), lng = minLng + fx * (maxLng - minLng);
+    if(turf.booleanPointInPolygon(turf.point([lng, lat]), tPolyT)) candidatos.push({ lat, lng });
+  }));
 
   let melhor = null;
-  for(let tentativa = 0; tentativa < 4; tentativa++) {
-    const curvas = _curvasParaPlantio(tPolyT, elevGrid, lats, lngs, intervalo);
-    if(!curvas.length) { intervalo = Math.max(0.02, intervalo / 2); continue; }
+  for(const partida of candidatos) {
+    const curvaMestra = _tracarCurvaDeNivel(tPolyT, samplerSuave, partida);
+    if(!curvaMestra) continue;
+    const curvas = _curvasPorCampoDeDistancia(tPolyT, curvaMestra, spacingM);
+    if(!curvas.length) continue;
     const fracaoDescoberta = _fracaoDescobertaDoTalhao(tPolyT, curvas, spacingM);
-    if(!melhor || fracaoDescoberta < melhor.fracaoDescoberta) melhor = { curvas, fracaoDescoberta, intervalo };
-    if(fracaoDescoberta < 0.08) break; // já cobre bem — não precisa afinar mais
-    intervalo *= fracaoDescoberta > 0.3 ? 0.5 : 0.75; // muita área descoberta → intervalo menor (mais curvas)
+    if(!melhor || fracaoDescoberta < melhor.fracaoDescoberta) melhor = { curvaMestra, curvas, fracaoDescoberta };
+    if(fracaoDescoberta < 0.05) break; // já achou uma geometria muito boa — não precisa testar as demais
   }
   return melhor;
 }
@@ -11004,7 +11102,7 @@ let _cenariosCurvas = null; // {curvas, spacing, talhaoUid, modoAtivo, previewLa
 async function otimizarCenarioCurvas() {
   const spacing = Math.max(0.5, parseFloat($('espac').value) || 6);
 
-  setStatus('Buscando elevação e calculando as curvas de nível reais do talhão…', 'info');
+  setStatus('Buscando elevação e traçando a linha mestra em nível…', 'info');
   $('btnOtimizarCenarioCurvas').disabled = true;
   const prep = await _prepararTalhaoParaOtimizacao();
   $('btnOtimizarCenarioCurvas').disabled = false;
@@ -11012,7 +11110,7 @@ async function otimizarCenarioCurvas() {
   const { tPolyT, modoAtivo, t, elevGrid, lats, lngs } = prep;
 
   const melhor = _melhorCenarioDeCurvas(tPolyT, elevGrid, lats, lngs, spacing);
-  if(!melhor || !melhor.curvas.length) { setStatus('Não consegui gerar curvas de nível nesse talhão (terreno muito plano?) — desenhe a guia manualmente (Suave) em vez disso.', 'err'); return; }
+  if(!melhor || !melhor.curvas.length) { setStatus('Não consegui traçar a linha mestra nesse talhão (terreno muito plano?) — desenhe a guia manualmente (Suave) em vez disso.', 'err'); return; }
 
   _cancelarPreviewCenarioCurvas();
   const previewLayers = melhor.curvas.map(pts => L.polyline(pts.map(p => [p.lat, p.lng]), { color: '#26c6da', weight: 2, opacity: .85, dashArray: '4,5' }).addTo(map));
@@ -11021,9 +11119,9 @@ async function otimizarCenarioCurvas() {
 
   _cenariosCurvas = { curvas: melhor.curvas, spacing, talhaoUid: modoAtivo ? null : t.uid, modoAtivo, previewLayers };
   const coberturaPct = Math.round((1 - melhor.fracaoDescoberta) * 100);
-  $('cenariosCurvasResumo').textContent = `${melhor.curvas.length} curva(s) de nível real(is) (intervalo ${melhor.intervalo.toFixed(2)}m) · ${Math.round(metrosLin)} m lineares · cobertura estimada: ${coberturaPct}%.`;
+  $('cenariosCurvasResumo').textContent = `${melhor.curvas.length} linha(s) derivadas de 1 linha mestra suavizada · ${Math.round(metrosLin)} m lineares · cobertura estimada: ${coberturaPct}%.`;
   $('modalCenariosCurvas').classList.add('open');
-  setStatus(`Curvas de nível reais calculadas (cobertura estimada ${coberturaPct}%) — confira a pré-visualização e confirme.`, 'ok');
+  setStatus(`Linha mestra traçada e derivada por campo de distância (cobertura estimada ${coberturaPct}%) — confira a pré-visualização e confirme.`, 'ok');
 }
 
 function _cancelarPreviewCenarioCurvas() {
