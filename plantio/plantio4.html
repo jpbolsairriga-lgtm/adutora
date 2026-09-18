@@ -359,7 +359,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.94 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.95 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -3401,6 +3401,27 @@ body.layout-lateral #status{grid-area:status;}
 // anchors independentes); com curvas sintéticas atravessando a união inteira, cada talhão recebe
 // só o pedaço que é seu. Regressão completa (18 suítes centrais re-verificadas) sem erros de
 // página.
+// v4.95: usuário reportou que, depois da v4.93 (multi-seleção por clique), tinha que clicar em
+// CADA talhão selecionado, um por um, pra tirar todos — queria clicar FORA e desmarcar tudo de
+// uma vez, como já funcionava pra seleção única antes da v4.93.
+// Causa: o "clique fora desseleciona" (map.on('click',...), v4.66) só checava
+// talhaoSelecionadoUid !== null — que, desde a v4.93, só é não-nulo com EXATAMENTE 1 selecionado;
+// com 2+, fica null, então esse trecho nunca disparava. Trocado pra checar talhoesMultiSel.size >
+// 0 e, quando houver, testar se o clique caiu dentro de QUALQUER um dos selecionados (só não limpa
+// nesse caso — o próprio polígono já tratou via onClick) ou fora de TODOS (limpa a seleção inteira
+// com limparSelecaoTalhoes()).
+// Isso expôs uma lacuna que já existia mas nunca importava antes: t.turfPoly (usado pra esse
+// teste de "dentro/fora") só era recalculado quando um talhão virava o ÚNICO selecionado (n===1) —
+// um talhão que entra na multi-seleção com 2+ já selecionados nunca passava por ali, então podia
+// ficar com t.turfPoly null (ex: talhão vindo de importação de KML, que sempre nasce assim — ver
+// v4.76) e o teste de "clique dentro dele" sempre dar falso, fazendo o clique-fora limpar a
+// seleção mesmo clicando NELE. Corrigido: _recalcularTurfPolyDoTalhao(t) (extraída da lógica que
+// já existia) agora roda ao ADICIONAR qualquer talhão à seleção, não só quando ele fica sozinho.
+// Testado (test_clique_fora.js, 2 talhões sintéticos com t.turfPoly começando null de propósito,
+// simulando o caso do KML): selecionar o 2º sem reclicar no 1º deixa os DOIS com t.turfPoly
+// preenchido; clicar dentro de qualquer um dos dois mantém a seleção de 2; clicar fora dos dois
+// limpa a seleção inteira e restaura a cor de ambos. Regressão completa (18 suítes centrais
+// re-verificadas) sem erros de página.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -3943,9 +3964,17 @@ map.on('click', e => {
   if(modo === 'idle' && !_modoPickLinha) {
     const pt = turf.point([e.latlng.lng, e.latlng.lat]);
     const dentroDoPoly = poly => { try { return !!poly && turf.booleanPointInPolygon(pt, poly); } catch(err) { return false; } };
-    if(talhaoSelecionadoUid !== null) {
-      const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
-      if(!dentroDoPoly(t && t.turfPoly)) { desselecionarTalhao(); return; }
+    if(talhoesMultiSel.size > 0) {
+      // v4.95: pedido do usuário — com 2+ selecionados (ver v4.93), esse "clique fora desseleciona"
+      // só checava talhaoSelecionadoUid (null com 2+), então nunca disparava — tinha que clicar em
+      // CADA talhão selecionado, um por um, pra tirar todos. Agora confere se o clique caiu dentro
+      // de QUALQUER um dos selecionados (nesse caso o próprio polígono já tratou via seu onClick,
+      // que borbulhou pra aqui — não faz nada) — só limpa a seleção inteira se caiu fora de todos.
+      const algumaDentro = [...talhoesMultiSel].some(uid => {
+        const t = talhoesArquivados.find(x => x.uid === uid);
+        return dentroDoPoly(t && t.turfPoly);
+      });
+      if(!algumaDentro) { limparSelecaoTalhoes(); return; }
     } else if(polyPts.length >= 3) {
       if(!dentroDoPoly(turfPoly)) { arquivarTalhaoAtual(); setStatus('Talhão travado automaticamente ✓ — clique nele para selecionar.', 'ok'); return; }
     }
@@ -9942,8 +9971,27 @@ function selecionarTalhao(uid) {
   } else {
     talhoesMultiSel.add(uid);
     if(t.polyLayer) t.polyLayer.setStyle({color:'#FFD600', weight:3, fillOpacity:.22, dashArray:'10,5'});
+    // v4.95: recalcula t.turfPoly já ao ADICIONAR (não só quando esse talhão vira o único
+    // selecionado — ver _sincronizarSelecaoTalhoes) — sem isso, um talhão que entra na
+    // multi-seleção com 2+ já selecionados podia nunca ganhar t.turfPoly (alguns caminhos de
+    // criação, como importação de KML, sempre deixam null), e o "clique fora desseleciona todos"
+    // do map.on('click',...) dependia exatamente disso pra saber se o clique caiu dentro dele.
+    _recalcularTurfPolyDoTalhao(t);
   }
   _sincronizarSelecaoTalhoes();
+}
+
+// Recalcula t.turfPoly a partir de t.polyPts — ver v4.76 (importação de KML/Unificar Talhões
+// deixavam t.turfPoly como null e nunca preenchiam depois, então SELECIONAR um talhão desses
+// desselecionava no mesmo clique) e v4.95 (mesma lacuna reaberta pra talhões que entram direto na
+// multi-seleção). Devolve o turf.polygon (ou null se o polígono for inválido).
+function _recalcularTurfPolyDoTalhao(t) {
+  const ring = [...t.polyPts.map(p => [p.lng, p.lat]), [t.polyPts[0].lng, t.polyPts[0].lat]];
+  try {
+    const poly = turf.polygon([ring]); turf.rewind(poly, {mutate:true});
+    t.turfPoly = poly;
+    return poly;
+  } catch(e) { return null; }
 }
 
 // Aplica os efeitos de estado/UI da seleção atual (talhoesMultiSel) — chamada depois de qualquer
@@ -9966,23 +10014,12 @@ function _sincronizarSelecaoTalhoes() {
     const t = talhoesArquivados.find(x => x.uid === uid);
     if(!t) return;
 
-    // Set turfPoly from selected talhão (enables guide-line generation)
-    const ring = [...t.polyPts.map(p => [p.lng, p.lat]), [t.polyPts[0].lng, t.polyPts[0].lat]];
-    try {
-      turfPoly = turf.polygon([ring]); turf.rewind(turfPoly, {mutate:true});
-      turfBound = turf.polygonToLine(turfPoly);
-      // v4.76: mantém t.turfPoly (do PRÓPRIO objeto talhão, não só a variável global turfPoly)
-      // sincronizado com o polígono atual — o clique no mapa borbulha do polígono pro 'click' do
-      // mapa (map.on('click', ...) — ver mais acima) NO MESMO EVENTO, e aquele handler usa
-      // t.turfPoly pra confirmar que o clique de seleção caiu DENTRO do talhão (senão desseleciona
-      // na hora). Vários caminhos de criação de talhão (importação de KML — Importar Projeto/
-      // Importar Polígono — e Unificar Talhões) sempre deixavam t.turfPoly como null e nunca
-      // preenchiam depois, então SELECIONAR um talhão desses desselecionava no mesmo clique (bug
-      // relatado: "quando importo vários kml, não consigo selecionar os talhões"). Recalcular aqui,
-      // sempre que qualquer talhão é selecionado, corrige isso pra qualquer talhão, independente de
-      // como ele foi criado — sem precisar caçar/corrigir cada função de criação uma por uma.
-      t.turfPoly = turfPoly;
-    } catch(e) {}
+    // Set turfPoly from selected talhão (enables guide-line generation) — reaproveita
+    // _recalcularTurfPolyDoTalhao (ver v4.76/v4.95: alguns caminhos de criação de talhão, ex.
+    // importação de KML, sempre deixavam t.turfPoly null, e o clique-fora-desseleciona do
+    // map.on('click',...) depende dele estar preenchido).
+    const poly = _recalcularTurfPolyDoTalhao(t);
+    if(poly) { turfPoly = poly; try { turfBound = turf.polygonToLine(turfPoly); } catch(e) {} }
 
     $('divSelInfo').innerHTML = '';
     $('divSelNome').textContent = `Talhão ${t.idx}  (${t.areaHa.toFixed(2)} ha)`;
