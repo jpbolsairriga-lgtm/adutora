@@ -359,7 +359,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.90 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.91 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1008,6 +1008,16 @@ body.layout-lateral #status{grid-area:status;}
     <input type="range" id="curvaturaCenarioCurvas" min="0" max="100" value="100" step="5" style="width:100%;" oninput="ajustarCurvaturaCenarioCurvas(this.value)" title="100% segue o relevo por completo; valores menores 'fecham' a curvatura em direção a uma linha reta — ajuste até a pré-visualização ficar sem distorções indesejadas.">
     <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--panel-text-dim);margin-top:2px;">
       <span>Reta</span><span>Segue o relevo</span>
+    </div>
+  </div>
+  <div style="margin:0 0 14px;">
+    <label style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--panel-text);margin-bottom:4px;">
+      <span>Suavidade da linha mestra</span>
+      <span id="suavidadeCenarioCurvasValor">0%</span>
+    </label>
+    <input type="range" id="suavidadeCenarioCurvas" min="-100" max="100" value="0" step="5" style="width:100%;" oninput="ajustarSuavidadeCenarioCurvas(this.value)" title="Independente da curvatura acima: positivo tira o ziguezague fino do relevo (linha mais lisa); negativo faz o oposto — acentua as ondulações locais em vez de polir, deixando a linha mais irregular que o traçado original.">
+    <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--panel-text-dim);margin-top:2px;">
+      <span>Mais irregular</span><span>Original</span><span>Mais suave</span>
     </div>
   </div>
   <p style="font-size:11.5px;color:var(--panel-text-dim);margin:0 0 14px;">Pré-visualização tracejada em ciano no mapa — mova/dê zoom livremente pra conferir antes de confirmar.</p>
@@ -3274,6 +3284,30 @@ body.layout-lateral #status{grid-area:status;}
 // meio da mesma linha (o gancho); versão corrigida fica com vão de 0,00 m e 1,6° na ponta — igual
 // à curvatura natural do meio da linha (1,1°). Regressão completa (18 suítes centrais
 // re-verificadas) sem erros de página.
+// v4.91: usuário aprovou a v4.90 ("ficou mto bom") e pediu mais um parâmetro de pré-ajuste no
+// mesmo painel — "uma opção de suavizar a linha ou deixar ele mais ao contrário de suavizar".
+// Adicionado o slider "Suavidade da linha mestra" (-100% a 100%, padrão 0%), independente do
+// slider "Curvatura" já existente (aquele mistura a mestra com uma RETA ligando início a fim —
+// controla o quanto ela se aproxima de uma reta). Este novo mexe no ziguezague FINO da mestra:
+// _ajustarSuavidadeCurvaMestra(curva, fator) calcula uma média móvel por vizinhança de pontos
+// (_mediaMovelMestra) e usa como referência — fator positivo aproxima cada ponto dessa média
+// (tira ruído local, "mais suave"); fator negativo faz o oposto, acentua o desvio de cada ponto em
+// relação à mesma média (amplifica em até 2,2× no limite -100%, "mais irregular" que o traçado
+// original). Como qualquer filtro de vizinhança tem viés de borda (a janela fica truncada de um
+// lado só perto das pontas do array), o efeito usa TAPER até 0 bem nas duas extremidades da mestra
+// — sem isso, as pontas se deslocariam do ponto original e reabririam exatamente o "gancho"/vão
+// que a v4.90 tinha acabado de corrigir (_estenderMestraNasPontas e a reta início-fim de
+// _blendCurvaMestra dependem da mestra manter os dois extremos exatos). Os dois sliders agora
+// compõem: suavidade primeiro (mexe no ziguezague), curvatura depois (mistura o resultado com a
+// reta) — mesmo debounce de 180ms compartilhado entre os dois, resposta em tempo real.
+// Testado (test_suavidade.js): fator=0 retorna a mesma referência (sem cópia/custo); +100% zera o
+// desvio local na região interior da linha (<1×10⁻⁶m); -100% amplia o ruído local (RMS de desvio
+// sobe monotonicamente de -50% pra -100%); as duas pontas da mestra ficam bit-a-bit idênticas ao
+// traçado original em QUALQUER fator testado (±50%, ±100%); e com curvatura=0% (reta pura), tanto
+// a mestra original quanto a irregularizada geram pontos que caem exatamente sobre o mesmo
+// segmento início-fim (desvio <1×10⁻⁹m) — confirma que suavidade e curvatura não interferem uma
+// na outra de forma inesperada. Regressão completa (18 suítes centrais re-verificadas) sem erros
+// de página.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -11227,11 +11261,13 @@ async function otimizarCenarioCurvas() {
   let metrosLin = 0;
   melhor.curvas.forEach(pts => { for(let i = 0; i < pts.length - 1; i++) metrosLin += haversineM(pts[i], pts[i+1]); });
 
-  _cenariosCurvas = { curvas: melhor.curvas, curvaMestraOriginal: melhor.curvaMestra, tPolyT, spacing, talhaoUid: modoAtivo ? null : t.uid, modoAtivo, previewLayers, fatorCurvatura: 1 };
+  _cenariosCurvas = { curvas: melhor.curvas, curvaMestraOriginal: melhor.curvaMestra, tPolyT, spacing, talhaoUid: modoAtivo ? null : t.uid, modoAtivo, previewLayers, fatorCurvatura: 1, fatorSuavidade: 0 };
   const coberturaPct = Math.round((1 - melhor.fracaoDescoberta) * 100);
   $('cenariosCurvasResumo').textContent = `${melhor.curvas.length} linha(s) derivadas de 1 linha mestra suavizada · ${Math.round(metrosLin)} m lineares · cobertura estimada: ${coberturaPct}%.`;
   $('curvaturaCenarioCurvas').value = 100;
   $('curvaturaCenarioCurvasValor').textContent = '100%';
+  $('suavidadeCenarioCurvas').value = 0;
+  $('suavidadeCenarioCurvasValor').textContent = '0%';
   $('modalCenariosCurvas').classList.add('open');
   setStatus(`Linha mestra traçada e derivada por campo de distância (cobertura estimada ${coberturaPct}%) — confira a pré-visualização e confirme.`, 'ok');
 }
@@ -11259,14 +11295,58 @@ function _blendCurvaMestra(curvaMestra, fator) {
   });
 }
 
-// Recalcula e redesenha a pré-visualização com o fator de curvatura atual — só refaz o offset por
-// campo de distância (geometria pura, rápido) a partir da mestra já traçada, sem buscar elevação
-// nem re-caminhar o relevo de novo.
-function _atualizarPreviewCenarioCurvas(fatorPct) {
+// v4.91: pedido do usuário — "mais um parâmetro de pré-ajuste, uma opção de suavizar a linha ou
+// deixar ela mais ao contrário de suavizar". Independente da "Curvatura" (que mistura a mestra com
+// uma RETA ligando início a fim — controla o quanto ela se aproxima de uma linha reta), este novo
+// controle mexe no ziguezague FINO da mestra: positivo tira ruído local (aproxima cada ponto da
+// média da vizinhança ao longo do traçado — "mais suave"); negativo faz o oposto — acentua o
+// desvio de cada ponto em relação a essa mesma média local, deixando a linha mais irregular que o
+// traçado original (útil quando o usuário quer que a linha siga mais literalmente cada ondulação
+// do relevo, sem o polimento que a suavização da grade de elevação já aplica por padrão antes de
+// traçar a mestra). É geometria pura sobre a mestra já traçada (raio da janela em nº de pontos,
+// não precisa buscar elevação de novo) — responde em tempo real como o slider de curvatura.
+function _mediaMovelMestra(curvaMestra, raioPontos) {
+  const n = curvaMestra.length;
+  return curvaMestra.map((p, i) => {
+    let sLat = 0, sLng = 0, cont = 0;
+    for(let j = Math.max(0, i - raioPontos); j <= Math.min(n - 1, i + raioPontos); j++) { sLat += curvaMestra[j].lat; sLng += curvaMestra[j].lng; cont++; }
+    return { lat: sLat / cont, lng: sLng / cont };
+  });
+}
+function _ajustarSuavidadeCurvaMestra(curvaMestra, fator) {
+  const n = curvaMestra.length;
+  if(Math.abs(fator) < 0.001 || n < 5) return curvaMestra;
+  const raioMax = Math.max(1, Math.round(n * 0.06)); // janela de referência (~12% do comprimento da mestra)
+  const raio = Math.max(1, Math.round(raioMax * Math.min(1, Math.abs(fator))));
+  const media = _mediaMovelMestra(curvaMestra, raio);
+  const AMP_MAX = 1.2; // no limite (-100%), o desvio em relação à tendência local fica 2,2× maior
+  const amp = 1 + AMP_MAX * Math.min(1, -fator);
+  // Taper pra 0 bem nas pontas da mestra (distBorda=0 → sem nenhum ajuste ali) subindo a pleno
+  // efeito depois de `raio` pontos pra dentro — sem isso, as pontas do array (janela da média
+  // truncada de um lado só, viés de borda de qualquer filtro de vizinhança) se deslocariam do
+  // ponto original. Isso reabriria exatamente o "gancho"/vão nas extremidades que a v4.90 corrigiu
+  // (_estenderMestraNasPontas e a reta início-fim de _blendCurvaMestra dependem da mestra manter
+  // seus dois pontos extremos intactos).
+  return curvaMestra.map((p, i) => {
+    const taper = Math.min(1, Math.min(i, n - 1 - i) / raio);
+    if(fator > 0) { const t = fator * taper; return { lat: p.lat + t * (media[i].lat - p.lat), lng: p.lng + t * (media[i].lng - p.lng) }; }
+    const a = 1 + (amp - 1) * taper;
+    return { lat: media[i].lat + a * (p.lat - media[i].lat), lng: media[i].lng + a * (p.lng - media[i].lng) };
+  });
+}
+
+// Recalcula e redesenha a pré-visualização com os fatores de curvatura e suavidade atuais (lidos
+// direto dos dois sliders) — só refaz o offset por campo de distância (geometria pura, rápido) a
+// partir da mestra já traçada, sem buscar elevação nem re-caminhar o relevo de novo. Ordem: a
+// suavidade mexe no ziguezague fino primeiro, a curvatura mistura o resultado com a reta depois —
+// assim os dois controles ficam independentes (mudar um não precisa levar em conta o outro).
+function _atualizarPreviewCenarioCurvas() {
   if(!_cenariosCurvas) return;
   const { tPolyT, curvaMestraOriginal, spacing, previewLayers } = _cenariosCurvas;
-  const fator = Math.max(0, Math.min(100, fatorPct)) / 100;
-  const mestraAjustada = _blendCurvaMestra(curvaMestraOriginal, fator);
+  const fatorCurvatura = Math.max(0, Math.min(100, parseFloat($('curvaturaCenarioCurvas').value))) / 100;
+  const fatorSuavidade = Math.max(-100, Math.min(100, parseFloat($('suavidadeCenarioCurvas').value))) / 100;
+  const mestraSuavizada = _ajustarSuavidadeCurvaMestra(curvaMestraOriginal, fatorSuavidade);
+  const mestraAjustada = _blendCurvaMestra(mestraSuavizada, fatorCurvatura);
   const curvas = _curvasPorCampoDeDistancia(tPolyT, mestraAjustada, spacing);
 
   previewLayers.forEach(l => l.remove());
@@ -11278,15 +11358,22 @@ function _atualizarPreviewCenarioCurvas(fatorPct) {
 
   _cenariosCurvas.curvas = curvas;
   _cenariosCurvas.previewLayers = novosPreview;
-  _cenariosCurvas.fatorCurvatura = fator;
+  _cenariosCurvas.fatorCurvatura = fatorCurvatura;
+  _cenariosCurvas.fatorSuavidade = fatorSuavidade;
   $('cenariosCurvasResumo').textContent = `${curvas.length} linha(s) derivadas de 1 linha mestra suavizada · ${Math.round(metrosLin)} m lineares · cobertura estimada: ${coberturaPct}%.`;
 }
 
-let _debounceCurvaturaCenarioCurvas = null;
+let _debounceCenarioCurvasPreview = null;
 function ajustarCurvaturaCenarioCurvas(valor) {
   $('curvaturaCenarioCurvasValor').textContent = valor + '%';
-  clearTimeout(_debounceCurvaturaCenarioCurvas);
-  _debounceCurvaturaCenarioCurvas = setTimeout(() => _atualizarPreviewCenarioCurvas(parseFloat(valor)), 180);
+  clearTimeout(_debounceCenarioCurvasPreview);
+  _debounceCenarioCurvasPreview = setTimeout(_atualizarPreviewCenarioCurvas, 180);
+}
+function ajustarSuavidadeCenarioCurvas(valor) {
+  const v = parseFloat(valor);
+  $('suavidadeCenarioCurvasValor').textContent = (v > 0 ? '+' : '') + v + '%';
+  clearTimeout(_debounceCenarioCurvasPreview);
+  _debounceCenarioCurvasPreview = setTimeout(_atualizarPreviewCenarioCurvas, 180);
 }
 
 function _cancelarPreviewCenarioCurvas() {
