@@ -359,7 +359,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.91 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.92 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -3308,6 +3308,40 @@ body.layout-lateral #status{grid-area:status;}
 // segmento início-fim (desvio <1×10⁻⁹m) — confirma que suavidade e curvatura não interferem uma
 // na outra de forma inesperada. Regressão completa (18 suítes centrais re-verificadas) sem erros
 // de página.
+// v4.92: usuário comparou pastas de export reais das duas marcas (arquivos "AgGPS.zip"/"Gen4.zip"
+// que ele mesmo tirou do AgroCAD, mais completos que os usados nas v4.79-v4.81) e notou que a
+// estrutura de pastas não batia — pediu pra conferir e corrigir pra ficar EXATAMENTE igual (mesma
+// estrutura, mesmos nomes). Comparação byte a byte com um harness Node (JSZip+turf reais, mesma
+// geometria de talhão dos dois arquivos de referência) achou:
+// (1) TRIMBLE — faltava a pasta "Executado" (vazia, presente em TODO talhão do export real —
+//     o próprio monitor usa pra guardar o log "como aplicado"; sem ela, cada pasta de talhão
+//     tinha 1 pasta a menos que o real). Corrigido: pastaTalhao.folder('Executado') sem arquivo
+//     dentro (JSZip grava a entrada de diretório vazia mesmo assim).
+// (2) TRIMBLE — o nome do ".pos" usava o CENTRO DE MASSA do talhão (turf.centerOfMass) e a sigla
+//     "500H"; o real usa o PRIMEIRO VÉRTICE do contorno tal como desenhado (polyPts[0], conferido
+//     nos dois talhões de referência) e a sigla "600H". Corrigido.
+// (3) TRIMBLE — 3 diferenças de formato binário achadas no diff byte a byte contra o .dbf/.prj
+//     real: (a) o .dbf real NÃO tem o marcador de EOF (0x1A) no final — o writer (_gerarDbf) tinha
+//     um a mais; (b) byte 29 do cabeçalho do .dbf (language driver ID) é 0x57 (ANSI/cp1252) no
+//     real, ficava zerado aqui; (c) o .prj real termina em CRLF, o nosso terminava só em LF. Os
+//     três corrigidos — Boundary/LineFeature .shp/.shx/.dbf/.prj agora batem BYTE A BYTE com o
+//     export real (exceto 2 valores de DADO, não de formato: o campo Area usa a fórmula esférica
+//     do turf.area — ~0,2% diferente do algoritmo elipsoidal proprietário do AgroCAD — e o campo Id
+//     de LineFeature usa um contador interno de sessão do AgroCAD sem significado pro monitor;
+//     nenhum dos dois afeta a leitura no trator).
+// (4) TRIMBLE — _garantirSentidoHorario/_garantirSentidoAntiHorario faziam pontosXY.reverse() puro
+//     pra inverter o sentido do anel quando preciso — isso troca a direção MAS também rotaciona
+//     qual vértice fica primeiro (last vira first). O real inverte preservando o primeiro vértice
+//     original ([P0,Pn-1,Pn-2,...,P1], não [Pn-1,...,P0] — mesmo polígono/sentido, já que rotação
+//     não muda o shoelace, só bate byte a byte assim). Extraído num _inverterMantendoPrimeiro()
+//     usado nos dois casos (Trimble/shapefile E John Deere/GeoJSON, mesma lógica dos dois lados).
+// (5) JOHN DEERE — já batia. Regenerado com a mesma geometria dos dois arquivos de referência e
+//     comparado (GUID/timestamp normalizados, já que são gerados novos a cada export): MasterData.xml
+//     idêntico byte a byte, e os 2 pares de .gjson (Boundary + AdaptiveCurve) IDÊNTICOS também —
+//     nenhuma mudança necessária aqui, só confirmado.
+// Testado com harness Node (pyshp pra inspecionar os arquivos reais, JSZip+turf reais — não um shim
+// — pra gerar e comparar): árvore de pastas do pacote gerado agora bate 1:1 com a árvore real nos
+// dois talhões de referência (T-01 de 26 vértices/69 linhas e T-02), incluindo a pasta "Executado".
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -8564,8 +8598,17 @@ function _areaComSinalXY(pontosXY) {
   }
   return s / 2;
 }
+// Inverte o SENTIDO de percurso do anel sem trocar qual vértice fica em primeiro — um
+// pontosXY.slice().reverse() ingênuo troca a direção mas também põe o ÚLTIMO vértice na frente
+// (rotação, não só inversão). Testado byte a byte contra um Boundary.shp real do AgroCAD: ele
+// inverte a direção preservando o primeiro vértice original — [P0, Pn-1, Pn-2, ..., P1] — não
+// [Pn-1, ..., P0]. Geometricamente dá no mesmo polígono/sentido (rotação não muda o shoelace),
+// mas só bate byte a byte assim.
+function _inverterMantendoPrimeiro(pontosXY) {
+  return pontosXY.length < 2 ? pontosXY.slice() : [pontosXY[0], ...pontosXY.slice(1).reverse()];
+}
 function _garantirSentidoHorario(pontosXY) {
-  return _areaComSinalXY(pontosXY) > 0 ? pontosXY.slice().reverse() : pontosXY;
+  return _areaComSinalXY(pontosXY) > 0 ? _inverterMantendoPrimeiro(pontosXY) : pontosXY;
 }
 
 // Gera o par .shp/.shx pra shapeType 3 (Polyline) ou 5 (Polygon) — cada registros[i].pontos é UM
@@ -8635,7 +8678,9 @@ function _gerarDbf(campos, registros) {
   w.i32le(registros.length);
   w.bytes([headerSize & 0xFF, (headerSize >> 8) & 0xFF]);
   w.bytes([recordSize & 0xFF, (recordSize >> 8) & 0xFF]);
-  w.bytes(new Uint8Array(20));
+  const reservado = new Uint8Array(20);
+  reservado[17] = 0x57; // language driver ID (ANSI/cp1252) — confere byte a byte com um .dbf real do AgroCAD
+  w.bytes(reservado);
   campos.forEach(c => {
     const nome = new Uint8Array(11); // nome do campo: até 10 chars ASCII + terminador nulo
     for(let i = 0; i < Math.min(10, c.nome.length); i++) nome[i] = c.nome.charCodeAt(i);
@@ -8655,11 +8700,12 @@ function _gerarDbf(campos, registros) {
       w.bytes(b);
     });
   });
-  w.bytes([0x1A]); // EOF
+  // Sem marcador de EOF (0x1A) — confere byte a byte com um .dbf real do AgroCAD, que termina o
+  // arquivo direto no fim do último registro (o header já diz quantos registros tem).
   return w.build();
 }
 
-const _AGGPS_PRJ = 'GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137,298.2572235629972]],PRIMEM["Greenwich",0],UNIT["Degree",0.017453292519943295]]\n';
+const _AGGPS_PRJ = 'GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137,298.2572235629972]],PRIMEM["Greenwich",0],UNIT["Degree",0.017453292519943295]]\r\n';
 
 // Nome de arquivo/pasta seguro pro Windows (é dali que o pendrive/monitor vai ler) — só tira os
 // caracteres proibidos, mantém acento/espaço (a pasta em si aceita UTF-8 numa unidade FAT32/exFAT
@@ -8720,15 +8766,12 @@ function _gerarPastaAgGpsTalhao(polyPts, linhas) {
     }
   }
 
-  // .pos — marcador de posição vazio, nome com as coordenadas do centro do talhão (formato
-  // observado no export real do AgroCAD: "<lng>E<lat>N<altura>H.pos", conteúdo sempre vazio)
+  // .pos — marcador de posição vazio; nome com o PRIMEIRO vértice do contorno tal como desenhado
+  // (não o centro/centroide — conferido byte a byte contra dois exports reais do AgroCAD, T-01 e
+  // T-02: em ambos o nome bate exatamente com polyPts[0], não com o centro de massa do polígono).
+  // Formato "<lng>E<lat>N600H.pos", conteúdo sempre vazio ("600H" também confere nos dois).
   if(polyPts && polyPts.length >= 3) {
-    let c = { lat: polyPts[0].lat, lng: polyPts[0].lng };
-    try {
-      const cc = turf.centerOfMass(turf.polygon([[...polyPts.map(p => [p.lng, p.lat]), [polyPts[0].lng, polyPts[0].lat]]])).geometry.coordinates;
-      c = { lat: cc[1], lng: cc[0] };
-    } catch(e) {}
-    arquivos[`${c.lng.toFixed(5)}E${c.lat.toFixed(5)}N500H.pos`] = '';
+    arquivos[`${polyPts[0].lng.toFixed(5)}E${polyPts[0].lat.toFixed(5)}N600H.pos`] = '';
   }
 
   return arquivos;
@@ -8787,6 +8830,7 @@ async function _exportarTrimbleAgGPS(produtor, fazenda, fontes) {
     if(!Object.keys(arquivos).length) return;
     const pastaTalhao = base.folder(_nomePastaSeguro(f.nome, 'Talhao'));
     Object.entries(arquivos).forEach(([nome, conteudo]) => pastaTalhao.file(nome, conteudo));
+    pastaTalhao.folder('Executado'); // pasta vazia (sem arquivos) — presente em todo talhão num export real do AgroCAD
     algumTalhao++;
   });
   if(!algumTalhao) { setStatus('Nenhum talhão com contorno pra exportar.', 'err'); return; }
@@ -8843,7 +8887,7 @@ function _isoJohnDeere(d, utc) {
 // GeoJSON (RFC7946) exige anel EXTERIOR anti-horário — o oposto do Shapefile (ver
 // _garantirSentidoHorario, usado na Trimble/v4.79).
 function _garantirSentidoAntiHorario(pontosXY) {
-  return _areaComSinalXY(pontosXY) < 0 ? pontosXY.slice().reverse() : pontosXY;
+  return _areaComSinalXY(pontosXY) < 0 ? _inverterMantendoPrimeiro(pontosXY) : pontosXY;
 }
 
 // Monta o Setup File (MasterData.xml + arquivos .gjson) de todos os talhões de uma vez — devolve
