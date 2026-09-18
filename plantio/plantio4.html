@@ -359,7 +359,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.95 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.96 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -921,6 +921,7 @@ body.layout-lateral #status{grid-area:status;}
             <select id="monitorMarca" class="rfield wide" onchange="_atualizarAvisoMonitorGPS()">
               <option value="trimble">Trimble (AgGPS)</option>
               <option value="johndeere">John Deere (Gen4 Setup File)</option>
+              <option value="johndeere_gs3">John Deere (GS3 2630 / RCD)</option>
             </select>
           </div>
           <div class="rcol">
@@ -3422,6 +3423,48 @@ body.layout-lateral #status{grid-area:status;}
 // preenchido; clicar dentro de qualquer um dos dois mantém a seleção de 2; clicar fora dos dois
 // limpa a seleção inteira e restaura a cor de ambos. Regressão completa (18 suítes centrais
 // re-verificadas) sem erros de página.
+// v4.96: usuário reportou erro na exportação John Deere — o display dele é um GS3 2630, que não
+// lê o "Gen4 Setup File" (v4.81); ele usa um formato bem mais antigo/nativo, "RCD", e o usuário
+// conseguiu um export REAL desse formato em Downloads/"Luis Mauro" pra gente decifrar.
+// Descobertas (byte a byte, com pyshp/python pra ler os binários):
+// (1) setup.fds é um XML de ~640KB, mas ~99% disso é o CATÁLOGO DE IMPLEMENTOS/PRODUTOS da
+//     instalação de AgroCAD do usuário (fertilizante, químico, todo modelo de plantadeira/grade
+//     configurado) — conferido: ZERO ocorrências dos GUIDs de Client/Farm/Field no meio do
+//     catálogo, ou seja, não depende nem um pouco do talhão sendo exportado. Só as primeiras ~22
+//     linhas (SourceApp + Client + Farm + Field×N + Area) mudam a cada export — o resto virou um
+//     arquivo à parte (plantio/rcd-catalogo-implementos.xml, 628KB, carregado por fetch() só
+//     quando essa opção é usada, pra não inchar o plantio4.html à toa) e é colado de volta
+//     verbatim toda vez.
+// (2) Boundary<guid>.fdShape / CurveTrack<guid>.fdShape: formato binário — cabeçalho fixo de 64
+//     bytes (só a contagem de pontos muda, offset 0x38) + N registros de 20 bytes (2 doubles LE +
+//     4 bytes de cauda float32). Boundary usa lng/lat ABSOLUTOS com cauda 0.0; CurveTrack usa
+//     DELTAS relativos a um ponto de referência (guardado no .SpatialCatalog) com cauda 1.0, e
+//     ganha 1 ponto (0,0) extra na frente com cauda 999.9 (um marcador — não decifrado o que
+//     significa, mas é sempre igual). Dois bugs achados testando contra o arquivo real: a cauda
+//     1.0 tinha sido generalizada pra ambos os tipos de forma (Boundary é 0.0, não 1.0), e o
+//     cabeçalho de 64 bytes tinha só 56 (faltavam 2 int32 no meio — contagem errada na primeira
+//     tentativa de decifrar).
+// (3) Boundary<guid>.fdData: blob de atributos pequeno (BoundaryType/SignalType/etc.) que não
+//     muda com a geometria — reaproveitado tal e qual (só copiado) pra qualquer contorno.
+// (4) *.SpatialCatalog (ExportOnly/ImportExport/WaterManagement): 3 XML pequenos por talhão,
+//     registrando Client/Farm/Field + área + a lista de itens espaciais (nome do arquivo .fdShape,
+//     tipo de geometria, MBR, e o ponto de referência do CurveTrack).
+// Adicionado como NOVA opção "John Deere (GS3 2630 / RCD)" no seletor de marca (Gen4 continua
+// existindo, pra quem tiver um display CommandCenter de verdade). Usa t.linhas[0] (a 1ª linha de
+// plantio já traçada) como o CurvedTrackLine — é guidance por curva real (o monitor deriva as
+// passadas seguintes sozinho a partir dela + a largura do implemento), não uma lista de todas as
+// linhas prontas como no Gen4.
+// Testado (test_rcd_geometry.js, com a MESMA geometria extraída do Boundary/CurveTrack REAIS via
+// pyshp): Boundary.fdData e Boundary.fdShape saem IDÊNTICOS byte a byte ao export real; CurveTrack
+// sai idêntico exceto 1 byte entre ~23 mil (um marcador de "waypoint" específico da GRAVAÇÃO
+// original, sem equivalente pra uma linha nossa recém-desenhada — não afeta geometria/estrutura).
+// Testado também ponta a ponta (test_rcd_e2e.js, JSZip real): árvore de pastas
+// GS3_2630/AgroCAD/RCD/EIC/{global.ver,host,setup.fds,Fields/<shard>/<uid>/...} correta pra 2
+// talhões (um com guia, outro sem — confirma que CurveTrack só é gerado quando existe linha);
+// setup.fds e os .SpatialCatalog gerados são XML bem formado (parseiam sem erro, com o catálogo
+// real colado no meio); Boundary.fdShape decodifica de volta o número certo de pontos e as
+// coordenadas do vértice desenhado. Regressão completa (18 suítes centrais re-verificadas) sem
+// erros de página.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -8657,6 +8700,7 @@ function _BinWriter() {
     i32be(v) { const b = new Uint8Array(4); new DataView(b.buffer).setInt32(0, v, false); this._add(b); },
     i32le(v) { const b = new Uint8Array(4); new DataView(b.buffer).setInt32(0, v, true); this._add(b); },
     f64le(v) { const b = new Uint8Array(8); new DataView(b.buffer).setFloat64(0, v, true); this._add(b); },
+    f32le(v) { const b = new Uint8Array(4); new DataView(b.buffer).setFloat32(0, v, true); this._add(b); },
     bytes(arr) { this._add(arr instanceof Uint8Array ? arr : new Uint8Array(arr)); },
     build() { const out = new Uint8Array(this.tamanho); let o = 0; this.partes.forEach(p => { out.set(p, o); o += p.length; }); return out; }
   };
@@ -8875,7 +8919,9 @@ function _atualizarAvisoMonitorGPS() {
   if(marca === 'trimble') {
     el.textContent = 'Pasta AgGPS/Data (Boundary + LineFeature) — testada contra um export real do AgroCAD.';
   } else if(marca === 'johndeere') {
-    el.textContent = 'Pasta Gen4 (MasterData.xml + SpatialFiles) — testada contra um export real do AgroCAD (mesmo talhão da Trimble).';
+    el.textContent = 'Pasta Gen4 (MasterData.xml + SpatialFiles) — testada contra um export real do AgroCAD (mesmo talhão da Trimble). Pra display GS3 2630 use a opção RCD abaixo — o Gen4 é pra CommandCenter.';
+  } else if(marca === 'johndeere_gs3') {
+    el.textContent = 'Pasta GS3_2630/AgroCAD/RCD/EIC (setup.fds + Boundary/CurveTrack por talhão) — formato nativo do display GS3 2630, decifrado byte a byte a partir de um export real do AgroCAD (diferente do Gen4 Setup File, que esse display não lê).';
   } else {
     el.textContent = '';
   }
@@ -8900,6 +8946,7 @@ async function exportarMonitorGPS() {
   try {
     if(marca === 'trimble') await _exportarTrimbleAgGPS(produtor, fazenda, fontes);
     else if(marca === 'johndeere') await _exportarJohnDeereSetupFile(produtor, fazenda, fontes);
+    else if(marca === 'johndeere_gs3') await _exportarJohnDeereGS3RCD(produtor, fazenda, fontes);
     else setStatus('Marca de monitor ainda não suportada.', 'err');
   } catch(e) {
     alert('Erro ao gerar exportação pro monitor: ' + e.message);
@@ -9047,6 +9094,203 @@ async function _exportarJohnDeereSetupFile(produtor, fazenda, fontes) {
   const blob = await zip.generateAsync({ type: 'blob' });
   baixarArquivo(blob, `Gen4_${produtor}_${fazenda}.zip`, 'application/zip');
   setStatus(`✓ Exportado pra John Deere (Gen4 Setup File) — ${nTalhoes} talhão(ões). Extraia o .zip e copie a pasta "Gen4" pra raiz do pendrive — no display, use Importar Dados e selecione o perfil "Gen4".`, 'ok');
+}
+
+// ── Exportar para Monitor GPS (Trator) — John Deere GS3 2630 (formato RCD) ──────────────────
+// v4.96: pedido do usuário — o Gen4 Setup File (v4.81) não é lido pelo display GS3 2630 dele; esse
+// display usa um formato mais antigo/nativo, "RCD" (pasta GS3_2630/AgroCAD/RCD/EIC/...), decifrado
+// byte a byte a partir de um export REAL do AgroCAD (o usuário conseguiu em Downloads/"Luis Mauro").
+// Descobertas:
+// (1) setup.fds é um XML de ~640KB, mas ~99% disso é o CATÁLOGO DE IMPLEMENTOS/PRODUTOS da
+//     instalação de AgroCAD do usuário (FertilizerType/ChemicalType/Implement/ImplementModel...)
+//     — conferido byte a byte: ZERO ocorrências dos GUIDs de Client/Farm/Field no meio do catálogo,
+//     ou seja, não depende nem um pouco do talhão sendo exportado. Só as primeiras ~22 linhas
+//     (SourceApp + Participant/Client + Farm + Field×N + Area) mudam a cada export — o resto foi
+//     extraído pra um arquivo à parte (rcd-catalogo-implementos.xml, ao lado do plantio4.html,
+//     carregado por fetch() só quando essa opção é usada) e é colado de volta verbatim toda vez.
+// (2) Boundary<guid>.fdShape / CurveTrack<guid>.fdShape: formato binário simples — cabeçalho fixo
+//     de 64 bytes (só o campo de contagem de pontos muda, no offset 0x38) seguido de N registros
+//     de 20 bytes cada (2 doubles little-endian + 4 bytes de cauda). Boundary usa lng/lat
+//     ABSOLUTOS; CurveTrack usa DELTAS relativos a um ponto de referência (guardado no
+//     .SpatialCatalog como vrReferenceLongitude/vrReferenceLatitude) — os 2 primeiros "pontos" de
+//     todo CurveTrack são fixos: (0,0) com cauda 999.9 (marcador, provavelmente de tipo de curva)
+//     seguido de (0,0) com cauda 1.0 (o ponto de referência de verdade, coincidindo com o primeiro
+//     ponto real da curva) — os pontos seguintes são os deltas reais.
+// (3) Boundary<guid>.fdData: um blob de atributos pequeno (BoundaryType/SignalType/etc.) que não
+//     muda com a geometria — reutilizado tal e qual (só copiado) pra qualquer contorno.
+// (4) *.SpatialCatalog (ExportOnly/ImportExport/WaterManagement): XML pequenos, um trio por
+//     talhão, registrando Client/Farm/Field + área + a lista de itens espaciais daquele talhão
+//     (nome do arquivo .fdShape, tipo de geometria, MBR, e o ponto de referência do CurveTrack).
+// Usa t.linhas[0] (a primeira linha de plantio já traçada) como o CurvedTrackLine — é o mesmo
+// princípio de guidance por curva real (o monitor deriva as passadas seguintes sozinho a partir
+// dela e da largura do implemento configurado), não uma lista de todas as linhas já prontas como
+// no Gen4 (lá o "AdaptiveCurve" guarda todas as passadas; aqui o "CurvedTrackLine" é só a guia).
+
+const _RCD_BOUNDARY_FDDATA_B64 = 'AAAAAAEAAAAAAAAAAAAAAAECAAAAAAAAAAAAAAAAAAAFAAAAAAAAAAAAAAAAAAAABwAAAEJvdW5kYXJ5VHlwZQAAAAABAAAAAAAAAAAAAAAABwAAAEJvdW5kYXJ5TmFtZUlEAAABAAAAAAAAAAAAAAAABwAAAFBhcmVudEJvdW5kYXJ5SUQBAAAAAAAAAAAAAAD/BwAAAEhlYWRsYW5kTG9va3VwSUQBAAAAAAAAAAAAAAD/BgAAAFNpZ25hbFR5cGUAAAAAAAABAAAAAAAAAAAAAAALFA==';
+function _rcdBoundaryFdData() {
+  const bin = atob(_RCD_BOUNDARY_FDDATA_B64);
+  const out = new Uint8Array(bin.length);
+  for(let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+// Escreve o cabeçalho fixo de 64 bytes (constantes conferidas byte a byte contra o export real,
+// só a contagem de pontos no offset 0x38 muda) + N registros de 20 bytes (2 doubles LE + cauda
+// float32 LE). pontoEspecialInicial: usado só pelo CurveTrack — 2 pontos (0,0) extras na frente,
+// o primeiro com cauda 999.9, o segundo com cauda 1.0 (ver comentário grande acima).
+function _gerarShapeRCD(pares, pontoEspecialInicial, caudaPadrao) {
+  const w = _BinWriter();
+  const n = pares.length + (pontoEspecialInicial ? 1 : 0);
+  w.i32le(0); w.i32le(0); w.i32le(0); w.i32le(0);
+  w.i32le(513); w.i32le(0); w.i32le(0); w.i32le(0);
+  w.i32le(1); w.i32le(0); w.i32le(0); w.i32le(0);
+  w.i32le(1); w.i32le(0);
+  w.i32le(n); w.i32le(0);
+  if(pontoEspecialInicial) { w.f64le(0); w.f64le(0); w.f32le(999.9); }
+  pares.forEach(([x, y]) => { w.f64le(x); w.f64le(y); w.f32le(caudaPadrao); });
+  return w.build();
+}
+
+// Boundary: anel FECHADO (primeiro ponto repetido no fim), lng/lat absolutos — mesma convenção do
+// export real (10 pontos = 9 vértices + fechamento).
+function _rcdBoundaryFdShape(polyPts) {
+  const anel = [...polyPts, polyPts[0]].map(p => [p.lng, p.lat]);
+  return _gerarShapeRCD(anel, false, 0);
+}
+
+// CurveTrack: ponto de referência = primeiro ponto da linha; todo o resto vira delta (lng-refLng,
+// lat-refLat) — sem projeção nenhuma, é grau a grau mesmo (conferido: o delta do último ponto real
+// bate com sua posição absoluta menos o ponto de referência, dentro do MBR do export real).
+function _rcdCurveTrackFdShape(linhaPts) {
+  const ref = linhaPts[0];
+  const deltas = linhaPts.map(p => [p.lng - ref.lng, p.lat - ref.lat]);
+  return { bytes: _gerarShapeRCD(deltas, true, 1), ref };
+}
+
+function _rcdMbr(pts) {
+  let north = -Infinity, south = Infinity, east = -Infinity, west = Infinity;
+  pts.forEach(p => { if(p.lat > north) north = p.lat; if(p.lat < south) south = p.lat; if(p.lng > east) east = p.lng; if(p.lng < west) west = p.lng; });
+  return { north, south, east, west };
+}
+
+// Os 3 .SpatialCatalog de um talhão — mesmo trio/estrutura do export real (ExportOnly sempre
+// vazio de itens espaciais de verdade; ImportExport tem o Boundary+CurveTrack; WaterManagement
+// sempre com SpatialItems vazio — nenhum recurso de manejo de água nesse fluxo).
+function _rcdSpatialCatalogs({ clientErid, farmErid, fieldErid, clientNome, farmNome, fieldNome, areaHa, fieldLastModified, boundaryErid, boundaryMbr, curveErid, curveMbr, curveRef, temCurva }) {
+  const sourceNode = _rcdSourceNode;
+  const participantXml = `<rcdsetup:Participant><rcdsetup:Client lastModified="1970-01-01T00:00:00" sourceNode="${sourceNode}" erid="${clientErid}" name="${_escaparXml(clientNome)}"/></rcdsetup:Participant><rcdsetup:Farm lastModified="${fieldLastModified}" sourceNode="${sourceNode}" erid="${farmErid}" name="${_escaparXml(farmNome)}" clientRef="${clientErid}"/><rcdsetup:Field lastModified="${fieldLastModified}" sourceNode="${sourceNode}" erid="${fieldErid}" name="${_escaparXml(fieldNome)}" farmRef="${farmErid}"><rcdsetup:Area value="${areaHa}" sourceUOM="ha" variableRepresentation="vrReportedFieldArea"/></rcdsetup:Field><rcdsetup:Products/>`;
+  const agora = _isoJohnDeere(new Date(), true);
+  const nodeUuid = () => `{${crypto.randomUUID()}}`;
+
+  const exportOnly = `<?xml version="1.0" encoding="utf-8"?>\r\n<rcdscfld:SpatialCatalog xmlns:spatial="urn:schemas-johndeere-com:SpatialTypes" xmlns:bt="urn:schemas-johndeere-com:BasicTypes" xmlns:rep="urn:schemas-johndeere-com:Representation" xmlns:unit="urn:schemas-johndeere-com:UnitSystem" xmlns:rcdscbase="urn:schemas-johndeere-com:RCD:SpatialCatalog:Base" xmlns:rcdsetup="urn:schemas-johndeere-com:RCD:Setup" xmlns:rcdscfld="urn:schemas-johndeere-com:RCD:SpatialCatalog:Field"><rcdscfld:FileSchemaVersion nonProductionCode="0"><bt:FileSchemaContentVersion major="1" minor="3" /><bt:UnitOfMeasureVersion major="1" minor="43" /><bt:RepresentationSystemVersion major="4" minor="161" /></rcdscfld:FileSchemaVersion><rcdscfld:SourceApp major="3" minor="0" build="0" revision="117" nameSourceApp="RCD Target Provider" uuidSourceApp="{b050528e-f328-4dd8-9e9c-71fe8153692e}" uuidSourceAppNode="${sourceNode}" uuidSession="${nodeUuid()}" /><rcdscfld:SpatialItems eridFieldRef="${fieldErid}" /></rcdscfld:SpatialCatalog>`;
+
+  const spatialItemsIE = temCurva
+    ? `<CurvedTrackLine lastModified="1970-01-01T00:00:00" sourceNode="${sourceNode}" erid="${curveErid}" spatialGeometryType="point" fileName="CurveTrack${curveErid.replace(/[{}]/g,'')}" name="CURVA"><spatial:MBR uomSource="arcdeg" uomTarget="arcdeg" north="${curveMbr.north}" south="${curveMbr.south}" east="${curveMbr.east}" west="${curveMbr.west}"/><spatial:dtSignalType value="dtiSignalTypeUnknown" definedTypeRepresentation="dtSignalType"/><rcdscbase:vrEastShiftComponent value="0" sourceUOM="m" variableRepresentation="vrEastShiftComponent"/><rcdscbase:vrNorthShiftComponent value="0" sourceUOM="m" variableRepresentation="vrNorthShiftComponent"/><rcdscbase:vrReferenceLatitude value="${curveRef.lat}" sourceUOM="arcdeg" variableRepresentation="vrLatitude"/><rcdscbase:vrReferenceLongitude value="${curveRef.lng}" sourceUOM="arcdeg" variableRepresentation="vrLongitude"/></CurvedTrackLine>`
+    : '';
+  const importExport = `<?xml version="1.0"?>\r\n<rcdscfldie:SpatialCatalog xmlns:spatial="urn:schemas-johndeere-com:SpatialTypes" xmlns:bt="urn:schemas-johndeere-com:BasicTypes" xmlns:rep="urn:schemas-johndeere-com:Representation" xmlns:unit="urn:schemas-johndeere-com:UnitSystem" xmlns:rcdscbase="urn:schemas-johndeere-com:RCD:SpatialCatalog:Base" xmlns:rcdsetup="urn:schemas-johndeere-com:RCD:Setup" xmlns:rcdscfldie="urn:schemas-johndeere-com:RCD:SpatialCatalog:FieldImportExport"><FileSchemaVersion nonProductionCode="0"><bt:FileSchemaContentVersion major="1" minor="11"/><bt:UnitOfMeasureVersion major="1" minor="43"/><bt:RepresentationSystemVersion major="4" minor="161"/></FileSchemaVersion><SourceApp major="3" minor="0" build="0" revision="117" nameSourceApp="RCD Target Provider" uuidSourceApp="{b050528e-f328-4dd8-9e9c-71fe8153692e}" uuidSourceAppNode="${sourceNode}" uuidSession="${nodeUuid()}"/><Setup><rcdsetup:FileSchemaVersion nonProductionCode="0"><bt:FileSchemaContentVersion major="3" minor="28"/><bt:UnitOfMeasureVersion major="1" minor="43"/><bt:RepresentationSystemVersion major="4" minor="161"/></rcdsetup:FileSchemaVersion><bt:Synchronization><bt:NodeVersions><bt:Node uuid="${nodeUuid()}" lastSeen="${agora}"/></bt:NodeVersions><bt:EntityDeletions/></bt:Synchronization>${participantXml}</Setup><SpatialItems eridFieldRef="${fieldErid}">${spatialItemsIE}<Boundary lastModified="${fieldLastModified}" sourceNode="${sourceNode}" erid="${boundaryErid}" spatialGeometryType="polygon" fileName="Boundary${boundaryErid.replace(/[{}]/g,'')}"><spatial:MBR uomSource="arcdeg" uomTarget="arcdeg" north="${boundaryMbr.north}" south="${boundaryMbr.south}" east="${boundaryMbr.east}" west="${boundaryMbr.west}"/><spatial:dtSignalType value="dtiSignalTypeRTK" definedTypeRepresentation="dtSignalType"/></Boundary></SpatialItems></rcdscfldie:SpatialCatalog>`;
+
+  const waterManagement = `<?xml version="1.0"?>\r\n<rcdscfldiewm:SpatialCatalog xmlns:spatial="urn:schemas-johndeere-com:SpatialTypes" xmlns:bt="urn:schemas-johndeere-com:BasicTypes" xmlns:rep="urn:schemas-johndeere-com:Representation" xmlns:unit="urn:schemas-johndeere-com:UnitSystem" xmlns:rcdscbase="urn:schemas-johndeere-com:RCD:SpatialCatalog:Base" xmlns:rcdsetup="urn:schemas-johndeere-com:RCD:Setup" xmlns:rcdscfldiewm="urn:schemas-johndeere-com:RCD:SpatialCatalog:FieldImportExportWaterManagment"><FileSchemaVersion nonProductionCode="0"><bt:FileSchemaContentVersion major="1" minor="9"/><bt:UnitOfMeasureVersion major="1" minor="43"/><bt:RepresentationSystemVersion major="4" minor="161"/></FileSchemaVersion><SourceApp major="3" minor="0" build="0" revision="117" nameSourceApp="RCD Target Provider" uuidSourceApp="{b050528e-f328-4dd8-9e9c-71fe8153692e}" uuidSourceAppNode="${sourceNode}" uuidSession="${nodeUuid()}"/><Setup><rcdsetup:FileSchemaVersion nonProductionCode="0"><bt:FileSchemaContentVersion major="3" minor="28"/><bt:UnitOfMeasureVersion major="1" minor="43"/><bt:RepresentationSystemVersion major="4" minor="161"/></rcdsetup:FileSchemaVersion><bt:Synchronization><bt:NodeVersions><bt:Node uuid="${nodeUuid()}" lastSeen="${agora}"/></bt:NodeVersions><bt:EntityDeletions/></bt:Synchronization>${participantXml}</Setup><SpatialItems eridFieldRef="${fieldErid}"/></rcdscfldiewm:SpatialCatalog>`;
+
+  return { exportOnly, importExport, waterManagement };
+}
+
+// global.ver: 1024 bytes, só o int32 inicial (7) tem significado conhecido, resto é padding 0xFF
+// — igual byte a byte ao export real, sem depender de nada específico do talhão.
+function _rcdGlobalVer() {
+  const b = new Uint8Array(1024);
+  b.fill(0xFF);
+  new DataView(b.buffer).setInt32(0, 7, true);
+  return b;
+}
+// host: 32 bytes com cara de identificador binário da instalação (não decifrado — não referencia
+// nenhum GUID de Client/Farm/Field, então não depende do talhão) — gera 32 bytes aleatórios
+// novos a cada export, tão válidos quanto o valor fixo real pra esse propósito.
+function _rcdHost() {
+  const b = new Uint8Array(32);
+  crypto.getRandomValues(b);
+  return b;
+}
+
+let _rcdSourceNode = null; // {uuid} compartilhado entre setup.fds e todos os .SpatialCatalog de um mesmo export
+
+async function _exportarJohnDeereGS3RCD(produtor, fazenda, fontes) {
+  if(typeof JSZip === 'undefined') { setStatus('Biblioteca de compactação (JSZip) não carregou — verifique sua conexão com a internet.', 'err'); return; }
+  const comTalhao = fontes.filter(f => f.polyPts && f.polyPts.length >= 3);
+  if(!comTalhao.length) { setStatus('Nenhum talhão com contorno pra exportar.', 'err'); return; }
+
+  setStatus('Gerando pacote RCD (GS3 2630) para o monitor John Deere…', 'info');
+  let catalogo;
+  try {
+    const resp = await fetch('rcd-catalogo-implementos.xml');
+    if(!resp.ok) throw new Error('HTTP ' + resp.status);
+    catalogo = await resp.text();
+  } catch(e) {
+    setStatus('Não consegui carregar rcd-catalogo-implementos.xml (precisa estar na mesma pasta do plantio4.html). ' + e.message, 'err');
+    return;
+  }
+
+  _rcdSourceNode = `{${crypto.randomUUID()}}`;
+  const clientErid = `{${crypto.randomUUID()}}`;
+  const farmErid = `{${crypto.randomUUID()}}`;
+  const agoraLocal = _isoJohnDeere(new Date(), false);
+
+  let fieldsXml = '';
+  const zip = new JSZip();
+  const pastaEic = zip.folder('GS3_2630').folder('AgroCAD').folder('RCD').folder('EIC');
+  const pastaFields = pastaEic.folder('Fields');
+  let nTalhoes = 0;
+
+  comTalhao.forEach(f => {
+    const fieldErid = `{${crypto.randomUUID()}}`;
+    const boundaryGuid = crypto.randomUUID(), boundaryErid = `{${boundaryGuid}}`;
+    const areaM2 = (() => { try { return turf.area(turf.polygon([[...f.polyPts.map(p => [p.lng, p.lat]), [f.polyPts[0].lng, f.polyPts[0].lat]]])); } catch(e) { return 0; } })();
+    const areaHa = areaM2 / 10000;
+    const boundaryMbr = _rcdMbr(f.polyPts);
+
+    let linhaGuia = null;
+    if(f.linhas && f.linhas.length) { try { linhaGuia = f.linhas[0].getLatLngs().flat(); } catch(e) {} }
+    const temCurva = linhaGuia && linhaGuia.length >= 2;
+    let curveGuid, curveErid, curveMbr, curveRef;
+    if(temCurva) {
+      curveGuid = crypto.randomUUID(); curveErid = `{${curveGuid}}`;
+      curveMbr = _rcdMbr(linhaGuia);
+    }
+
+    fieldsXml += `<Field lastModified="${agoraLocal}" sourceNode="${_rcdSourceNode}" erid="${fieldErid}" name="${_escaparXml(f.nome)}" farmRef="${farmErid}"><Area value="${areaHa}" sourceUOM="ha" variableRepresentation="vrReportedFieldArea" /></Field>`;
+
+    // Shard de 2 caracteres (organização de pastas, igual ao export real) — os 2 primeiros
+    // caracteres hex do erid do talhão, maiúsculos.
+    const shard = fieldErid.replace(/[{}]/g, '').slice(0, 2).toUpperCase();
+    const pastaCampo = pastaFields.folder(shard).folder(fieldErid.replace(/[{}]/g, ''));
+    pastaCampo.file(`Boundary${boundaryGuid}.fdData`, _rcdBoundaryFdData());
+    pastaCampo.file(`Boundary${boundaryGuid}.fdShape`, _rcdBoundaryFdShape(f.polyPts));
+    if(temCurva) {
+      const { bytes, ref } = _rcdCurveTrackFdShape(linhaGuia);
+      curveRef = ref;
+      pastaCampo.file(`CurveTrack${curveGuid}.fdShape`, bytes);
+    }
+
+    const { exportOnly, importExport, waterManagement } = _rcdSpatialCatalogs({
+      clientErid, farmErid, fieldErid, clientNome: produtor, farmNome: fazenda, fieldNome: f.nome,
+      areaHa, fieldLastModified: agoraLocal, boundaryErid, boundaryMbr, curveErid, curveMbr, curveRef, temCurva,
+    });
+    pastaCampo.file('ExportOnly.SpatialCatalog', exportOnly);
+    pastaCampo.file('ImportExport.SpatialCatalog', importExport);
+    pastaCampo.file('WaterManagement.SpatialCatalog', waterManagement);
+    nTalhoes++;
+  });
+
+  const prefixo = `﻿<?xml version="1.0" encoding="utf-8"?>\r\n<SetupFile language="en-US" xmlns="urn:schemas-johndeere-com:RCD:Setup" xmlns:bt="urn:schemas-johndeere-com:BasicTypes" xmlns:spatial="urn:schemas-johndeere-com:SpatialTypes" xmlns:rep="urn:schemas-johndeere-com:Representation" xmlns:unit="urn:schemas-johndeere-com:UnitSystem" xmlns:xsi="http://www.w3.org/2001/xmlschema-instance">\r\n  <SourceApp major="3" minor="34" build="1338" revision="0" nameSourceApp="RCDFieldDoc" uuidSourceApp="{5e1c2eb0-9582-4f8b-8aa6-fa0acf2ca22f}" uuidSourceAppNode="${_rcdSourceNode}" uuidSession="{${crypto.randomUUID()}}" />\r\n  <Setup>\r\n    <FileSchemaVersion nonProductionCode="0">\r\n      <bt:FileSchemaContentVersion major="3" minor="26" />\r\n      <bt:UnitOfMeasureVersion major="1" minor="58" />\r\n      <bt:RepresentationSystemVersion major="4" minor="219" />\r\n    </FileSchemaVersion>\r\n    <bt:Synchronization>\r\n      <bt:NodeVersions>\r\n        <bt:Node uuid="${crypto.randomUUID()}" lastSeen="${_isoJohnDeere(new Date(), true)}" />\r\n      </bt:NodeVersions>\r\n      <bt:EntityDeletions />\r\n    </bt:Synchronization>\r\n    <Participant>\r\n      <Client lastModified="1970-01-01T00:00:00" sourceNode="${_rcdSourceNode}" erid="${clientErid}" name="${_escaparXml(produtor)}" />\r\n    </Participant>\r\n    <Farm lastModified="${agoraLocal}" sourceNode="${_rcdSourceNode}" erid="${farmErid}" name="${_escaparXml(fazenda)}" clientRef="${clientErid}" />\r\n    ${fieldsXml}\r\n`;
+  const sufixo = `\r\n  </Setup>\r\n</SetupFile>\r\n`;
+  const setupFds = prefixo + catalogo + sufixo;
+
+  pastaEic.file('global.ver', _rcdGlobalVer());
+  pastaEic.file('host', _rcdHost());
+  pastaEic.file('setup.fds', setupFds);
+
+  const blob = await zip.generateAsync({ type: 'blob' });
+  baixarArquivo(blob, `GS3_2630_${produtor}_${fazenda}.zip`, 'application/zip');
+  setStatus(`✓ Exportado pra John Deere GS3 2630 (RCD) — ${nTalhoes} talhão(ões). Extraia o .zip e copie a pasta "GS3_2630" pra raiz do pendrive.`, 'ok');
 }
 
 // ── Importar do Monitor GPS (Trator) — caminho inverso da exportação acima ──────────────────
