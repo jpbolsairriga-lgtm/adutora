@@ -359,7 +359,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.89 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.90 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -3252,6 +3252,28 @@ body.layout-lateral #status{grid-area:status;}
 // do desvio original, num relevo com colina real de curvatura acentuada); mover o slider de
 // verdade recalcula e redesenha a pré-visualização (o número de linhas e a cobertura estimada
 // mudam de acordo). Regressão completa (18 suítes centrais re-verificadas) sem erros de página.
+// v4.90: usuário reportou (com prints) que as extremidades das linhas derivadas tinham "mtas
+// falhas" — não tocavam o contorno do talhão e tinham mudanças bruscas de sentido perto da ponta.
+// Causa raiz dupla em _curvasPorCampoDeDistancia:
+// (1) GANCHO NAS PONTAS: a mestra é um segmento FINITO. Além das próprias pontas dela, "distância
+//     assinada até a mestra" (_distanciaAssinadaAMestra) passa a significar "distância até o
+//     ponto final" (projeção clampada em t∈[0,1]) em vez de continuar a perpendicular — as
+//     isolinhas derivadas então curvam em arcos ao redor dessa ponta, o "gancho" visto nos prints.
+//     Corrigido com _estenderMestraNasPontas(curvaMestra, dist): estende a mestra em reta bem além
+//     do bbox do talhão (2× a diagonal), na direção do trecho final de cada ponta — dentro do
+//     talhão, o campo de distância passa a se comportar como se a mestra fosse uma reta infinita
+//     ali, sem curvatura artificial nenhuma perto das pontas. É só um artifício geométrico interno
+//     de _curvasPorCampoDeDistancia (a mestra real armazenada em curvaMestraOriginal não muda).
+// (2) VÃO ATÉ O CONTORNO: _clipChainAoPoligono só descartava pontos fora do talhão (clip por
+//     ponto), então cada pedaço de linha terminava no último ponto de GRADE ainda dentro — nunca
+//     exatamente em cima do contorno real, deixando um vão. Reescrito pra calcular a interseção
+//     geométrica exata entre o segmento que cruza a fronteira e o contorno do talhão
+//     (_pontoNoContorno/_paramInterseccaoSegmentos) e usar esse ponto como início/fim do pedaço.
+// Testado (test_fix_pontas.js, talhão hexagonal irregular não alinhado à grade + mestra ondulada):
+// versão antiga deixava vão de até 2,43 m até o contorno e virava 5,5° na ponta contra 1,2° no
+// meio da mesma linha (o gancho); versão corrigida fica com vão de 0,00 m e 1,6° na ponta — igual
+// à curvatura natural do meio da linha (1,1°). Regressão completa (18 suítes centrais
+// re-verificadas) sem erros de página.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -10918,13 +10940,44 @@ function usarCenarioEscolhido() {
 //     curva fechada, a isolinha da distância simplesmente arredonda a transição em vez de se
 //     autointerseccionar — a garantia central do método (é a mesma técnica de "offset verdadeiro"
 //     que ferramentas de CAM/CAD profissionais usam pra contornos com curvatura arbitrária).
+// Parâmetro t∈[0,1] ao longo do segmento (x1,y1)-(x2,y2) onde ele cruza o segmento
+// (x3,y3)-(x4,y4), ou null se não cruzam dentro dos dois segmentos.
+function _paramInterseccaoSegmentos(x1, y1, x2, y2, x3, y3, x4, y4) {
+  const d = (x2 - x1) * (y4 - y3) - (y2 - y1) * (x4 - x3);
+  if(Math.abs(d) < 1e-14) return null;
+  const t = ((x3 - x1) * (y4 - y3) - (y3 - y1) * (x4 - x3)) / d;
+  const u = ((x3 - x1) * (y2 - y1) - (y3 - y1) * (x2 - x1)) / d;
+  if(t < -1e-9 || t > 1 + 1e-9 || u < -1e-9 || u > 1 + 1e-9) return null;
+  return Math.max(0, Math.min(1, t));
+}
+
+// Ponto exato onde o segmento p-q cruza o contorno (anel externo) do talhão — usado pra terminar
+// os pedaços de linha EXATAMENTE em cima do contorno, em vez de no último ponto de grade ainda
+// dentro (o que deixava um vão entre a ponta da linha e o contorno real).
+function _pontoNoContorno(p, q, anel) {
+  let melhorT = null;
+  for(let e = 0; e + 1 < anel.length; e++) {
+    const t = _paramInterseccaoSegmentos(p.lng, p.lat, q.lng, q.lat, anel[e][0], anel[e][1], anel[e + 1][0], anel[e + 1][1]);
+    if(t != null && (melhorT == null || t < melhorT)) melhorT = t;
+  }
+  if(melhorT == null) return null;
+  return { lat: p.lat + melhorT * (q.lat - p.lat), lng: p.lng + melhorT * (q.lng - p.lng) };
+}
+
 function _clipChainAoPoligono(chain, tPolyT) {
+  const anel = tPolyT.geometry.coordinates[0];
   const dentro = chain.map(p => turf.booleanPointInPolygon(turf.point([p.lng, p.lat]), tPolyT));
   const pedacos = [];
-  let atual = [];
-  for(let i = 0; i < chain.length; i++) {
-    if(dentro[i]) atual.push(chain[i]);
-    else { if(atual.length >= 2) pedacos.push(atual); atual = []; }
+  let atual = dentro[0] ? [chain[0]] : [];
+  for(let i = 0; i + 1 < chain.length; i++) {
+    if(dentro[i] !== dentro[i + 1]) {
+      const cruz = _pontoNoContorno(chain[i], chain[i + 1], anel);
+      if(cruz) {
+        if(dentro[i]) { atual.push(cruz); pedacos.push(atual); atual = []; }
+        else atual = [cruz];
+      } else if(dentro[i] && atual.length >= 2) { pedacos.push(atual); atual = []; }
+    }
+    if(dentro[i + 1]) atual.push(chain[i + 1]);
   }
   if(atual.length >= 2) pedacos.push(atual);
   return pedacos;
@@ -11021,6 +11074,32 @@ function _distanciaAssinadaAMestra(px, py, mestraXY) {
   return minD * sinal;
 }
 
+// Estende a mestra em linha reta além das próprias pontas, na direção local de cada extremo — sem
+// isso, o campo de distância "enxerga" a mestra como um segmento FINITO: além das pontas, a
+// distância assinalada passa a ser medida até o PONTO final (não até uma reta que continua na
+// mesma direção), e as isolinhas derivadas curvam em arcos ao redor dessa ponta — o "gancho"/
+// mudança brusca de direção perto das extremidades que o usuário reportou (linhas verdes se
+// curvando de repente perto do contorno do talhão). Estendendo a mestra bem além do bbox do
+// talhão na direção que ela já vinha seguindo nos últimos pontos, o campo de distância dentro do
+// talhão passa a se comportar como se a mestra fosse uma reta infinita ali perto — sem curvatura
+// artificial nenhuma nas pontas, e o gancho desaparece.
+function _estenderMestraNasPontas(curvaMestra, distM) {
+  const n = curvaMestra.length;
+  if(n < 2) return curvaMestra;
+  const mLat = 111320, mLng = Math.cos(curvaMestra[0].lat * Math.PI / 180) * 111320;
+  const direcao = (a, b) => {
+    const dx = (b.lng - a.lng) * mLng, dy = (b.lat - a.lat) * mLat;
+    const len = Math.hypot(dx, dy) || 1;
+    return { lng: dx / len / mLng, lat: dy / len / mLat };
+  };
+  const k = Math.min(5, n - 1);
+  const dirIni = direcao(curvaMestra[k], curvaMestra[0]); // sentido "pra trás", antes do início
+  const dirFim = direcao(curvaMestra[n - 1 - k], curvaMestra[n - 1]); // sentido "pra frente", depois do fim
+  const ini = { lat: curvaMestra[0].lat + dirIni.lat * distM, lng: curvaMestra[0].lng + dirIni.lng * distM };
+  const fim = { lat: curvaMestra[n - 1].lat + dirFim.lat * distM, lng: curvaMestra[n - 1].lng + dirFim.lng * distM };
+  return [ini, ...curvaMestra, fim];
+}
+
 // Gera as linhas derivadas da mestra como ISOLINHAS de um campo de distância assinada — nunca se
 // cruzam (mesma garantia matemática de isolinhas de elevação: são cortes de valor constante de uma
 // superfície de valor único), e "arredondam" sozinhas onde um offset ingênuo autointersecionaria.
@@ -11036,7 +11115,8 @@ function _curvasPorCampoDeDistancia(tPolyT, curvaMestra, spacingM) {
   const lats = Array.from({ length: nFino }, (_, i) => minLat + i * (maxLat - minLat) / (nFino - 1));
   const lngs = Array.from({ length: nFino }, (_, j) => minLng + j * (maxLng - minLng) / (nFino - 1));
 
-  const mestraXY = _decimarPontos(curvaMestra, 80).map(p => [p.lng * mLng, p.lat * mLat]);
+  const mestraEstendida = _estenderMestraNasPontas(curvaMestra, diagM * 2);
+  const mestraXY = _decimarPontos(mestraEstendida, 80).map(p => [p.lng * mLng, p.lat * mLat]);
   const distGrid = lats.map(lat => lngs.map(lng => _distanciaAssinadaAMestra(lng * mLng, lat * mLat, mestraXY)));
 
   let maxAbs = 0;
