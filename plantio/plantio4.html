@@ -359,7 +359,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.92 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.93 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -517,12 +517,11 @@ body.layout-lateral #status{grid-area:status;}
       </div>
       <div class="rgroup" id="secCarreador">
         <div class="rgroup-body">
-          <button class="rbtn-sm" id="btnMultiSelect" onclick="toggleMultiSelect()">&#9635; Selecionar Múltiplos</button>
           <div id="divMultiSelInfo" style="display:none;" class="rreadout"><span class="l">Selecionados:</span><span class="v" id="iMultiSelCount">0</span></div>
           <button class="rbtn-sm warn" id="btnUnificarMulti" style="display:none;" onclick="unificarTalhoesSelecionados()" title="Junta os talhões selecionados num único polígono. As linhas de plantio deles são apagadas (área unificada fica em branco pra você redesenhar a guia).">&#8677; Unificar Selecionados</button>
-          <button class="rbtn-sm clr" id="btnCancelarMulti" style="display:none;" onclick="cancelarMultiSelect()">&#10005; Cancelar Multi-seleção</button>
+          <button class="rbtn-sm clr" id="btnCancelarMulti" style="display:none;" onclick="cancelarMultiSelect()" title="Clique num talhão travado pra selecionar (clique de novo pra tirar); clique em vários pra multi-selecionar.">&#10005; Limpar Seleção</button>
         </div>
-        <div class="rgroup-title">Seleção</div>
+        <div class="rgroup-title">Seleção — clique nos talhões travados</div>
       </div>
     </div>
 
@@ -3342,6 +3341,39 @@ body.layout-lateral #status{grid-area:status;}
 // Testado com harness Node (pyshp pra inspecionar os arquivos reais, JSZip+turf reais — não um shim
 // — pra gerar e comparar): árvore de pastas do pacote gerado agora bate 1:1 com a árvore real nos
 // dois talhões de referência (T-01 de 26 vértices/69 linhas e T-02), incluindo a pasta "Executado".
+// v4.93: usuário relatou que o pedido atendido na v4.78 ("trocar de aba cancela a ferramenta
+// ativa") quebrou a multi-seleção de talhões — a própria mensagem da ferramenta dizia "clique nos
+// talhões, DEPOIS desenhe a guia", mas desenhar a guia é noutra aba, e trocar de aba cancelava o
+// modo (_abandonarFerramentaAtiva chamava cancelarMultiSelect()), limpando a seleção no meio do
+// fluxo que a ferramenta pedia. Pedido do usuário pra resolver: poder selecionar múltiplos "só
+// clicando", sem precisar armar nenhum modo antes.
+// Removido o botão/modo "Selecionar Múltiplos" (multiSelectMode) por completo. Agora clicar em
+// QUALQUER talhão travado sempre ALTERNA ele dentro do mesmo Set (talhoesMultiSel) que antes só
+// existia durante o modo armado — selecionarTalhao() ficou reduzida a isso, e
+// _sincronizarSelecaoTalhoes() decide o resto a partir do tamanho do Set:
+// - 0 selecionados: nada ativo (mesma tela "Clique em um talhão travado" de sempre).
+// - EXATAMENTE 1: talhaoSelecionadoUid é populado igual ao antigo seletor único — Carreador,
+//   Divisão, Editar Linhas e todo o resto que já lia essa variável (~30 pontos no código)
+//   continuam funcionando SEM NENHUMA MUDANÇA, porque a variável se comporta exatamente igual a
+//   antes nesse caso.
+// - 2+: as ferramentas de "um talhão só" ficam escondidas (não fazem sentido em vários) e aparecem
+//   as ações de multi-seleção (Unificar Selecionados / Travar Todos) — mesmo comportamento de
+//   antes, só que sem precisar ter clicado num botão pra "armar" isso primeiro.
+// A parte que resolve o bug de verdade: como não existe mais um "modo" separado pra cancelar,
+// _abandonarFerramentaAtiva() (chamada ao trocar de aba) NÃO toca mais em talhoesMultiSel/
+// talhaoSelecionadoUid — a seleção é dado de projeto (o que está selecionado), não uma ferramenta
+// "armada" esperando clique no mapa, então sobrevive a qualquer troca de aba, incluindo o fluxo
+// selecionar-na-aba-Talhão-depois-desenhar-a-guia-na-aba-Guia que a v4.78 tinha quebrado.
+// desselecionarTalhao()/cancelarMultiSelect() (nomes antigos, chamados de vários pontos do código
+// e do HTML) agora são o mesmo limparSelecaoTalhoes() — limpam a seleção inteira, com 1 ou com
+// vários selecionados, restaurando a cor de cada talhão e o turfPoly ativo.
+// Testado (test_selecao.js, com as funções extraídas literalmente do arquivo): clicar em 2 talhões
+// sem clicar de novo no primeiro dá multi-seleção de 2 (talhaoSelecionadoUid volta a null, painel
+// de Carreador some, botão Unificar aparece); simular a troca de aba (sem chamar nada que zere o
+// Set) confirma que a seleção de 2 sobrevive; clicar de novo no segundo tira ele e RESTAURA o
+// comportamento de seleção única pro primeiro (painel de Carreador volta, turfPoly recalculado);
+// limparSelecaoTalhoes()/os dois nomes antigos limpam tudo e restauram as cores. Regressão
+// completa (18 suítes centrais re-verificadas) sem erros de página.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -3686,8 +3718,10 @@ let talhoesArquivados = [];
 // Paleta de cores para contorno de cada talhão
 const CORES_TALHAO = ['#42a5f5','#ef5350','#66bb6a','#ffa726','#ab47bc','#26c6da','#ff7043','#8d6e63'];
 
-// Multi-seleção de talhões
-let multiSelectMode = false;
+// Seleção de talhões (v4.93: unificada — clicar num talhão travado sempre alterna ele dentro
+// desse Set, sem precisar armar um "modo" antes; ver selecionarTalhao/_sincronizarSelecaoTalhoes.
+// Sobrevive à troca de aba do ribbon de propósito — é dado de projeto, não uma ferramenta "armada"
+// esperando clique, então _abandonarFerramentaAtiva() não cancela isso).
 let talhoesMultiSel = new Set();
 
 // ── Carreador / Divisão ──────────────────────────────────────────────────────
@@ -4057,8 +4091,8 @@ function setModoGuia(m) {
 }
 
 function iniciarGuia() {
-  if(multiSelectMode) {
-    if(talhoesMultiSel.size === 0) { setStatus('Selecione pelo menos um talhão na multi-seleção.', 'err'); return; }
+  if(talhoesMultiSel.size > 0) {
+    // nada a checar — sempre tem pelo menos 1 talhão selecionado aqui, por definição
   } else {
     // Se tiver talhão arquivado selecionado e nenhum polígono ativo → ativa para edição automaticamente
     if(talhaoSelecionadoUid !== null && polyPts.length < 3) {
@@ -4153,7 +4187,7 @@ function cancelarGuia() {
   // linhas — ex: talhão que estava travado e foi puxado pra edição sem querer), trava ele de
   // volta automaticamente, igual ao estado antes de começar a desenhar a guia. Fica sem seleção
   // (natural), pronto pra ser clicado/selecionado de novo.
-  if(!multiSelectMode && polyPts.length >= 3) {
+  if(talhoesMultiSel.size === 0 && polyPts.length >= 3) {
     arquivarTalhaoAtual();
     setStatus('Guia cancelada. Talhão travado novamente ✓ — clique nele para selecionar.', 'ok');
   } else {
@@ -4297,15 +4331,11 @@ function _limparTalhoesArquivadosSemUndo() {
   carreadorLayers.forEach(l => l.remove()); carreadorLayers = [];
   talhaoSelecionadoUid = null;
   talhoesMultiSel.clear();
-  if(multiSelectMode) {
-    multiSelectMode = false;
-    $('btnMultiSelect').style.background = 'var(--panel-border)';
-    $('btnMultiSelect').innerHTML = '&#9635; Selecionar M&#250;ltiplos';
-    $('divMultiSelInfo').style.display = 'none';
-    $('btnCancelarMulti').style.display = 'none';
-    $('iMultiSelCount').textContent = '0';
-    $('btnTravarTodos').style.display = 'none';
-  }
+  $('divMultiSelInfo').style.display = 'none';
+  $('btnCancelarMulti').style.display = 'none';
+  $('iMultiSelCount').textContent = '0';
+  $('btnTravarTodos').style.display = 'none';
+  $('btnUnificarMulti').style.display = 'none';
   $('divSelInfo').innerHTML = 'Clique em um talh&#227;o travado para selecionar';
   $('divCarreadorOps').style.display = 'none';
   $('iTalhoes').textContent = '0';
@@ -4757,8 +4787,9 @@ function gerarLinhas() {
   if(guidePts.length < 2) { setStatus('Desenhe a linha guia primeiro.', 'err'); return; }
   _offsetStats.ajustadas = 0; _offsetStats.puladas = 0; _offsetStats.splitFalhou = false;
 
-  // ── Modo multi-seleção ─────────────────────────────────────────────────────
-  if(multiSelectMode && talhoesMultiSel.size > 0) {
+  // ── Modo multi-seleção (também cobre o caso de 1 talhão só selecionado — ver
+  // _sincronizarSelecaoTalhoes) ────────────────────────────────────────────────
+  if(talhoesMultiSel.size > 0) {
     const spacing = parseFloat($('espac').value) || 12;
     const spacingKm = spacing / 1000;
     const cor = $('corLinha').value;
@@ -9607,7 +9638,6 @@ function limparTudo() {
   if(_ortofotoLocal) _removerOrtofotoLocalSemUndo();
   if(_curvasLocais) _removerCurvasLocaisSemUndo();
   if(_demLocal) _removerDemLocalSemUndo();
-  if(multiSelectMode) cancelarMultiSelect();
   _modoPickLinha = null; // sem isso o cursor ficava travado em crosshair se Perfil/Carreador de Linha estivesse ativo
   modo='idle'; map.getContainer().style.cursor='';
   $('btnPoly').classList.remove('active');
@@ -9658,50 +9688,28 @@ setModoGuia('reta');
 // CARREADOR / DIVISÃO
 // ══════════════════════════════════════════════════════════════════════════════
 
-// ── Multi-seleção ─────────────────────────────────────────────────────────────
-function toggleMultiSelect() {
-  if(multiSelectMode) { cancelarMultiSelect(); return; }
-  if(talhaoSelecionadoUid !== null) desselecionarTalhao();
-  multiSelectMode = true;
-  $('btnMultiSelect').style.background = '#e65100';
-  $('btnMultiSelect').innerHTML = '&#10005; Sair Multi-sele&#231;&#227;o';
-  $('divMultiSelInfo').style.display = 'block';
-  $('btnCancelarMulti').style.display = 'flex';
-  setStatus('Multi-sele&#231;&#227;o ativa: clique nos talh&#245;es para selecionar, depois desenhe a guia e gere as linhas.', 'info');
-}
-
-function cancelarMultiSelect() {
+// ── Seleção de talhões (v4.93) ────────────────────────────────────────────────
+// Antes disso: "Selecionar Múltiplos" era um MODO separado que precisava ser armado num botão
+// antes de clicar nos talhões — e a mensagem do próprio modo já dizia "clique nos talhões, DEPOIS
+// desenhe a guia" (aba diferente!), mas trocar de aba cancelava esse modo (ver
+// _abandonarFerramentaAtiva), limpando a seleção bem no meio do fluxo que a própria ferramenta
+// pedia. Usuário pediu pra simplesmente poder clicar direto nos talhões pra multi-selecionar, sem
+// precisar armar nada — então o botão "Selecionar Múltiplos" foi removido, e clicar em QUALQUER
+// talhão travado (mesmo sem nenhum outro selecionado ainda) sempre alterna ele dentro do MESMO Set
+// (talhoesMultiSel) que antes só existia durante o modo — ver selecionarTalhao/
+// _sincronizarSelecaoTalhoes. Com exatamente 1 selecionado, o comportamento de sempre (Carreador/
+// Divisão/Editar Linhas, tudo baseado em talhaoSelecionadoUid) continua idêntico — só passa a
+// coexistir com o mesmo mecanismo usado por 2+.
+function limparSelecaoTalhoes() {
   talhoesMultiSel.forEach(uid => {
     const t = talhoesArquivados.find(x => x.uid === uid);
     if(t && t.polyLayer) t.polyLayer.setStyle({color:t.cor, weight:2, fillOpacity:.06, dashArray:null});
   });
   talhoesMultiSel.clear();
-  multiSelectMode = false;
-  $('btnMultiSelect').style.background = 'var(--panel-border)';
-  $('btnMultiSelect').innerHTML = '&#9635; Selecionar M&#250;ltiplos';
-  $('divMultiSelInfo').style.display = 'none';
-  $('btnCancelarMulti').style.display = 'none';
-  $('iMultiSelCount').textContent = '0';
-  $('btnTravarTodos').style.display = 'none';
-  $('btnUnificarMulti').style.display = 'none';
-  setStatus('', '');
+  _sincronizarSelecaoTalhoes();
 }
-
-function toggleTalhaoMultiSel(uid) {
-  const t = talhoesArquivados.find(x => x.uid === uid);
-  if(!t) return;
-  if(talhoesMultiSel.has(uid)) {
-    talhoesMultiSel.delete(uid);
-    if(t.polyLayer) t.polyLayer.setStyle({color:t.cor, weight:2, fillOpacity:.06, dashArray:null});
-  } else {
-    talhoesMultiSel.add(uid);
-    if(t.polyLayer) t.polyLayer.setStyle({color:'#FFD600', weight:3, fillOpacity:.18, dashArray:'10,5'});
-  }
-  $('iMultiSelCount').textContent = talhoesMultiSel.size;
-  const n = talhoesMultiSel.size;
-  $('btnUnificarMulti').style.display = n >= 2 ? 'flex' : 'none';
-  setStatus(n > 0 ? `${n} talhão(ões) selecionado(s) — desenhe a linha guia e gere as linhas, ou unifique-os.` : 'Nenhum talhão selecionado.', 'info');
-}
+// Nomes antigos preservados (chamados de vários pontos do código/onclick) — mesmo efeito agora.
+function cancelarMultiSelect() { limparSelecaoTalhoes(); }
 
 // ── Unificar Talhões Selecionados (multi-seleção) ────────────────────────────
 // Junta os polígonos dos talhões marcados num único talhão novo. Diferente da Divisão (que separa
@@ -9893,78 +9901,102 @@ function selecionarTalhao(uid) {
   // preenchimento do polígono (mesmo quase transparente) cobre a área inteira e captura o clique
   // sempre que o usuário erra o traço fino da linha por alguns pixels.
   if(_modoPickLinha) return;
-  if(multiSelectMode) { toggleTalhaoMultiSel(uid); return; }
-  // Deselect any previous
-  if(talhaoSelecionadoUid !== null) {
-    const prev = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
-    if(prev && prev.polyLayer) {
-      prev.polyLayer.setStyle({color:prev.cor, weight:2, fillOpacity:.06, dashArray:null});
-    }
-  }
   // Cancel any active division drawing
   if(modoDivisao) _limparDivisaoLine();
 
   const t = talhoesArquivados.find(x => x.uid === uid);
   if(!t) return;
-  talhaoSelecionadoUid = uid;
 
-  // Highlight selected talhão
-  if(t.polyLayer) {
-    t.polyLayer.setStyle({color:'#FFD600', weight:3, fillOpacity:.22, dashArray:'10,5'});
+  // v4.93: clicar sempre ALTERNA o talhão dentro da seleção (o mesmo Set usado por 1 ou por
+  // vários) — sem precisar armar nenhum modo antes. Ver comentário grande em limparSelecaoTalhoes.
+  if(talhoesMultiSel.has(uid)) {
+    talhoesMultiSel.delete(uid);
+    if(t.polyLayer) t.polyLayer.setStyle({color:t.cor, weight:2, fillOpacity:.06, dashArray:null});
+  } else {
+    talhoesMultiSel.add(uid);
+    if(t.polyLayer) t.polyLayer.setStyle({color:'#FFD600', weight:3, fillOpacity:.22, dashArray:'10,5'});
   }
-
-  // Set turfPoly from selected talhão (enables guide-line generation)
-  const ring = [...t.polyPts.map(p => [p.lng, p.lat]), [t.polyPts[0].lng, t.polyPts[0].lat]];
-  try {
-    turfPoly = turf.polygon([ring]); turf.rewind(turfPoly, {mutate:true});
-    turfBound = turf.polygonToLine(turfPoly);
-    // v4.76: mantém t.turfPoly (do PRÓPRIO objeto talhão, não só a variável global turfPoly)
-    // sincronizado com o polígono atual — o clique no mapa borbulha do polígono pro 'click' do
-    // mapa (map.on('click', ...) — ver mais acima) NO MESMO EVENTO, e aquele handler usa
-    // t.turfPoly pra confirmar que o clique de seleção caiu DENTRO do talhão (senão desseleciona
-    // na hora). Vários caminhos de criação de talhão (importação de KML — Importar Projeto/
-    // Importar Polígono — e Unificar Talhões) sempre deixavam t.turfPoly como null e nunca
-    // preenchiam depois, então SELECIONAR um talhão desses desselecionava no mesmo clique (bug
-    // relatado: "quando importo vários kml, não consigo selecionar os talhões"). Recalcular aqui,
-    // sempre que qualquer talhão é selecionado, corrige isso pra qualquer talhão, independente de
-    // como ele foi criado — sem precisar caçar/corrigir cada função de criação uma por uma.
-    t.turfPoly = turfPoly;
-  } catch(e) {}
-
-  $('divSelInfo').innerHTML = '';
-  $('divSelNome').textContent = `Talhão ${t.idx}  (${t.areaHa.toFixed(2)} ha)`;
-  $('divCarreadorOps').style.display = '';
-  $('btnConfDivisao').style.display = 'none';
-  $('btnFinDivisao').style.display = 'none';
-  $('btnCancelarDivisao').style.display = 'none';
-  $('btnIniciarDivisao').style.display = 'flex';
-  $('btnCortarAngulo').style.display = (t.poliGuidePts && t.poliGuidePts.length >= 3) ? 'flex' : 'none';
-  $('btnEditarLinhas').style.display = 'flex';
-  $('iArea').textContent   = t.areaHa.toFixed(2) + ' ha';
-  $('iLinhas').textContent = t.count  || '—';
-  $('iEspac').textContent  = t.spacing ? t.spacing + ' m' : '—';
-  $('btnLimparDeclivTerreno').style.display = t.declivTerrenoOverlay ? 'flex' : 'none';
-  setStatus(`Talhão ${t.idx} selecionado — use "Traçar Divisão" ou "Editar Linhas".`, 'info');
+  _sincronizarSelecaoTalhoes();
 }
 
-function desselecionarTalhao() {
-  if(talhaoSelecionadoUid !== null) {
-    const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
-    if(t && t.polyLayer) t.polyLayer.setStyle({color:t.cor, weight:2, fillOpacity:.06, dashArray:null});
+// Aplica os efeitos de estado/UI da seleção atual (talhoesMultiSel) — chamada depois de qualquer
+// alteração nela (selecionarTalhao, limparSelecaoTalhoes). Com exatamente 1 talhão selecionado,
+// mantém TODO o comportamento de seleção única de sempre (turfPoly, Carreador, Divisão, Editar
+// Linhas — talhaoSelecionadoUid populado normalmente, nenhuma das dezenas de checagens existentes
+// baseadas nele precisou mudar). Com 0 ou 2+, essas ferramentas de "um talhão só" não fazem
+// sentido e ficam escondidas; com 2+ aparecem as ações de multi-seleção (Unificar/Travar Todos).
+function _sincronizarSelecaoTalhoes() {
+  const n = talhoesMultiSel.size;
+  $('iMultiSelCount').textContent = n;
+  $('divMultiSelInfo').style.display = n > 0 ? 'block' : 'none';
+  $('btnCancelarMulti').style.display = n > 0 ? 'flex' : 'none';
+  $('btnUnificarMulti').style.display = n >= 2 ? 'flex' : 'none';
+  if(n < 2) $('btnTravarTodos').style.display = 'none';
+
+  if(n === 1) {
+    const uid = [...talhoesMultiSel][0];
+    talhaoSelecionadoUid = uid;
+    const t = talhoesArquivados.find(x => x.uid === uid);
+    if(!t) return;
+
+    // Set turfPoly from selected talhão (enables guide-line generation)
+    const ring = [...t.polyPts.map(p => [p.lng, p.lat]), [t.polyPts[0].lng, t.polyPts[0].lat]];
+    try {
+      turfPoly = turf.polygon([ring]); turf.rewind(turfPoly, {mutate:true});
+      turfBound = turf.polygonToLine(turfPoly);
+      // v4.76: mantém t.turfPoly (do PRÓPRIO objeto talhão, não só a variável global turfPoly)
+      // sincronizado com o polígono atual — o clique no mapa borbulha do polígono pro 'click' do
+      // mapa (map.on('click', ...) — ver mais acima) NO MESMO EVENTO, e aquele handler usa
+      // t.turfPoly pra confirmar que o clique de seleção caiu DENTRO do talhão (senão desseleciona
+      // na hora). Vários caminhos de criação de talhão (importação de KML — Importar Projeto/
+      // Importar Polígono — e Unificar Talhões) sempre deixavam t.turfPoly como null e nunca
+      // preenchiam depois, então SELECIONAR um talhão desses desselecionava no mesmo clique (bug
+      // relatado: "quando importo vários kml, não consigo selecionar os talhões"). Recalcular aqui,
+      // sempre que qualquer talhão é selecionado, corrige isso pra qualquer talhão, independente de
+      // como ele foi criado — sem precisar caçar/corrigir cada função de criação uma por uma.
+      t.turfPoly = turfPoly;
+    } catch(e) {}
+
+    $('divSelInfo').innerHTML = '';
+    $('divSelNome').textContent = `Talhão ${t.idx}  (${t.areaHa.toFixed(2)} ha)`;
+    $('divCarreadorOps').style.display = '';
+    $('btnConfDivisao').style.display = 'none';
+    $('btnFinDivisao').style.display = 'none';
+    $('btnCancelarDivisao').style.display = 'none';
+    $('btnIniciarDivisao').style.display = 'flex';
+    $('btnCortarAngulo').style.display = (t.poliGuidePts && t.poliGuidePts.length >= 3) ? 'flex' : 'none';
+    $('btnEditarLinhas').style.display = 'flex';
+    $('iArea').textContent   = t.areaHa.toFixed(2) + ' ha';
+    $('iLinhas').textContent = t.count  || '—';
+    $('iEspac').textContent  = t.spacing ? t.spacing + ' m' : '—';
+    $('btnLimparDeclivTerreno').style.display = t.declivTerrenoOverlay ? 'flex' : 'none';
+    setStatus(`Talhão ${t.idx} selecionado — use "Traçar Divisão" ou "Editar Linhas".`, 'info');
+    return;
   }
+
+  // 0 ou 2+ selecionados: nenhuma ferramenta de "um talhão só" fica ativa.
   talhaoSelecionadoUid = null;
   _limparDivisaoLine();
-  $('divSelInfo').innerHTML = 'Clique em um talh&#227;o travado para selecionar';
   $('divCarreadorOps').style.display = 'none';
-  if(polyPts.length < 3) {
-    $('iArea').textContent = '—';
-    $('iLinhas').textContent = '—';
-    $('iEspac').textContent = '—';
+  if(n === 0) {
+    $('divSelInfo').innerHTML = 'Clique em um talh&#227;o travado para selecionar';
+    if(polyPts.length < 3) {
+      $('iArea').textContent = '—';
+      $('iLinhas').textContent = '—';
+      $('iEspac').textContent = '—';
+    }
+    // Restore turfPoly to active polygon if any
+    if(polyPts.length >= 3) buildTurfPoly(); else { turfPoly=null; turfBound=null; }
+    setStatus('Seleção cancelada.', '');
+  } else {
+    $('divSelInfo').innerHTML = `${n} talh&#245;es selecionados`;
+    setStatus(`${n} talhão(ões) selecionado(s) — desenhe a linha guia e gere as linhas, ou unifique-os.`, 'info');
   }
-  // Restore turfPoly to active polygon if any
-  if(polyPts.length >= 3) buildTurfPoly(); else { turfPoly=null; turfBound=null; }
-  setStatus('Seleção cancelada.','');
 }
+
+// Nome antigo preservado (chamado de vários pontos do código/onclick) — mesmo efeito agora: limpa
+// TODA a seleção (funciona igual com 1 ou com vários selecionados).
+function desselecionarTalhao() { limparSelecaoTalhoes(); }
 
 function redesenharLinhasSelecionado() {
   if(talhaoSelecionadoUid === null) return;
@@ -11759,7 +11791,11 @@ function _abandonarFerramentaAtiva() {
   if(modoDivisao || modo === 'divisao') cancelarDivisaoUsuario();
   if(_modoPickLinha === 'perfil') cancelarPerfilLinhaPlantio();
   else if(_modoPickLinha === 'carreador') cancelarCarreadorDeLinha();
-  if(multiSelectMode) cancelarMultiSelect();
+  // v4.93: a seleção de talhões (talhoesMultiSel/talhaoSelecionadoUid) NÃO é mais cancelada aqui de
+  // propósito — ela é dado de projeto (o que está selecionado), não uma ferramenta "armada" à espera
+  // de clique no mapa, e o próprio fluxo de multi-seleção pede pra selecionar talhões numa aba e
+  // desenhar a guia noutra (ver limparSelecaoTalhoes) — cancelar isso ao trocar de aba quebrava
+  // exatamente esse fluxo (bug relatado: "não consigo mais selecionar múltiplo").
   if(_pickingCurvaGuia) cancelarEscolhaCurvaGuia();
   // v4.86: a pré-visualização de "Otimizar Cenário (Curvas)" virou um painel flutuante (não bloqueia
   // mais o mapa/ribbon como um modal) — então, ao trocar de aba, precisa ser cancelada explicitamente
