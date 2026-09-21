@@ -359,7 +359,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.98 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.99 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -3471,6 +3471,16 @@ body.layout-lateral #status{grid-area:status;}
 // v4.98: Exportar KML/DXF ainda podia sumir na aba Exportar em outros caminhos — agora a
 // visibilidade é derivada do estado (talhão travado, contorno fechado ou linhas) e reavaliada a
 // cada setStatus (_atualizarBotoesExport).
+// v4.99: simulação de chuva (Vista 3D, aba Análise) — pedido: tirar a "névoa azul" e deixar só as
+// gotas, cada uma com um rastro que acompanha o caminho natural do escoamento superficial.
+// (1) Removida a textura de canais/poças sobre o terreno (_3da_construirRastroChuva/_3da_pintarRastro/
+//     _3da_blurCampo) — era o que aparecia como névoa azul.
+// (2) Rota: as gotas agora seguem um campo de direção de escoamento (D8 sobre a superfície com
+//     depressões preenchidas, _3da_campoFluxoRect, interpolado bilinearmente em _3da_direcaoFluxo),
+//     em vez do gradiente local — o gradiente prendia gota em depressão/platô e não convergia pros
+//     canais. Agora elas descem juntas pelas calhas naturais do relevo e atravessam poças.
+// (3) Rastro: cada gota carrega K=18 pontos (esmaecendo da cabeça pra cauda, mistura aditiva) que
+//     acompanham o movimento e, quando a gota sai da malha, encolhem até sumir (estado 3).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -12458,10 +12468,12 @@ let _3da_chuvaIntensidade = 40, _3da_chuvaDuracaoMin = 10, _3da_chuvaVelocidade 
 let _3da_chuvaElapsedS = 0, _3da_chuvaTotalSimS = 0;
 const _3DA_CHUVA_NPONTOS = 3500;
 let _3da_chuvaSprite = null; // THREE.CanvasTexture (gota com brilho) — gerada uma vez, reaproveitada
-// Rastro da enxurrada: grade de "umidade" acumulada (mesma resolução da malha do terreno) pintada
-// numa textura e projetada como uma 2ª camada semi-transparente logo acima do relevo (mesmo
-// mecanismo de raw+eps já usado pras curvas/talvegues em _3da_lineObjs, pra acompanhar o exagero).
-let _3da_chuvaRastro = null; // { wet:Float32Array, w, h, canvas, ctx, imgData, tex, geo, mesh }
+// v4.99: a "névoa azul" (textura de canais de enxurrada sobre o terreno) saiu — ficam só as gotas,
+// cada uma com um RASTRO que anda junto com ela, e elas seguem o escoamento superficial calculado
+// (D8 + preenchimento de depressões) em vez do gradiente local (que prendia gota em depressão).
+let _3da_chuvaTrilha = null; // { pontos:THREE.Points, geo, pos, len:Uint8Array, acc:Float32Array }
+let _3da_chuvaFluxo = null;  // { fx, fy:Float32Array (direção unitária de escoamento por célula), W, H, dx, dy }
+const _3DA_CHUVA_TRILHA_K = 18; // nº de pontos do rastro de cada gota
 
 // Em vez de buscar uma foto de satélite separada (com zoom/projeção calculados por este código,
 // independente do resto do app), captura a imagem que o PRÓPRIO MAPA 2D (Leaflet — já correto,
@@ -12853,13 +12865,9 @@ function capturarImagem3DAnalise() {
 // malha cobre uma área contínua maior, incluindo entorno sem talhão nenhum desenhado). Sai de
 // cena (volta a inativa) ao sair dos limites da malha ou ao ficar tempo demais numa depressão/
 // platô sem gradiente (evita gota "presa" pra sempre num mínimo local).
-// Junto da gota em si, uma 2ª camada ("rastro") mostra os canais de enxurrada — uma textura pintada
-// numa malha idêntica à do terreno, logo acima dele (mesmo esquema raw+eps de _3da_lineObjs,
-// acompanha o exagero vertical). Diferente das versões anteriores (que acumulavam "por onde a gota
-// passou" quadro a quadro), o rastro agora é CALCULADO de uma vez por hidrologia real (D8 +
-// preenchimento de depressões sobre a malha inteira — ver _3da_construirRastroChuva/
-// _3da_preencherDepressoesRect/_3da_calcularD8AcumuloRect), com blur pra borda suave — canais mais
-// largos exatamente onde mais água converge, igual à estética dos vídeos de referência.
+// v4.99: cada gota escoa pelo campo de fluxo calculado (D8 + depressões preenchidas — ver
+// _3da_campoFluxoRect) e deixa um rastro que anda junto com ela (_3da_construirTrilhaChuva); a
+// textura azul de canais sobre o terreno ("névoa") foi removida.
 function _3da_atualizarLabelIntensidadeChuva(v) {
   _3da_chuvaIntensidade = parseFloat(v) || 40;
   $('m3da-chuvaIntensidadeVal').textContent = _3da_chuvaIntensidade.toFixed(0) + ' mm/h';
@@ -12883,13 +12891,11 @@ function _3da_resetChuvaEstado() {
   if(_3da_chuvaPontos && _3da_scene) { try { _3da_scene.remove(_3da_chuvaPontos.pontos); } catch(e) {} }
   if(_3da_chuvaPontos) { try { _3da_chuvaPontos.geo.dispose(); } catch(e) {} }
   _3da_chuvaPontos = null; _3da_chuvaEstado = null; _3da_chuvaVidaFluxo = null; _3da_chuvaSample = null;
-  if(_3da_chuvaRastro) {
-    if(_3da_scene) { try { _3da_scene.remove(_3da_chuvaRastro.mesh); } catch(e) {} }
-    try { _3da_chuvaRastro.geo.dispose(); _3da_chuvaRastro.tex.dispose(); } catch(e) {}
-    const i = _3da_lineObjs.indexOf(_3da_chuvaRastro.lineObjRef);
-    if(i >= 0) _3da_lineObjs.splice(i, 1);
+  if(_3da_chuvaTrilha) {
+    if(_3da_scene) { try { _3da_scene.remove(_3da_chuvaTrilha.pontos); } catch(e) {} }
+    try { _3da_chuvaTrilha.geo.dispose(); } catch(e) {}
   }
-  _3da_chuvaRastro = null;
+  _3da_chuvaTrilha = null; _3da_chuvaFluxo = null;
   _3da_chuvaAtiva = false; _3da_chuvaPausada = false; _3da_chuvaElapsedS = 0; _3da_chuvaTotalSimS = 0;
   const btn = $('m3da-btnChuvaIniciar'); if(btn) btn.textContent = '🌧️ Simular Chuva';
   const btnReset = $('m3da-btnChuvaReset'); if(btnReset) btnReset.style.display = 'none';
@@ -12984,11 +12990,13 @@ function _3da_preencherDepressoesRect(elevFlat, W, H) {
   return filled;
 }
 
-// D8 + acumulação de fluxo (mesmo algoritmo de _calcularD8Acumulo), generalizado pra grade
-// retangular W×H e Float32Array plano (idx=r*W+c, mesmo layout de _3da_terrRaw).
-function _3da_calcularD8AcumuloRect(filled, W, H, dx, dy) {
-  const N = W * H;
-  const flowTo = new Int32Array(N).fill(-1);
+// Campo de direção de escoamento por célula (D8 sobre a superfície JÁ com depressões preenchidas —
+// toda célula tem pra onde escoar, até atravessando poça/platô — mesmo algoritmo de
+// _calcularD8Acumulo, generalizado pra grade retangular W×H em Float32Array plano, idx=r*W+c).
+// Devolve vetores unitários (fx,fy) no mundo (x=leste/oeste, y=norte/sul da malha), zero onde não
+// há saída (só borda).
+function _3da_campoFluxoRect(filled, W, H, dx, dy) {
+  const fx = new Float32Array(W * H), fy = new Float32Array(W * H);
   for(let r = 0; r < H; r++) for(let c = 0; c < W; c++) {
     const idx = r * W + c;
     let bestSlope = 0, bestK = -1;
@@ -12999,131 +13007,50 @@ function _3da_calcularD8AcumuloRect(filled, W, H, dx, dy) {
       const slope = (filled[idx] - filled[nr * W + nc]) / distM;
       if(slope > bestSlope) { bestSlope = slope; bestK = k; }
     }
-    flowTo[idx] = bestK;
+    if(bestK < 0) continue;
+    const vx = _ESCOAMENTO_DIRS[bestK][1] * dx, vy = _ESCOAMENTO_DIRS[bestK][0] * dy;
+    const m = Math.hypot(vx, vy);
+    fx[idx] = vx / m; fy[idx] = vy / m;
   }
-  const ordem = Array.from({ length: N }, (_, i) => i);
-  ordem.sort((a, b) => filled[b] - filled[a]);
-  const accum = new Float32Array(N).fill(1);
-  for(let i = 0; i < ordem.length; i++) {
-    const idx = ordem[i], k = flowTo[idx];
-    if(k < 0) continue;
-    const r = (idx / W) | 0, c = idx % W;
-    accum[(r + _ESCOAMENTO_DIRS[k][0]) * W + (c + _ESCOAMENTO_DIRS[k][1])] += accum[idx];
-  }
-  return accum;
+  return { fx, fy, W, H, dx, dy };
 }
 
-// Box blur separável (3×3, `iter` passes) num Float32Array plano W×H — dá a borda suave/"glow" dos
-// canais no vídeo de referência, em vez de uma linha de 1 célula com corte duro.
-function _3da_blurCampo(arr, W, H, iter) {
-  let a = arr, b = new Float32Array(W * H);
-  for(let it = 0; it < iter; it++) {
-    for(let r = 0; r < H; r++) for(let c = 0; c < W; c++) {
-      let soma = 0, n = 0;
-      for(let dr = -1; dr <= 1; dr++) for(let dc = -1; dc <= 1; dc++) {
-        const nr = r + dr, nc = c + dc;
-        if(nr < 0 || nr >= H || nc < 0 || nc >= W) continue;
-        soma += a[nr * W + nc]; n++;
-      }
-      b[r * W + c] = soma / n;
-    }
-    const t = a; a = b; b = t;
-  }
-  if(a !== arr) arr.set(a);
+// Direção de escoamento em (gx,gy) — interpolação bilinear dos vetores das 4 células vizinhas, pra
+// a gota descer suave pelo canal em vez de zigue-zague em 8 direções. mag≈0 = sem saída (borda).
+function _3da_direcaoFluxo(fl, gx, gy) {
+  const gi = (gx - (_3da_bcx - _3da_halfW)) / fl.dx, gj = (gy - (_3da_bcy - _3da_halfH)) / fl.dy;
+  const i0 = Math.max(0, Math.min(fl.W - 2, Math.floor(gi))), j0 = Math.max(0, Math.min(fl.H - 2, Math.floor(gj)));
+  const tx = Math.max(0, Math.min(1, gi - i0)), ty = Math.max(0, Math.min(1, gj - j0));
+  const a = j0 * fl.W + i0, b = a + 1, c = a + fl.W, d = c + 1;
+  const w00 = (1 - tx) * (1 - ty), w10 = tx * (1 - ty), w01 = (1 - tx) * ty, w11 = tx * ty;
+  const ux = fl.fx[a] * w00 + fl.fx[b] * w10 + fl.fx[c] * w01 + fl.fx[d] * w11;
+  const uy = fl.fy[a] * w00 + fl.fy[b] * w10 + fl.fy[c] * w01 + fl.fy[d] * w11;
+  const m = Math.hypot(ux, uy);
+  return m < 0.05 ? null : [ux / m, uy / m];
 }
 
-// Malha idêntica à grade do terreno (mesmas posições X/Z, raw+eps=0.2 — fica colada acima do relevo,
-// embaixo das linhas/curvas/talvegues que usam eps 0.4-0.6), texturizada com o canal de fluxo
-// (calculado, ver acima) + o de acúmulo, registrada em _3da_lineObjs pra acompanhar o exagero. A
-// textura é pintada UMA VEZ (determinística — não depende de quantas gotas passaram) e só se repinta
-// enquanto o fade-in de revelação (r.revelado, ver _3da_tickChuva) ainda não chegou a 1.
-function _3da_construirRastroChuva() {
-  const NGTX = _3da_NGTX, NGTY = _3da_NGTY, bcx = _3da_bcx, bcy = _3da_bcy, halfW = _3da_halfW, halfH = _3da_halfH;
-  const W = NGTX + 1, H = NGTY + 1;
-  const pos = new Float32Array(W * H * 3), uv = new Float32Array(W * H * 2);
-  for(let jj = 0; jj < H; jj++) for(let ii = 0; ii < W; ii++) {
-    const idx = jj * W + ii;
-    const gx = (bcx - halfW) + ii * (2 * halfW / NGTX), gy = (bcy - halfH) + jj * (2 * halfH / NGTY);
-    pos[idx * 3] = gx; pos[idx * 3 + 1] = _3da_terrRaw[idx] * _3da_exag + 0.2; pos[idx * 3 + 2] = -gy;
-    uv[idx * 2] = ii / NGTX; uv[idx * 2 + 1] = jj / NGTY;
-  }
-  const idxArr = [];
-  for(let jj = 0; jj < NGTY; jj++) for(let ii = 0; ii < NGTX; ii++) {
-    const a = jj * W + ii, b = a + 1, c = (jj + 1) * W + ii, d = c + 1;
-    idxArr.push(a, c, b, b, c, d);
+// Rastro das gotas: cada gota tem K pontos (do mais novo ao mais velho) que esmaecem em direção à
+// cauda — cor estática por posição no rastro (mistura aditiva: preto = invisível). O rastro anda
+// junto da gota (ver _3da_tickChuva) e desaparece aos poucos quando ela sai da malha.
+function _3da_construirTrilhaChuva() {
+  const N = _3DA_CHUVA_NPONTOS, K = _3DA_CHUVA_TRILHA_K;
+  const pos = new Float32Array(N * K * 3), col = new Float32Array(N * K * 3);
+  for(let i = 0; i < N; i++) for(let s = 0; s < K; s++) {
+    const o = (i * K + s) * 3;
+    pos[o + 1] = -99999;
+    const f = Math.pow(1 - s / K, 1.6) * 0.75;
+    col[o] = 0.55 * f; col[o + 1] = 0.82 * f; col[o + 2] = 1.0 * f;
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-  geo.setIndex(idxArr);
-
-  // ── Hidrologia da malha inteira: preenche depressões, calcula D8+acumulação ────────────────
-  const dx = (2 * halfW) / NGTX, dy = (2 * halfH) / NGTY;
-  const filled = _3da_preencherDepressoesRect(_3da_terrRaw, W, H);
-  const accum = _3da_calcularD8AcumuloRect(filled, W, H, dx, dy);
-
-  // Canal de fluxo: log(acumulação) normalizado pelo máximo real da malha — canais concorridos
-  // (muita área de montante) ficam bem mais fortes/largos que um trecho de encosta isolado, igual
-  // ao afunilamento visto nos vídeos. Limiar corta ruído de encosta (área de contribuição mínima).
-  let maxAccum = 1;
-  for(let i = 0; i < accum.length; i++) if(accum[i] > maxAccum) maxAccum = accum[i];
-  const logMax = Math.log(maxAccum + 1);
-  const LIMIAR_FLUXO = 6;
-  const aFluxo = new Float32Array(W * H);
-  for(let i = 0; i < accum.length; i++) {
-    if(accum[i] < LIMIAR_FLUXO || logMax < 1e-6) continue;
-    aFluxo[i] = Math.min(1, Math.log(accum[i] + 1) / logMax);
-  }
-  _3da_blurCampo(aFluxo, W, H, 1); // borda suave em vez de linha de 1 célula (sem borrar demais)
-
-  // Canal de acúmulo: profundidade de preenchimento (filled-raw) — onde o algoritmo precisou
-  // "levantar" a cota pra escoar é justamente onde não havia saída natural (platô/depressão de
-  // verdade) — uma poça/área de concentração real, não um trecho qualquer de canal. Piso absoluto
-  // de 10cm (não relativo ao máximo) — sem ele, ruído de interpolação/downsample do DEM (bolhas de
-  // poucos cm, sem significado hidrológico nenhum) virava "poça" enorme depois do blur sempre que a
-  // depressão real mais profunda da malha era pequena (normalização toda relativa a ela amplificava
-  // o ruído). Escala num intervalo físico razoável (até ~2,5m) em vez de sempre "o máximo da malha".
-  const aAcc = new Float32Array(W * H);
-  const DEPTH_MIN = 0.10;
-  let maxDepth = 0;
-  for(let i = 0; i < filled.length; i++) { const d = filled[i] - _3da_terrRaw[i]; if(d > maxDepth) maxDepth = d; }
-  if(maxDepth > DEPTH_MIN) {
-    const escalaAcc = Math.max(0.4, Math.min(maxDepth, 2.5));
-    for(let i = 0; i < filled.length; i++) {
-      const d = filled[i] - _3da_terrRaw[i];
-      aAcc[i] = d <= DEPTH_MIN ? 0 : Math.min(1, (d - DEPTH_MIN) / (escalaAcc - DEPTH_MIN));
-    }
-    _3da_blurCampo(aAcc, W, H, 1);
-  }
-
-  const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
-  const ctx = canvas.getContext('2d');
-  const imgData = ctx.createImageData(W, H);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter;
-  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
-  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: false });
-  const mesh = new THREE.Mesh(geo, mat);
-  const lineObjRef = { geo, raw: _3da_terrRaw, eps: 0.2 };
-  _3da_lineObjs.push(lineObjRef);
-  const r = { aFluxo, aAcc, w: W, h: H, canvas, ctx, imgData, tex, geo, mesh, lineObjRef, revelado: 0 };
-  _3da_pintarRastro(r);
-  return r;
-}
-
-// Pinta o canvas a partir dos campos já calculados (aFluxo/aAcc) × o fator de revelação atual
-// (fade-in — ver _3da_tickChuva). Cor ciano/azul-clara pro canal de fluxo (mesma família das linhas
-// de talvegue do Mapa de Escoamento 2D), azul mais escuro/opaco pra poça de acúmulo onde ela domina.
-function _3da_pintarRastro(r) {
-  const data = r.imgData.data, rev = r.revelado;
-  for(let i = 0; i < r.aFluxo.length; i++) {
-    const aF = r.aFluxo[i] * rev, aA = r.aAcc[i] * rev;
-    const o = i * 4;
-    if(aA > aF * 0.6) { data[o] = 6; data[o + 1] = 35; data[o + 2] = 105; data[o + 3] = Math.round(aA * 235); }
-    else { data[o] = 4; data[o + 1] = 130; data[o + 2] = 185; data[o + 3] = Math.round(aF * 220); }
-  }
-  r.ctx.putImageData(r.imgData, 0, 0);
-  r.tex.needsUpdate = true;
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  const mat = new THREE.PointsMaterial({
+    size: 3.6, map: _3da_criarSpriteChuva(), vertexColors: true, transparent: true,
+    sizeAttenuation: true, depthWrite: false, blending: THREE.AdditiveBlending
+  });
+  const pontos = new THREE.Points(geo, mat);
+  pontos.frustumCulled = false;
+  return { pontos, geo, pos, len: new Uint8Array(N), acc: new Float32Array(N) };
 }
 
 // Botão único: nasce a chuva do zero / pausa / continua, dependendo do estado atual.
@@ -13150,9 +13077,14 @@ function toggleChuva3DAnalise() {
   _3da_chuvaSample = _3da_mkMeshSampler(_3da_terrRaw, _3da_NGTX, _3da_NGTY, _3da_bcx, _3da_bcy, _3da_halfW, _3da_halfH);
   _3da_chuvaMaxRaw = 0;
   for(let i = 0; i < _3da_terrRaw.length; i++) if(_3da_terrRaw[i] > _3da_chuvaMaxRaw) _3da_chuvaMaxRaw = _3da_terrRaw[i];
-  if(_3da_chuvaRastro) { try { _3da_scene.remove(_3da_chuvaRastro.mesh); } catch(e) {} }
-  _3da_chuvaRastro = _3da_construirRastroChuva();
-  _3da_scene.add(_3da_chuvaRastro.mesh);
+  if(_3da_chuvaTrilha) { try { _3da_scene.remove(_3da_chuvaTrilha.pontos); _3da_chuvaTrilha.geo.dispose(); } catch(e) {} }
+  _3da_chuvaTrilha = _3da_construirTrilhaChuva();
+  _3da_scene.add(_3da_chuvaTrilha.pontos);
+  {
+    const Wg = _3da_NGTX + 1, Hg = _3da_NGTY + 1;
+    const filled = _3da_preencherDepressoesRect(_3da_terrRaw, Wg, Hg);
+    _3da_chuvaFluxo = _3da_campoFluxoRect(filled, Wg, Hg, (2 * _3da_halfW) / _3da_NGTX, (2 * _3da_halfH) / _3da_NGTY);
+  }
   _3da_chuvaElapsedS = 0;
   _3da_chuvaTotalSimS = _3da_chuvaDuracaoMin * 60;
   _3da_chuvaAtiva = true; _3da_chuvaPausada = false;
@@ -13162,7 +13094,7 @@ function toggleChuva3DAnalise() {
   $('m3da-chuvaProgresso').style.display = 'block';
 }
 
-// Descarta a chuva atual (partículas, rastro e progresso) sem fechar a Vista 3D — pra começar de
+// Descarta a chuva atual (gotas, rastros e progresso) sem fechar a Vista 3D — pra começar de
 // novo com outra intensidade/duração/velocidade sem precisar reabrir o modal inteiro.
 function reiniciarChuva3DAnalise() {
   _3da_resetChuvaEstado();
@@ -13185,9 +13117,10 @@ function _3da_tickChuva() {
 
   const { pos, N, geo } = _3da_chuvaPontos;
   const estado = _3da_chuvaEstado, vidaFluxo = _3da_chuvaVidaFluxo, sample = _3da_chuvaSample;
+  const trilha = _3da_chuvaTrilha, fluxo = _3da_chuvaFluxo;
+  const K = _3DA_CHUVA_TRILHA_K, tPos = trilha.pos, tLen = trilha.len, tAcc = trilha.acc;
   const bcx = _3da_bcx, bcy = _3da_bcy, halfW = _3da_halfW, halfH = _3da_halfH, exag = _3da_exag;
   const topoY = _3da_chuvaMaxRaw * exag + Math.max(halfW, halfH) * 0.15 + 20;
-  const rastro = _3da_chuvaRastro;
 
   // A velocidade escolhida acelera/desacelera a ANIMAÇÃO TODA (queda, escoamento e nascimento de
   // gotas) — não só o relógio da Duração — pra parecer de fato um timelapse acelerado/desacelerado,
@@ -13201,15 +13134,10 @@ function _3da_tickChuva() {
   const probNascer = Math.min(1, (taxaNascimentoAlvo * dt) / N);
   const velQueda = (55 + _3da_chuvaIntensidade * 0.9) * velFactor;
   const velFluxo = (3.5 + _3da_chuvaIntensidade * 0.06) * velFactor;
-  const passoGrad = Math.max(halfW, halfH) * 0.006;
+  const passoTrilha = 2.4; // distância percorrida entre dois pontos do rastro (unidades do mundo)
 
-  // O canal de fluxo/acúmulo (rastro) é CALCULADO de uma vez (ver _3da_construirRastroChuva) — não
-  // marcado gota a gota. Só falta o fade-in de revelação (~1.2s), pra não "aparecer tudo de repente"
-  // ao clicar em Simular Chuva.
-  if(rastro && rastro.revelado < 1) {
-    rastro.revelado = Math.min(1, rastro.revelado + dt / 1.2);
-    _3da_pintarRastro(rastro);
-  }
+  // Mostra/esconde um ponto do rastro (slot s da gota i).
+  const escondeSlot = (i, s) => { tPos[(i * K + s) * 3 + 1] = -99999; };
 
   for(let i = 0; i < N; i++) {
     const idx = i * 3;
@@ -13222,31 +13150,52 @@ function _3da_tickChuva() {
       }
       continue;
     }
-    const gx = pos[idx], gy = -pos[idx + 2];
-    if(estado[i] === 1) { // caindo em queda livre (sem marcar rastro — só a partir de quando escoa)
-      pos[idx + 1] -= velQueda * dt;
-      const terrenoY = sample(gx, gy) * exag;
-      if(pos[idx + 1] <= terrenoY + 0.3) { pos[idx + 1] = terrenoY + 0.3; estado[i] = 2; vidaFluxo[i] = 0; }
+    if(estado[i] === 3) { // gota já saiu da malha — só o rastro, encolhendo da cauda pra cabeça
+      tAcc[i] += velFluxo * dt;
+      if(tAcc[i] >= passoTrilha) {
+        tAcc[i] -= passoTrilha;
+        if(tLen[i] > 0) { tLen[i]--; escondeSlot(i, tLen[i]); }
+        if(tLen[i] === 0) estado[i] = 0;
+      }
       continue;
     }
-    // estado 2: escoando sobre o relevo — segue o gradiente descendente (diferenças centrais)
-    vidaFluxo[i] += dt;
-    const d = passoGrad;
-    const hE = sample(Math.min(bcx + halfW, gx + d), gy), hW = sample(Math.max(bcx - halfW, gx - d), gy);
-    const hN = sample(gx, Math.min(bcy + halfH, gy + d)), hS = sample(gx, Math.max(bcy - halfH, gy - d));
-    let dx = -(hE - hW), dy = -(hN - hS); // aponta pra onde o relevo desce
-    const mag = Math.hypot(dx, dy);
-    let saiu = false;
-    if(mag < 1e-5 || vidaFluxo[i] > 40) {
-      saiu = true; // platô/depressão sem gradiente, ou tempo de vida esgotado
-    } else {
-      dx /= mag; dy /= mag;
-      const novoGx = gx + dx * velFluxo * dt, novoGy = gy + dy * velFluxo * dt;
-      if(Math.abs(novoGx - bcx) > halfW || Math.abs(novoGy - bcy) > halfH) saiu = true;
-      else { pos[idx] = novoGx; pos[idx + 2] = -novoGy; pos[idx + 1] = sample(novoGx, novoGy) * exag + 0.3; }
+    const gx = pos[idx], gy = -pos[idx + 2];
+    if(estado[i] === 1) { // caindo em queda livre (sem rastro — só a partir de quando escoa)
+      pos[idx + 1] -= velQueda * dt;
+      const terrenoY = sample(gx, gy) * exag;
+      if(pos[idx + 1] <= terrenoY + 0.3) { pos[idx + 1] = terrenoY + 0.3; estado[i] = 2; vidaFluxo[i] = 0; tLen[i] = 0; tAcc[i] = 0; }
+      continue;
     }
-    if(saiu) { estado[i] = 0; pos[idx + 1] = -99999; }
+    // estado 2: escoando sobre o relevo pelo campo de fluxo (D8 com depressões preenchidas)
+    vidaFluxo[i] += dt;
+    const dir = _3da_direcaoFluxo(fluxo, gx, gy);
+    let saiu = false;
+    if(!dir || vidaFluxo[i] > 60) {
+      saiu = true; // sem saída (borda) ou tempo de vida esgotado
+    } else {
+      const passo = velFluxo * dt;
+      const novoGx = gx + dir[0] * passo, novoGy = gy + dir[1] * passo;
+      if(Math.abs(novoGx - bcx) > halfW || Math.abs(novoGy - bcy) > halfH) saiu = true;
+      else {
+        // o rastro anda junto: a cada `passoTrilha` percorrido, empurra a posição atual pro slot 0
+        // (o resto desloca uma casa) e o tamanho cresce até K
+        tAcc[i] += passo;
+        if(tAcc[i] >= passoTrilha) {
+          tAcc[i] -= passoTrilha;
+          const base = i * K * 3;
+          tPos.copyWithin(base + 3, base, base + (K - 1) * 3);
+          tPos[base] = gx; tPos[base + 1] = pos[idx + 1]; tPos[base + 2] = pos[idx + 2];
+          if(tLen[i] < K) tLen[i]++;
+        }
+        pos[idx] = novoGx; pos[idx + 2] = -novoGy; pos[idx + 1] = sample(novoGx, novoGy) * exag + 0.3;
+      }
+    }
+    if(saiu) {
+      pos[idx + 1] = -99999; // some a cabeça; o rastro continua e vai sumindo (estado 3)
+      if(tLen[i] > 0) { estado[i] = 3; tAcc[i] = 0; } else estado[i] = 0;
+    }
   }
+  trilha.geo.attributes.position.needsUpdate = true;
   geo.attributes.position.needsUpdate = true;
 
   const prog = $('m3da-chuvaProgresso');
