@@ -54,8 +54,11 @@ header{background:linear-gradient(135deg,var(--gr0),var(--gr1),var(--gr2));color
 label{display:block;font-size:.72rem;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.05em;margin:0 0 .25rem}
 input[type=text],input[type=number],textarea{width:100%;padding:.55rem .7rem;border:1.5px solid var(--bdr);border-radius:8px;
   font-size:16px;font-family:inherit;color:var(--tx);background:#fafeff;outline:none}
+select{width:100%;padding:.55rem .7rem;border:1.5px solid var(--bdr);border-radius:8px;font-size:16px;font-family:inherit;color:var(--tx);background:#fafeff;outline:none}
+.med{background:linear-gradient(135deg,#fff8e1,#ffecb3);border:1px solid #ffe082;border-radius:10px;padding:.55rem .75rem;margin-top:.6rem;font-size:.82rem;line-height:1.5}
+.med b{color:#7c4d00}
 input:focus,textarea:focus{border-color:var(--gr2);box-shadow:0 0 0 3px rgba(46,125,50,.13)}
-input:disabled{opacity:.6}
+input:disabled,select:disabled{opacity:.6}
 textarea{resize:vertical;min-height:52px}
 .row{display:flex;gap:.7rem}
 .row>*{flex:1;min-width:0}
@@ -140,15 +143,21 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.9rem 1rem calc(.
 
 <div class="card">
   <p class="sec-title">Captura automática</p>
+  <div class="field"><label for="fTipo">O que medir</label>
+    <select id="fTipo">
+      <option value="linha">Linha (trilha / caminho)</option>
+      <option value="area">Área (fecha o polígono ao parar)</option>
+    </select></div>
   <div class="row">
     <div class="field"><label for="fInt">Intervalo (segundos)</label>
       <input type="number" id="fInt" value="5" min="1" step="1" inputmode="numeric"></div>
-    <div class="field"><label>Pontos na linha atual</label>
+    <div class="field"><label>Pontos na medição atual</label>
       <div class="kv"><div class="v" id="autoN">0</div></div></div>
   </div>
   <button class="btn-main" id="btnAuto">Iniciar captura automática</button>
   <div class="note" id="wakeNote"></div>
-  <div class="note" id="autoNote">Grava um ponto a cada intervalo e liga os pontos com uma linha. <b>Deixe o app aberto e em primeiro plano</b>: no iPhone, ao minimizar ou bloquear a tela, o sistema pausa o GPS e a coleta.</div>
+  <div id="medicoes"></div>
+  <div class="note" id="autoNote">Grava um ponto a cada intervalo e liga os pontos com uma linha; no modo Área, ao parar o polígono é fechado e a área é calculada. <b>Deixe o app aberto e em primeiro plano</b>: no iPhone, ao minimizar ou bloquear a tela, o sistema pausa o GPS e a coleta.</div>
 </div>
 
 <div class="card">
@@ -292,7 +301,7 @@ function proximoNome(){
   });
   return "P"+String(max+1).padStart(3,"0");
 }
-function salvaPonto(c,linha,auto){
+function salvaPonto(c,linha,auto,tipo){
   var u=toUTM(c.latitude,c.longitude);
   var nomeManual=auto?"":(document.getElementById("fNome").value||"").trim();
   pontos.push({
@@ -302,7 +311,7 @@ function salvaPonto(c,linha,auto){
     alt:(c.altitude==null?null:c.altitude),
     acc:(c.accuracy==null?null:c.accuracy),
     e:u.e, n:u.n, zona:u.zona, hemi:u.hemi,
-    linha:linha||null,
+    linha:linha||null, tipo:(linha?(tipo||"linha"):null),
     data:new Date().toISOString()
   });
   save(); render();
@@ -323,7 +332,7 @@ function proximaLinha(){
   var max=0; pontos.forEach(function(p){ if(p.linha&&p.linha>max)max=p.linha; });
   return max+1;
 }
-var autoSeg=5, autoProx=0, autoUlt=0, autoAviso="";
+var linhaTipo="linha", autoSeg=5, autoProx=0, autoUlt=0, autoAviso="";
 function nAuto(){ return pontos.filter(function(p){return p.linha===linhaAtual;}).length; }
 function checaAuto(){
   if(!autoTimer) return;
@@ -337,7 +346,7 @@ function checaAuto(){
   }
   var gap=autoUlt?(agora-autoUlt)/1000:0;
   if(gap>autoSeg*3+2) autoAviso=" · pausou "+Math.round(gap)+" s (app em segundo plano?)";
-  salvaPonto(live.coords,linhaAtual,true);
+  salvaPonto(live.coords,linhaAtual,true,linhaTipo);
   autoUlt=agora;
   /* agenda pelo relógio, sem acumular atraso */
   autoProx=agora+autoSeg*1000;
@@ -364,6 +373,8 @@ function iniciaAuto(){
   if(!(seg>=1)){erro("Informe um intervalo de pelo menos 1 segundo.");return;}
   autoSeg=seg; autoProx=0; autoUlt=0; autoAviso="";
   linhaAtual=proximaLinha();
+  linhaTipo=document.getElementById("fTipo").value;
+  document.getElementById("fTipo").disabled=true;
   document.getElementById("autoN").textContent="0";
   document.getElementById("fInt").disabled=true;
   var b=document.getElementById("btnAuto");
@@ -374,9 +385,16 @@ function iniciaAuto(){
 function paraAuto(){
   clearInterval(autoTimer); autoTimer=null;
   document.getElementById("fInt").disabled=false;
+  document.getElementById("fTipo").disabled=false;
   var b=document.getElementById("btnAuto");
   b.textContent="Iniciar captura automática"; b.classList.remove("btn-stop");
-  document.getElementById("autoNote").textContent="Captura parada. Linha "+linhaAtual+" salva.";
+  var ls=linhasDe().filter(function(l){return l.id===linhaAtual;})[0];
+  var msg="Captura parada.";
+  if(ls){
+    if(ls.tipo==="area"&&ls.pts.length<3) msg+=" Área precisa de ao menos 3 pontos.";
+    else msg+=" "+(ls.tipo==="area"?"Polígono fechado. ":"")+nomeMed(ls)+" salva.";
+  }
+  document.getElementById("autoNote").textContent=msg;
   linhaAtual=null;
 }
 document.addEventListener("visibilitychange",function(){
@@ -395,6 +413,7 @@ window.addEventListener("beforeunload",function(e){
 
 /* ---------- render ---------- */
 function render(){
+  pintaMedicoes();
   var el=document.getElementById("lista");
   document.getElementById("count").textContent=pontos.length+(pontos.length===1?" ponto":" pontos");
   if(!pontos.length){el.innerHTML='<div class="empty">Nenhum ponto coletado ainda.</div>';atualizaMapa();return;}
@@ -445,7 +464,7 @@ function initMapa(){
   try{
     map=L.map("mapaLeaflet",{zoomControl:true}).setView([-19.5,-47.5],4);
     camSat=L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-      {maxZoom:21,maxNativeZoom:19,attribution:"Esri, Maxar, Earthstar Geographics"});
+      {maxZoom:21,maxNativeZoom:18,attribution:"Esri, Maxar, Earthstar Geographics"});
     camSat.on("tileerror",function(){ errTile++; if(errTile>=8) semMapa(); });
     camSat.addTo(map);
     gMarc=L.layerGroup().addTo(map);
@@ -465,23 +484,51 @@ function centralizar(){
   if(!map) return;
   var b=limites(); if(!b) return;
   if(b.getNorth()===b.getSouth()&&b.getEast()===b.getWest()) map.setView(b.getCenter(),18);
-  else map.fitBounds(b,{padding:[35,35],maxZoom:19});
+  else map.fitBounds(b,{padding:[35,35],maxZoom:18});
 }
 function linhasDe(){
   var m={},ord=[];
   pontos.forEach(function(p){
     if(!p.linha) return;
-    if(!m[p.linha]){m[p.linha]={id:p.linha,pts:[]};ord.push(m[p.linha]);}
+    if(!m[p.linha]){m[p.linha]={id:p.linha,tipo:p.tipo||"linha",pts:[]};ord.push(m[p.linha]);}
     m[p.linha].pts.push(p);
   });
   return ord;
+}
+function medida(l){
+  var pts=l.pts, n=pts.length, i, per=0, a=0;
+  for(i=1;i<n;i++) per+=Math.hypot(pts[i].e-pts[i-1].e,pts[i].n-pts[i-1].n);
+  if(l.tipo!=="area"||n<3) return {area:0,per:per};
+  per+=Math.hypot(pts[0].e-pts[n-1].e,pts[0].n-pts[n-1].n);
+  var e0=pts[0].e, n0=pts[0].n;
+  for(i=0;i<n;i++){
+    var p=pts[i], q=pts[(i+1)%n];
+    a+=(p.e-e0)*(q.n-n0)-(q.e-e0)*(p.n-n0);
+  }
+  return {area:Math.abs(a)/2,per:per};
+}
+function fmtNum(v,d){ return v.toLocaleString("pt-BR",{minimumFractionDigits:d,maximumFractionDigits:d}); }
+function fmtArea(a){ return fmtNum(a,1)+" m² ("+fmtNum(a/10000,4)+" ha)"; }
+function nomeMed(l){ return (l.tipo==="area"?"Área ":"Linha ")+l.id; }
+function resumoMed(l){
+  var m=medida(l);
+  if(l.tipo==="area") return nomeMed(l)+": "+l.pts.length+" pts · <b>"+(l.pts.length<3?"mín. 3 pontos":fmtArea(m.area))+"</b> · perímetro "+fmtNum(m.per,1)+" m";
+  return nomeMed(l)+": "+l.pts.length+" pts · <b>"+fmtNum(m.per,1)+" m</b>";
+}
+function pintaMedicoes(){
+  var el=document.getElementById("medicoes"); if(!el) return;
+  var ls=linhasDe();
+  el.innerHTML=ls.length?ls.map(function(l){return '<div class="med">'+resumoMed(l)+'</div>';}).join(""):"";
 }
 function marcadores(){
   if(!map||!gMarc) return;
   gMarc.clearLayers();
   linhasDe().forEach(function(l){
-    if(l.pts.length>1) L.polyline(l.pts.map(function(p){return [p.lat,p.lon];}),
-      {color:"#ffd400",weight:3,opacity:.95}).addTo(gMarc);
+    var ll=l.pts.map(function(p){return [p.lat,p.lon];});
+    if(l.tipo==="area"&&ll.length>=3)
+      L.polygon(ll,{color:"#ffd400",weight:3,fillColor:"#ffd400",fillOpacity:.22})
+        .bindTooltip(nomeMed(l)+" · "+fmtArea(medida(l).area),{sticky:true}).addTo(gMarc);
+    else if(ll.length>1) L.polyline(ll,{color:"#ffd400",weight:3,opacity:.95}).addTo(gMarc);
   });
   pontos.forEach(function(p){
     L.circleMarker([p.lat,p.lon],{radius:7,color:"#ffffff",weight:2,
@@ -499,7 +546,13 @@ function marcadores(){
       fillColor:"#e08a3c",fillOpacity:1}).addTo(map); }
     mMe.bringToFront();
   }
-  if(nAjuste!==pontos.length){ nAjuste=pontos.length; centralizar(); }
+  /* só enquadra na 1ª vez; depois respeita o zoom do usuário e apenas desloca se o ponto sair da tela */
+  var ant=nAjuste; nAjuste=pontos.length;
+  if(ant<=0 && pontos.length>0) centralizar();
+  else if(pontos.length>ant && pontos.length){
+    var u=pontos[pontos.length-1], ll=L.latLng(u.lat,u.lon);
+    if(!map.getBounds().pad(-0.1).contains(ll)) map.panTo(ll);
+  }
 }
 function atualizaMapa(){ if(map) marcadores(); else renderCroqui(); }
 
@@ -528,8 +581,9 @@ function renderCroqui(){
   s+='<line x1="6" y1="'+py(cy)+'" x2="'+(W-6)+'" y2="'+py(cy)+'" stroke="var(--bdr)" stroke-width="1" stroke-dasharray="3 4"/>';
   linhasDe().forEach(function(l){
     if(l.pts.length<2) return;
-    s+='<polyline fill="none" stroke="var(--am)" stroke-width="2" points="'+
-      l.pts.map(function(p){return px(p.e)+","+py(p.n);}).join(" ")+'"/>';
+    var pp=l.pts.map(function(p){return px(p.e)+","+py(p.n);}).join(" ");
+    if(l.tipo==="area"&&l.pts.length>=3) s+='<polygon fill="var(--am)" fill-opacity=".18" stroke="var(--am)" stroke-width="2" points="'+pp+'"/>';
+    else s+='<polyline fill="none" stroke="var(--am)" stroke-width="2" points="'+pp+'"/>';
   });
   all.forEach(function(a){
     var X=px(a.x), Y=py(a.y);
@@ -582,6 +636,7 @@ function kml(){
   var x='<?xml version="1.0" encoding="UTF-8"?>\r\n<kml xmlns="http://www.opengis.net/kml/2.2">\r\n<Document>\r\n<name>Pontos GPS '+stamp()+'</name>\r\n'+
     '<Style id="pt"><IconStyle><scale>0.9</scale><Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon></IconStyle></Style>\r\n'+
     '<Style id="ln"><LineStyle><color>ff00d4ff</color><width>3</width></LineStyle></Style>\r\n'+
+    '<Style id="ar"><LineStyle><color>ff00d4ff</color><width>3</width></LineStyle><PolyStyle><color>4000d4ff</color></PolyStyle></Style>\r\n'+
     '<Folder><name>Pontos</name>\r\n';
   function co(p){return p.lon.toFixed(8)+","+p.lat.toFixed(8)+","+(p.alt==null?0:p.alt.toFixed(3));}
   pontos.forEach(function(p){
@@ -590,9 +645,16 @@ function kml(){
   });
   x+='</Folder>\r\n<Folder><name>Linhas</name>\r\n';
   linhasDe().forEach(function(l){
-    if(l.pts.length<2) return;
+    if(l.pts.length<2||l.tipo==="area") return;
     x+='<Placemark><name>Linha '+l.id+'</name><styleUrl>#ln</styleUrl><LineString><tessellate>1</tessellate><coordinates>'+
       l.pts.map(co).join(" ")+'</coordinates></LineString></Placemark>\r\n';
+  });
+  x+='</Folder>\r\n<Folder><name>Áreas</name>\r\n';
+  linhasDe().forEach(function(l){
+    if(l.tipo!=="area"||l.pts.length<3) return;
+    var m=medida(l), c=l.pts.map(co); c.push(c[0]);
+    x+='<Placemark><name>Área '+l.id+'</name><description>Área: '+fmtNum(m.area,1)+' m² ('+fmtNum(m.area/10000,4)+' ha) · Perímetro: '+fmtNum(m.per,1)+' m</description><styleUrl>#ar</styleUrl>'+
+      '<Polygon><tessellate>1</tessellate><outerBoundaryIs><LinearRing><coordinates>'+c.join(" ")+'</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>\r\n';
   });
   return x+'</Folder>\r\n</Document>\r\n</kml>';
 }
@@ -672,7 +734,7 @@ document.getElementById("btnTxt").onclick=function(){exportar("txt");};
 document.getElementById("btnLimpar").onclick=function(){
   if(!pontos.length)return;
   if(autoTimer) paraAuto();
-  if(confirm("Apagar todos os "+pontos.length+" pontos? Exporte antes.")){pontos=[];save();render();}
+  if(confirm("Apagar todos os "+pontos.length+" pontos? Exporte antes.")){pontos=[];save();render();document.getElementById("fNome").placeholder=proximoNome();}
 };
 document.getElementById("dlgClose").onclick=function(){document.getElementById("dlg").close();};
 document.getElementById("dlgCopy").onclick=function(){
