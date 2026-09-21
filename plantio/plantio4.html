@@ -359,7 +359,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.96 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.97 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -3465,6 +3465,9 @@ body.layout-lateral #status{grid-area:status;}
 // real colado no meio); Boundary.fdShape decodifica de volta o número certo de pontos e as
 // coordenadas do vértice desenhado. Regressão completa (18 suítes centrais re-verificadas) sem
 // erros de página.
+// v4.97: botões Exportar KML/DXF sumiam — limparLinhas()/redesenharLinhas() (chamadas também ao
+// iniciar novo contorno/guia) escondiam os dois incondicionalmente, mesmo com talhões travados e
+// suas linhas no mapa. Agora só escondem se não há talhão arquivado (_ocultarExportSeNaoHaNada).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -9770,9 +9773,17 @@ function redesenharLinhas() {
   $('divDeclivAtivo').style.display = 'none';
   $('btnLimparDeclivAtivo').style.display = 'none';
   $('secLegenda').style.display = 'none';
+  _ocultarExportSeNaoHaNada();
+  setStatus('Linhas descartadas. Desenhe a linha guia e gere novamente.', 'info');
+}
+
+// Exportar KML/DXF só some se não sobrou NADA pra exportar — limpar/redesenhar as linhas do
+// talhão ATIVO escondia os dois botões mesmo com talhões travados (e suas linhas) no mapa, e
+// iniciar um novo contorno/guia (que chama limparLinhas) fazia o mesmo.
+function _ocultarExportSeNaoHaNada() {
+  if(talhoesArquivados.length) return;
   $('btnKml').style.display = 'none';
   $('btnDxf').style.display = 'none';
-  setStatus('Linhas descartadas. Desenhe a linha guia e gere novamente.', 'info');
 }
 
 // ── Limpar ────────────────────────────────────────────────────────────────────
@@ -9783,8 +9794,7 @@ function limparLinhas() {
   $('btnRedesenharLinhas').style.display='none';
   $('divDeclivAtivo').style.display='none';
   $('btnLimparDeclivAtivo').style.display='none';
-  $('btnKml').style.display='none';
-  $('btnDxf').style.display='none';
+  _ocultarExportSeNaoHaNada();
   linhasDecl.forEach(l=>l.remove()); linhasDecl=[];
   linhas.forEach(pl=>pl.setStyle({opacity:.95})); // restaura opacidade caso tenha classificado
   if(infoMarker){infoMarker.remove();infoMarker=null;}
