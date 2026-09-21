@@ -21,7 +21,7 @@
   --sh:0 2px 16px rgba(0,80,160,.10);
 }
 *,*::before,*::after{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%}
+html{-webkit-text-size-adjust:100%;overscroll-behavior-y:contain}
 body{margin:0;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--tx);font-size:14px;
   padding-bottom:env(safe-area-inset-bottom,0px)}
 header{background:linear-gradient(135deg,var(--gr0),var(--gr1),var(--gr2));color:#fff;box-shadow:0 3px 20px rgba(0,0,0,.2);
@@ -147,6 +147,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.9rem 1rem calc(.
       <div class="kv"><div class="v" id="autoN">0</div></div></div>
   </div>
   <button class="btn-main" id="btnAuto">Iniciar captura automática</button>
+  <div class="note" id="wakeNote"></div>
   <div class="note" id="autoNote">Grava um ponto a cada intervalo e liga os pontos com uma linha. <b>Deixe o app aberto e em primeiro plano</b>: no iPhone, ao minimizar ou bloquear a tela, o sistema pausa o GPS e a coleta.</div>
 </div>
 
@@ -344,12 +345,19 @@ function checaAuto(){
   document.getElementById("autoNote").textContent="Capturando… último ponto às "+new Date().toLocaleTimeString("pt-BR")+autoAviso;
   autoAviso="";
 }
+function pintaWake(){
+  var el=document.getElementById("wakeNote"); if(!el) return;
+  if(!navigator.wakeLock) el.textContent="Tela sempre ligada: indisponível neste iOS (atualize para 16.4+ ou desative o bloqueio automático).";
+  else el.textContent=wake?"Tela sempre ligada: ativa.":"Tela sempre ligada: aguardando (toque na tela).";
+}
 function pedeWake(){
   try{
     if(navigator.wakeLock) navigator.wakeLock.request("screen").then(function(w){
-      wake=w; w.addEventListener("release",function(){ if(wake===w) wake=null; });
-    }).catch(function(){});
-  }catch(e){}
+      wake=w; pintaWake();
+      w.addEventListener("release",function(){ if(wake===w){wake=null;} pintaWake(); });
+    }).catch(function(){ pintaWake(); });
+    else pintaWake();
+  }catch(e){ pintaWake(); }
 }
 function iniciaAuto(){
   var seg=parseFloat(document.getElementById("fInt").value);
@@ -360,13 +368,11 @@ function iniciaAuto(){
   document.getElementById("fInt").disabled=true;
   var b=document.getElementById("btnAuto");
   b.textContent="Parar captura automática"; b.classList.add("btn-stop");
-  pedeWake();
   autoTimer=setInterval(checaAuto,500);
   checaAuto();
 }
 function paraAuto(){
   clearInterval(autoTimer); autoTimer=null;
-  try{ if(wake){wake.release();wake=null;} }catch(e){}
   document.getElementById("fInt").disabled=false;
   var b=document.getElementById("btnAuto");
   b.textContent="Iniciar captura automática"; b.classList.remove("btn-stop");
@@ -374,8 +380,17 @@ function paraAuto(){
   linhaAtual=null;
 }
 document.addEventListener("visibilitychange",function(){
-  if(!autoTimer) return;
   if(document.visibilityState==="visible"){ pedeWake(); checaAuto(); }
+});
+/* tela sempre ligada enquanto o app estiver aberto (reforça no primeiro toque, exigido por alguns navegadores) */
+document.addEventListener("click",function(){ if(!wake) pedeWake(); });
+document.addEventListener("touchend",function(){ if(!wake) pedeWake(); },{passive:true});
+setInterval(function(){ if(!wake && document.visibilityState==="visible") pedeWake(); },15000);
+/* aviso ao tentar sair/recarregar a página */
+window.addEventListener("beforeunload",function(e){
+  if(!autoTimer && !pontos.length) return;
+  e.preventDefault(); e.returnValue="";
+  return "";
 });
 
 /* ---------- render ---------- */
@@ -407,6 +422,7 @@ function render(){
     lk.className="maps-link"; lk.target="_blank"; lk.rel="noopener";
     lk.href="https://maps.apple.com/?ll="+p.lat+","+p.lon+"&q="+encodeURIComponent(p.nome);
     lk.textContent="Abrir no Maps ›";
+    lk.onclick=function(ev){ if(!confirm("Sair do app para abrir o Maps?")) ev.preventDefault(); };
     d.appendChild(lk);
     el.appendChild(d);
   });
@@ -646,7 +662,10 @@ load(); render();
 document.getElementById("fNome").placeholder=proximoNome();
 document.getElementById("btnCentro").onclick=centralizar;
 document.getElementById("btnCap").onclick=capturar;
-document.getElementById("btnAuto").onclick=function(){ if(autoTimer) paraAuto(); else iniciaAuto(); };
+document.getElementById("btnAuto").onclick=function(){
+  if(!autoTimer){ iniciaAuto(); return; }
+  if(confirm("Parar a captura automática?")) paraAuto();
+};
 document.getElementById("btnKml").onclick=function(){exportar("kml");};
 document.getElementById("btnCsv").onclick=function(){exportar("csv");};
 document.getElementById("btnTxt").onclick=function(){exportar("txt");};
@@ -663,6 +682,7 @@ document.getElementById("dlgCopy").onclick=function(){
 };
 initMapa();
 startGPS();
+pedeWake();
 if("serviceWorker" in navigator && location.protocol.indexOf("http")===0){
   try{ navigator.serviceWorker.register("sw.js").catch(function(){}); }catch(e){}
 }
