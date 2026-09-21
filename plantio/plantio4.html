@@ -359,7 +359,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.97 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.98 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -3468,6 +3468,9 @@ body.layout-lateral #status{grid-area:status;}
 // v4.97: botões Exportar KML/DXF sumiam — limparLinhas()/redesenharLinhas() (chamadas também ao
 // iniciar novo contorno/guia) escondiam os dois incondicionalmente, mesmo com talhões travados e
 // suas linhas no mapa. Agora só escondem se não há talhão arquivado (_ocultarExportSeNaoHaNada).
+// v4.98: Exportar KML/DXF ainda podia sumir na aba Exportar em outros caminhos — agora a
+// visibilidade é derivada do estado (talhão travado, contorno fechado ou linhas) e reavaliada a
+// cada setStatus (_atualizarBotoesExport).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -3637,6 +3640,7 @@ function setStatus(msg, tipo = '') {
   // (definida mais abaixo — try/catch cobre eventuais chamadas de setStatus ainda durante o boot,
   // antes das const _CAMADAS/_camadaVisivel serem inicializadas).
   try { _aplicarTodasCamadas(); } catch(e) {}
+  try { _atualizarBotoesExport(); } catch(e) {}
 }
 
 // ── Mapa ──────────────────────────────────────────────────────────────────────
@@ -9780,10 +9784,18 @@ function redesenharLinhas() {
 // Exportar KML/DXF só some se não sobrou NADA pra exportar — limpar/redesenhar as linhas do
 // talhão ATIVO escondia os dois botões mesmo com talhões travados (e suas linhas) no mapa, e
 // iniciar um novo contorno/guia (que chama limparLinhas) fazia o mesmo.
-function _ocultarExportSeNaoHaNada() {
-  if(talhoesArquivados.length) return;
-  $('btnKml').style.display = 'none';
-  $('btnDxf').style.display = 'none';
+function _ocultarExportSeNaoHaNada() { _atualizarBotoesExport(); }
+
+// v4.98: visibilidade de Exportar KML/DXF derivada do estado real (talhão travado, contorno
+// ativo fechado ou linhas), reavaliada a cada setStatus — antes cada fluxo ligava/desligava na
+// mão e vários caminhos (limpar, redesenhar, novo contorno...) deixavam os botões escondidos
+// mesmo com algo pra exportar. O exportarKML/DXF aceita contorno sem linhas.
+function _atualizarBotoesExport() {
+  const kml = document.getElementById('btnKml'), dxf = document.getElementById('btnDxf');
+  if(!kml || !dxf) return;
+  const ha = talhoesArquivados.length > 0 || linhas.length > 0 || polyPts.length >= 3;
+  kml.style.display = ha ? 'flex' : 'none';
+  dxf.style.display = ha ? 'flex' : 'none';
 }
 
 // ── Limpar ────────────────────────────────────────────────────────────────────
