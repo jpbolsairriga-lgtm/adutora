@@ -1,8 +1,9 @@
 /* Service worker - cache do app para uso offline em campo */
-var CACHE = "tophofarm-v10";
+var CACHE = "tophofarm-v11";
 var ARQS = ["./", "./index.html", "./manifest.json", "./icon.png", "./icon-maskable.png", "./logo.png",
   "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css",
-  "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"];
+  "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js",
+  "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"];
 
 self.addEventListener("install", function(e){
   self.skipWaiting();

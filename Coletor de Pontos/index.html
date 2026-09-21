@@ -13,6 +13,7 @@
 <link rel="apple-touch-icon" href="icon.png">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
 :root{
   --gr1:#2e7d32;--gr2:#388e3c;--gr3:#c8e6c9;--gr0:#1b5e20;
@@ -87,12 +88,27 @@ button[disabled]{opacity:.45}
 .leaflet-control-attribution{font-size:9px}
 #mapa .lbl{font-size:9px;font-weight:700;fill:var(--tx);font-family:ui-monospace,Menlo,monospace}
 #mapa .sb{font-size:9px;fill:var(--mu);font-weight:600}
-body.coleta{overflow:hidden}
-body.coleta #cardMapa{position:fixed;left:0;top:0;right:0;bottom:0;z-index:100;margin:0;border-radius:0;border:none;
+body.coleta,body.nav{overflow:hidden}
+body.coleta #cardMapa,body.nav #cardMapa{position:fixed;left:0;top:0;right:0;bottom:0;z-index:100;margin:0;border-radius:0;border:none;
   display:flex;flex-direction:column;padding:calc(.6rem + env(safe-area-inset-top,0px)) .6rem calc(.6rem + env(safe-area-inset-bottom,0px))}
-body.coleta #cardMapa .card-top,body.coleta #cardMapa .note,body.coleta #cardMapa .mapbtns{display:none}
-body.coleta #mapaLeaflet{flex:1;height:auto;min-height:0}
-body.coleta #mapa{flex:1;overflow:auto}
+body.coleta #cardMapa .card-top,body.coleta #cardMapa .note,body.coleta #cardMapa .mapbtns,body.nav #cardMapa .card-top,body.nav #cardMapa .note,body.nav #cardMapa .mapbtns{display:none}
+body.coleta #mapaLeaflet,body.nav #mapaLeaflet{flex:1;height:auto;min-height:0}
+body.coleta #mapa,body.nav #mapa{flex:1;overflow:auto}
+.navhud,.navbar{display:none}
+body.nav .navhud{display:flex;align-items:center;gap:.8rem;background:#fff;border:2px solid var(--gr3);border-radius:12px;padding:.4rem .7rem;margin-bottom:.5rem}
+body.nav.chegou .navhud{background:#e8f5e9;border-color:var(--gr2)}
+body.nav .navbar{display:flex;gap:.5rem;margin-top:.5rem}
+.navdist{font-size:2rem;font-weight:900;color:#003d5c;line-height:1.05;font-variant-numeric:tabular-nums}
+.navtxt{min-width:0;font-size:.85rem;color:var(--mu);font-weight:600}
+.navnome{font-weight:800;color:var(--gr1);font-size:1rem}
+.navsub{font-size:.72rem}
+.alvo{display:flex;align-items:center;gap:.6rem;border:1px solid #b3d9f2;border-left:4px solid #0277bd;border-radius:10px;padding:.5rem .7rem;margin-top:.5rem;background:#fff}
+.alvo.feito{border-left-color:#9e9e9e;opacity:.7}
+.alvo .info{flex:1;min-width:0}
+.alvo .nm{font-weight:800;font-size:.9rem;color:#01579b}
+.alvo .ds{font-size:.72rem;color:var(--mu);word-break:break-word}
+.alvo .ad{font-size:.74rem;font-weight:700;color:var(--tx);margin-top:.1rem}
+.alvo button{padding:.5rem .7rem;font-size:.78rem;flex:none}
 .hud,.hudbar{display:none}
 body.coleta .hud{display:grid;grid-template-columns:1.3fr 1.3fr .8fr;gap:.4rem;margin-bottom:.5rem}
 body.coleta .hudbar{display:flex;gap:.5rem;margin-top:.5rem}
@@ -170,11 +186,40 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.9rem 1rem calc(.
   <div class="note" id="autoNote">Grava um ponto a cada intervalo e liga os pontos com uma linha; no modo Área, ao parar o polígono é fechado e a área é calculada. <b>Deixe o app aberto e em primeiro plano</b>: no iPhone, ao minimizar ou bloquear a tela, o sistema pausa o GPS e a coleta.</div>
 </div>
 
+<div class="card">
+  <div class="card-top">
+    <p class="sec-title">Navegação até pontos</p>
+    <span class="count" id="alvoCount">0</span>
+  </div>
+  <div class="btns">
+    <button id="btnImp">Importar KML/KMZ</button>
+    <button id="btnProx">Ir ao mais próximo</button>
+  </div>
+  <input type="file" id="fileKml" multiple style="display:none">
+  <div class="field" style="margin-top:.7rem"><label for="fRaio">Raio de chegada (m)</label>
+    <input type="number" id="fRaio" value="1" min="0.1" step="0.1" inputmode="decimal"></div>
+  <div id="alvos"></div>
+  <div class="btns" style="margin-top:.6rem"><button id="btnLimpaAlvos" style="color:var(--rd)">Remover todos os alvos</button></div>
+  <div class="note">Importe o KML/KMZ com os pontos planejados (ex.: PC-01…PC-08). Toque em <b>Navegar</b> para abrir o mapa com uma seta apontando o rumo e a distância até o ponto. Ao chegar, use <b>Marcar ponto</b>: ele grava a sua posição com o nome do alvo e segue para o próximo.</div>
+</div>
+
 <div class="card" id="cardMapa">
   <div class="hud">
     <div class="kv"><div class="k" id="hudK1">Área</div><div class="v" id="hudV1">—</div></div>
     <div class="kv"><div class="k" id="hudK2">Perímetro</div><div class="v" id="hudV2">—</div></div>
     <div class="kv"><div class="k">Pontos</div><div class="v" id="hudV3">0</div></div>
+  </div>
+  <div class="navhud">
+    <svg id="navArrow" viewBox="-50 -50 100 100" width="96" height="96" style="flex:none">
+      <circle r="47" fill="#f1f9f2" stroke="#c8e6c9" stroke-width="3"/>
+      <g id="navArrowG"><polygon points="0,-40 26,28 0,14 -26,28" fill="#2e7d32" stroke="#fff" stroke-width="3" stroke-linejoin="round"/></g>
+    </svg>
+    <div class="navtxt">
+      <div class="navdist" id="navDist">—</div>
+      <div id="navRumo">—</div>
+      <div class="navnome" id="navNome"></div>
+      <div class="navsub" id="navSub"></div>
+    </div>
   </div>
   <div class="card-top">
     <p class="sec-title">Mapa</p>
@@ -188,6 +233,11 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.9rem 1rem calc(.
   <div class="hudbar">
     <button id="btnCentro2" style="flex:1">Centralizar</button>
     <button id="btnStop2" class="btn-main btn-stop" style="flex:2;width:auto">Parar captura</button>
+  </div>
+  <div class="navbar">
+    <button id="btnNavSair" style="flex:1">Sair</button>
+    <button id="btnNavProx" style="flex:1">Próximo</button>
+    <button id="btnNavMarca" class="btn-main" style="flex:2;width:auto">Marcar ponto</button>
   </div>
   <div class="note" id="mapaNota">Imagem de satélite Esri · ponto laranja = posição atual · linha amarela = captura automática.</div>
 </div>
@@ -298,7 +348,9 @@ function startGPS(){
     return;
   }
   navigator.geolocation.watchPosition(function(p){
-    live=p; pintaLive(); checaAuto();
+    live=p;
+    var cc=p.coords; if(cc.heading!=null&&!isNaN(cc.heading)&&cc.speed>0.8) hdgG=cc.heading;
+    pintaLive(); checaAuto();
     var m=document.getElementById("msg");
     if(m.querySelector(".msg.err")) m.innerHTML="";
   },function(e){
@@ -338,6 +390,7 @@ function salvaPonto(c,linha,auto,tipo){
     document.getElementById("fNome").value="";
     document.getElementById("fObs").value="";
     info("Ponto salvo.");
+    marcaFeito(pontos[pontos.length-1].nome);
   }
   document.getElementById("fNome").placeholder=proximoNome();
 }
@@ -500,7 +553,13 @@ function initMapa(){
   }catch(e){ semMapa(); }
 }
 function limites(){
-  var ll=pontos.map(function(p){return [p.lat,p.lon];});
+  var ll=[];
+  var al=navAlvo?alvoPorId(navAlvo):null;
+  if(al) ll.push([al.lat,al.lon]);
+  else{
+    ll=pontos.map(function(p){return [p.lat,p.lon];});
+    alvos.forEach(function(a){ ll.push([a.lat,a.lon]); });
+  }
   if(live) ll.push([live.coords.latitude,live.coords.longitude]);
   return ll.length?L.latLngBounds(ll):null;
 }
@@ -569,12 +628,20 @@ function marcadores(){
         (p.alt==null?"—":p.alt.toFixed(2)+" m"))
       .addTo(gMarc);
   });
+  alvos.forEach(function(a){
+    var mk=L.circleMarker([a.lat,a.lon],{radius:navAlvo===a.id?10:8,color:"#ffffff",weight:2,
+      fillColor:a.feito?"#9e9e9e":"#0277bd",fillOpacity:1})
+      .bindTooltip(a.nome,{permanent:true,direction:"bottom",className:"rot",offset:[0,8]}).addTo(gMarc);
+    mk.on("click",function(){ if(!autoTimer&&confirm("Navegar até "+a.nome+"?")) iniciaNav(a.id); });
+  });
   if(live){
     var c=[live.coords.latitude,live.coords.longitude];
     if(mMe){ mMe.setLatLng(c); }
     else{ mMe=L.circleMarker(c,{radius:7,color:"#ffffff",weight:2,
       fillColor:"#e08a3c",fillOpacity:1}).addTo(map); }
     mMe.bringToFront();
+    var alN=navAlvo?alvoPorId(navAlvo):null;
+    if(alN) L.polyline([c,[alN.lat,alN.lon]],{color:"#0288d1",weight:3,dashArray:"4 8"}).addTo(gMarc);
     /* prévia: a posição atual entra como vértice provisório (tracejado) */
     if(act&&act.pts.length){
       var u=toUTM(c[0],c[1]), first=act.pts[0], last=act.pts[act.pts.length-1];
@@ -616,7 +683,7 @@ function pintaHud(){
     document.getElementById("hudV2").textContent=(live&&live.coords.accuracy!=null)?"± "+live.coords.accuracy.toFixed(1)+" m":"—";
   }
 }
-function atualizaMapa(){ prevMed=null; if(map) marcadores(); else renderCroqui(); pintaHud(); }
+function atualizaMapa(){ prevMed=null; if(map) marcadores(); else renderCroqui(); pintaHud(); pintaNav(); pintaAlvosDist(); }
 
 /* ---------- croqui (reserva, sem internet) ---------- */
 function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
@@ -669,6 +736,192 @@ function renderCroqui(){
   s+='</svg>';
   el.innerHTML=s;
   et.textContent="≈ "+(span<1000?span.toFixed(0)+" m":(span/1000).toFixed(2)+" km")+" de extensão";
+}
+
+/* ---------- navegação até pontos (alvos importados) ---------- */
+var KEYA="alvos_gps_v1", alvos=[], navAlvo=null, hdgC=null, hdgCt=0, hdgG=null, bussolaOn=false, chegouAvisado=false;
+function loadAlvos(){
+  try{ var r=localStorage.getItem(KEYA); alvos=r?JSON.parse(r):[]; }catch(e){ alvos=[]; }
+  if(!Array.isArray(alvos)) alvos=[];
+}
+function saveAlvos(){ try{ localStorage.setItem(KEYA,JSON.stringify(alvos)); }catch(e){} }
+function alvoPorId(id){ return alvos.filter(function(a){return a.id===id;})[0]||null; }
+function distRumo(la1,lo1,la2,lo2){
+  var R=6371008.8, r=Math.PI/180, f1=la1*r, f2=la2*r, dl=(lo2-lo1)*r, dp=f2-f1;
+  var a=Math.pow(Math.sin(dp/2),2)+Math.cos(f1)*Math.cos(f2)*Math.pow(Math.sin(dl/2),2);
+  var d=2*R*Math.asin(Math.min(1,Math.sqrt(a)));
+  var y=Math.sin(dl)*Math.cos(f2), x=Math.cos(f1)*Math.sin(f2)-Math.sin(f1)*Math.cos(f2)*Math.cos(dl);
+  return {d:d,b:(Math.atan2(y,x)/r+360)%360};
+}
+function cardeal(b){ return ["N","NE","L","SE","S","SO","O","NO"][Math.round(b/45)%8]; }
+function fmtDist(d){ return d>=1000?fmtNum(d/1000,2)+" km":(d>=100?fmtNum(d,0):fmtNum(d,1))+" m"; }
+function deLive(a){
+  if(!live) return null;
+  return distRumo(live.coords.latitude,live.coords.longitude,a.lat,a.lon);
+}
+function decodifica(u8){
+  try{ return new TextDecoder("utf-8",{fatal:true}).decode(u8); }
+  catch(e){ return new TextDecoder("windows-1252").decode(u8); }
+}
+function textoLimpo(html){
+  try{ return (new DOMParser().parseFromString(html||"","text/html").body.textContent||"").trim(); }
+  catch(e){ return ""; }
+}
+function parseKml(txt){
+  var doc=new DOMParser().parseFromString(txt,"application/xml");
+  if(doc.getElementsByTagName("parsererror").length) throw new Error("KML inválido.");
+  var out=[], pms=doc.getElementsByTagName("Placemark");
+  for(var i=0;i<pms.length;i++){
+    var pm=pms[i], pt=pm.getElementsByTagName("Point")[0];
+    if(!pt) continue;
+    var ce=pt.getElementsByTagName("coordinates")[0]; if(!ce) continue;
+    var c=ce.textContent.trim().split(/[,\s]+/).map(parseFloat);
+    if(!isFinite(c[0])||!isFinite(c[1])) continue;
+    var ne=pm.getElementsByTagName("name")[0], de=pm.getElementsByTagName("description")[0];
+    out.push({nome:(ne?ne.textContent.trim():"")||("Ponto "+(out.length+1)),
+      desc:de?textoLimpo(de.textContent):"", lat:c[1], lon:c[0]});
+  }
+  return out;
+}
+function lerArquivo(f){
+  return f.arrayBuffer().then(function(buf){
+    var u8=new Uint8Array(buf);
+    if(u8[0]===0x50&&u8[1]===0x4b){
+      if(typeof JSZip==="undefined") throw new Error("Leitor de KMZ indisponível (precisa de internet na primeira abertura).");
+      return JSZip.loadAsync(buf).then(function(z){
+        var nomes=Object.keys(z.files).filter(function(n){return /\.kml$/i.test(n);});
+        nomes.sort(function(a,b){ return (/(^|\/)doc\.kml$/i.test(b)?1:0)-(/(^|\/)doc\.kml$/i.test(a)?1:0); });
+        return Promise.all(nomes.map(function(n){ return z.files[n].async("uint8array"); })).then(function(arrs){
+          var r=[]; arrs.forEach(function(a){ r=r.concat(parseKml(decodifica(a))); }); return r;
+        });
+      });
+    }
+    return parseKml(decodifica(u8));
+  });
+}
+function importaArquivos(files){
+  var lista=[].slice.call(files); if(!lista.length) return;
+  Promise.all(lista.map(lerArquivo)).then(function(res){
+    var novos=[]; res.forEach(function(r){ novos=novos.concat(r); });
+    if(!novos.length){ erro("Nenhum ponto encontrado no arquivo."); return; }
+    var add=0, upd=0;
+    novos.forEach(function(n,i){
+      var ex=alvos.filter(function(a){return a.nome.toLowerCase()===n.nome.toLowerCase();})[0];
+      if(ex){ ex.lat=n.lat; ex.lon=n.lon; ex.desc=n.desc; upd++; }
+      else{ alvos.push({id:Date.now()+i+Math.floor(Math.random()*1000),nome:n.nome,desc:n.desc,lat:n.lat,lon:n.lon,feito:false}); add++; }
+    });
+    saveAlvos(); renderAlvos(); atualizaMapa();
+    setTimeout(centralizar,50);
+    info(add+" ponto(s) importado(s)"+(upd?", "+upd+" atualizado(s)":"")+".");
+  }).catch(function(e){ erro("Não foi possível ler o arquivo: "+esc(e.message||e)); });
+}
+function renderAlvos(){
+  var el=document.getElementById("alvos");
+  var feitos=alvos.filter(function(a){return a.feito;}).length;
+  document.getElementById("alvoCount").textContent=alvos.length?(feitos+"/"+alvos.length+" marcados"):"0";
+  if(!alvos.length){ el.innerHTML='<div class="empty">Nenhum ponto importado.</div>'; return; }
+  el.innerHTML="";
+  alvos.forEach(function(a){
+    var d=document.createElement("div"); d.className="alvo"+(a.feito?" feito":"");
+    var info=document.createElement("div"); info.className="info";
+    var nm=document.createElement("div"); nm.className="nm"; nm.textContent=(a.feito?"✓ ":"")+a.nome; info.appendChild(nm);
+    if(a.desc){ var ds=document.createElement("div"); ds.className="ds"; ds.textContent=a.desc; info.appendChild(ds); }
+    var ad=document.createElement("div"); ad.className="ad"; ad.id="ad-"+a.id; info.appendChild(ad);
+    var b=document.createElement("button"); b.className="btn-main"; b.style.width="auto"; b.style.fontSize=".78rem"; b.textContent="Navegar";
+    b.onclick=function(){ iniciaNav(a.id); };
+    var x=document.createElement("button"); x.className="del"; x.textContent="×"; x.title="Remover";
+    x.onclick=function(){ if(confirm("Remover "+a.nome+"?")){ alvos=alvos.filter(function(z){return z!==a;}); saveAlvos(); renderAlvos(); atualizaMapa(); } };
+    d.appendChild(info); d.appendChild(b); d.appendChild(x); el.appendChild(d);
+  });
+  pintaAlvosDist();
+}
+function pintaAlvosDist(){
+  alvos.forEach(function(a){
+    var el=document.getElementById("ad-"+a.id); if(!el) return;
+    var r=deLive(a);
+    el.textContent=r?fmtDist(r.d)+" · rumo "+Math.round(r.b)+"° "+cardeal(r.b):"aguardando GPS…";
+  });
+}
+function maisProximo(excluiId){
+  var cand=alvos.filter(function(a){return !a.feito&&a.id!==excluiId;});
+  if(!cand.length) return null;
+  if(!live) return cand[0];
+  cand.sort(function(a,b){ return deLive(a).d-deLive(b).d; });
+  return cand[0];
+}
+function headingEf(){
+  if(hdgC!=null&&Date.now()-hdgCt<3000) return {h:hdgC,src:"bússola"};
+  if(hdgG!=null) return {h:hdgG,src:"direção do GPS (em movimento)"};
+  return null;
+}
+function onOri(e){
+  var h=null;
+  if(typeof e.webkitCompassHeading==="number") h=e.webkitCompassHeading;
+  else if(e.absolute===true&&typeof e.alpha==="number") h=(360-e.alpha)%360;
+  if(h==null) return;
+  hdgC=h; hdgCt=Date.now(); pintaNav();
+}
+function iniciaBussola(){
+  if(bussolaOn) return; bussolaOn=true;
+  try{
+    if(typeof DeviceOrientationEvent!=="undefined"&&typeof DeviceOrientationEvent.requestPermission==="function"){
+      DeviceOrientationEvent.requestPermission().then(function(r){
+        if(r==="granted") window.addEventListener("deviceorientation",onOri,true); else bussolaOn=false;
+      }).catch(function(){ bussolaOn=false; });
+    }else{
+      window.addEventListener("deviceorientationabsolute",onOri,true);
+      window.addEventListener("deviceorientation",onOri,true);
+    }
+  }catch(e){ bussolaOn=false; }
+}
+function iniciaNav(id){
+  if(autoTimer){ erro("Pare a captura automática antes de navegar."); return; }
+  var a=alvoPorId(id); if(!a) return;
+  navAlvo=id; chegouAvisado=false;
+  iniciaBussola();
+  document.body.classList.add("nav"); document.body.classList.remove("chegou");
+  window.scrollTo(0,0);
+  document.getElementById("navSub").textContent="";
+  setTimeout(function(){ if(map){ map.invalidateSize(); centralizar(); } atualizaMapa(); },80);
+  atualizaMapa();
+}
+function sairNav(){
+  navAlvo=null;
+  document.body.classList.remove("nav","chegou");
+  setTimeout(function(){ if(map){ map.invalidateSize(); centralizar(); } },80);
+  atualizaMapa();
+}
+function pintaNav(){
+  if(!navAlvo) return;
+  var a=alvoPorId(navAlvo); if(!a){ sairNav(); return; }
+  document.getElementById("navNome").textContent=a.nome;
+  var r=deLive(a);
+  if(!r){ document.getElementById("navDist").textContent="—"; document.getElementById("navRumo").textContent="Aguardando GPS…"; return; }
+  var hd=headingEf(), ang=hd?(r.b-hd.h):r.b;
+  document.getElementById("navArrowG").setAttribute("transform","rotate("+ang.toFixed(1)+")");
+  document.getElementById("navDist").textContent=fmtDist(r.d);
+  document.getElementById("navRumo").textContent="Rumo "+Math.round(r.b)+"° "+cardeal(r.b);
+  var sub=hd?"Seta pela "+hd.src:"Sem bússola: seta aponta em relação ao norte (caminhe ou ative a bússola)";
+  if(live.coords.accuracy!=null) sub+=" · ± "+live.coords.accuracy.toFixed(1)+" m";
+  var raio=parseFloat(document.getElementById("fRaio").value)||1;
+  var chegou=r.d<=raio;
+  document.body.classList.toggle("chegou",chegou);
+  if(chegou){ sub="CHEGOU! Toque em Marcar ponto."; if(!chegouAvisado){ chegouAvisado=true; try{ if(navigator.vibrate) navigator.vibrate([200,100,200]); }catch(e){} } }
+  else chegouAvisado=false;
+  document.getElementById("navSub").textContent=sub;
+}
+function marcaNav(){
+  var a=alvoPorId(navAlvo); if(!a) return;
+  if(!live){ document.getElementById("navSub").textContent="Sem posição do GPS ainda."; return; }
+  document.getElementById("fNome").value=a.nome;
+  salvaPonto(live.coords,null,false);
+  var prox=maisProximo(a.id);
+  if(prox){ navAlvo=prox.id; chegouAvisado=false; atualizaMapa(); document.getElementById("navSub").textContent=a.nome+" marcado. Próximo: "+prox.nome; }
+  else { sairNav(); info("Todos os alvos foram marcados."); }
+}
+function marcaFeito(nome){
+  var a=alvos.filter(function(x){return x.nome.toLowerCase()===String(nome).toLowerCase();})[0];
+  if(a&&!a.feito){ a.feito=true; saveAlvos(); renderAlvos(); }
 }
 
 /* ---------- export ---------- */
@@ -782,7 +1035,7 @@ function exportar(ext){
 }
 
 /* ---------- init ---------- */
-load(); render();
+load(); render(); loadAlvos(); renderAlvos();
 document.getElementById("fNome").placeholder=proximoNome();
 document.getElementById("btnCentro").onclick=centralizar;
 document.getElementById("btnCap").onclick=capturar;
@@ -793,6 +1046,23 @@ function alternaAuto(){
 document.getElementById("btnAuto").onclick=alternaAuto;
 document.getElementById("btnStop2").onclick=alternaAuto;
 document.getElementById("btnCentro2").onclick=centralizar;
+document.getElementById("btnImp").onclick=function(){ document.getElementById("fileKml").click(); };
+document.getElementById("fileKml").onchange=function(){ importaArquivos(this.files); this.value=""; };
+document.getElementById("btnProx").onclick=function(){
+  if(!alvos.length){ erro("Importe um KML/KMZ primeiro."); return; }
+  var p=maisProximo(null); if(!p){ info("Todos os alvos já foram marcados."); return; }
+  iniciaNav(p.id);
+};
+document.getElementById("btnLimpaAlvos").onclick=function(){
+  if(!alvos.length) return;
+  if(confirm("Remover todos os "+alvos.length+" alvos importados? Os pontos coletados não são afetados.")){ alvos=[]; saveAlvos(); renderAlvos(); atualizaMapa(); }
+};
+document.getElementById("btnNavSair").onclick=sairNav;
+document.getElementById("btnNavMarca").onclick=marcaNav;
+document.getElementById("btnNavProx").onclick=function(){
+  var p=maisProximo(navAlvo); if(!p){ document.getElementById("navSub").textContent="Não há outro alvo pendente."; return; }
+  navAlvo=p.id; chegouAvisado=false; atualizaMapa();
+};
 document.getElementById("btnKml").onclick=function(){exportar("kml");};
 document.getElementById("btnCsv").onclick=function(){exportar("csv");};
 document.getElementById("btnTxt").onclick=function(){exportar("txt");};
