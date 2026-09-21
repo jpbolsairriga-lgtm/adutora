@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Coleta de Pontos GPS</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#2e7d32">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Pontos GPS">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+:root{
+  --gr1:#2e7d32;--gr2:#388e3c;--gr3:#c8e6c9;--gr0:#1b5e20;
+  --bdr:#d0e4f0;--bg:#f4f7fb;--tx:#1a2535;--mu:#607080;
+  --rd:#c62828;--am:#e07b00;
+  --sh:0 2px 16px rgba(0,80,160,.10);
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--tx);font-size:14px;
+  padding-bottom:env(safe-area-inset-bottom,0px)}
+header{background:linear-gradient(135deg,var(--gr0),var(--gr1),var(--gr2));color:#fff;box-shadow:0 3px 20px rgba(0,0,0,.2);
+  padding-top:env(safe-area-inset-top,0px)}
+.hdr{max-width:720px;margin:0 auto;padding:.9rem 1rem;display:flex;align-items:center;justify-content:space-between;gap:.8rem}
+.hdr-logo{display:flex;align-items:center;gap:.8rem;min-width:0}
+.hdr-logo img{height:52px;width:auto;object-fit:contain;flex:none}
+.hdr-brand h1{font-size:1.15rem;font-weight:800;letter-spacing:-.2px;margin:0}
+.hdr-brand p{opacity:.85;font-size:.74rem;margin:.1rem 0 0}
+.chip{display:inline-flex;align-items:center;gap:.35rem;font-size:.74rem;font-weight:800;padding:.32rem .7rem;
+  border-radius:99px;background:rgba(255,255,255,.18);color:#fff;white-space:nowrap;border:1px solid rgba(255,255,255,.3)}
+.dot{width:8px;height:8px;border-radius:99px;background:#cfd8dc}
+.chip.ok .dot{background:#69f0ae}
+.chip.mid .dot{background:#ffd54f}
+.chip.bad .dot{background:#ff8a80}
+.wrap{max-width:720px;margin:1rem auto;padding:0 .9rem 1.5rem}
+.card{background:#fff;border-radius:12px;padding:1rem 1.1rem;margin-bottom:.9rem;box-shadow:var(--sh);border:1px solid var(--bdr)}
+.sec-title{font-size:.76rem;font-weight:800;color:var(--gr1);text-transform:uppercase;letter-spacing:.08em;
+  margin:0 0 .8rem;padding-bottom:.45rem;border-bottom:2px solid var(--gr3);display:flex;align-items:center;gap:.5rem}
+.sec-title::before{content:'';width:4px;height:1.1em;background:var(--gr2);border-radius:2px;flex-shrink:0}
+.card-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:.8rem}
+.card-top .sec-title{margin:0;flex:1}
+.count{font-size:.74rem;color:var(--mu);font-weight:700;margin-left:.6rem;white-space:nowrap}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:.6rem}
+.kv{background:linear-gradient(135deg,#e8f5e9,#c8e6c9);border:1px solid #a5d6a7;border-radius:10px;padding:.55rem .75rem;min-width:0}
+.kv .k{font-size:.66rem;font-weight:800;color:var(--gr1);text-transform:uppercase;letter-spacing:.06em}
+.kv .v{font-variant-numeric:tabular-nums;font-size:1rem;font-weight:900;color:#003d5c;margin-top:.1rem;word-break:break-all}
+.kv.full{grid-column:1/-1}
+.kv.full .v{font-size:.9rem}
+label{display:block;font-size:.72rem;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.05em;margin:0 0 .25rem}
+input[type=text],input[type=number],textarea{width:100%;padding:.55rem .7rem;border:1.5px solid var(--bdr);border-radius:8px;
+  font-size:16px;font-family:inherit;color:var(--tx);background:#fafeff;outline:none}
+input:focus,textarea:focus{border-color:var(--gr2);box-shadow:0 0 0 3px rgba(46,125,50,.13)}
+input:disabled{opacity:.6}
+textarea{resize:vertical;min-height:52px}
+.row{display:flex;gap:.7rem}
+.row>*{flex:1;min-width:0}
+.field{margin-bottom:.7rem}
+button{font-family:inherit;font-size:.88rem;font-weight:700;border-radius:8px;border:none;background:var(--bdr);color:var(--tx);
+  padding:.7rem .9rem;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:all .18s}
+button:active{opacity:.75}
+button[disabled]{opacity:.45}
+.btn-main{width:100%;background:linear-gradient(135deg,var(--gr1),var(--gr2));color:#fff;font-size:1rem;padding:.85rem}
+.btn-main:hover{box-shadow:0 4px 16px rgba(46,125,50,.38)}
+.btn-stop{background:linear-gradient(135deg,#b71c1c,#880e4f)!important;color:#fff!important}
+.btns{display:flex;gap:.5rem;flex-wrap:wrap}
+.btns button{flex:1;min-width:100px}
+.pt{border:1px solid #c8e6c9;border-left:4px solid var(--gr2);border-radius:10px;padding:.65rem .8rem;margin-bottom:.55rem;background:#fff}
+.pt-head{display:flex;justify-content:space-between;align-items:flex-start;gap:.5rem}
+.pt-name{font-weight:800;font-size:.95rem;color:var(--gr1)}
+.pt-obs{font-size:.78rem;color:var(--mu);margin-top:.1rem;word-break:break-word}
+.pt-coords{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.74rem;color:var(--mu);margin-top:.45rem;line-height:1.7}
+.pt-coords b{color:var(--tx);font-weight:700}
+.del{background:none;color:var(--rd);font-size:.76rem;font-weight:700;padding:.15rem .3rem;flex:none}
+.empty{text-align:center;color:var(--mu);font-size:.85rem;padding:1.3rem .6rem}
+#mapa svg{width:100%;height:auto;display:block;background:#f1f9f2;border-radius:10px}
+#mapaLeaflet{height:340px;border-radius:10px;overflow:hidden;display:none;background:#e8f5e9;border:2px solid var(--gr3)}
+.leaflet-tooltip.rot{background:rgba(0,0,0,.62);border:none;box-shadow:none;color:#fff;font-size:11px;font-weight:700;padding:1px 5px;border-radius:4px}
+.leaflet-tooltip.rot::before{display:none}
+.leaflet-control-attribution{font-size:9px}
+#mapa .lbl{font-size:9px;font-weight:700;fill:var(--tx);font-family:ui-monospace,Menlo,monospace}
+#mapa .sb{font-size:9px;fill:var(--mu);font-weight:600}
+.maps-link{display:inline-block;margin-top:.4rem;font-size:.76rem;font-weight:700;color:var(--gr1);text-decoration:none}
+.msg{font-size:.82rem;border-radius:8px;padding:.65rem .85rem;margin-bottom:.8rem;line-height:1.4}
+.msg.err{background:#ffebee;border-left:4px solid var(--rd);color:#7f0000}
+.msg.info{background:#e8f5e9;border-left:4px solid var(--gr2);color:#1b4d2e}
+.note{font-size:.74rem;color:var(--mu);margin-top:.7rem;line-height:1.5}
+dialog{border:1px solid var(--bdr);border-radius:12px;background:#fff;color:var(--tx);max-width:92vw;width:560px;padding:1rem}
+dialog::backdrop{background:rgba(0,0,0,.5)}
+dialog textarea{min-height:230px;font-family:ui-monospace,Menlo,monospace;font-size:12px}
+footer{background:#fff;border-top:2px solid var(--bdr);padding:.9rem 1rem calc(.9rem + env(safe-area-inset-bottom,0px))}
+.fi{max-width:720px;margin:0 auto;display:flex;align-items:center;gap:.7rem}
+.fi .fn{font-weight:800;color:var(--gr1);font-size:.85rem}
+.fi .fr{font-size:.72rem;color:var(--mu);line-height:1.5}
+</style>
+</head>
+<body>
+<header>
+  <div class="hdr">
+    <div class="hdr-logo">
+      <img src="logo.png" alt="Bolsa Irriga">
+      <div class="hdr-brand">
+        <h1>Coleta de Pontos GPS</h1>
+        <p>Pontos de controle &middot; levantamento com drone</p>
+      </div>
+    </div>
+    <span class="chip" id="gpsChip"><span class="dot"></span><span id="gpsTxt">Aguardando</span></span>
+  </div>
+</header>
+<div class="wrap">
+
+<div id="msg"></div>
+
+<div class="card">
+  <p class="sec-title">Leitura atual</p>
+  <div class="grid">
+    <div class="kv"><div class="k">Latitude</div><div class="v" id="vLat">—</div></div>
+    <div class="kv"><div class="k">Longitude</div><div class="v" id="vLon">—</div></div>
+    <div class="kv"><div class="k">Altitude (m)</div><div class="v" id="vAlt">—</div></div>
+    <div class="kv"><div class="k">Precisão (m)</div><div class="v" id="vAcc">—</div></div>
+    <div class="kv full"><div class="k">UTM (SIRGAS 2000)</div><div class="v" id="vUtm">—</div></div>
+  </div>
+</div>
+
+<div class="card">
+  <p class="sec-title">Novo ponto</p>
+  <div class="row">
+    <div class="field"><label for="fNome">Nome do ponto</label>
+      <input type="text" id="fNome" autocomplete="off" placeholder="P001"></div>
+  </div>
+  <div class="field"><label for="fObs">Obs</label>
+    <textarea id="fObs" placeholder="Ex.: alvo pintado, canto do talhão..."></textarea></div>
+  <button class="btn-main" id="btnCap">Capturar ponto</button>
+  <div class="note" id="capNote"></div>
+</div>
+
+<div class="card">
+  <p class="sec-title">Captura automática</p>
+  <div class="row">
+    <div class="field"><label for="fInt">Intervalo (segundos)</label>
+      <input type="number" id="fInt" value="5" min="1" step="1" inputmode="numeric"></div>
+    <div class="field"><label>Pontos na linha atual</label>
+      <div class="kv"><div class="v" id="autoN">0</div></div></div>
+  </div>
+  <button class="btn-main" id="btnAuto">Iniciar captura automática</button>
+  <div class="note" id="autoNote">Grava um ponto a cada intervalo e liga os pontos com uma linha. Mantenha a tela ligada e o app aberto durante a coleta.</div>
+</div>
+
+<div class="card">
+  <div class="card-top">
+    <p class="sec-title">Mapa</p>
+    <span class="count" id="escalaTxt"></span>
+  </div>
+  <div id="mapaLeaflet"></div>
+  <div id="mapa"></div>
+  <div class="btns" style="margin-top:.7rem">
+    <button id="btnCentro">Centralizar</button>
+  </div>
+  <div class="note" id="mapaNota">Imagem de satélite Esri · ponto laranja = posição atual · linha amarela = captura automática.</div>
+</div>
+
+<div class="card">
+  <div class="card-top">
+    <p class="sec-title">Pontos salvos</p>
+    <span class="count" id="count">0</span>
+  </div>
+  <div id="lista"><div class="empty">Nenhum ponto coletado ainda.</div></div>
+  <div class="btns" style="margin-top:12px">
+    <button id="btnCsv">Exportar CSV</button>
+    <button id="btnTxt">Exportar TXT</button>
+    <button id="btnKml">Exportar KML</button>
+    <button id="btnLimpar" style="color:var(--danger)">Limpar tudo</button>
+  </div>
+  <div class="note">
+    CSV separado por “;” (abre direto no Excel pt-BR). TXT no formato clássico de topografia:
+    <b>Nome,Este,Norte,Cota,Obs</b>. KML abre no Google Earth com pontos e linhas. Altitude vem elipsoidal (WGS84/SIRGAS 2000) — aplique o
+    MAPGEO2015 se precisar de altitude ortométrica.
+  </div>
+</div>
+
+<dialog id="dlg">
+  <p class="sec-title" id="dlgTitle">Arquivo</p>
+  <textarea id="dlgTxt" readonly></textarea>
+  <div class="btns" style="margin-top:10px">
+    <button id="dlgCopy">Copiar</button>
+    <button id="dlgClose">Fechar</button>
+  </div>
+</dialog>
+
+</div>
+
+<footer>
+  <div class="fi">
+    <div>
+      <div class="fn">Jo&#227;o Paulo de Oliveira</div>
+      <div class="fr">Engenheiro Agr&#244;nomo &middot; Especialista em Irriga&#231;&#227;o<br>Bolsa Irriga &middot; bolsairriga.com.br</div>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function(){
+"use strict";
+var KEY="pontos_gps_v1";
+var pontos=[], live=null, downloads=null, autoTimer=null, linhaAtual=null, wake=null;
+
+/* ---------- storage ---------- */
+function load(){
+  try{var r=localStorage.getItem(KEY); pontos=r?JSON.parse(r):[];}catch(e){pontos=[];}
+  if(!Array.isArray(pontos)) pontos=[];
+}
+function save(){ try{localStorage.setItem(KEY,JSON.stringify(pontos));}catch(e){} }
+
+/* ---------- UTM (WGS84 / SIRGAS 2000) ---------- */
+function toUTM(lat,lon){
+  var a=6378137.0, f=1/298.257223563, k0=0.9996;
+  var e2=f*(2-f), ep2=e2/(1-e2);
+  var zone=Math.floor((lon+180)/6)+1;
+  var lon0=((zone-1)*6-180+3)*Math.PI/180;
+  var p=lat*Math.PI/180, l=lon*Math.PI/180;
+  var sp=Math.sin(p), cp=Math.cos(p), tp=Math.tan(p);
+  var N=a/Math.sqrt(1-e2*sp*sp);
+  var T=tp*tp, C=ep2*cp*cp, A=(l-lon0)*cp;
+  var M=a*((1-e2/4-3*e2*e2/64-5*e2*e2*e2/256)*p
+        -(3*e2/8+3*e2*e2/32+45*e2*e2*e2/1024)*Math.sin(2*p)
+        +(15*e2*e2/256+45*e2*e2*e2/1024)*Math.sin(4*p)
+        -(35*e2*e2*e2/3072)*Math.sin(6*p));
+  var E=k0*N*(A+(1-T+C)*A*A*A/6+(5-18*T+T*T+72*C-58*ep2)*Math.pow(A,5)/120)+500000;
+  var Nn=k0*(M+N*tp*(A*A/2+(5-T+9*C+4*C*C)*Math.pow(A,4)/24
+        +(61-58*T+T*T+600*C-330*ep2)*Math.pow(A,6)/720));
+  if(lat<0) Nn+=10000000;
+  return {e:E,n:Nn,zona:zone,hemi:lat<0?"S":"N"};
+}
+function fmtUtm(u){ return u.e.toFixed(3)+" E  ·  "+u.n.toFixed(3)+" N  ·  "+u.zona+u.hemi; }
+
+/* ---------- GPS ---------- */
+function chip(cls,txt){
+  var c=document.getElementById("gpsChip");
+  c.className="chip"+(cls?" "+cls:"");
+  document.getElementById("gpsTxt").textContent=txt;
+}
+function erro(t){
+  document.getElementById("msg").innerHTML='<div class="msg err">'+t+'</div>';
+}
+function info(t){
+  document.getElementById("msg").innerHTML='<div class="msg info">'+t+'</div>';
+  setTimeout(function(){var m=document.getElementById("msg");if(m.textContent===t)m.innerHTML="";},3500);
+}
+function pintaLive(){
+  if(!live){return;}
+  var c=live.coords;
+  document.getElementById("vLat").textContent=c.latitude.toFixed(8);
+  document.getElementById("vLon").textContent=c.longitude.toFixed(8);
+  document.getElementById("vAlt").textContent=(c.altitude==null?"—":c.altitude.toFixed(2));
+  document.getElementById("vAcc").textContent=(c.accuracy==null?"—":c.accuracy.toFixed(2));
+  document.getElementById("vUtm").textContent=fmtUtm(toUTM(c.latitude,c.longitude));
+  var a=c.accuracy==null?999:c.accuracy;
+  chip(a<=0.5?"ok":(a<=3?"mid":"bad"), "± "+a.toFixed(2)+" m");
+  atualizaMapa();
+}
+function startGPS(){
+  if(!navigator.geolocation){
+    chip("bad","Indisponível");
+    erro("Este navegador/visualização não libera o GPS. Abra a página direto no Safari e toque em “Permitir”.");
+    return;
+  }
+  navigator.geolocation.watchPosition(function(p){
+    live=p; pintaLive();
+    var m=document.getElementById("msg");
+    if(m.querySelector(".msg.err")) m.innerHTML="";
+  },function(e){
+    chip("bad","Sem sinal");
+    var t="Erro no GPS.";
+    if(e.code===1) t="Permissão de localização negada. Libere em Ajustes › Safari › Localização.";
+    if(e.code===2) t="Posição indisponível. Verifique se o receptor está conectado e com vista para o céu.";
+    if(e.code===3) t="Tempo esgotado aguardando a posição.";
+    erro(t);
+  },{enableHighAccuracy:true,maximumAge:0,timeout:30000});
+}
+
+/* ---------- captura ---------- */
+function proximoNome(){
+  var max=0;
+  pontos.forEach(function(p){
+    var m=/^([A-Za-z]*)(\d+)$/.exec(p.nome||"");
+    if(m){var n=parseInt(m[2],10); if(n>max)max=n;}
+  });
+  return "P"+String(max+1).padStart(3,"0");
+}
+function salvaPonto(c,linha,auto){
+  var u=toUTM(c.latitude,c.longitude);
+  var nomeManual=auto?"":(document.getElementById("fNome").value||"").trim();
+  pontos.push({
+    nome:nomeManual||proximoNome(),
+    obs:auto?"":(document.getElementById("fObs").value||"").trim(),
+    lat:c.latitude, lon:c.longitude,
+    alt:(c.altitude==null?null:c.altitude),
+    acc:(c.accuracy==null?null:c.accuracy),
+    e:u.e, n:u.n, zona:u.zona, hemi:u.hemi,
+    linha:linha||null,
+    data:new Date().toISOString()
+  });
+  save(); render();
+  if(!auto){
+    document.getElementById("fNome").value="";
+    document.getElementById("fObs").value="";
+    info("Ponto salvo.");
+  }
+  document.getElementById("fNome").placeholder=proximoNome();
+}
+function capturar(){
+  if(!live){erro("Ainda sem posição. Aguarde a primeira leitura aparecer na tela.");return;}
+  salvaPonto(live.coords,null,false);
+}
+
+/* ---------- captura automática ---------- */
+function proximaLinha(){
+  var max=0; pontos.forEach(function(p){ if(p.linha&&p.linha>max)max=p.linha; });
+  return max+1;
+}
+function tickAuto(){
+  if(!live){ document.getElementById("autoNote").textContent="Aguardando posição do GPS…"; return; }
+  salvaPonto(live.coords,linhaAtual,true);
+  var n=pontos.filter(function(p){return p.linha===linhaAtual;}).length;
+  document.getElementById("autoN").textContent=n;
+  document.getElementById("autoNote").textContent="Capturando… último ponto às "+new Date().toLocaleTimeString("pt-BR");
+}
+function pedeWake(){
+  try{ if(navigator.wakeLock) navigator.wakeLock.request("screen").then(function(w){wake=w;}).catch(function(){}); }catch(e){}
+}
+function iniciaAuto(){
+  var seg=parseFloat(document.getElementById("fInt").value);
+  if(!(seg>=1)){erro("Informe um intervalo de pelo menos 1 segundo.");return;}
+  linhaAtual=proximaLinha();
+  document.getElementById("autoN").textContent="0";
+  document.getElementById("fInt").disabled=true;
+  var b=document.getElementById("btnAuto");
+  b.textContent="Parar captura automática"; b.classList.add("btn-stop");
+  pedeWake();
+  tickAuto();
+  autoTimer=setInterval(tickAuto,seg*1000);
+}
+function paraAuto(){
+  clearInterval(autoTimer); autoTimer=null;
+  try{ if(wake){wake.release();wake=null;} }catch(e){}
+  document.getElementById("fInt").disabled=false;
+  var b=document.getElementById("btnAuto");
+  b.textContent="Iniciar captura automática"; b.classList.remove("btn-stop");
+  document.getElementById("autoNote").textContent="Captura parada. Linha "+linhaAtual+" salva.";
+  linhaAtual=null;
+}
+document.addEventListener("visibilitychange",function(){
+  if(autoTimer && document.visibilityState==="visible") pedeWake();
+});
+
+/* ---------- render ---------- */
+function render(){
+  var el=document.getElementById("lista");
+  document.getElementById("count").textContent=pontos.length+(pontos.length===1?" ponto":" pontos");
+  if(!pontos.length){el.innerHTML='<div class="empty">Nenhum ponto coletado ainda.</div>';atualizaMapa();return;}
+  el.innerHTML="";
+  pontos.slice().reverse().forEach(function(p){
+    var i=pontos.indexOf(p);
+    var d=document.createElement("div"); d.className="pt";
+    var head=document.createElement("div"); head.className="pt-head";
+    var left=document.createElement("div"); left.style.minWidth="0";
+    var nm=document.createElement("div"); nm.className="pt-name"; nm.textContent=p.nome;
+    left.appendChild(nm);
+    if(p.obs){var ob=document.createElement("div");ob.className="pt-obs";ob.textContent=p.obs;left.appendChild(ob);}
+    var bt=document.createElement("button"); bt.className="del"; bt.textContent="Excluir";
+    bt.onclick=function(){ if(confirm("Excluir "+p.nome+"?")){pontos.splice(i,1);save();render();} };
+    head.appendChild(left); head.appendChild(bt); d.appendChild(head);
+    var co=document.createElement("div"); co.className="pt-coords";
+    co.innerHTML=
+      "Lat <b>"+p.lat.toFixed(8)+"</b> &nbsp; Lon <b>"+p.lon.toFixed(8)+"</b><br>"+
+      "Alt <b>"+(p.alt==null?"—":p.alt.toFixed(2)+" m")+"</b> &nbsp; ± "+
+        (p.acc==null?"—":p.acc.toFixed(2)+" m")+
+        (p.linha?" · linha "+p.linha:"")+"<br>"+
+      "UTM <b>"+p.e.toFixed(3)+" E</b> / <b>"+p.n.toFixed(3)+" N</b> · "+p.zona+p.hemi;
+    d.appendChild(co);
+    var lk=document.createElement("a");
+    lk.className="maps-link"; lk.target="_blank"; lk.rel="noopener";
+    lk.href="https://maps.apple.com/?ll="+p.lat+","+p.lon+"&q="+encodeURIComponent(p.nome);
+    lk.textContent="Abrir no Maps ›";
+    d.appendChild(lk);
+    el.appendChild(d);
+  });
+  atualizaMapa();
+}
+
+/* ---------- mapa (satélite) ---------- */
+var map=null,camSat=null,gMarc=null,mMe=null,errTile=0,nAjuste=-1;
+function semMapa(msg){
+  try{ if(map) map.remove(); }catch(e){}
+  map=null;
+  document.getElementById("mapaLeaflet").style.display="none";
+  document.getElementById("mapa").style.display="block";
+  document.getElementById("mapaNota").textContent=msg||
+    "Sem imagem de satélite aqui — mostrando o croqui em UTM. No endereço hospedado o mapa carrega normalmente.";
+  renderCroqui();
+}
+function initMapa(){
+  if(typeof L==="undefined"){ semMapa(); return; }
+  try{
+    map=L.map("mapaLeaflet",{zoomControl:true}).setView([-19.5,-47.5],4);
+    camSat=L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      {maxZoom:21,maxNativeZoom:19,attribution:"Esri, Maxar, Earthstar Geographics"});
+    camSat.on("tileerror",function(){ errTile++; if(errTile>=8) semMapa(); });
+    camSat.addTo(map);
+    gMarc=L.layerGroup().addTo(map);
+    document.getElementById("mapaLeaflet").style.display="block";
+    document.getElementById("mapa").style.display="none";
+    document.getElementById("escalaTxt").textContent="";
+    setTimeout(function(){ if(map) map.invalidateSize(); },400);
+    atualizaMapa();
+  }catch(e){ semMapa(); }
+}
+function limites(){
+  var ll=pontos.map(function(p){return [p.lat,p.lon];});
+  if(live) ll.push([live.coords.latitude,live.coords.longitude]);
+  return ll.length?L.latLngBounds(ll):null;
+}
+function centralizar(){
+  if(!map) return;
+  var b=limites(); if(!b) return;
+  if(b.getNorth()===b.getSouth()&&b.getEast()===b.getWest()) map.setView(b.getCenter(),18);
+  else map.fitBounds(b,{padding:[35,35],maxZoom:19});
+}
+function linhasDe(){
+  var m={},ord=[];
+  pontos.forEach(function(p){
+    if(!p.linha) return;
+    if(!m[p.linha]){m[p.linha]={id:p.linha,pts:[]};ord.push(m[p.linha]);}
+    m[p.linha].pts.push(p);
+  });
+  return ord;
+}
+function marcadores(){
+  if(!map||!gMarc) return;
+  gMarc.clearLayers();
+  linhasDe().forEach(function(l){
+    if(l.pts.length>1) L.polyline(l.pts.map(function(p){return [p.lat,p.lon];}),
+      {color:"#ffd400",weight:3,opacity:.95}).addTo(gMarc);
+  });
+  pontos.forEach(function(p){
+    L.circleMarker([p.lat,p.lon],{radius:7,color:"#ffffff",weight:2,
+      fillColor:"#2f7d32",fillOpacity:1})
+      .bindTooltip(p.nome,{permanent:true,direction:"top",className:"rot",offset:[0,-8]})
+      .bindPopup("<b>"+esc(p.nome)+"</b><br>"+(p.obs?esc(p.obs)+"<br>":"")+
+        p.e.toFixed(3)+" E<br>"+p.n.toFixed(3)+" N<br>"+
+        (p.alt==null?"—":p.alt.toFixed(2)+" m"))
+      .addTo(gMarc);
+  });
+  if(live){
+    var c=[live.coords.latitude,live.coords.longitude];
+    if(mMe){ mMe.setLatLng(c); }
+    else{ mMe=L.circleMarker(c,{radius:7,color:"#ffffff",weight:2,
+      fillColor:"#e08a3c",fillOpacity:1}).addTo(map); }
+    mMe.bringToFront();
+  }
+  if(nAjuste!==pontos.length){ nAjuste=pontos.length; centralizar(); }
+}
+function atualizaMapa(){ if(map) marcadores(); else renderCroqui(); }
+
+/* ---------- croqui (reserva, sem internet) ---------- */
+function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+function renderCroqui(){
+  var el=document.getElementById("mapa"), et=document.getElementById("escalaTxt");
+  var all=pontos.map(function(p){return {x:p.e,y:p.n,nome:p.nome,atual:false};});
+  if(live){
+    var u=toUTM(live.coords.latitude,live.coords.longitude);
+    all.push({x:u.e,y:u.n,nome:"",atual:true});
+  }
+  if(!all.length){el.innerHTML='<div class="empty">Sem pontos para exibir.</div>';et.textContent="";return;}
+  var W=360,H=280,pad=30;
+  var xs=[],ys=[];
+  all.forEach(function(a){xs.push(a.x);ys.push(a.y);});
+  var minx=Math.min.apply(null,xs),maxx=Math.max.apply(null,xs);
+  var miny=Math.min.apply(null,ys),maxy=Math.max.apply(null,ys);
+  var cx=(minx+maxx)/2, cy=(miny+maxy)/2;
+  var span=Math.max(maxx-minx,maxy-miny,20)*1.3;
+  var k=(Math.min(W,H)-2*pad)/span;
+  function px(x){return (W/2+(x-cx)*k).toFixed(1);}
+  function py(y){return (H/2-(y-cy)*k).toFixed(1);}
+  var s='<svg viewBox="0 0 '+W+' '+H+'" xmlns="http://www.w3.org/2000/svg">';
+  s+='<line x1="'+px(cx)+'" y1="6" x2="'+px(cx)+'" y2="'+(H-6)+'" stroke="var(--bdr)" stroke-width="1" stroke-dasharray="3 4"/>';
+  s+='<line x1="6" y1="'+py(cy)+'" x2="'+(W-6)+'" y2="'+py(cy)+'" stroke="var(--bdr)" stroke-width="1" stroke-dasharray="3 4"/>';
+  linhasDe().forEach(function(l){
+    if(l.pts.length<2) return;
+    s+='<polyline fill="none" stroke="var(--am)" stroke-width="2" points="'+
+      l.pts.map(function(p){return px(p.e)+","+py(p.n);}).join(" ")+'"/>';
+  });
+  all.forEach(function(a){
+    var X=px(a.x), Y=py(a.y);
+    if(a.atual){
+      s+='<circle cx="'+X+'" cy="'+Y+'" r="11" fill="var(--am)" opacity="0.22"/>';
+      s+='<circle cx="'+X+'" cy="'+Y+'" r="5" fill="var(--am)" stroke="#fff" stroke-width="2"/>';
+    }else{
+      s+='<circle cx="'+X+'" cy="'+Y+'" r="5" fill="var(--gr2)" stroke="#fff" stroke-width="1.5"/>';
+      s+='<text class="lbl" x="'+X+'" y="'+(parseFloat(Y)-9)+'" text-anchor="middle">'+esc(a.nome)+'</text>';
+    }
+  });
+  var cand=[1,2,5,10,20,25,50,100,200,500,1000,2000], alvo=span/4, m=cand[0];
+  cand.forEach(function(v){ if(Math.abs(v-alvo)<Math.abs(m-alvo)) m=v; });
+  var barra=m*k, x0=14, y0=H-14;
+  s+='<line x1="'+x0+'" y1="'+y0+'" x2="'+(x0+barra)+'" y2="'+y0+'" stroke="var(--mu)" stroke-width="2"/>';
+  s+='<line x1="'+x0+'" y1="'+(y0-4)+'" x2="'+x0+'" y2="'+(y0+4)+'" stroke="var(--mu)" stroke-width="2"/>';
+  s+='<line x1="'+(x0+barra)+'" y1="'+(y0-4)+'" x2="'+(x0+barra)+'" y2="'+(y0+4)+'" stroke="var(--mu)" stroke-width="2"/>';
+  s+='<text class="sb" x="'+(x0+barra/2)+'" y="'+(y0-8)+'" text-anchor="middle">'+m+' m</text>';
+  s+='<path d="M'+(W-20)+' 26 L'+(W-25)+' 38 L'+(W-20)+' 34 L'+(W-15)+' 38 Z" fill="var(--mu)"/>';
+  s+='<text class="sb" x="'+(W-20)+'" y="20" text-anchor="middle">N</text>';
+  s+='</svg>';
+  el.innerHTML=s;
+  et.textContent="≈ "+(span<1000?span.toFixed(0)+" m":(span/1000).toFixed(2)+" km")+" de extensão";
+}
+
+/* ---------- export ---------- */
+function csv(){
+  var l=["Nome;Obs;Latitude;Longitude;Altitude_m;UTM_E;UTM_N;Zona;Precisao_m;Linha;DataHora"];
+  pontos.forEach(function(p){
+    l.push([
+      p.nome, (p.obs||"").replace(/[;\r\n]/g," "),
+      p.lat.toFixed(8).replace(".",","), p.lon.toFixed(8).replace(".",","),
+      (p.alt==null?"":p.alt.toFixed(3).replace(".",",")),
+      p.e.toFixed(3).replace(".",","), p.n.toFixed(3).replace(".",","),
+      p.zona+p.hemi,
+      (p.acc==null?"":p.acc.toFixed(2).replace(".",",")),
+      p.linha||"", p.data
+    ].join(";"));
+  });
+  return l.join("\r\n");
+}
+function txt(){
+  return pontos.map(function(p){
+    return [p.nome,p.e.toFixed(3),p.n.toFixed(3),
+      (p.alt==null?"0.000":p.alt.toFixed(3)),
+      (p.obs||"").replace(/[,\r\n]/g," ")].join(",");
+  }).join("\r\n");
+}
+function kml(){
+  var x='<?xml version="1.0" encoding="UTF-8"?>\r\n<kml xmlns="http://www.opengis.net/kml/2.2">\r\n<Document>\r\n<name>Pontos GPS '+stamp()+'</name>\r\n'+
+    '<Style id="pt"><IconStyle><scale>0.9</scale><Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon></IconStyle></Style>\r\n'+
+    '<Style id="ln"><LineStyle><color>ff00d4ff</color><width>3</width></LineStyle></Style>\r\n'+
+    '<Folder><name>Pontos</name>\r\n';
+  function co(p){return p.lon.toFixed(8)+","+p.lat.toFixed(8)+","+(p.alt==null?0:p.alt.toFixed(3));}
+  pontos.forEach(function(p){
+    x+='<Placemark><name>'+esc(p.nome)+'</name><description>'+esc((p.obs||"")+" UTM "+p.e.toFixed(3)+" E "+p.n.toFixed(3)+" N "+p.zona+p.hemi)+
+      '</description><styleUrl>#pt</styleUrl><TimeStamp><when>'+p.data+'</when></TimeStamp><Point><coordinates>'+co(p)+'</coordinates></Point></Placemark>\r\n';
+  });
+  x+='</Folder>\r\n<Folder><name>Linhas</name>\r\n';
+  linhasDe().forEach(function(l){
+    if(l.pts.length<2) return;
+    x+='<Placemark><name>Linha '+l.id+'</name><styleUrl>#ln</styleUrl><LineString><tessellate>1</tessellate><coordinates>'+
+      l.pts.map(co).join(" ")+'</coordinates></LineString></Placemark>\r\n';
+  });
+  return x+'</Folder>\r\n</Document>\r\n</kml>';
+}
+function stamp(){
+  var d=new Date(), p=function(n){return String(n).padStart(2,"0");};
+  return d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+"_"+p(d.getHours())+p(d.getMinutes());
+}
+function fallback(titulo,conteudo){
+  document.getElementById("dlgTitle").textContent=titulo;
+  document.getElementById("dlgTxt").value=conteudo;
+  document.getElementById("dlg").showModal();
+}
+function mime(ext){return ext==="csv"?"text/csv;charset=utf-8":ext==="kml"?"application/vnd.google-earth.kml+xml":"text/plain;charset=utf-8";}
+function viaAncora(nome,blob){
+  try{
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement("a");
+    a.href=url; a.download=nome; a.rel="noopener";
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){
+      if(a.parentNode)a.parentNode.removeChild(a);
+      URL.revokeObjectURL(url);
+    },5000);
+    return true;
+  }catch(e){return false;}
+}
+function exportar(ext){
+  if(!pontos.length){erro("Nenhum ponto para exportar.");return;}
+  var conteudo=(ext==="csv"?csv():ext==="kml"?kml():txt());
+  var nome="pontos_"+stamp()+"."+ext;
+  var bom=(ext==="kml"?"":"\ufeff");
+  var blob=new Blob([bom+conteudo],{type:mime(ext)});
+  function plano_b(){ if(!viaAncora(nome,blob)) fallback(nome+" (copie o conteúdo)",conteudo); }
+
+  /* 1) dentro do Claude */
+  if(downloads){
+    downloads.save({filename:nome,data:bom+conteudo}).then(function(){
+      info("Arquivo "+nome+" gerado.");
+    }).catch(function(e){
+      if(e && e.code==="declined") return;
+      plano_b();
+    });
+    return;
+  }
+  /* 2) folha de compartilhamento do iOS: Salvar em Arquivos, WhatsApp, e-mail */
+  try{
+    if(navigator.share && navigator.canShare){
+      var arq=new File([blob],nome,{type:mime(ext)});
+      if(navigator.canShare({files:[arq]})){
+        navigator.share({files:[arq],title:nome}).then(function(){
+          info("Arquivo "+nome+" gerado.");
+        }).catch(function(e){
+          if(e && e.name==="AbortError") return;
+          plano_b();
+        });
+        return;
+      }
+    }
+  }catch(e){}
+  /* 3) download direto */
+  if(viaAncora(nome,blob)){ info("Arquivo "+nome+" gerado."); return; }
+  fallback(nome+" (copie o conteúdo)",conteudo);
+}
+
+/* ---------- init ---------- */
+load(); render();
+document.getElementById("fNome").placeholder=proximoNome();
+document.getElementById("btnCentro").onclick=centralizar;
+document.getElementById("btnCap").onclick=capturar;
+document.getElementById("btnAuto").onclick=function(){ if(autoTimer) paraAuto(); else iniciaAuto(); };
+document.getElementById("btnKml").onclick=function(){exportar("kml");};
+document.getElementById("btnCsv").onclick=function(){exportar("csv");};
+document.getElementById("btnTxt").onclick=function(){exportar("txt");};
+document.getElementById("btnLimpar").onclick=function(){
+  if(!pontos.length)return;
+  if(autoTimer) paraAuto();
+  if(confirm("Apagar todos os "+pontos.length+" pontos? Exporte antes.")){pontos=[];save();render();}
+};
+document.getElementById("dlgClose").onclick=function(){document.getElementById("dlg").close();};
+document.getElementById("dlgCopy").onclick=function(){
+  var t=document.getElementById("dlgTxt"); t.select();
+  try{document.execCommand("copy");}catch(e){}
+  if(navigator.clipboard){navigator.clipboard.writeText(t.value).catch(function(){});}
+};
+initMapa();
+startGPS();
+if("serviceWorker" in navigator && location.protocol.indexOf("http")===0){
+  try{ navigator.serviceWorker.register("sw.js").catch(function(){}); }catch(e){}
+}
+if(window.claude && claude.use){
+  claude.use("downloads").then(function(d){downloads=d;}).catch(function(){});
+}
+})();
+</script>
+</body>
+</html>
