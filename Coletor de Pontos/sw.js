@@ -1,5 +1,5 @@
 /* Service worker - app e mapa funcionam offline em campo */
-var CACHE = "tophofarm-v14";
+var CACHE = "tophofarm-v15";
 var TILES = "tiles-esri-v1";   /* mapa baixado pelo usuário; não é apagado nas atualizações */
 var ARQS = ["./", "./index.html", "./manifest.json", "./icon.png", "./icon-maskable.png", "./logo.png", "./logo-splash.png",
   "./lib/leaflet.min.css", "./lib/leaflet.min.js", "./lib/jszip.min.js",
