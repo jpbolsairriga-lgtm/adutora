@@ -1,5 +1,5 @@
 /* Service worker - cache do app para uso offline em campo */
-var CACHE = "pontos-gps-v7";
+var CACHE = "pontos-gps-v8";
 var ARQS = ["./", "./index.html", "./manifest.json", "./icon.png", "./icon-maskable.png", "./logo.png",
   "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css",
   "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"];

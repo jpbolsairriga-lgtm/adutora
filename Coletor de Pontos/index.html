@@ -87,6 +87,17 @@ button[disabled]{opacity:.45}
 .leaflet-control-attribution{font-size:9px}
 #mapa .lbl{font-size:9px;font-weight:700;fill:var(--tx);font-family:ui-monospace,Menlo,monospace}
 #mapa .sb{font-size:9px;fill:var(--mu);font-weight:600}
+body.coleta{overflow:hidden}
+body.coleta #cardMapa{position:fixed;left:0;top:0;right:0;bottom:0;z-index:100;margin:0;border-radius:0;border:none;
+  display:flex;flex-direction:column;padding:calc(.6rem + env(safe-area-inset-top,0px)) .6rem calc(.6rem + env(safe-area-inset-bottom,0px))}
+body.coleta #cardMapa .card-top,body.coleta #cardMapa .note,body.coleta #cardMapa .mapbtns{display:none}
+body.coleta #mapaLeaflet{flex:1;height:auto;min-height:0}
+body.coleta #mapa{flex:1;overflow:auto}
+.hud,.hudbar{display:none}
+body.coleta .hud{display:grid;grid-template-columns:1.3fr 1.3fr .8fr;gap:.4rem;margin-bottom:.5rem}
+body.coleta .hudbar{display:flex;gap:.5rem;margin-top:.5rem}
+.hud .kv{padding:.4rem .6rem}
+.hud .kv .v{font-size:.88rem}
 .maps-link{display:inline-block;margin-top:.4rem;font-size:.76rem;font-weight:700;color:var(--gr1);text-decoration:none}
 .msg{font-size:.82rem;border-radius:8px;padding:.65rem .85rem;margin-bottom:.8rem;line-height:1.4}
 .msg.err{background:#ffebee;border-left:4px solid var(--rd);color:#7f0000}
@@ -160,15 +171,24 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.9rem 1rem calc(.
   <div class="note" id="autoNote">Grava um ponto a cada intervalo e liga os pontos com uma linha; no modo Área, ao parar o polígono é fechado e a área é calculada. <b>Deixe o app aberto e em primeiro plano</b>: no iPhone, ao minimizar ou bloquear a tela, o sistema pausa o GPS e a coleta.</div>
 </div>
 
-<div class="card">
+<div class="card" id="cardMapa">
+  <div class="hud">
+    <div class="kv"><div class="k" id="hudK1">Área</div><div class="v" id="hudV1">—</div></div>
+    <div class="kv"><div class="k" id="hudK2">Perímetro</div><div class="v" id="hudV2">—</div></div>
+    <div class="kv"><div class="k">Pontos</div><div class="v" id="hudV3">0</div></div>
+  </div>
   <div class="card-top">
     <p class="sec-title">Mapa</p>
     <span class="count" id="escalaTxt"></span>
   </div>
   <div id="mapaLeaflet"></div>
   <div id="mapa"></div>
-  <div class="btns" style="margin-top:.7rem">
+  <div class="btns mapbtns" style="margin-top:.7rem">
     <button id="btnCentro">Centralizar</button>
+  </div>
+  <div class="hudbar">
+    <button id="btnCentro2" style="flex:1">Centralizar</button>
+    <button id="btnStop2" class="btn-main btn-stop" style="flex:2;width:auto">Parar captura</button>
   </div>
   <div class="note" id="mapaNota">Imagem de satélite Esri · ponto laranja = posição atual · linha amarela = captura automática.</div>
 </div>
@@ -380,12 +400,17 @@ function iniciaAuto(){
   var b=document.getElementById("btnAuto");
   b.textContent="Parar captura automática"; b.classList.add("btn-stop");
   autoTimer=setInterval(checaAuto,500);
+  document.body.classList.add("coleta");
+  window.scrollTo(0,0);
+  setTimeout(function(){ if(map){ map.invalidateSize(); centralizar(); } atualizaMapa(); },80);
   checaAuto();
 }
 function paraAuto(){
   clearInterval(autoTimer); autoTimer=null;
   document.getElementById("fInt").disabled=false;
   document.getElementById("fTipo").disabled=false;
+  document.body.classList.remove("coleta");
+  setTimeout(function(){ if(map){ map.invalidateSize(); centralizar(); } },80);
   var b=document.getElementById("btnAuto");
   b.textContent="Iniciar captura automática"; b.classList.remove("btn-stop");
   var ls=linhasDe().filter(function(l){return l.id===linhaAtual;})[0];
@@ -523,8 +548,14 @@ function pintaMedicoes(){
 function marcadores(){
   if(!map||!gMarc) return;
   gMarc.clearLayers();
+  var ativa=autoTimer?linhaAtual:null, act=null;
   linhasDe().forEach(function(l){
     var ll=l.pts.map(function(p){return [p.lat,p.lon];});
+    if(l.id===ativa){
+      act=l;
+      if(ll.length>1) L.polyline(ll,{color:"#ffd400",weight:3,opacity:.95}).addTo(gMarc);
+      return;
+    }
     if(l.tipo==="area"&&ll.length>=3)
       L.polygon(ll,{color:"#ffd400",weight:3,fillColor:"#ffd400",fillOpacity:.22})
         .bindTooltip(nomeMed(l)+" · "+fmtArea(medida(l).area),{sticky:true}).addTo(gMarc);
@@ -545,6 +576,23 @@ function marcadores(){
     else{ mMe=L.circleMarker(c,{radius:7,color:"#ffffff",weight:2,
       fillColor:"#e08a3c",fillOpacity:1}).addTo(map); }
     mMe.bringToFront();
+    /* prévia: a posição atual entra como vértice provisório (tracejado) */
+    if(act&&act.pts.length){
+      var u=toUTM(c[0],c[1]), first=act.pts[0], last=act.pts[act.pts.length-1];
+      var vis=act.pts.concat([{e:u.e,n:u.n}]);
+      if(act.tipo==="area"){
+        if(act.pts.length>=2)
+          L.polygon(act.pts.map(function(p){return [p.lat,p.lon];}).concat([c]),
+            {stroke:false,fillColor:"#ffd400",fillOpacity:.25}).addTo(gMarc);
+        L.polyline([[last.lat,last.lon],c,[first.lat,first.lon]],
+          {color:"#ffffff",weight:3,dashArray:"6 6"}).addTo(gMarc);
+        prevMed=medida({tipo:"area",pts:vis});
+      }else{
+        L.polyline([[last.lat,last.lon],c],{color:"#ffffff",weight:3,dashArray:"6 6"}).addTo(gMarc);
+        prevMed=medida({tipo:"linha",pts:vis});
+      }
+      mMe.bringToFront();
+    }
   }
   /* só enquadra na 1ª vez; depois respeita o zoom do usuário e apenas desloca se o ponto sair da tela */
   var ant=nAjuste; nAjuste=pontos.length;
@@ -554,7 +602,22 @@ function marcadores(){
     if(!map.getBounds().pad(-0.1).contains(ll)) map.panTo(ll);
   }
 }
-function atualizaMapa(){ if(map) marcadores(); else renderCroqui(); }
+var prevMed=null;
+function pintaHud(){
+  if(!autoTimer) return;
+  var area=(linhaTipo==="area"), m=prevMed, n=nAuto();
+  document.getElementById("hudK1").textContent=area?"Área agora":"Comprimento";
+  document.getElementById("hudK2").textContent=area?"Perímetro":"Precisão GPS";
+  document.getElementById("hudV3").textContent=n;
+  if(area){
+    document.getElementById("hudV1").innerHTML=(m&&n>=2)?fmtNum(m.area/10000,4)+" ha<br><span style='font-size:.7rem;font-weight:600'>"+fmtNum(m.area,0)+" m²</span>":"—";
+    document.getElementById("hudV2").textContent=m?fmtNum(m.per,0)+" m":"—";
+  }else{
+    document.getElementById("hudV1").textContent=m?fmtNum(m.per,1)+" m":"—";
+    document.getElementById("hudV2").textContent=(live&&live.coords.accuracy!=null)?"± "+live.coords.accuracy.toFixed(1)+" m":"—";
+  }
+}
+function atualizaMapa(){ prevMed=null; if(map) marcadores(); else renderCroqui(); pintaHud(); }
 
 /* ---------- croqui (reserva, sem internet) ---------- */
 function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
@@ -724,10 +787,13 @@ load(); render();
 document.getElementById("fNome").placeholder=proximoNome();
 document.getElementById("btnCentro").onclick=centralizar;
 document.getElementById("btnCap").onclick=capturar;
-document.getElementById("btnAuto").onclick=function(){
+function alternaAuto(){
   if(!autoTimer){ iniciaAuto(); return; }
   if(confirm("Parar a captura automática?")) paraAuto();
-};
+}
+document.getElementById("btnAuto").onclick=alternaAuto;
+document.getElementById("btnStop2").onclick=alternaAuto;
+document.getElementById("btnCentro2").onclick=centralizar;
 document.getElementById("btnKml").onclick=function(){exportar("kml");};
 document.getElementById("btnCsv").onclick=function(){exportar("csv");};
 document.getElementById("btnTxt").onclick=function(){exportar("txt");};
