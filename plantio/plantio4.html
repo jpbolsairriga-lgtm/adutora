@@ -203,7 +203,7 @@ body.layout-lateral #status{grid-area:status;}
 /* v4.63: fundo neutro pro mapa quando "Ocultar Imagem Online" está ativo — sem isso, fora da área
    da ortofoto (ou se nem houver ortofoto) o mapa ficava branco/quebrado em vez de só "vazio" de
    propósito. */
-#map.map-sem-online{background:#1a2e22;}
+#map.map-sem-online{background:var(--cor-fundo-mapa,#000000);}
 #infoFloat{position:absolute;top:10px;right:10px;width:220px;background:var(--panel-bg-float);border:1px solid var(--panel-border);border-radius:10px;box-shadow:0 6px 22px rgba(0,0,0,.5);z-index:900;color:var(--panel-text);}
 #infoFloat .ifhead{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;cursor:pointer;}
 #infoFloat .ifhead span{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--panel-text-dim);}
@@ -359,7 +359,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v4.99 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v4.100 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -395,6 +395,16 @@ body.layout-lateral #status{grid-area:status;}
             </div>
             <div id="keyStatus" style="font-size:10px;color:var(--panel-text-dim);">Usando ESRI (sem chave)</div>
             <button class="rbtn-sm" id="btnImagemOnline" style="margin-top:2px;" onclick="alternarImagemOnline()" title="Liga/desliga a imagem de satélite online (ESRI ou Google) no mapa 2D E na Vista 3D — pra ver SÓ a ortofoto que você importou, sem a foto online por baixo/ao redor competindo visualmente com ela.">&#128225; Ocultar Imagem Online</button>
+            <div id="grpCorFundoMapa" style="display:none;margin-top:6px;">
+              <div style="font-size:10px;color:var(--panel-text-dim);margin-bottom:3px;">Cor de fundo do mapa</div>
+              <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;">
+                <button class="rbtn-sm" style="padding:2px 8px;min-width:0;" onclick="definirCorFundoMapa('#000000')" title="Preto (padrão do AutoCAD)"><span style="display:inline-block;width:12px;height:12px;background:#000;border:1px solid #888;vertical-align:middle;"></span></button>
+                <button class="rbtn-sm" style="padding:2px 8px;min-width:0;" onclick="definirCorFundoMapa('#212830')" title="Cinza-azulado escuro (AutoCAD moderno)"><span style="display:inline-block;width:12px;height:12px;background:#212830;border:1px solid #888;vertical-align:middle;"></span></button>
+                <button class="rbtn-sm" style="padding:2px 8px;min-width:0;" onclick="definirCorFundoMapa('#4a4a4a')" title="Cinza"><span style="display:inline-block;width:12px;height:12px;background:#4a4a4a;border:1px solid #888;vertical-align:middle;"></span></button>
+                <button class="rbtn-sm" style="padding:2px 8px;min-width:0;" onclick="definirCorFundoMapa('#ffffff')" title="Branco"><span style="display:inline-block;width:12px;height:12px;background:#fff;border:1px solid #888;vertical-align:middle;"></span></button>
+                <input type="color" id="inputCorFundoMapa" value="#000000" oninput="definirCorFundoMapa(this.value)" title="Escolher outra cor" style="width:30px;height:24px;padding:0;border:1px solid var(--panel-border);background:none;cursor:pointer;">
+              </div>
+            </div>
           </div>
         </div>
         <div class="rgroup-title">Chave Google Maps</div>
@@ -3481,6 +3491,8 @@ body.layout-lateral #status{grid-area:status;}
 //     canais. Agora elas descem juntas pelas calhas naturais do relevo e atravessam poças.
 // (3) Rastro: cada gota carrega K=18 pontos (esmaecendo da cabeça pra cauda, mistura aditiva) que
 //     acompanham o movimento e, quando a gota sai da malha, encolhem até sumir (estado 3).
+// v4.100: com "Ocultar Imagem Online" ativo, aparece "Cor de fundo do mapa" (atalhos preto/cinza-
+// azulado/cinza/branco + seletor livre, lembrado em localStorage) — padrão preto, igual AutoCAD.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -3689,17 +3701,29 @@ let googleLayer = null;
 // criando costura visível na borda). Persistido (como o layout do ribbon) — some/aparece igual em
 // toda sessão futura até o usuário mudar de novo.
 let _mostrarImagemOnline = localStorage.getItem('mostrarImagemOnline') !== 'false';
+// v4.100: com a imagem online oculta, o fundo do mapa era um verde-escuro fixo — agora é uma cor
+// à escolha (padrão preto, como o AutoCAD), lembrada entre sessões.
+let _corFundoMapa = localStorage.getItem('corFundoMapa') || '#000000';
+function definirCorFundoMapa(cor) {
+  _corFundoMapa = cor;
+  try { localStorage.setItem('corFundoMapa', cor); } catch(e) {}
+  const mapEl = document.getElementById('map');
+  if(mapEl) mapEl.style.setProperty('--cor-fundo-mapa', cor);
+  const inp = document.getElementById('inputCorFundoMapa'); if(inp && inp.value !== cor) inp.value = cor;
+}
 function alternarImagemOnline() {
   _mostrarImagemOnline = !_mostrarImagemOnline;
   localStorage.setItem('mostrarImagemOnline', String(_mostrarImagemOnline));
   _aplicarVisibilidadeImagemOnline();
   setStatus(_mostrarImagemOnline
     ? 'Imagem online (ESRI/Google) voltou a aparecer no mapa.'
-    : 'Imagem online ocultada — agora só a ortofoto importada (se houver), curvas e linhas aparecem. Fora da área da ortofoto o mapa fica em branco de propósito.', 'info');
+    : 'Imagem online ocultada — agora só a ortofoto importada (se houver), curvas e linhas aparecem. Fora da área da ortofoto aparece só a cor de fundo (escolha em "Cor de fundo do mapa").', 'info');
 }
 function _aplicarVisibilidadeImagemOnline() {
   const mapEl = document.getElementById('map');
   if(mapEl) mapEl.classList.toggle('map-sem-online', !_mostrarImagemOnline);
+  const grpCor = document.getElementById('grpCorFundoMapa'); if(grpCor) grpCor.style.display = _mostrarImagemOnline ? 'none' : '';
+  definirCorFundoMapa(_corFundoMapa);
   if(_mostrarImagemOnline) {
     if(googleLayer) { if(!map.hasLayer(googleLayer)) googleLayer.addTo(map); }
     else { if(!map.hasLayer(esriLayer)) esriLayer.addTo(map); if(!map.hasLayer(esriLabels)) esriLabels.addTo(map); }
