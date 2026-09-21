@@ -147,7 +147,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.9rem 1rem calc(.
       <div class="kv"><div class="v" id="autoN">0</div></div></div>
   </div>
   <button class="btn-main" id="btnAuto">Iniciar captura automática</button>
-  <div class="note" id="autoNote">Grava um ponto a cada intervalo e liga os pontos com uma linha. Mantenha a tela ligada e o app aberto durante a coleta.</div>
+  <div class="note" id="autoNote">Grava um ponto a cada intervalo e liga os pontos com uma linha. <b>Deixe o app aberto e em primeiro plano</b>: no iPhone, ao minimizar ou bloquear a tela, o sistema pausa o GPS e a coleta.</div>
 </div>
 
 <div class="card">
@@ -269,7 +269,7 @@ function startGPS(){
     return;
   }
   navigator.geolocation.watchPosition(function(p){
-    live=p; pintaLive();
+    live=p; pintaLive(); checaAuto();
     var m=document.getElementById("msg");
     if(m.querySelector(".msg.err")) m.innerHTML="";
   },function(e){
@@ -322,27 +322,47 @@ function proximaLinha(){
   var max=0; pontos.forEach(function(p){ if(p.linha&&p.linha>max)max=p.linha; });
   return max+1;
 }
-function tickAuto(){
+var autoSeg=5, autoProx=0, autoUlt=0, autoAviso="";
+function nAuto(){ return pontos.filter(function(p){return p.linha===linhaAtual;}).length; }
+function checaAuto(){
+  if(!autoTimer) return;
+  var agora=Date.now();
+  if(agora<autoProx) return;
   if(!live){ document.getElementById("autoNote").textContent="Aguardando posição do GPS…"; return; }
+  /* não grava posição velha (GPS parado/app em segundo plano) */
+  if(agora-live.timestamp>autoSeg*1000+5000){
+    document.getElementById("autoNote").textContent="GPS sem atualização há "+Math.round((agora-live.timestamp)/1000)+" s — aguardando…";
+    return;
+  }
+  var gap=autoUlt?(agora-autoUlt)/1000:0;
+  if(gap>autoSeg*3+2) autoAviso=" · pausou "+Math.round(gap)+" s (app em segundo plano?)";
   salvaPonto(live.coords,linhaAtual,true);
-  var n=pontos.filter(function(p){return p.linha===linhaAtual;}).length;
-  document.getElementById("autoN").textContent=n;
-  document.getElementById("autoNote").textContent="Capturando… último ponto às "+new Date().toLocaleTimeString("pt-BR");
+  autoUlt=agora;
+  /* agenda pelo relógio, sem acumular atraso */
+  autoProx=agora+autoSeg*1000;
+  document.getElementById("autoN").textContent=nAuto();
+  document.getElementById("autoNote").textContent="Capturando… último ponto às "+new Date().toLocaleTimeString("pt-BR")+autoAviso;
+  autoAviso="";
 }
 function pedeWake(){
-  try{ if(navigator.wakeLock) navigator.wakeLock.request("screen").then(function(w){wake=w;}).catch(function(){}); }catch(e){}
+  try{
+    if(navigator.wakeLock) navigator.wakeLock.request("screen").then(function(w){
+      wake=w; w.addEventListener("release",function(){ if(wake===w) wake=null; });
+    }).catch(function(){});
+  }catch(e){}
 }
 function iniciaAuto(){
   var seg=parseFloat(document.getElementById("fInt").value);
   if(!(seg>=1)){erro("Informe um intervalo de pelo menos 1 segundo.");return;}
+  autoSeg=seg; autoProx=0; autoUlt=0; autoAviso="";
   linhaAtual=proximaLinha();
   document.getElementById("autoN").textContent="0";
   document.getElementById("fInt").disabled=true;
   var b=document.getElementById("btnAuto");
   b.textContent="Parar captura automática"; b.classList.add("btn-stop");
   pedeWake();
-  tickAuto();
-  autoTimer=setInterval(tickAuto,seg*1000);
+  autoTimer=setInterval(checaAuto,500);
+  checaAuto();
 }
 function paraAuto(){
   clearInterval(autoTimer); autoTimer=null;
@@ -354,7 +374,8 @@ function paraAuto(){
   linhaAtual=null;
 }
 document.addEventListener("visibilitychange",function(){
-  if(autoTimer && document.visibilityState==="visible") pedeWake();
+  if(!autoTimer) return;
+  if(document.visibilityState==="visible"){ pedeWake(); checaAuto(); }
 });
 
 /* ---------- render ---------- */
