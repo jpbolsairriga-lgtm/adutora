@@ -359,7 +359,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.04 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.05 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -601,8 +601,8 @@ body.layout-lateral #status{grid-area:status;}
             <button class="rbtn-sm ok finish" id="btnFinGuia" onclick="finalizarGuia()">&#10003; Finalizar Guia</button>
             <button class="rbtn-sm clr" id="btnCancelarGuia" style="display:none;" onclick="cancelarGuia()">&#10005; Cancelar Guia</button>
           </div>
-          <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--panel-text);cursor:pointer;" title="Com isso marcado, 'Desenhar Guia' e 'Gerar Linhas de Plantio' NÃO apagam as linhas já geradas — a nova guia (outra direção, ex. pra parte do talhão que ficou torta) soma linhas em cima das existentes, em vez de substituir. Útil pra desenhar 2 sentidos de plantio no mesmo talhão antes de tratar onde eles se cruzam.">
-            <input type="checkbox" id="chkSomarGuia"> Somar 2ª guia (não apaga as linhas já geradas)
+          <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--panel-text);cursor:pointer;" title="Com isso marcado, 'Desenhar Guia' e 'Gerar Linhas de Plantio' NÃO apagam as linhas já geradas — a nova guia (outra direção, ex. pra parte do talhão que ficou torta) soma linhas em cima das existentes, em vez de substituir. Útil pra desenhar 2 sentidos de plantio no mesmo talhão antes de tratar onde eles se cruzam. Com um talhão travado selecionado, clique direto em 'Desenhar Guia' — não precisa de 'Editar Linhas' antes, isso já acontece sozinho.">
+            <input type="checkbox" id="chkSomarGuia" onchange="_onToggleSomarGuia(this)"> Somar 2ª guia (não apaga as linhas já geradas)
           </label>
           <div>
             <div id="rowGuiaLen" style="display:none;" class="rreadout"><span class="l">Comprimento:</span><span class="v" id="iGuiaLen">—</span></div>
@@ -3529,6 +3529,11 @@ body.layout-lateral #status{grid-area:status;}
 // marca o checkbox → "Editar Linhas" → "Desenhar Guia" (guia B, outra direção) → "Gerar Linhas de
 // Plantio" (soma) → trava de novo. O tratamento automático da faixa de embolamento fica pro próximo
 // passo.
+// v5.05: usuário marcou "Somar 2ª guia" e foi procurar "Editar Linhas" (aba Carreador) achando que
+// precisava — instrução errada minha no chat, não bug: iniciarGuia() já ativa pra edição sozinha o
+// talhão selecionado quando "Desenhar Guia" é clicado direto, sem precisar de "Editar Linhas" antes
+// (comportamento já existente, testado em test_somar_guia_sem_editar.js). Novo: onchange no checkbox
+// (_onToggleSomarGuia) avisa isso na hora, no status, quando marcado com um talhão já selecionado.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -4258,6 +4263,19 @@ document.addEventListener('click', e => {
     if(box) box.style.display = 'none';
   }
 });
+
+// v5.05: usuário marcou "Somar 2ª guia" com um talhão travado já selecionado e foi procurar
+// "Editar Linhas" (aba Carreador) achando que precisava clicar nele antes de desenhar a 2ª guia —
+// não precisa: iniciarGuia() (abaixo) já ativa esse talhão pra edição sozinha quando "Desenhar Guia"
+// é clicado direto (`if(talhaoSelecionadoUid !== null && polyPts.length < 3) ativarTalhaoParaEdicao();`,
+// já existente desde muito antes do checkbox). O problema foi só instrução minha (no chat) mandando
+// clicar em "Editar Linhas" à toa. Esse handler avisa na hora, no status, qual é o próximo passo de
+// verdade — sem precisar caçar botão em outra aba.
+function _onToggleSomarGuia(el) {
+  if(el.checked && talhaoSelecionadoUid !== null) {
+    setStatus('OK — agora é só clicar em "Desenhar Guia" (nesta aba) pra traçar a 2ª direção. Não precisa de "Editar Linhas" antes, isso já acontece sozinho.', 'ok');
+  }
+}
 
 // ── Linha Guia ────────────────────────────────────────────────────────────────
 function setModoGuia(m) {
