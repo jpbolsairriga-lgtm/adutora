@@ -359,7 +359,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.03 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.04 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -601,6 +601,9 @@ body.layout-lateral #status{grid-area:status;}
             <button class="rbtn-sm ok finish" id="btnFinGuia" onclick="finalizarGuia()">&#10003; Finalizar Guia</button>
             <button class="rbtn-sm clr" id="btnCancelarGuia" style="display:none;" onclick="cancelarGuia()">&#10005; Cancelar Guia</button>
           </div>
+          <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--panel-text);cursor:pointer;" title="Com isso marcado, 'Desenhar Guia' e 'Gerar Linhas de Plantio' NÃO apagam as linhas já geradas — a nova guia (outra direção, ex. pra parte do talhão que ficou torta) soma linhas em cima das existentes, em vez de substituir. Útil pra desenhar 2 sentidos de plantio no mesmo talhão antes de tratar onde eles se cruzam.">
+            <input type="checkbox" id="chkSomarGuia"> Somar 2ª guia (não apaga as linhas já geradas)
+          </label>
           <div>
             <div id="rowGuiaLen" style="display:none;" class="rreadout"><span class="l">Comprimento:</span><span class="v" id="iGuiaLen">—</span></div>
             <div class="rhint">&#9995; Arraste a linha (fora dos vértices) para mover a guia inteira</div>
@@ -3515,6 +3518,17 @@ body.layout-lateral #status{grid-area:status;}
 // cortarNoAnguloDaGuia() + confirmarDivisao() em sequência — cria o carreador e divide o talhão na
 // quina com 1 clique. Os 2 botões antigos continuam disponíveis (agora rotulado "Cortar no Ângulo
 // (ajustar antes)") pra quem quiser arrastar os pontos do corte antes de confirmar.
+// v5.04: v5.03 ainda não era isso — usuário esclareceu: quer desenhar DUAS guias independentes
+// (cada uma com seu próprio offset/direção) no MESMO talhão, sem uma apagar a outra, pra depois
+// (próximo passo, ainda não implementado) tratar automaticamente a faixa onde as duas franjas de
+// linha se cruzam ("embolamento") como carreador. Esse passo: novo checkbox "Somar 2ª guia (não
+// apaga as linhas já geradas)" no painel Guia & Linhas de Plantio. Marcado, `iniciarGuia()` e o modo
+// simples de `gerarLinhas()` pulam o `limparLinhas()` que sempre rodava antes de desenhar/gerar —
+// como a geração em si já usa `linhas.push` (nunca substituição), a guia nova soma por cima da(s)
+// já geradas em vez de apagá-las. Fluxo: desenha guia A, gera, trava talhão → seleciona talhão →
+// marca o checkbox → "Editar Linhas" → "Desenhar Guia" (guia B, outra direção) → "Gerar Linhas de
+// Plantio" (soma) → trava de novo. O tratamento automático da faixa de embolamento fica pro próximo
+// passo.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -4263,7 +4277,12 @@ function iniciarGuia() {
     }
     if(!turfPoly) { setStatus('Desenhe o contorno primeiro ou selecione um talhão.', 'err'); return; }
   }
-  limparGuia(); limparLinhas();
+  // v5.04: com "Somar 2ª guia" marcado, NÃO apaga as linhas já geradas — só limpa o traço da guia
+  // em si (limparGuia), deixando a próxima "Gerar Linhas de Plantio" somar em cima das existentes
+  // (linhas.push, não substituição) em vez de recomeçar do zero. Pra desenhar 2 sentidos de plantio
+  // no mesmo talhão (uma guia pra cada direção) antes de tratar a faixa onde eles se cruzam.
+  limparGuia();
+  if(!$('chkSomarGuia').checked) limparLinhas();
   modo = 'guide';
   map.getContainer().style.cursor = 'crosshair';
   $('btnGuia').classList.add('active');
@@ -5033,7 +5052,8 @@ function gerarLinhas() {
   // ── Modo simples ───────────────────────────────────────────────────────────
   if(!turfPoly || !turfBound) { setStatus('Desenhe o contorno primeiro.', 'err'); return; }
 
-  limparLinhas();
+  const _somarGuia = $('chkSomarGuia').checked;
+  if(!_somarGuia) limparLinhas();
   const spacing = parseFloat($('espac').value) || 12;
   const spacingKm = spacing / 1000;
   const cor = $('corLinha').value;
@@ -5220,11 +5240,15 @@ function gerarLinhas() {
   }
 
   if(count === 0) { setStatus('Nenhuma linha gerada. Verifique se a guia cruza o talhão.', 'err'); return; }
-  $('iLinhas').textContent = count;
+  // Com "Somar 2ª guia" marcado, `count` só conta as linhas DESSA geração — mas linhas[] já tem as
+  // da guia anterior somadas junto (não foi limpo acima), então o total exibido/salvo é linhas.length,
+  // não `count` sozinho (senão o rótulo mostraria só a 2ª guia, escondendo a 1ª que continua no mapa).
+  const countTotal = linhas.length;
+  $('iLinhas').textContent = countTotal;
   $('iEspac').textContent = spacing + ' m';
   corLinhaAtual = cor;
   spacingAtual = spacing;
-  countLinhasAtual = count;
+  countLinhasAtual = countTotal;
   limparGuia();
   // Metros lineares totais
   let metrosLin = 0;
@@ -5235,13 +5259,13 @@ function gerarLinhas() {
   metrosLinAtual = metrosLin;
   const ha = areaHa(polyPts);
   areaHaAtual = ha;
-  mostrarLabel(ha, spacing, count, metrosLin);
+  mostrarLabel(ha, spacing, countTotal, metrosLin);
   // Aguarda decisão do usuário: classificar declividade, travar ou redesenhar
   polyMarkers.forEach(m => m.dragging && m.dragging.disable());
   $('btnTravarTalhao').style.display = 'flex';
   $('btnRedesenharLinhas').style.display = 'flex';
   $('divDeclivAtivo').style.display = '';
-  setStatus(`${count} linhas geradas.${_avisoCurvatura()} Classifique a declividade, trave ou redesenhe.`, 'ok');
+  setStatus(`${count} linhas geradas` + (_somarGuia && countTotal > count ? ` (+ ${countTotal - count} da guia anterior, mantidas)` : '') + `.${_avisoCurvatura()} Classifique a declividade, trave ou redesenhe.`, 'ok');
 }
 
 // Mensagem opcional quando o offset da guia precisou cortar/pular trechos por curvatura fechada
