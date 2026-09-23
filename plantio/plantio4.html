@@ -359,7 +359,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.02 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.03 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -562,7 +562,8 @@ body.layout-lateral #status{grid-area:status;}
               <button class="rbtn-sm clr" id="btnCancelarCarreadorLinha" style="display:none;" onclick="cancelarCarreadorDeLinha()">&#10005; Cancelar</button>
             </div>
             <div class="rcol">
-              <button class="rbtn-sm warn" id="btnCortarAngulo" style="display:none;" onclick="cortarNoAnguloDaGuia()">&#8961; Cortar no Ângulo da Guia</button>
+              <button class="rbtn c-purple" id="btnCarreadorQuinaGuia" style="display:none;" onclick="criarCarreadorNaQuinaDaGuia()" title="Atalho de 1 clique pra guia Polilinha com quebra (2 direções): acha a quina, posiciona o corte alinhado à bissetriz E já confirma — cria o carreador e divide o talhão ali, sem passos separados."><span class="ico">&#8961;</span><span class="lbl">Carreador na Quina da Guia</span></button>
+              <button class="rbtn-sm warn" id="btnCortarAngulo" style="display:none;" onclick="cortarNoAnguloDaGuia()" title="Só posiciona o corte na quina, sem confirmar — pra quem quer arrastar/ajustar antes de criar o carreador (o atalho acima já faz tudo de uma vez)">&#8961; Cortar no Ângulo (ajustar antes)</button>
               <button class="rbtn-sm ok" id="btnFinDivisao" style="display:none;" onclick="finalizarDivisaoLinha()">&#10003; Finalizar Linha</button>
               <div id="rowDivisaoLen" style="display:none;" class="rreadout"><span class="l">Comprimento:</span><span class="v" id="iDivisaoLen">—</span></div>
               <button class="rbtn-sm ok" id="btnConfDivisao" style="display:none;" onclick="confirmarDivisao()">&#10003; Confirmar Divisão</button>
@@ -3507,6 +3508,13 @@ body.layout-lateral #status{grid-area:status;}
 // talhão"). Novo: iniciarDivisao(tipo) agora aceita 'dividir' (padrão) ou 'carreadorLivre',
 // reaproveitando o mesmo traço livre dos dois modos; _executarCarreadorLivre/confirmarCarreadorLivre
 // fazem o recorte (reaproveita _clipLinhaForaDoCarreador).
+// v5.03: revendo o vídeo com mais calma — a "Matação" de verdade é a guia em modo Polilinha com uma
+// quebra (2 direções) + o corte automático na quina (bissetriz), que o app já tinha desde a v3.17
+// ("Cortar no Ângulo da Guia" + "Confirmar Divisão", em 2 passos manuais). Pedido do usuário: juntar
+// os 2 passos num só. Novo botão "Carreador na Quina da Guia" (criarCarreadorNaQuinaDaGuia) chama
+// cortarNoAnguloDaGuia() + confirmarDivisao() em sequência — cria o carreador e divide o talhão na
+// quina com 1 clique. Os 2 botões antigos continuam disponíveis (agora rotulado "Cortar no Ângulo
+// (ajustar antes)") pra quem quiser arrastar os pontos do corte antes de confirmar.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -10346,6 +10354,7 @@ function _sincronizarSelecaoTalhoes() {
     $('btnIniciarDivisao').style.display = 'flex';
     $('btnIniciarCarreadorLivre').style.display = 'flex';
     $('btnCortarAngulo').style.display = (t.poliGuidePts && t.poliGuidePts.length >= 3) ? 'flex' : 'none';
+    $('btnCarreadorQuinaGuia').style.display = (t.poliGuidePts && t.poliGuidePts.length >= 3) ? 'flex' : 'none';
     $('btnEditarLinhas').style.display = 'flex';
     $('iArea').textContent   = t.areaHa.toFixed(2) + ' ha';
     $('iLinhas').textContent = t.count  || '—';
@@ -10487,6 +10496,7 @@ function iniciarDivisao(tipo) {
   $('btnIniciarDivisao').style.display = 'none';
   $('btnIniciarCarreadorLivre').style.display = 'none';
   $('btnCortarAngulo').style.display   = 'none';
+  $('btnCarreadorQuinaGuia').style.display = 'none';
   $('btnFinDivisao').style.display     = 'flex';
   $('btnConfDivisao').style.display    = 'none';
   $('btnConfCarreadorLivre').style.display = 'none';
@@ -10510,7 +10520,9 @@ function cancelarDivisaoUsuario() {
   $('btnCancelarDivisao').style.display = 'none';
   $('btnEditarLinhas').style.display    = 'flex';
   const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
-  $('btnCortarAngulo').style.display = (t && t.poliGuidePts && t.poliGuidePts.length >= 3) ? 'flex' : 'none';
+  const temPoliVertice = t && t.poliGuidePts && t.poliGuidePts.length >= 3;
+  $('btnCortarAngulo').style.display = temPoliVertice ? 'flex' : 'none';
+  $('btnCarreadorQuinaGuia').style.display = temPoliVertice ? 'flex' : 'none';
   setStatus((divisaoTipo === 'carreadorLivre' ? 'Carreador cancelado' : 'Divisão cancelada') + '. Talhão continua selecionado.', '');
 }
 
@@ -10607,6 +10619,18 @@ function cortarNoAnguloDaGuia() {
   addDivisaoPt({lat:b[1], lng:b[0]});
   finalizarDivisaoLinha();
   setStatus('Linha de corte alinhada ao ângulo da guia — confira e clique em "Confirmar Divisão" (arraste os pontos se quiser ajustar).', 'ok');
+}
+
+// v5.03: atalho de 1 clique pedido pelo usuário — "Cortar no Ângulo da Guia" só posicionava o corte
+// (deixando "Confirmar Divisão" como passo manual separado, de propósito, desde o v3.17). Esse botão
+// faz os dois de uma vez: posiciona o corte na quina da guia Polilinha (bissetriz das 2 direções,
+// _bearingBissetriz) e já confirma — cria o carreador e divide o talhão ali, sem passos separados.
+// A dupla "Cortar no Ângulo da Guia" (ajustar antes) + "Confirmar Divisão" continua disponível pra
+// quem quiser arrastar os pontos antes de confirmar.
+function criarCarreadorNaQuinaDaGuia() {
+  cortarNoAnguloDaGuia();
+  if(divisaoPts.length !== 3) return; // cortarNoAnguloDaGuia já mostrou o erro (sem talhão/sem guia poli)
+  confirmarDivisao();
 }
 
 // Recorta uma linha (array de [lng,lat]) tirando o(s) pedaço(s) que caem dentro do polígono do
