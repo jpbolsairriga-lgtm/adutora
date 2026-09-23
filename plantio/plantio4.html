@@ -359,7 +359,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.05 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.06 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -3534,6 +3534,17 @@ body.layout-lateral #status{grid-area:status;}
 // talhão selecionado quando "Desenhar Guia" é clicado direto, sem precisar de "Editar Linhas" antes
 // (comportamento já existente, testado em test_somar_guia_sem_editar.js). Novo: onchange no checkbox
 // (_onToggleSomarGuia) avisa isso na hora, no status, quando marcado com um talhão já selecionado.
+// v5.06: BUG DE VERDADE reportado com prints — a franja da guia A (vertical) sumia ao gerar a guia B
+// (horizontal), mesmo com "Somar 2ª guia" marcado. Causa: selecionar 1 talhão já travado (clique
+// normal) SEMPRE cai no ramo `if(talhoesMultiSel.size > 0)` de gerarLinhas() — talhoesMultiSel tem 1
+// uid mesmo em seleção "única" (ver _sincronizarSelecaoTalhoes) — nunca no "Modo simples" (que só
+// roda pra um talhão desenhado do zero, nunca selecionado do arquivo). O checkbox da v5.04 só tinha
+// sido aplicado no Modo simples; o ramo multi-seleção continuava com `t.linhas.forEach(l=>l.remove());
+// t.linhas=[]` incondicional. Corrigido: mesmo tratamento (pré-carrega o array com t.linhas quando
+// marcado, em vez de apagar) agora também no ramo multi-seleção — é o caminho realmente usado ao
+// selecionar um talhão do mapa. Novo teste test_somar_guia_multiselect.js reproduz o cenário exato
+// (talhoesMultiSel com 1 uid, como o clique de seleção deixa) — o teste anterior (test_somar_guia_
+// sem_editar.js) só cobria o Modo simples e por isso não pegou esse bug.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -4990,6 +5001,13 @@ function gerarLinhas() {
   // ── Modo multi-seleção (também cobre o caso de 1 talhão só selecionado — ver
   // _sincronizarSelecaoTalhoes) ────────────────────────────────────────────────
   if(talhoesMultiSel.size > 0) {
+    // v5.06: BUG — selecionar um talhão já travado (mesmo 1 só) entra SEMPRE por este ramo
+    // (talhoesMultiSel tem 1 uid mesmo em seleção "única", ver _sincronizarSelecaoTalhoes), nunca
+    // pelo "Modo simples" abaixo. O checkbox "Somar 2ª guia" (v5.04) só tinha sido aplicado no Modo
+    // simples (que só roda pra um talhão desenhado do zero, nunca selecionado do arquivo) — por
+    // isso a guia B continuava apagando a guia A na prática (relatado pelo usuário com prints: a
+    // franja vertical sumia ao gerar a horizontal). Mesma lógica agora aplicada aqui.
+    const _somarGuiaMulti = $('chkSomarGuia').checked;
     const spacing = parseFloat($('espac').value) || 12;
     const spacingKm = spacing / 1000;
     const cor = $('corLinha').value;
@@ -5010,7 +5028,7 @@ function gerarLinhas() {
         return turf.bearing(turf.point([a.lng,a.lat]), turf.point([b.lng,b.lat]));
       });
     }
-    let totalCount = 0, divididos = 0;
+    let totalCount = 0, divididos = 0, _linhasMantidasSoma = 0;
     talhoesMultiSel.forEach(uid => {
       const t = talhoesArquivados.find(x => x.uid === uid);
       if(!t) return;
@@ -5036,13 +5054,17 @@ function gerarLinhas() {
         }
       }
 
-      t.linhas.forEach(l => l.remove()); t.linhas = [];
+      // Com "Somar 2ª guia" marcado, NÃO apaga t.linhas — pré-carrega newLinhas com as já
+      // existentes, então _gerarLinhasParaTalhao só ACRESCENTA (ela recebe o array e dá push nele,
+      // não substitui). Sem marcar, comportamento de sempre: apaga tudo antes de gerar.
+      if(!_somarGuiaMulti) t.linhas.forEach(l => l.remove());
       t.linhasDecl.forEach(l => l.remove()); t.linhasDecl = [];
-      const newLinhas = [];
+      const newLinhas = _somarGuiaMulti ? [...t.linhas] : [];
+      const linhasAntes = newLinhas.length;
       const count = _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingKm, cor, esp, newLinhas);
       if(count === 0) return;
       t.linhas = newLinhas;
-      t.count = count;
+      t.count = newLinhas.length; // total (soma da(s) guia(s) anterior(es) + essa), não só essa geração
       t.spacing = spacing;
       t.corLinha = cor;
       t.poliGuidePts = poliPts;
@@ -5052,9 +5074,10 @@ function gerarLinhas() {
       if(t.infoMarker) { t.infoMarker.remove(); t.infoMarker = null; }
       const c = turf.centerOfMass(tPolyT).geometry.coordinates;
       const fmt = n => Math.round(n).toLocaleString('pt-BR');
-      const html = `<div class="poly-label"><div class="poly-label-head">&#9632; Talh&#227;o ${t.idx}</div><div class="poly-label-body"><div class="poly-label-row"><span class="poly-label-lbl">&#193;rea</span><span class="poly-label-val">${t.areaHa.toFixed(2)} ha</span></div><div class="poly-label-row"><span class="poly-label-lbl">Espa&#231;amento</span><span class="poly-label-val">${spacing} m</span></div><div class="poly-label-row"><span class="poly-label-lbl">Linhas</span><span class="poly-label-val">${count}</span></div><div class="poly-label-row"><span class="poly-label-lbl">Metros lineares</span><span class="poly-label-val">${fmt(metrosLin)} m</span></div></div></div>`;
+      const html = `<div class="poly-label"><div class="poly-label-head">&#9632; Talh&#227;o ${t.idx}</div><div class="poly-label-body"><div class="poly-label-row"><span class="poly-label-lbl">&#193;rea</span><span class="poly-label-val">${t.areaHa.toFixed(2)} ha</span></div><div class="poly-label-row"><span class="poly-label-lbl">Espa&#231;amento</span><span class="poly-label-val">${spacing} m</span></div><div class="poly-label-row"><span class="poly-label-lbl">Linhas</span><span class="poly-label-val">${newLinhas.length}</span></div><div class="poly-label-row"><span class="poly-label-lbl">Metros lineares</span><span class="poly-label-val">${fmt(metrosLin)} m</span></div></div></div>`;
       t.infoMarker = L.marker([c[1],c[0]], {icon:L.divIcon({html, className:'', iconAnchor:[84,58]}), interactive:false, zIndexOffset:500}).addTo(map);
       totalCount += count;
+      if(_somarGuiaMulti) _linhasMantidasSoma += linhasAntes;
     });
     if(divididos > 0) renumerarTalhoes();
     if(totalCount === 0) { setStatus('Nenhuma linha gerada. Verifique se a guia passa pelos talhões selecionados.', 'err'); return; }
@@ -5063,7 +5086,8 @@ function gerarLinhas() {
     polyMarkers.forEach(m => m.dragging && m.dragging.disable());
     $('btnTravarTodos').style.display = 'flex';
     const avisoDivisao = divididos > 0 ? ` ${divididos} talhão(ões) foram divididos por distorção da guia — confira os novos talhões em branco.` : '';
-    setStatus(`${totalCount} linhas geradas em ${talhoesMultiSel.size} talhão(ões).${_avisoCurvatura()}${avisoDivisao} Clique em "Travar Todos" para confirmar.`, 'ok');
+    const avisoSoma = _linhasMantidasSoma > 0 ? ` (+ ${_linhasMantidasSoma} linha(s) da guia anterior, mantidas)` : '';
+    setStatus(`${totalCount} linhas geradas${avisoSoma} em ${talhoesMultiSel.size} talhão(ões).${_avisoCurvatura()}${avisoDivisao} Clique em "Travar Todos" para confirmar.`, 'ok');
     return;
   }
 
