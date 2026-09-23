@@ -359,7 +359,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.01 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.02 · Ribbon</span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -554,7 +554,8 @@ body.layout-lateral #status{grid-area:status;}
               <input type="number" id="larguraCarreador" class="rfield" value="6" min="1" max="100" step="0.5">
             </div>
             <div class="rcol">
-              <button class="rbtn c-orange" id="btnIniciarDivisao" onclick="iniciarDivisao()"><span class="ico">&#9986;</span><span class="lbl">Traçar Divisão</span></button>
+              <button class="rbtn c-orange" id="btnIniciarDivisao" onclick="iniciarDivisao('dividir')"><span class="ico">&#9986;</span><span class="lbl">Traçar Divisão</span></button>
+              <button class="rbtn c-purple" id="btnIniciarCarreadorLivre" onclick="iniciarDivisao('carreadorLivre')" title="Trace uma faixa livre cruzando o talhão — pode passar por cima das linhas de plantio já geradas e sair da borda. Ao confirmar, a faixa é removida do talhão (vira carreador) e as linhas de plantio que caírem nela ou fora do talhão são apagadas."><span class="ico">&#9888;</span><span class="lbl">Criar Carreador (Traçar Linha)</span></button>
             </div>
             <div class="rcol">
               <button class="rbtn-sm" id="btnCarreadorDeLinha" onclick="iniciarCarreadorDeLinha()" title="Clique numa linha de plantio já gerada do talhão selecionado — ela vira o contorno do lado bom, com 1m de afastamento até o carreador (largura configurada ao lado)">&#128207; Carreador a partir de Linha</button>
@@ -565,7 +566,8 @@ body.layout-lateral #status{grid-area:status;}
               <button class="rbtn-sm ok" id="btnFinDivisao" style="display:none;" onclick="finalizarDivisaoLinha()">&#10003; Finalizar Linha</button>
               <div id="rowDivisaoLen" style="display:none;" class="rreadout"><span class="l">Comprimento:</span><span class="v" id="iDivisaoLen">—</span></div>
               <button class="rbtn-sm ok" id="btnConfDivisao" style="display:none;" onclick="confirmarDivisao()">&#10003; Confirmar Divisão</button>
-              <button class="rbtn-sm clr" id="btnCancelarDivisao" style="display:none;" onclick="cancelarDivisaoUsuario()">&#10005; Cancelar Divisão</button>
+              <button class="rbtn-sm ok" id="btnConfCarreadorLivre" style="display:none;" onclick="confirmarCarreadorLivre()">&#10003; Confirmar Carreador</button>
+              <button class="rbtn-sm clr" id="btnCancelarDivisao" style="display:none;" onclick="cancelarDivisaoUsuario()">&#10005; Cancelar</button>
             </div>
             <div class="rcol">
               <button class="rbtn-sm" id="btnEditarLinhas" onclick="ativarTalhaoParaEdicao()">&#9998; Editar Linhas</button>
@@ -3494,6 +3496,17 @@ body.layout-lateral #status{grid-area:status;}
 // v4.100: com "Ocultar Imagem Online" ativo, aparece "Cor de fundo do mapa" (atalhos preto/cinza-
 // azulado/cinza/branco + seletor livre, lembrado em localStorage) — padrão preto, igual AutoCAD.
 // v5.01: numeração passa a ser 5.NN (v4.100 -> v5.01); ao chegar em 5.99 o próximo é 6.01.
+// v5.02: nova ferramenta na aba Carreador — "Criar Carreador (Traçar Linha)" (a "Matação" do vídeo
+// de referência C3DFARM™). Trace uma faixa livre cruzando o talhão — pode passar por cima das
+// linhas de plantio já geradas e sair da borda dos dois lados (no vídeo a faixa atravessa de ponta
+// a ponta). Ao confirmar, a faixa some do talhão. Diferente da "Traçar Divisão" (sempre cria 2
+// talhões novos): aqui é o MESMO talhão que fica com a nova forma — se a faixa separar o contorno em
+// pedaços desconectados, só o MAIOR vira a nova forma do talhão, e o(s) menor(es) são descartados.
+// As linhas de plantio que caírem na faixa ou em qualquer pedaço descartado são apagadas de vez, não
+// redistribuídas pra lugar nenhum (pedido do usuário: "deletando as linhas que ficaram fora do
+// talhão"). Novo: iniciarDivisao(tipo) agora aceita 'dividir' (padrão) ou 'carreadorLivre',
+// reaproveitando o mesmo traço livre dos dois modos; _executarCarreadorLivre/confirmarCarreadorLivre
+// fazem o recorte (reaproveita _clipLinhaForaDoCarreador).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -3863,6 +3876,7 @@ let talhaoSelecionadoUid = null;
 let modoDivisao = false;
 let divisaoPts = [], divisaoMarkers = [], divisaoLineLayer = null;
 let divisaoModoGuia = 'reta';
+let divisaoTipo = 'dividir'; // 'dividir' (Traçar Divisão, split em 2 talhões) | 'carreadorLivre' (Criar Carreador — v5.02)
 let carreadorLayers = [];
 
 // ── Utilitários ───────────────────────────────────────────────────────────────
@@ -10326,9 +10340,11 @@ function _sincronizarSelecaoTalhoes() {
     $('divSelNome').textContent = `Talhão ${t.idx}  (${t.areaHa.toFixed(2)} ha)`;
     $('divCarreadorOps').style.display = '';
     $('btnConfDivisao').style.display = 'none';
+    $('btnConfCarreadorLivre').style.display = 'none';
     $('btnFinDivisao').style.display = 'none';
     $('btnCancelarDivisao').style.display = 'none';
     $('btnIniciarDivisao').style.display = 'flex';
+    $('btnIniciarCarreadorLivre').style.display = 'flex';
     $('btnCortarAngulo').style.display = (t.poliGuidePts && t.poliGuidePts.length >= 3) ? 'flex' : 'none';
     $('btnEditarLinhas').style.display = 'flex';
     $('iArea').textContent   = t.areaHa.toFixed(2) + ' ha';
@@ -10455,33 +10471,47 @@ function setModoDivisaoGuia(m) {
   $('btnDivSpline').style.background = m === 'spline' ? '#e65100' : 'var(--panel-border)';
 }
 
-function iniciarDivisao() {
+// v5.02: tipo 'dividir' (padrão, Traçar Divisão — corta o talhão em 2 novos talhões, preservando
+// as linhas de plantio recortadas dos dois lados) ou 'carreadorLivre' (Criar Carreador — a faixa
+// traçada é removida do talhão ATUAL (sem criar um novo) e as linhas de plantio que caírem nela ou
+// fora do talhão resultante são apagadas). Reaproveita o mesmo traço livre (pontos/marcadores/
+// preview) dos dois modos — só o passo de confirmação (confirmarDivisao × confirmarCarreadorLivre)
+// muda de verdade.
+function iniciarDivisao(tipo) {
   if(talhaoSelecionadoUid === null) { setStatus('Selecione um talhão primeiro.','err'); return; }
+  divisaoTipo = tipo || 'dividir';
   _limparDivisaoLine();
   modoDivisao = true;
   modo = 'divisao';
   map.getContainer().style.cursor = 'crosshair';
   $('btnIniciarDivisao').style.display = 'none';
+  $('btnIniciarCarreadorLivre').style.display = 'none';
   $('btnCortarAngulo').style.display   = 'none';
   $('btnFinDivisao').style.display     = 'flex';
   $('btnConfDivisao').style.display    = 'none';
+  $('btnConfCarreadorLivre').style.display = 'none';
   $('btnCancelarDivisao').style.display = 'flex';
   $('btnEditarLinhas').style.display   = 'none';
-  setStatus('Clique para adicionar pontos da linha de divisão. Duplo clique ou ⏎ para finalizar.', 'info');
+  setStatus(divisaoTipo === 'carreadorLivre'
+    ? 'Clique para adicionar pontos da faixa do carreador (pode cruzar linhas de plantio e sair da borda). Duplo clique ou ⏎ para finalizar.'
+    : 'Clique para adicionar pontos da linha de divisão. Duplo clique ou ⏎ para finalizar.', 'info');
 }
 
-// Desiste da divisão em andamento (traçando ou já com linha finalizada, antes de confirmar) sem
-// mexer no talhão em si — ele continua travado e selecionado, só a linha de corte é descartada.
+// Desiste da divisão/carreador em andamento (traçando ou já com linha finalizada, antes de
+// confirmar) sem mexer no talhão em si — ele continua travado e selecionado, só a linha de corte é
+// descartada.
 function cancelarDivisaoUsuario() {
   _limparDivisaoLine();
   $('btnIniciarDivisao').style.display  = 'flex';
+  $('btnIniciarCarreadorLivre').style.display = 'flex';
   $('btnFinDivisao').style.display      = 'none';
   $('btnConfDivisao').style.display     = 'none';
+  $('btnConfCarreadorLivre').style.display = 'none';
   $('btnCancelarDivisao').style.display = 'none';
   $('btnEditarLinhas').style.display    = 'flex';
   const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
   $('btnCortarAngulo').style.display = (t && t.poliGuidePts && t.poliGuidePts.length >= 3) ? 'flex' : 'none';
-  setStatus('Divisão cancelada. Talhão continua selecionado.', '');
+  setStatus((divisaoTipo === 'carreadorLivre' ? 'Carreador cancelado' : 'Divisão cancelada') + '. Talhão continua selecionado.', '');
 }
 
 function addDivisaoPt(ll) {
@@ -10521,8 +10551,13 @@ function finalizarDivisaoLinha() {
   modo = 'idle';
   map.getContainer().style.cursor = '';
   $('btnFinDivisao').style.display  = 'none';
-  $('btnConfDivisao').style.display = 'flex';
-  setStatus('Linha finalizada. Clique em "Confirmar Divisão" para criar o carreador.', 'info');
+  if(divisaoTipo === 'carreadorLivre') {
+    $('btnConfCarreadorLivre').style.display = 'flex';
+    setStatus('Linha finalizada. Clique em "Confirmar Carreador" pra recortar a faixa do talhão.', 'info');
+  } else {
+    $('btnConfDivisao').style.display = 'flex';
+    setStatus('Linha finalizada. Clique em "Confirmar Divisão" para criar o carreador.', 'info');
+  }
 }
 
 // ── Corte automático no ângulo da guia Polilinha ──────────────────────────────
@@ -10770,6 +10805,121 @@ function confirmarDivisao() {
   renumerarTalhoes();       // reordena idx e atualiza cabeçalhos das legendas
   _updateLabelScale();      // aplica escala inicial às novas legendas
   setStatus(`✓ Talhão dividido em ${r.numPartes} novos talhões — carreador de ${largura}m criado.`, 'ok');
+}
+
+// ── Criar Carreador (Traçar Linha) ────────────────────────────────────────────────────────────
+// v5.02: ferramenta "Matação" do vídeo de referência (C3DFARM™, aula do fluxo básico) — trace uma
+// faixa livre cruzando o talhão, por cima das linhas de plantio já geradas se precisar, saindo da
+// borda dos dois lados se quiser (no vídeo a faixa atravessa o talhão de ponta a ponta). Ao
+// confirmar, a faixa vira um carreador: some da área do talhão. Diferença pra "Traçar Divisão":
+// aqui NÃO nascem talhões novos — se a faixa separar o contorno em pedaços desconectados (comum
+// quando ela atravessa de lado a lado, igual no vídeo), só o MAIOR pedaço vira a nova forma do
+// MESMO talhão (mesmo uid/idx); os pedaços menores são descartados junto com o resto. As linhas de
+// plantio que caírem na faixa OU em qualquer pedaço descartado são apagadas de vez, não
+// redistribuídas pra lugar nenhum (pedido explícito do usuário: "deletando as linhas que ficaram
+// fora do talhão").
+function _executarCarreadorLivre(uid, lineCoordsLngLat, largura) {
+  const idx = talhoesArquivados.findIndex(t => t.uid === uid);
+  if(idx < 0) return { ok: false, erro: 'Talhão não encontrado.' };
+  const t = talhoesArquivados[idx];
+
+  const ring = [...t.polyPts.map(p => [p.lng, p.lat]), [t.polyPts[0].lng, t.polyPts[0].lat]];
+  let talhaoTurf;
+  try { talhaoTurf = turf.polygon([ring]); turf.rewind(talhaoTurf, {mutate:true}); }
+  catch(e) { return { ok: false, erro: 'Erro ao processar o polígono do talhão.' }; }
+
+  // Sem _extenderLinha aqui de propósito: essa é pra dividir de lado a lado (Divisão manual); o
+  // Carreador livre pode ser um traço curto só sobre um obstáculo, sem precisar atravessar tudo.
+  let carreadorBuf;
+  try { carreadorBuf = turf.buffer(turf.lineString(lineCoordsLngLat), largura / 2, {units:'meters'}); }
+  catch(e) { return { ok: false, erro: 'Erro ao criar a faixa do carreador: ' + e.message }; }
+
+  let resto;
+  try { resto = turf.difference(talhaoTurf, carreadorBuf); }
+  catch(e) { return { ok: false, erro: 'Erro ao recortar o talhão: ' + e.message }; }
+  if(!resto) return { ok: false, erro: 'A faixa cobriu o talhão inteiro — reduza a largura ou encurte a linha.' };
+
+  let partes = [];
+  if(resto.geometry.type === 'MultiPolygon') resto.geometry.coordinates.forEach(c => partes.push(turf.polygon(c)));
+  else partes.push(resto);
+  partes = partes.filter(p => turf.area(p) > 10); // descarta sliver de precisão de ponto flutuante
+  if(partes.length === 0) return { ok: false, erro: 'A faixa cobriu o talhão inteiro — reduza a largura ou encurte a linha.' };
+  partes.sort((a, b) => turf.area(b) - turf.area(a));
+  const novaParte = partes[0];             // fica com o talhão
+  const partesDescartadas = partes.slice(1); // pedaço(s) menor(es) — só descartados, não viram talhão novo
+
+  _capturarEstadoParaUndo(`carreador no Talhão ${t.idx}`);
+
+  // Recorta as linhas de plantio já existentes: mantém só os pedaços que sobraram DENTRO da nova
+  // forma do talhão — o que caía na faixa do carreador (ou, por algum motivo, fora da nova forma
+  // mesmo sem estar na faixa) é apagado de vez, não vira linha de outro talhão.
+  let linhasApagadas = 0;
+  const novasLinhas = [];
+  t.linhas.forEach(pl => {
+    const coords = pl.getLatLngs().flat().map(ll => [ll.lng, ll.lat]);
+    const cor = pl.options.color, peso = pl.options.weight;
+    pl.remove();
+    if(coords.length < 2) { linhasApagadas++; return; }
+    const pedacos = _clipLinhaForaDoCarreador(coords, carreadorBuf);
+    pedacos.forEach(pc => {
+      if(pc.length < 2) return;
+      let dentro = false;
+      try { dentro = turf.booleanPointInPolygon(turf.point(pc[Math.floor(pc.length/2)]), novaParte); } catch(e) {}
+      if(!dentro) { linhasApagadas++; return; }
+      const novaLinha = L.polyline(pc.map(([lng,lat]) => [lat,lng]), {color:cor, weight:peso, opacity:.95}).addTo(map);
+      novaLinha.on('click', () => { if(_modoPickLinha) _cliqueEmLinhaPlantio(novaLinha); });
+      novasLinhas.push(novaLinha);
+    });
+    if(!pedacos.length) linhasApagadas++;
+  });
+
+  // Atualiza o próprio talhão (mesmo uid/idx) pra nova forma, sem criar um talhão novo
+  if(t.polyLayer) t.polyLayer.remove();
+  const novoPolyPts = novaParte.geometry.coordinates[0].slice(0,-1).map(([lng,lat]) => ({lat,lng}));
+  const novoLayer = L.polygon(novoPolyPts.map(p=>[p.lat,p.lng]), {color:t.cor, fillColor:t.cor, fillOpacity:.06, weight:2}).addTo(map);
+  novoLayer.on('click', () => { if(modo==='idle') selecionarTalhao(t.uid); });
+  if(t.infoMarker) t.infoMarker.remove();
+  limparDeclividadeTerreno(t); // contorno mudou — classificação antiga (declividade/temático) não vale mais
+  limparMapaTematico(t);
+
+  t.polyPts   = novoPolyPts;
+  t.polyLayer = novoLayer;
+  t.linhas    = novasLinhas;
+  t.areaHa    = turf.area(novaParte) / 10000;
+  t.count     = novasLinhas.length;
+  let metrosLin = 0;
+  novasLinhas.forEach(pl => { const pts = pl.getLatLngs().flat(); for(let i=0;i<pts.length-1;i++) metrosLin += haversineM(pts[i], pts[i+1]); });
+  t.metrosLin  = metrosLin;
+  t.turfPoly   = novaParte;
+  t.infoMarker = _criarInfoMarkerParaTalhao(t);
+
+  return { ok: true, linhasApagadas, partesDescartadas: partesDescartadas.length };
+}
+
+function confirmarCarreadorLivre() {
+  const uid = talhaoSelecionadoUid;
+  if(uid === null || divisaoPts.length < 2) {
+    setStatus('Selecione um talhão e trace a linha do carreador.','err'); return;
+  }
+  const largura = parseFloat($('larguraCarreador').value) || 6;
+  const rawPts   = (divisaoModoGuia === 'spline' && divisaoPts.length >= 2)
+                    ? catmullRom(divisaoPts, 40) : divisaoPts;
+  const lineCoords = rawPts.map(p => [p.lng, p.lat]);
+
+  const r = _executarCarreadorLivre(uid, lineCoords, largura);
+  if(!r.ok) { setStatus(r.erro, 'err'); return; }
+
+  _limparDivisaoLine();
+  talhaoSelecionadoUid = null;
+  $('divSelInfo').innerHTML = 'Clique em um talh&#227;o travado para selecionar';
+  $('divCarreadorOps').style.display = 'none';
+  renumerarTalhoes();
+  _updateLabelScale();
+  let msg = `✓ Carreador de ${largura}m criado`;
+  const extras = [];
+  if(r.linhasApagadas) extras.push(`${r.linhasApagadas} linha(s) de plantio apagada(s)`);
+  if(r.partesDescartadas) extras.push(`${r.partesDescartadas} pedaço(s) menor(es) do talhão descartado(s)`);
+  setStatus(msg + (extras.length ? ` — ${extras.join(' e ')}.` : '.'), 'ok');
 }
 
 // ── Carreador a partir de uma Linha de Plantio Existente ─────────────────────────────────────
