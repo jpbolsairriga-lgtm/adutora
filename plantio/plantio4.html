@@ -135,6 +135,13 @@ body.layout-lateral .rdadosLocaisScroll{max-height:none;overflow-y:visible;paddi
 .btn-poly.active{background:var(--acc);box-shadow:0 0 0 2px var(--acc-pale) inset;} .btn-poly.active .ico,.btn-poly.active .lbl{color:#fff;}
 .btn-guide.active{background:#e65100;box-shadow:0 0 0 2px #ffcc02 inset;} .btn-guide.active .ico,.btn-guide.active .lbl{color:#fff;}
 .btn-curva.active{background:#00695c;box-shadow:0 0 0 2px #4db6ac inset;} .btn-curva.active .ico,.btn-curva.active .lbl{color:#fff;}
+
+/* Buscar Atualizações — ícone gira enquanto verifica; botão pulsa suavemente quando acha versão nova */
+@keyframes girarAtualizacao{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
+@keyframes pulsarAtualizacao{0%,100%{box-shadow:0 0 0 0 rgba(102,187,106,.55);}50%{box-shadow:0 0 0 5px rgba(102,187,106,0);}}
+.ico.spin{display:inline-block;animation:girarAtualizacao .8s linear infinite;}
+#btnBuscarAtualizacoes.tem-novidade{animation:pulsarAtualizacao 1.8s ease-in-out infinite;border-radius:6px;}
+#dotAtualizacao{display:none;width:8px;height:8px;border-radius:50%;background:#66bb6a;margin-left:6px;vertical-align:middle;cursor:pointer;box-shadow:0 0 0 0 rgba(102,187,106,.6);animation:pulsarAtualizacao 1.8s ease-in-out infinite;}
 .btn-curvaguia.active{background:#00695c;box-shadow:0 0 0 2px #4db6ac inset;color:#fff;}
 
 /* botão pequeno (modo / confirmar / cancelar / lista) */
@@ -359,7 +366,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.07 · Ribbon</span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.08 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="ativarRibbon('rp-inicio')"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -385,6 +392,13 @@ body.layout-lateral #status{grid-area:status;}
 
     <!-- ══ Início ══ -->
     <div class="rpanel active" id="rp-inicio">
+      <div class="rgroup">
+        <div class="rgroup-body">
+          <button class="rbtn c-blue" id="btnBuscarAtualizacoes" onclick="_cliqueBotaoAtualizacao()" title="Verifica se existe uma versão mais nova publicada e, se sim, deixa você atualizar com 1 clique — sem precisar de Ctrl+Shift+R."><span class="ico" id="icoAtualizacao">&#8635;</span><span class="lbl" id="lblAtualizacao">Buscar Atualizações</span></button>
+          <div id="statusAtualizacao" style="font-size:10.5px;color:var(--panel-text-dim);margin-top:4px;max-width:190px;white-space:normal;">Verificando automaticamente ao abrir…</div>
+        </div>
+        <div class="rgroup-title">Atualizações</div>
+      </div>
       <div class="rgroup">
         <div class="rgroup-body">
           <div style="display:flex;flex-direction:column;gap:4px;">
@@ -3503,6 +3517,16 @@ body.layout-lateral #status{grid-area:status;}
 // dupla original "Cortar no Ângulo da Guia" + "Confirmar Divisão", v3.17, continua intacta como
 // sempre foi) e o checkbox "Somar 2ª guia" (v5.04-v5.06: chkSomarGuia e toda a lógica de soma/
 // preservação de linhas ao gerar uma 2ª guia). Nada do resto do app foi tocado.
+// v5.08: botão "Buscar Atualizações" (aba Início, topo) — pedido: o usuário sempre precisava de
+// Ctrl+Shift+R pra ver mudanças, sem nenhum aviso de que havia versão nova. O sw.js (v2) já busca o
+// HTML network-first, mas isso não avisa nada nem resolve sozinho uma aba já aberta há tempo com um
+// service worker antigo ainda ativo. O botão: (1) força reg.update() no service worker; (2) busca o
+// próprio plantio4.html publicado agora (cache:'no-store' + query string única) e compara o
+// #verLabel dele com o desta página; (3) se diferente, o botão vira "Atualizar (vX.YY)" (pulsando) e
+// uma bolinha verde aparece do lado do número de versão no cabeçalho — 1 clique limpa os caches do
+// SW, desregistra ele e recarrega. Roda sozinho (silencioso) 4s depois de abrir, e de novo a cada
+// clique manual. Novas funções: buscarAtualizacoes, aplicarAtualizacao, _cliqueBotaoAtualizacao,
+// _extrairVersaoDoHtml, _versaoAtualLabel.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -3657,6 +3681,83 @@ async function instalarApp() {
 window.addEventListener('appinstalled', () => {
   const btn = $('btnInstalarApp'); if (btn) btn.style.display = 'none';
 });
+
+// ── Buscar Atualizações ──────────────────────────────────────────────────────────────────────
+// O service worker (sw.js v2) já busca o HTML network-first, mas isso só evita servir do cache
+// HTTP comum — não avisa o usuário quando existe uma versão mais nova, nem resolve sozinho um
+// service worker antigo que ainda esteja ativo numa aba já aberta há tempo. Este botão: (1) força
+// o SW a checar se há um sw.js novo publicado (reg.update()); (2) busca o PRÓPRIO plantio4.html
+// publicado agora mesmo, ignorando todo cache (cache:'no-store' + query string única), e compara o
+// texto de #verLabel com o desta página; (3) se for diferente, o botão vira "Atualizar pra vX.YY" —
+// um clique nele limpa os caches do SW e recarrega, sem precisar de Ctrl+Shift+R. Roda uma vez
+// sozinho (silencioso) ~4s depois de abrir, e sempre que o usuário clicar em "Buscar Atualizações".
+let _versaoDisponivel = null; // null = nada de novo (ou ainda não verificado); string = versão nova achada
+
+function _extrairVersaoDoHtml(html) {
+  const m = html.match(/id="verLabel">([^<]+)</);
+  return m ? m[1].trim() : null;
+}
+function _versaoAtualLabel() {
+  const el = $('verLabel');
+  return el ? el.textContent.trim() : null;
+}
+
+function _cliqueBotaoAtualizacao() {
+  if(_versaoDisponivel) aplicarAtualizacao();
+  else buscarAtualizacoes(false);
+}
+
+async function buscarAtualizacoes(silencioso) {
+  const btn = $('btnBuscarAtualizacoes'), ico = $('icoAtualizacao'), lbl = $('lblAtualizacao'), st = $('statusAtualizacao');
+  if(!btn) return;
+  if(!silencioso) { btn.disabled = true; ico.classList.add('spin'); lbl.textContent = 'Verificando…'; }
+  try {
+    if('serviceWorker' in navigator) {
+      try { const reg = await navigator.serviceWorker.getRegistration(); if(reg) await reg.update(); } catch(e) {}
+    }
+    const resp = await fetch(location.pathname + '?_chk=' + Date.now(), { cache: 'no-store' });
+    if(!resp.ok) throw new Error('HTTP ' + resp.status);
+    const html = await resp.text();
+    const versaoRemota = _extrairVersaoDoHtml(html);
+    const versaoLocal = _versaoAtualLabel();
+    if(versaoRemota && versaoRemota !== versaoLocal) {
+      _versaoDisponivel = versaoRemota;
+      btn.classList.remove('c-blue'); btn.classList.add('c-green', 'tem-novidade');
+      ico.innerHTML = '&#11015;&#65039;';
+      lbl.textContent = `Atualizar (${versaoRemota})`;
+      st.innerHTML = `<b style="color:#66bb6a;">Nova versão disponível!</b> Clique no botão acima pra atualizar agora.`;
+      const dot = $('dotAtualizacao'); if(dot) dot.style.display = 'inline-block';
+      if(!silencioso) setStatus(`Nova versão disponível: ${versaoRemota} (você está na ${versaoLocal}).`, 'ok');
+    } else {
+      _versaoDisponivel = null;
+      btn.classList.remove('c-green', 'tem-novidade'); btn.classList.add('c-blue');
+      ico.innerHTML = '&#8635;';
+      lbl.textContent = 'Buscar Atualizações';
+      st.textContent = `Você já está na versão mais recente (${versaoLocal}).`;
+      const dot = $('dotAtualizacao'); if(dot) dot.style.display = 'none';
+      if(!silencioso) setStatus(`Você já está atualizado (${versaoLocal}).`, 'ok');
+    }
+  } catch(e) {
+    st.textContent = 'Não foi possível verificar agora — confira sua conexão.';
+    if(!silencioso) setStatus('Não foi possível verificar atualizações — confira sua conexão.', 'err');
+  } finally {
+    if(!silencioso) { btn.disabled = false; ico.classList.remove('spin'); }
+  }
+}
+
+async function aplicarAtualizacao() {
+  setStatus(`Atualizando para ${_versaoDisponivel || 'a versão mais recente'}…`, 'info');
+  try {
+    if('caches' in window) { const nomes = await caches.keys(); await Promise.all(nomes.map(n => caches.delete(n))); }
+    if('serviceWorker' in navigator) { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r => r.unregister())); }
+  } catch(e) {}
+  location.reload();
+}
+
+// Checagem automática e silenciosa ao abrir — nunca interrompe nem atualiza sozinho, só avisa
+// (botão + bolinha no cabeçalho). Espera 4s pra deixar o boot do app (mapa, chave salva etc.)
+// terminar antes de bater outra rede.
+setTimeout(() => { try { buscarAtualizacoes(true); } catch(e) {} }, 4000);
 
 function lerAnguloMax() {
   const raw = $('anguloMax')?.value;
