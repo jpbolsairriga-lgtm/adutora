@@ -366,7 +366,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.08 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="ativarRibbon('rp-inicio')"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.09 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1048,6 +1048,21 @@ body.layout-lateral #status{grid-area:status;}
   <div style="display:flex;gap:8px;">
     <button class="rbtn-sm clr" style="flex:1;justify-content:center;" onclick="cancelarCenarioCurvas()">&#10005; Cancelar</button>
     <button class="rbtn-sm ok" style="flex:1;justify-content:center;" onclick="usarCenarioCurvasEscolhido()">&#10003; Usar Estas Linhas</button>
+  </div>
+</div>
+
+<!-- ── Modal: Nova Versão Disponível ── -->
+<div class="modal-bg" id="modalAtualizacao" onclick="if(event.target===this) fecharModalAtualizacao()">
+  <div class="modal" style="max-width:400px;">
+    <button class="modal-close" onclick="fecharModalAtualizacao()">&#10005;</button>
+    <h2>&#8635; Nova versão disponível</h2>
+    <p style="color:var(--panel-text-dim);font-size:12px;margin:8px 0 16px;">
+      Você está na <b id="modalAtualizacaoVersaoAtual">—</b>, e a <b id="modalAtualizacaoVersaoNova" style="color:#66bb6a;">—</b> já está publicada. Atualizar agora recarrega a página com a versão mais nova (nenhum talhão/linha desenhado na tela é salvo automaticamente — exporte antes se tiver algo importante ainda não exportado).
+    </p>
+    <div style="display:flex;gap:8px;">
+      <button class="rbtn-sm ok" style="flex:1;justify-content:center;" onclick="aplicarAtualizacao()">&#10003; Atualizar Agora</button>
+      <button class="rbtn-sm" style="flex:1;justify-content:center;" onclick="fecharModalAtualizacao()">Depois</button>
+    </div>
   </div>
 </div>
 
@@ -3527,6 +3542,13 @@ body.layout-lateral #status{grid-area:status;}
 // SW, desregistra ele e recarrega. Roda sozinho (silencioso) 4s depois de abrir, e de novo a cada
 // clique manual. Novas funções: buscarAtualizacoes, aplicarAtualizacao, _cliqueBotaoAtualizacao,
 // _extrairVersaoDoHtml, _versaoAtualLabel.
+// v5.09: pedido do usuário — pop-up avisando a nova versão, não só o botão/bolinha discretos. Novo
+// modal "modalAtualizacao" (mesmo padrão visual dos outros modais do app), abre sozinho assim que
+// buscarAtualizacoes() acha uma versão diferente (tanto na checagem automática ao abrir quanto num
+// clique manual em "Buscar Atualizações") — mostra versão atual × nova e um botão "Atualizar Agora"
+// (chama aplicarAtualizacao() direto) ou "Depois" (só fecha, o botão/bolinha continuam avisando).
+// A bolinha do cabeçalho agora também abre o pop-up direto num clique (_cliqueDotAtualizacao), em
+// vez de só levar pra aba Início.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -3706,6 +3728,24 @@ function _cliqueBotaoAtualizacao() {
   if(_versaoDisponivel) aplicarAtualizacao();
   else buscarAtualizacoes(false);
 }
+// Clique na bolinha do cabeçalho: se já sabe que tem versão nova, abre o pop-up direto (não precisa
+// ir até a aba Início) — senão, só leva pra lá (bolinha só aparece com versão nova, então normalmente
+// cai sempre no primeiro caso, mas o fallback cobre alguma condição de corrida).
+function _cliqueDotAtualizacao() {
+  if(_versaoDisponivel) abrirModalAtualizacao(_versaoDisponivel);
+  else ativarRibbon('rp-inicio');
+}
+function abrirModalAtualizacao(versaoNova) {
+  const modal = $('modalAtualizacao');
+  if(!modal) return;
+  $('modalAtualizacaoVersaoAtual').textContent = _versaoAtualLabel();
+  $('modalAtualizacaoVersaoNova').textContent = versaoNova;
+  modal.classList.add('open');
+}
+function fecharModalAtualizacao() {
+  const modal = $('modalAtualizacao');
+  if(modal) modal.classList.remove('open');
+}
 
 async function buscarAtualizacoes(silencioso) {
   const btn = $('btnBuscarAtualizacoes'), ico = $('icoAtualizacao'), lbl = $('lblAtualizacao'), st = $('statusAtualizacao');
@@ -3727,6 +3767,7 @@ async function buscarAtualizacoes(silencioso) {
       lbl.textContent = `Atualizar (${versaoRemota})`;
       st.innerHTML = `<b style="color:#66bb6a;">Nova versão disponível!</b> Clique no botão acima pra atualizar agora.`;
       const dot = $('dotAtualizacao'); if(dot) dot.style.display = 'inline-block';
+      abrirModalAtualizacao(versaoRemota); // pop-up — pedido do usuário: avisar na hora, não só o botão/bolinha
       if(!silencioso) setStatus(`Nova versão disponível: ${versaoRemota} (você está na ${versaoLocal}).`, 'ok');
     } else {
       _versaoDisponivel = null;
@@ -3746,6 +3787,7 @@ async function buscarAtualizacoes(silencioso) {
 }
 
 async function aplicarAtualizacao() {
+  fecharModalAtualizacao();
   setStatus(`Atualizando para ${_versaoDisponivel || 'a versão mais recente'}…`, 'info');
   try {
     if('caches' in window) { const nomes = await caches.keys(); await Promise.all(nomes.map(n => caches.delete(n))); }
