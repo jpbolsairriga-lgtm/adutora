@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.17 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.18 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -3662,6 +3662,20 @@ body.layout-lateral #status{grid-area:status;}
 // calcula pctComDadoReal (mesmo cálculo, antes do preenchimento) e mostra o mesmo aviso no painel
 // (curvaInfo) e no status (tipo 'warn', nova classe #status.warn) quando <90% — some sozinho quando
 // a cobertura é boa. Testado com harness Node.js: aviso aparece certinho em 45%/85%, some em 95%/100%.
+// v5.18: usuário esclareceu — o caso do v5.17 era outro talhão/outra sessão; NESSE relato ele estava
+// usando "curvas de satélite" (online), não DEM, e a cobertura de elevação era 100% — então não era
+// falta de dado, era outro bug. Causa real: o clipping por ponto amostrado numa grade regular
+// (marching squares) simplesmente descartava cada ponto fora do polígono e parava a linha no ÚLTIMO
+// PONTO AMOSTRADO que sobrou dentro — como a grade não segue o contorno real do talhão, esse ponto
+// pode ficar até 1 célula inteira da grade antes da borda de verdade (bem perceptível em talhões
+// grandes/irregulares selecionados via "Usar Talhão(ões) Selecionado(s)", e pior ainda pra curvas
+// online, que desde a v5.14 ficam travadas em 50×50 pra não sobrecarregar as APIs — célula grande =
+// gap grande). Corrigido na raiz: gerarCurvas() agora acha o ponto EXATO de cruzamento com a borda
+// do polígono (turf.lineIntersect contra polyBoundRef = turf.polygonToLine(polyRef)) toda vez que um
+// trecho da curva passa de dentro pra fora (ou vice-versa), e insere esse ponto exato na linha em
+// vez de parar no último amostrado — a curva sempre encosta na borda real, não importa o tamanho da
+// célula da grade. Testado com harness Node.js: polígono triangular + grade propositalmente grossa
+// (gap de 15m sem o fix) — com o fix, a linha bate exatamente na borda geométrica real.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -8088,6 +8102,19 @@ function marchingSquaresCurva(elev, lts, lns, level) {
 async function gerarCurvas() {
   const polyRef = turfCurvaPoly || turfPoly;
   if(!polyRef) { setStatus('Desenhe a área de curvas (ou o talhão) primeiro.', 'err'); return; }
+  // v5.18: BUG relatado — mesmo com fonte de elevação cobrindo 100% da área (usuário confirmou:
+  // "curvas de satélite", não DEM — problema diferente do v5.17), as curvas ainda paravam antes de
+  // chegar na borda real do talhão ao usar "Usar Talhão(ões) Selecionado(s)". Causa: o clipping
+  // (abaixo, "Filtra pontos fora do polígono") simplesmente DESCARTAVA cada ponto amostrado fora do
+  // polígono e parava a linha no último ponto amostrado que sobrou dentro — como a amostra é numa
+  // grade regular (não segue o contorno real do talhão), esse último ponto pode estar até 1 célula
+  // inteira da grade antes da borda de verdade. Bem perceptível em talhões grandes/irregulares (a
+  // grade de curvas online fica travada em 50×50 desde a v5.14, pra não sobrecarregar as APIs —
+  // célula grande = gap grande) e em talhões selecionados via polígono (que tendem a ser bem
+  // maiores que uma área desenhada à mão e focada). polyBoundRef (abaixo) é usado no clipping pra
+  // achar o ponto EXATO de cruzamento com a borda (turf.lineIntersect) e esticar a linha até lá —
+  // corrige o gap na origem, sem depender de aumentar a resolução da grade.
+  const polyBoundRef = turf.polygonToLine(polyRef);
   if(!window.google?.maps && !_elevacaoLocalDisponivel() && !_demLocalDisponivel()) { setStatus('Chave Google Maps necessária (ou importe um DEM/curvas de nível locais) para gerar curvas de nível.','err'); return; }
 
   limparCurvas();
@@ -8158,8 +8185,18 @@ async function gerarCurvas() {
 
     chains.forEach(chain => {
       if(chain.length < 2) return;
-      // Filtra pontos fora do polígono (clipping simples por segmento)
+      // Filtra pontos fora do polígono (clipping por segmento, com ponto de cruzamento exato — ver
+      // v5.18 acima). Quando um trecho passa de dentro pra fora (ou vice-versa), acha onde ele
+      // cruza a borda de verdade e usa ESSE ponto em vez de parar no último amostrado — a linha
+      // encosta na borda real do talhão, não importa o tamanho da célula da grade.
       const inside = chain.map(p => turf.booleanPointInPolygon(turf.point([p.lng,p.lat]), polyRef));
+      const achaCruzamento = (a, b) => {
+        try {
+          const ix = turf.lineIntersect(turf.lineString([[a.lng,a.lat],[b.lng,b.lat]]), polyBoundRef);
+          if(ix.features.length) { const [lng,lat] = ix.features[0].geometry.coordinates; return {lat,lng}; }
+        } catch(e) {}
+        return null;
+      };
       let seg = [];
       const flush = () => {
         if(seg.length >= 2) {
@@ -8197,7 +8234,21 @@ async function gerarCurvas() {
         }
         seg = [];
       };
-      chain.forEach((p,i) => { if(inside[i]) seg.push(p); else flush(); });
+      chain.forEach((p,i) => {
+        if(inside[i]) {
+          if(i > 0 && !inside[i-1]) { // estava fora, entrou agora — insere o ponto de entrada exato na borda
+            const cruz = achaCruzamento(chain[i-1], p);
+            if(cruz) seg.push(cruz);
+          }
+          seg.push(p);
+        } else {
+          if(i > 0 && inside[i-1]) { // estava dentro, saiu agora — insere o ponto de saída exato antes de fechar
+            const cruz = achaCruzamento(chain[i-1], p);
+            if(cruz) seg.push(cruz);
+          }
+          flush();
+        }
+      });
       flush();
     });
   }
