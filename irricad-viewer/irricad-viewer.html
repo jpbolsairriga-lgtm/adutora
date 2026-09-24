@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<!-- build 2026-09-24 v1.3.0 -->
+<!-- build 2026-09-24 v1.4.0 -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Visualizador IrriCAD v1.3.0 &middot; TophoFarm</title>
+<title>Visualizador IrriCAD v1.4.0 &middot; TophoFarm</title>
 <meta name="theme-color" content="#1f4e4c">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -130,6 +130,15 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
   border-left:9px solid transparent;border-right:9px solid transparent;border-bottom:16px solid rgba(26,115,232,.88);
   display:none;filter:drop-shadow(0 1px 2px rgba(0,0,0,.4))}
 .gps-seta.com-rumo .gps-cone{display:block}
+
+/* ---------- pontos com informacao (Cota/Vazao/PS etc.) -- alvo de toque
+   maior que o desenho, pra ficar facil de acertar mesmo com zoom baixo ---------- */
+.info-pt-wrap{background:transparent!important;border:none!important}
+.info-pt{position:relative;width:40px;height:40px;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.info-pt-alvo{width:13px;height:13px;border-radius:50%;border:2.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.55)}
+.info-pt-rotulo{position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:1px;
+  background:rgba(13,30,28,.9);color:#fff;font-size:.66rem;font-weight:700;padding:.14rem .4rem;border-radius:6px;
+  white-space:nowrap;pointer-events:none;box-shadow:0 2px 6px rgba(0,0,0,.4)}
 </style>
 </head>
 <body>
@@ -204,8 +213,9 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 /* ==================================================================
    VERSAO / HISTORICO
    ================================================================== */
-const VERSAO_APP = '1.3.0';
+const VERSAO_APP = '1.4.0';
 const HISTORICO_VERSOES = [
+  {v:'1.4.0', d:'24/09/2026', t:'Pontos com informação (Cota, Vazão, PS etc.) ganham alvo de toque maior e rótulo sempre visível no mapa — mais fácil de achar e tocar em campo, mesmo com zoom baixo.'},
   {v:'1.3.0', d:'24/09/2026', t:'Modo navegação: a tela agora gira de verdade seguindo pra onde você está andando (como o modo a pé do Google Maps), não só uma setinha — usa a bússola do celular; o marcador de GPS fica sempre "pra cima" mostrando sua frente.'},
   {v:'1.2.0', d:'24/09/2026', t:'Visual com a identidade Agrolâmina/TophoFarm, painel "Sobre" com versão e créditos, localização com bússola e modo "seguir" contínuo em campo.'},
   {v:'1.1.0', d:'24/09/2026', t:'Cores fiéis ao IrriCAD (lê a cor real gravada em cada elemento em vez de uma cor genérica), camadas mostradas por padrão como no Google Earth, painel de camadas com filtro de texto e contador.'},
@@ -474,6 +484,11 @@ function limparProjeto(){
 // nesses casos usa o nome da camada + um numero sequencial, senao fica tudo igual.
 const NOME_GENERICO = /^(polyline|placemark|path|untitled ?path|point|line|fill|rectangle)$/i;
 function primeiraLinha(s){ return (s||'').split('\n')[0].trim(); }
+// ponto "informativo" = carrega dado real (Cota/Vazão/PS, ExtendedData...),
+// não é só um vértice/nó de rede sem conteúdo.
+function placemarkInformativo(pm){
+  return (Object.keys(pm.dados||{}).length>0) || (pm.nome||'').includes('\n');
+}
 function rotuloPlacemark(pm, idxNaCamada, nomeCamada){
   const l1 = primeiraLinha(pm.nome);
   if(l1 && !NOME_GENERICO.test(l1)) return l1;
@@ -493,7 +508,9 @@ function popupHTML(pm, tipoLabel, rotulo){
       h += `<tr><td style="color:#5a7a88;padding-right:.5rem;vertical-align:top">${escHTML(k)}</td><td>${escHTML(pm.dados[k])}</td></tr>`;
     });
     h += '</table>';
-  } else if(pm.descricao){
+  } else if(pm.descricao && !restoDoNome){
+    // o IrriCAD costuma repetir o mesmo texto em <name> e <description>;
+    // so mostra a descricao se ela nao for so uma copia do que ja saiu acima.
     h += `<div style="margin-top:.3rem">${escMultilinha(pm.descricao)}</div>`;
   }
   return h || '<i>Sem nome</i>';
@@ -517,10 +534,19 @@ function construirCamadas(arvore){
       const corTraco = pm.corLinha || pm.corPreench || corPasta;
       const corFundo = pm.corPreench || pm.corLinha || corPasta;
       const rotulo = rotuloPlacemark(pm, idxPm, pasta.nome);
+      const informativo = placemarkInformativo(pm);
       pm.geoms.forEach(g=>{
         let obj=null;
         if(g.tipo==='point'){
-          obj = L.circleMarker([g.coords[0],g.coords[1]], {radius:3.5, color:'#fff', weight:1, fillColor:corTraco, fillOpacity:.85});
+          if(informativo){
+            const icone = L.divIcon({
+              className:'info-pt-wrap', iconSize:[40,40], iconAnchor:[20,20],
+              html:`<div class="info-pt"><div class="info-pt-alvo" style="background:${corTraco}"></div><div class="info-pt-rotulo">${escHTML(rotulo)}</div></div>`
+            });
+            obj = L.marker([g.coords[0],g.coords[1]], {icon:icone, zIndexOffset:500});
+          } else {
+            obj = L.circleMarker([g.coords[0],g.coords[1]], {radius:3.5, color:'#fff', weight:1, fillColor:corTraco, fillOpacity:.85});
+          }
           bounds.extend([g.coords[0],g.coords[1]]);
         } else if(g.tipo==='line'){
           obj = L.polyline(g.coords, {color:corTraco, weight:2.5, opacity:.9});
