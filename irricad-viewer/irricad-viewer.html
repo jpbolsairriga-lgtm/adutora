@@ -1,15 +1,15 @@
 <!DOCTYPE html>
-<!-- build 2026-09-24 v1.2.0 -->
+<!-- build 2026-09-24 v1.3.0 -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Visualizador IrriCAD v1.2.0 &middot; TophoFarm</title>
+<title>Visualizador IrriCAD v1.3.0 &middot; TophoFarm</title>
 <meta name="theme-color" content="#1f4e4c">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="icon" href="icon-192.png">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
 :root{--azul-esc:#1f4e4c;--azul:#2f7a78;--azul-cl:#f2b134;--bg:#0d1917;--verde:#1e7b45;--vermelho:#c0392b}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -195,7 +195,8 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 <div id="toast"></div>
 <input id="file-input" type="file" accept=".kml,.kmz">
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet-src.js"></script>
+<script src="https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
 'use strict';
@@ -203,8 +204,9 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 /* ==================================================================
    VERSAO / HISTORICO
    ================================================================== */
-const VERSAO_APP = '1.2.0';
+const VERSAO_APP = '1.3.0';
 const HISTORICO_VERSOES = [
+  {v:'1.3.0', d:'24/09/2026', t:'Modo navegação: a tela agora gira de verdade seguindo pra onde você está andando (como o modo a pé do Google Maps), não só uma setinha — usa a bússola do celular; o marcador de GPS fica sempre "pra cima" mostrando sua frente.'},
   {v:'1.2.0', d:'24/09/2026', t:'Visual com a identidade Agrolâmina/TophoFarm, painel "Sobre" com versão e créditos, localização com bússola e modo "seguir" contínuo em campo.'},
   {v:'1.1.0', d:'24/09/2026', t:'Cores fiéis ao IrriCAD (lê a cor real gravada em cada elemento em vez de uma cor genérica), camadas mostradas por padrão como no Google Earth, painel de camadas com filtro de texto e contador.'},
   {v:'1.0.0', d:'24/09/2026', t:'Primeira versão: abre KML/KMZ exportado do IrriCAD, camadas por pasta, busca, GPS, medição de distância, funciona offline como app instalável.'}
@@ -224,7 +226,8 @@ iniciaPainelSobre();
 /* ==================================================================
    MAPA
    ================================================================== */
-const mapa = L.map('mapa', {zoomControl:false, attributionControl:false, zoomSnap:.25, wheelPxPerZoomLevel:180});
+const mapa = L.map('mapa', {zoomControl:false, attributionControl:false, zoomSnap:.25, wheelPxPerZoomLevel:180,
+  rotate:true, rotateControl:false, bearing:0, touchRotate:false, compassBearing:false});
 mapa.setView([-15,-50], 5);
 L.control.zoom({position:'bottomleft'}).addTo(mapa);
 L.control.attribution({position:'bottomright', prefix:false}).addTo(mapa);
@@ -826,14 +829,15 @@ buscaInput.addEventListener('input', ()=>{
 });
 
 /* ==================================================================
-   GPS + BUSSOLA
-   "Seguir" mantem o mapa centralizado na posicao atual enquanto o
-   tecnico anda na lavoura; a seta no marcador gira conforme a bussola
-   do celular pra indicar pra que lado ele esta olhando (o mapa em si
-   fica sempre com norte pra cima, que e o jeito mais confiavel de
-   fazer isso sem depender de plugin de rotacao do mapa).
+   GPS + BUSSOLA (modo navegacao)
+   "Seguir" liga os dois juntos: a tela fica centralizada na posicao
+   atual E gira acompanhando pra onde o celular esta apontando (como
+   o modo de navegacao a pe do Google Maps/Waze) -- usa o handler
+   nativo do leaflet-rotate (map.compassBearing) pra ler a bussola do
+   aparelho e girar o mapa; o marcador de GPS fica parado (nao gira
+   junto), entao a setinha aponta sempre "pra cima" = sua frente.
    ================================================================== */
-let marcadorGPS=null, circuloGPS=null, watchId=null, seguindo=false, temRumo=false, orientacaoLigada=false;
+let marcadorGPS=null, circuloGPS=null, watchId=null, seguindo=false;
 const iconeGPS = L.divIcon({
   className: 'gps-icon-wrap', iconSize:[40,40], iconAnchor:[20,20],
   html: '<div class="gps-seta"><div class="gps-cone"></div><div class="gps-ponto"></div></div>'
@@ -841,7 +845,6 @@ const iconeGPS = L.divIcon({
 function ativaGPS(){
   if(!navigator.geolocation){ toast('GPS não disponível neste dispositivo.'); return; }
   document.getElementById('btn-gps').classList.add('ativo');
-  pedePermissaoBussola();
   navigator.geolocation.getCurrentPosition(pos=>{
     atualizaGPS(pos);
     mapa.setView([pos.coords.latitude,pos.coords.longitude], Math.max(mapa.getZoom(),18));
@@ -855,7 +858,7 @@ function ativaGPS(){
 function atualizaGPS(pos){
   const ll = [pos.coords.latitude, pos.coords.longitude];
   if(!marcadorGPS){
-    marcadorGPS = L.marker(ll, {icon:iconeGPS, zIndexOffset:1000}).addTo(mapa);
+    marcadorGPS = L.marker(ll, {icon:iconeGPS, zIndexOffset:1000, rotateWithView:false}).addTo(mapa);
     circuloGPS = L.circle(ll, {radius:pos.coords.accuracy, color:'#1a73e8', weight:1, fillColor:'#1a73e8', fillOpacity:.12}).addTo(mapa);
   } else {
     marcadorGPS.setLatLng(ll);
@@ -863,46 +866,40 @@ function atualizaGPS(pos){
   }
   if(seguindo) mapa.panTo(ll, {animate:true, duration:.4});
 }
-function atualizaRumo(graus){
-  temRumo = true;
-  if(!marcadorGPS) return;
-  const el = marcadorGPS.getElement();
+function marcaComRumo(ligado){
+  const el = marcadorGPS && marcadorGPS.getElement();
   const seta = el && el.querySelector('.gps-seta');
-  if(seta){ seta.classList.add('com-rumo'); seta.style.transform = `rotate(${graus}deg)`; }
+  if(seta) seta.classList.toggle('com-rumo', ligado);
 }
-function handleOrientacao(e){
-  let graus;
-  if(typeof e.webkitCompassHeading === 'number') graus = e.webkitCompassHeading; // iOS Safari: ja e o rumo real
-  else if(typeof e.alpha === 'number') graus = 360 - e.alpha; // Android: alpha cresce anti-horario
-  else return;
-  atualizaRumo(graus);
-}
-function pedePermissaoBussola(){
-  if(orientacaoLigada) return;
+function ativaBussola(){
+  if(!mapa.compassBearing){ return; } // plugin de rotacao nao carregou (ex.: sem internet na 1a visita)
   const DOE = window.DeviceOrientationEvent;
-  if(!DOE){ return; }
+  if(!DOE){ toast('Este navegador não dá acesso à bússola do aparelho.', 3500); return; }
+  const liga = ()=>{ mapa.compassBearing.enable(); marcaComRumo(true); };
   if(typeof DOE.requestPermission === 'function'){
-    // iOS 13+: precisa ser chamado a partir de um toque do usuario
-    DOE.requestPermission().then(resp=>{
-      if(resp==='granted'){
-        orientacaoLigada = true;
-        window.addEventListener('deviceorientation', handleOrientacao);
-      }
-    }).catch(()=>{});
+    // iOS 13+: o pedido de permissão precisa partir de um toque do usuário
+    DOE.requestPermission().then(resp=>{ if(resp==='granted') liga(); else toast('Permissão de bússola negada.', 3000); }).catch(()=>{});
   } else {
-    orientacaoLigada = true;
-    window.addEventListener('deviceorientationabsolute', handleOrientacao);
-    window.addEventListener('deviceorientation', handleOrientacao);
+    liga();
   }
+}
+function desativaBussola(){
+  if(mapa.compassBearing) mapa.compassBearing.disable();
+  mapa.setBearing(0);
+  marcaComRumo(false);
 }
 document.getElementById('btn-gps').addEventListener('click', ativaGPS);
 document.getElementById('btn-seguir').addEventListener('click', ()=>{
   seguindo = !seguindo;
   document.getElementById('btn-seguir').classList.toggle('ativo', seguindo);
   if(seguindo){
-    if(!marcadorGPS) ativaGPS(); else pedePermissaoBussola();
+    if(!marcadorGPS) ativaGPS();
     if(marcadorGPS) mapa.panTo(marcadorGPS.getLatLng(), {animate:true});
-    toast(temRumo ? 'Seguindo sua posição e direção' : 'Seguindo sua posição');
+    ativaBussola();
+    toast('Modo navegação: tela segue sua posição e gira com a direção que você está andando');
+  } else {
+    desativaBussola();
+    toast('Modo navegação desligado — mapa voltou pro norte pra cima');
   }
 });
 
