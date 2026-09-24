@@ -370,7 +370,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.12 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.13 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -3593,6 +3593,19 @@ body.layout-lateral #status{grid-area:status;}
 // ampliação no Windows) os dois cálculos dão exatamente igual, por isso passou batido em teste
 // sem esse ajuste ativo — só aparece com 125%/150% (comum em notebook e monitor 4K, que é
 // provavelmente o caso do usuário). Corrigido em _3da_renderSplitScreen e _3da_renderFrame.
+// v5.13: usuário confirmou a divisão da tela perfeita — sobraram 2 ajustes no mesmo vídeo. (1) 3D
+// (direita) não ficava totalmente enquadrada (terreno cortado/vazando da tela): reduzir só o aspect
+// (largura pela metade) sem mexer no FOV vertical da câmera perspectiva também reduz o campo de
+// visão HORIZONTAL pela metade — a câmera "dava zoom" sozinha. Corrigido: FOV vertical compensado
+// durante o split (fórmula que mantém tan(fovH/2)=tan(fovV/2)×aspect constante mesmo com aspect
+// menor — testado, bate exatamente com o campo de visão horizontal da vista cheia), restaurado o
+// FOV normal (_3DA_PERSP_FOV=38, mesmo valor da criação da câmera) fora do split. (2) Gota de chuva
+// quase invisível na 3D (perfeita na 2D): sizeAttenuation:true só atenua tamanho por distância em
+// câmera de PERSPECTIVA (ortográfica nunca atenua, por definição) — a câmera 3D fica longe o
+// bastante pra cobrir a propriedade inteira, então a gota encolhia quase a nada lá enquanto a 2D
+// (sempre no tamanho cheio) ficava ótima. Desligado sizeAttenuation nas gotas e no rastro — tamanho
+// agora é constante em pixels de tela nas duas câmeras, sem mudar nada na 2D (que já se comportava
+// assim) e sem precisar mexer no "size" compartilhado entre as duas.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -12693,6 +12706,10 @@ let _3da_chuvaElapsedS = 0, _3da_chuvaTotalSimS = 0;
 // em sincronia perfeita, sem precisar gravar duas vezes.
 let _3da_gravando = false, _3da_gravarSplit = false;
 let _3da_mediaRecorder = null, _3da_recChunks = [], _3da_recStartTs = 0, _3da_recTimerId = null;
+// FOV vertical "normal" da câmera perspectiva (mesmo valor usado na criação, gerarVista3DAnalise) —
+// guardado aqui pra _3da_renderSplitScreen saber pra que valor restaurar fora do split, e pra que
+// valor compensar durante o split (ver comentário em _3da_renderSplitScreen).
+const _3DA_PERSP_FOV = 38;
 const _3DA_CHUVA_NPONTOS = 3500;
 let _3da_chuvaSprite = null; // THREE.CanvasTexture (gota com brilho) — gerada uma vez, reaproveitada
 // v4.99: a "névoa azul" (textura de canais de enxurrada sobre o terreno) saiu — ficam só as gotas,
@@ -13133,7 +13150,24 @@ function _3da_renderSplitScreen() {
     _3da_cameraOrtho.lookAt(_3da_bcx, 0, -_3da_bcy);
   }
   _3da_resizeOrtho(aspHalf);
-  if(_3da_cameraPersp) { _3da_cameraPersp.aspect = aspHalf; _3da_cameraPersp.updateProjectionMatrix(); }
+  // v5.13: BUG relatado — a 3D saía cortada/mal enquadrada no split (terreno "vazando" da tela,
+  // canto sem nada). Causa: a largura do viewport caiu pela metade (aspect indo de ~1,7 pra ~0,87),
+  // mas o FOV vertical da câmera perspectiva ficou o mesmo — pra uma PerspectiveCamera, o campo de
+  // visão HORIZONTAL depende do FOV vertical × aspect, então reduzir só o aspect também reduz o
+  // campo de visão horizontal pela metade (a câmera "dá zoom" sozinha, sem ninguém pedir), cortando
+  // as bordas do terreno que cabiam antes. Corrigido: aumenta o FOV vertical só durante o split, na
+  // medida exata que cancela essa perda (fórmula: mantém tan(fovH/2) = tan(fovV/2)×aspect constante
+  // mesmo com o aspect menor) — o campo de visão horizontal volta a ser o mesmo de sempre, então o
+  // terreno cabe igual à vista cheia (com uma folga vertical a mais, que é só espaço sobrando, nunca
+  // corta nada). _3da_renderFrame restaura o FOV normal (_3DA_PERSP_FOV) fora do split.
+  if(_3da_cameraPersp) {
+    const aspNormal = w / h; // aspect de tela cheia, referência do enquadramento "normal" já testado
+    const fovRad = _3DA_PERSP_FOV * Math.PI / 180;
+    const fovCompensado = 2 * Math.atan(Math.tan(fovRad / 2) * (aspNormal / aspHalf)) * 180 / Math.PI;
+    _3da_cameraPersp.fov = fovCompensado;
+    _3da_cameraPersp.aspect = aspHalf;
+    _3da_cameraPersp.updateProjectionMatrix();
+  }
   _3da_renderer.setScissorTest(true);
   _3da_renderer.setViewport(0, 0, halfW, h);       // esquerda: 2D (ortográfica, de cima)
   _3da_renderer.setScissor(0, 0, halfW, h);
@@ -13155,7 +13189,10 @@ function _3da_renderFrame() {
   if(_3da_gravando && _3da_gravarSplit) { _3da_renderSplitScreen(); return; }
   const cv = _3da_renderer.domElement, w = cv.clientWidth, h = cv.clientHeight;
   const asp = w / (h || 1);
-  if(_3da_cameraPersp) { _3da_cameraPersp.aspect = asp; _3da_cameraPersp.updateProjectionMatrix(); }
+  // Restaura o FOV normal (_3da_renderSplitScreen aumenta ele temporariamente pra compensar o
+  // aspect estreito do split) — sem isso, depois de gravar uma vez com "Tela dividida" a vista 3D
+  // cheia ficaria com zoom errado pro resto da sessão.
+  if(_3da_cameraPersp) { _3da_cameraPersp.fov = _3DA_PERSP_FOV; _3da_cameraPersp.aspect = asp; _3da_cameraPersp.updateProjectionMatrix(); }
   _3da_resizeOrtho(asp);
   _3da_renderer.setScissorTest(false);
   _3da_renderer.setViewport(0, 0, w, h);
@@ -13303,9 +13340,17 @@ function _3da_construirPontosChuva() {
   for(let i = 0; i < N; i++) pos[i * 3 + 1] = -99999; // escondida (bem abaixo da cena) até nascer
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  // v5.13: sizeAttenuation desligado — usuário relatou gota quase invisível na câmera perspectiva
+  // (3D), embora bem visível na ortográfica (2D/Vista de Cima). Motivo: com sizeAttenuation:true
+  // o Three.js só aplica a atenuação por distância quando a câmera é de PERSPECTIVA (ortográfica
+  // nunca atenua, por definição da projeção) — a câmera 3D fica longe o bastante pra cobrir a
+  // propriedade inteira, então o mesmo tamanho de gota que aparece ótimo na ortográfica encolhia
+  // quase a nada na perspectiva. Desligado: tamanho agora é constante em pixels de tela pras duas
+  // câmeras — não muda nada na ortográfica (ela já se comportava assim, atenuação nunca se aplicava
+  // ali) e resolve a 3D sem precisar mexer no "size" (que afetaria as duas juntas).
   const mat = new THREE.PointsMaterial({
     color: 0xcfe9ff, size: 5.5, map: _3da_criarSpriteChuva(), transparent: true, opacity: .95,
-    sizeAttenuation: true, depthWrite: false, blending: THREE.AdditiveBlending
+    sizeAttenuation: false, depthWrite: false, blending: THREE.AdditiveBlending
   });
   const pontos = new THREE.Points(geo, mat);
   pontos.frustumCulled = false;
@@ -13424,7 +13469,7 @@ function _3da_construirTrilhaChuva() {
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   const mat = new THREE.PointsMaterial({
     size: 3.6, map: _3da_criarSpriteChuva(), vertexColors: true, transparent: true,
-    sizeAttenuation: true, depthWrite: false, blending: THREE.AdditiveBlending
+    sizeAttenuation: false, depthWrite: false, blending: THREE.AdditiveBlending // v5.13: ver comentário em _3da_construirPontosChuva
   });
   const pontos = new THREE.Points(geo, mat);
   pontos.frustumCulled = false;
@@ -13735,7 +13780,7 @@ async function gerarVista3DAnalise() {
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0d1b2a);
     scene.fog = new THREE.Fog(0x0d1b2a, span * 2.5, span * 6);
-    const camera = new THREE.PerspectiveCamera(38, W3 / H3, Math.max(0.5, span * 0.001), span * 6);
+    const camera = new THREE.PerspectiveCamera(_3DA_PERSP_FOV, W3 / H3, Math.max(0.5, span * 0.001), span * 6);
     // logarithmicDepthBuffer: essencial aqui — near/far cobrem de <1m até vários km (propriedade
     // inteira), e um z-buffer padrão perde precisão demais nessa faixa, causando as linhas de
     // plantio "piscarem"/se misturarem com o terreno (z-fighting) mesmo com o offset em Y.
