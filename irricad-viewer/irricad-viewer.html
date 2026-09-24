@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<!-- build 2026-09-24 v1.0 -->
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Visualizador IrriCAD</title>
+<meta name="theme-color" content="#003d5c">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+:root{--azul-esc:#003d5c;--azul:#0077b6;--azul-cl:#00b4d8;--bg:#0e1a22}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:#eaf2f6}
+#mapa{position:fixed;inset:0;background:#0b141a}
+.leaflet-popup-content-wrapper{border-radius:10px}
+.leaflet-popup-content{font-size:.85rem;max-width:260px}
+.leaflet-control-attribution{font-size:.6rem}
+
+/* ---------- top bar ---------- */
+#topbar{position:fixed;top:0;left:0;right:0;z-index:1200;display:flex;align-items:center;gap:.5rem;
+  padding:calc(env(safe-area-inset-top) + .5rem) .6rem .5rem;background:linear-gradient(180deg,rgba(0,20,30,.92),rgba(0,20,30,0));
+  pointer-events:none}
+#topbar>*{pointer-events:auto}
+.btn-round{width:42px;height:42px;border-radius:50%;border:none;background:#fff;color:var(--azul-esc);font-size:1.2rem;
+  display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(0,0,0,.35);flex-shrink:0}
+.btn-round.ativo{background:var(--azul-cl);color:#fff}
+#titulo-proj{flex:1;min-width:0;background:rgba(0,0,0,.45);backdrop-filter:blur(4px);border-radius:10px;padding:.45rem .7rem;
+  font-size:.8rem;line-height:1.25;overflow:hidden}
+#titulo-proj b{display:block;font-size:.82rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#titulo-proj span{display:block;font-size:.68rem;color:#b9d4de;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#titulo-proj.vazio{color:#cfe3ea;font-style:italic}
+
+/* ---------- search bar ---------- */
+#buscabar{position:fixed;top:calc(env(safe-area-inset-top) + 3.6rem);left:.6rem;right:.6rem;z-index:1150;display:none;gap:.4rem}
+#buscabar.aberto{display:flex}
+#busca-input{flex:1;border:none;border-radius:10px;padding:.6rem .8rem;font-size:.9rem;box-shadow:0 3px 10px rgba(0,0,0,.35)}
+#busca-resultados{position:fixed;top:calc(env(safe-area-inset-top) + 6.4rem);left:.6rem;right:.6rem;z-index:1150;
+  background:#12222c;border-radius:10px;max-height:40vh;overflow:auto;box-shadow:0 6px 20px rgba(0,0,0,.5);display:none}
+#busca-resultados.aberto{display:block}
+.busca-item{padding:.6rem .8rem;font-size:.85rem;border-bottom:1px solid rgba(255,255,255,.08);display:flex;justify-content:space-between;gap:.5rem}
+.busca-item small{color:#8fb2c0}
+
+/* ---------- bottom toolbar ---------- */
+#toolbar{position:fixed;left:0;right:0;bottom:0;z-index:1200;display:flex;justify-content:center;gap:.6rem;
+  padding:.6rem .6rem calc(env(safe-area-inset-bottom) + .6rem);background:linear-gradient(0deg,rgba(0,20,30,.92),rgba(0,20,30,0));
+  pointer-events:none}
+#toolbar>*{pointer-events:auto}
+
+/* ---------- drawer (layers) ---------- */
+#drawer{position:fixed;top:0;bottom:0;right:-100%;width:min(340px,86vw);z-index:1400;background:#101d26;
+  box-shadow:-6px 0 24px rgba(0,0,0,.5);transition:right .22s ease;display:flex;flex-direction:column}
+#drawer.aberto{right:0}
+#drawer-head{padding:calc(env(safe-area-inset-top) + .9rem) 1rem .8rem;background:var(--azul-esc);display:flex;align-items:center;justify-content:space-between}
+#drawer-head h2{font-size:1rem}
+#drawer-close{background:none;border:none;color:#fff;font-size:1.4rem;line-height:1;padding:.2rem .4rem}
+#drawer-actions{display:flex;gap:.4rem;padding:.6rem 1rem;border-bottom:1px solid rgba(255,255,255,.08)}
+#drawer-actions button{flex:1;background:#1c313e;color:#eaf2f6;border:1px solid #2b4757;border-radius:8px;padding:.4rem;font-size:.72rem}
+#lista-camadas{flex:1;overflow:auto;padding:.4rem 0}
+.camada-item{display:flex;align-items:center;gap:.6rem;padding:.55rem 1rem;border-bottom:1px solid rgba(255,255,255,.05)}
+.camada-item .swatch{width:14px;height:14px;border-radius:4px;flex-shrink:0}
+.camada-item label{flex:1;font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.camada-item small{color:#7fa0af;font-size:.7rem}
+.camada-item input{width:19px;height:19px;flex-shrink:0}
+#drawer-empty{padding:2rem 1rem;text-align:center;color:#7fa0af;font-size:.82rem}
+
+/* ---------- projects drawer ---------- */
+#drawer-proj{position:fixed;top:0;bottom:0;left:-100%;width:min(340px,86vw);z-index:1400;background:#101d26;
+  box-shadow:6px 0 24px rgba(0,0,0,.5);transition:left .22s ease;display:flex;flex-direction:column}
+#drawer-proj.aberto{left:0}
+#dp-head{padding:calc(env(safe-area-inset-top) + .9rem) 1rem .8rem;background:var(--azul-esc);display:flex;align-items:center;justify-content:space-between}
+#dp-head h2{font-size:1rem}
+#dp-close{background:none;border:none;color:#fff;font-size:1.4rem;line-height:1;padding:.2rem .4rem}
+#dp-abrir{margin:.8rem 1rem;padding:.75rem;border-radius:10px;border:2px dashed #2b4757;background:#162732;color:#eaf2f6;font-size:.85rem;text-align:center}
+#dp-lista{flex:1;overflow:auto;padding:.2rem 0}
+.proj-item{padding:.7rem 1rem;border-bottom:1px solid rgba(255,255,255,.05);display:flex;justify-content:space-between;align-items:center;gap:.5rem}
+.proj-item .info{flex:1;min-width:0;cursor:pointer}
+.proj-item b{display:block;font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.proj-item small{color:#7fa0af;font-size:.7rem}
+.proj-item .del{background:none;border:none;color:#e07a7a;font-size:1.1rem;padding:.3rem .5rem}
+#dp-empty{padding:2rem 1rem;text-align:center;color:#7fa0af;font-size:.82rem}
+
+/* ---------- overlays ---------- */
+#drop-overlay{position:fixed;inset:0;z-index:2000;background:rgba(0,61,92,.9);display:none;align-items:center;justify-content:center;
+  text-align:center;padding:2rem;font-size:1.1rem;border:4px dashed #fff;margin:0}
+#drop-overlay.aberto{display:flex}
+#carregando{position:fixed;inset:0;z-index:2500;background:rgba(5,15,20,.88);display:none;align-items:center;justify-content:center;flex-direction:column;gap:.8rem}
+#carregando.aberto{display:flex}
+.spin{width:38px;height:38px;border:4px solid rgba(255,255,255,.25);border-top-color:var(--azul-cl);border-radius:50%;animation:girar 1s linear infinite}
+@keyframes girar{to{transform:rotate(360deg)}}
+#toast{position:fixed;left:50%;bottom:5.2rem;transform:translateX(-50%);z-index:2600;background:#1c313e;color:#fff;
+  padding:.6rem 1rem;border-radius:20px;font-size:.8rem;box-shadow:0 4px 16px rgba(0,0,0,.4);opacity:0;transition:opacity .25s;pointer-events:none;max-width:90vw;text-align:center}
+#toast.mostra{opacity:1}
+
+#file-input{display:none}
+
+/* medicao */
+#med-info{position:fixed;left:50%;bottom:5.4rem;transform:translateX(-50%);z-index:1300;background:rgba(0,20,30,.85);
+  color:#fff;padding:.5rem 1rem;border-radius:20px;font-size:.82rem;display:none;box-shadow:0 4px 14px rgba(0,0,0,.4)}
+#med-info.aberto{display:block}
+</style>
+</head>
+<body>
+
+<div id="mapa"></div>
+
+<div id="topbar">
+  <button id="btn-projetos" class="btn-round" title="Meus projetos">&#128193;</button>
+  <div id="titulo-proj" class="vazio"><b>Nenhum projeto aberto</b><span>Toque para abrir um arquivo .kmz/.kml</span></div>
+  <button id="btn-busca" class="btn-round" title="Buscar talh&#227;o">&#128269;</button>
+  <button id="btn-camadas" class="btn-round" title="Camadas">&#128737;&#65039;</button>
+</div>
+
+<div id="buscabar">
+  <input id="busca-input" type="text" placeholder="Buscar talh&#227;o, ponto, texto...">
+</div>
+<div id="busca-resultados"></div>
+
+<div id="med-info"></div>
+
+<div id="toolbar">
+  <button id="btn-abrir" class="btn-round" title="Abrir arquivo">&#128194;</button>
+  <button id="btn-medir" class="btn-round" title="Medir dist&#226;ncia">&#128207;</button>
+  <button id="btn-gps" class="btn-round" title="Minha localiza&#231;&#227;o">&#128205;</button>
+  <button id="btn-seguir" class="btn-round" title="Seguir minha posi&#231;&#227;o">&#128664;</button>
+</div>
+
+<!-- drawer de camadas -->
+<div id="drawer">
+  <div id="drawer-head"><h2>Camadas</h2><button id="drawer-close">&times;</button></div>
+  <div id="drawer-actions">
+    <button id="cam-todas">Mostrar todas</button>
+    <button id="cam-nenhuma">Ocultar todas</button>
+    <button id="cam-padrao">Padr&#227;o</button>
+  </div>
+  <div id="lista-camadas"><div id="drawer-empty">Abra um projeto para ver as camadas.</div></div>
+</div>
+
+<!-- drawer de projetos -->
+<div id="drawer-proj">
+  <div id="dp-head"><h2>Meus projetos</h2><button id="dp-close">&times;</button></div>
+  <div id="dp-abrir">&#128194; Abrir arquivo .kmz / .kml</div>
+  <div id="dp-lista"><div id="dp-empty">Nenhum projeto salvo neste aparelho ainda.</div></div>
+</div>
+
+<div id="drop-overlay">Solte o arquivo .kmz ou .kml aqui</div>
+<div id="carregando"><div class="spin"></div><div id="carregando-txt">Processando arquivo...</div></div>
+<div id="toast"></div>
+<input id="file-input" type="file" accept=".kml,.kmz">
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+'use strict';
+
+/* ==================================================================
+   MAPA
+   ================================================================== */
+const mapa = L.map('mapa', {zoomControl:false, attributionControl:false, zoomSnap:.25, wheelPxPerZoomLevel:180});
+mapa.setView([-15,-50], 5);
+L.control.zoom({position:'bottomleft'}).addTo(mapa);
+L.control.attribution({position:'bottomright', prefix:false}).addTo(mapa);
+
+const SERVIDORES_SAT = [
+  {nome:'Esri World Imagery', url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'},
+  {nome:'Esri (alt)', url:'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'},
+  {nome:'Esri Clarity', url:'https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'}
+];
+let iServ=0, camadaSat=null, tileOk=false, erroCount=0;
+function montaSatelite(i){
+  if(camadaSat) mapa.removeLayer(camadaSat);
+  iServ=i; tileOk=false; erroCount=0;
+  camadaSat = L.tileLayer(SERVIDORES_SAT[i].url, {maxNativeZoom:19, maxZoom:22, attribution:'Esri, Maxar'});
+  camadaSat.on('tileload', ()=>{tileOk=true; erroCount=0;});
+  camadaSat.on('tileerror', ()=>{
+    if(tileOk) return;
+    if(++erroCount>4 && i+1<SERVIDORES_SAT.length){ montaSatelite(i+1); }
+  });
+  camadaSat.addTo(mapa);
+}
+const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxNativeZoom:19, maxZoom:22, attribution:'OpenStreetMap'});
+montaSatelite(0);
+let modoRua=false;
+function alternaBase(){
+  modoRua = !modoRua;
+  if(modoRua){ mapa.removeLayer(camadaSat); osm.addTo(mapa); }
+  else { mapa.removeLayer(osm); camadaSat.addTo(mapa); }
+}
+mapa.on('dblclick', ()=>{}); // reservado
+
+/* ==================================================================
+   TOAST / LOADING
+   ================================================================== */
+let toastTimer=null;
+function toast(msg, ms){
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('mostra');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>el.classList.remove('mostra'), ms||2600);
+}
+function mostraCarregando(msg){
+  document.getElementById('carregando-txt').textContent = msg || 'Processando arquivo...';
+  document.getElementById('carregando').classList.add('aberto');
+}
+function escondeCarregando(){ document.getElementById('carregando').classList.remove('aberto'); }
+
+/* ==================================================================
+   PARSER KML  ->  arvore de pastas com placemarks (geojson-like)
+   ================================================================== */
+function textoDe(el, tag){
+  const n = el.getElementsByTagName(tag)[0];
+  return n ? n.textContent.trim() : '';
+}
+function coordsDeTexto(txt){
+  return txt.trim().split(/\s+/).filter(Boolean).map(par=>{
+    const p = par.split(',').map(Number);
+    return [p[1], p[0]]; // [lat, lon] -- ignora altitude
+  }).filter(c=>isFinite(c[0]) && isFinite(c[1]));
+}
+function corDeKML(kmlColor){
+  // KML usa aabbggrr
+  if(!kmlColor || kmlColor.length<6) return null;
+  const c = kmlColor.length===8 ? kmlColor : '00'+kmlColor;
+  const bb = c.slice(2,4), gg = c.slice(4,6), rr = c.slice(6,8);
+  return '#'+rr+gg+bb;
+}
+function extendedDataDe(pm){
+  const dados = {};
+  const ed = pm.getElementsByTagName('ExtendedData')[0];
+  if(ed){
+    [...ed.getElementsByTagName('Data')].forEach(d=>{
+      const nome = d.getAttribute('name');
+      const val = textoDe(d,'value');
+      if(nome && val) dados[nome]=val;
+    });
+    [...ed.getElementsByTagName('SimpleData')].forEach(d=>{
+      const nome = d.getAttribute('name');
+      const val = d.textContent.trim();
+      if(nome && val) dados[nome]=val;
+    });
+  }
+  return dados;
+}
+function geometriasDePlacemark(pm){
+  const geoms = [];
+  [...pm.getElementsByTagName('Point')].forEach(g=>{
+    const c = g.getElementsByTagName('coordinates')[0];
+    if(c){ const arr = coordsDeTexto(c.textContent); if(arr.length) geoms.push({tipo:'point', coords:arr[0]}); }
+  });
+  [...pm.getElementsByTagName('LineString')].forEach(g=>{
+    const c = g.getElementsByTagName('coordinates')[0];
+    if(c){ const arr = coordsDeTexto(c.textContent); if(arr.length>1) geoms.push({tipo:'line', coords:arr}); }
+  });
+  [...pm.getElementsByTagName('Polygon')].forEach(g=>{
+    const ob = g.getElementsByTagName('outerBoundaryIs')[0];
+    const c = ob ? ob.getElementsByTagName('coordinates')[0] : g.getElementsByTagName('coordinates')[0];
+    if(c){
+      const anel = coordsDeTexto(c.textContent);
+      const buracos = [...g.getElementsByTagName('innerBoundaryIs')].map(ib=>{
+        const cc = ib.getElementsByTagName('coordinates')[0];
+        return cc ? coordsDeTexto(cc.textContent) : [];
+      }).filter(a=>a.length);
+      if(anel.length>2) geoms.push({tipo:'polygon', anel, buracos});
+    }
+  });
+  return geoms;
+}
+function corPadraoPasta(nome){
+  // paleta simples e estavel a partir do nome da pasta
+  let h=0; for(let i=0;i<nome.length;i++) h = (h*31 + nome.charCodeAt(i)) & 0xffffffff;
+  const hue = Math.abs(h) % 360;
+  return `hsl(${hue},70%,55%)`;
+}
+function parseKMLTree(texto){
+  const doc = new DOMParser().parseFromString(texto, 'application/xml');
+  if(doc.getElementsByTagName('parsererror').length) throw new Error('Arquivo KML inválido ou corrompido.');
+
+  // resolve estilos simples (cor de linha) por #id
+  const estilos = {};
+  [...doc.getElementsByTagName('Style')].forEach(st=>{
+    const id = st.getAttribute('id');
+    if(!id) return;
+    const ls = st.getElementsByTagName('LineStyle')[0];
+    const ps = st.getElementsByTagName('PolyStyle')[0];
+    estilos['#'+id] = {
+      linha: ls ? corDeKML(textoDe(ls,'color')) : null,
+      preench: ps ? corDeKML(textoDe(ps,'color')) : null
+    };
+  });
+
+  function corDoPlacemark(pm){
+    const su = textoDe(pm,'styleUrl');
+    if(su && estilos[su]) return estilos[su];
+    return null;
+  }
+
+  function montaPasta(el, caminho){
+    const nomePasta = textoDe(el,'name') || 'Sem nome';
+    const meuCaminho = caminho ? caminho+' / '+nomePasta : nomePasta;
+    const pasta = {nome:nomePasta, caminho:meuCaminho, subpastas:[], placemarks:[]};
+    // subpastas diretas (Folder e Document filhos diretos)
+    for(const filho of el.children){
+      if(filho.tagName==='Folder' || filho.tagName==='Document'){
+        pasta.subpastas.push(montaPasta(filho, meuCaminho));
+      } else if(filho.tagName==='Placemark'){
+        const geoms = geometriasDePlacemark(filho);
+        if(!geoms.length) continue;
+        const estilo = corDoPlacemark(filho);
+        pasta.placemarks.push({
+          nome: textoDe(filho,'name') || '',
+          descricao: textoDe(filho,'description') || '',
+          dados: extendedDataDe(filho),
+          geoms,
+          cor: (estilo && (estilo.linha || estilo.preench)) || null
+        });
+      }
+    }
+    return pasta;
+  }
+
+  const raiz = doc.documentElement;
+  // acha o(s) Document/Folder de nivel superior dentro de <kml>
+  const topEls = [...raiz.children].filter(c=>c.tagName==='Document' || c.tagName==='Folder');
+  const arvore = topEls.length ? topEls.map(e=>montaPasta(e,'')) : [montaPasta(raiz,'')];
+  return arvore;
+}
+
+/* achata a arvore em lista de "camadas" (uma por pasta que tem placemarks OU subpastas com placemarks, priorizando o nivel mais alto que ja tenha geometria propria) */
+function achataCamadas(arvore){
+  const camadas = [];
+  function rec(pasta){
+    if(pasta.placemarks.length){
+      camadas.push(pasta);
+    }
+    pasta.subpastas.forEach(rec);
+  }
+  arvore.forEach(rec);
+  return camadas;
+}
+
+/* ==================================================================
+   REGRAS DE VISIBILIDADE PADRAO
+   Muitas pastas exportadas de CAD (perfis, seções, grades, tabelas)
+   são ruído em campo. Ficam ocultas por padrão, mas continuam
+   disponíveis na gaveta de camadas.
+   ================================================================== */
+const OCULTAR_POR_PADRAO = /(PROF|SECT|SCTN|MASS|GRID|TABL|VIEW|DIAG|CANT|SAMP|SPIR|CURV$|ASSM|STAN|SGHT|TURNOUT|FOUNDATION|GIRDER|ABUTMENT|PIER|Defpoints|CONFRONTANTE|AZIMUTE|DIMENS)/i;
+const REALCAR = /(TALH|WATR-PIPE|WATR-FITT|PROP-BNDY|PROP-LINE|LOTE|ADUTORA|C-WATR)/i;
+
+/* ==================================================================
+   ESTADO DO PROJETO ATUAL
+   ================================================================== */
+let grupoCamadas = []; // {info:pastaObj, layer:L.LayerGroup, cor, visivel}
+let projetoAtual = null; // {id, nome, ts}
+
+function limparProjeto(){
+  grupoCamadas.forEach(c=>mapa.removeLayer(c.layer));
+  grupoCamadas = [];
+  document.getElementById('lista-camadas').innerHTML = '<div id="drawer-empty">Abra um projeto para ver as camadas.</div>';
+}
+
+// muitas exportacoes de CAD nomeiam toda geometria como "POLYLINE"/"Placemark";
+// nesses casos usa o nome da camada + um numero sequencial, senao fica tudo igual.
+const NOME_GENERICO = /^(polyline|placemark|path|untitled ?path|point|line)$/i;
+function rotuloPlacemark(pm, idxNaCamada, nomeCamada){
+  if(pm.nome && !NOME_GENERICO.test(pm.nome.trim())) return pm.nome;
+  return nomeCamada + ' #' + (idxNaCamada+1);
+}
+
+function popupHTML(pm, tipoLabel, rotulo){
+  let h = '';
+  h += `<b>${escHTML(rotulo || pm.nome || tipoLabel || 'Elemento')}</b>`;
+  if(tipoLabel) h += `<br><small style="color:#5a7a88">${tipoLabel}</small>`;
+  const chaves = Object.keys(pm.dados||{});
+  if(chaves.length){
+    h += '<table style="margin-top:.4rem;font-size:.78rem;border-collapse:collapse">';
+    chaves.slice(0,12).forEach(k=>{
+      h += `<tr><td style="color:#5a7a88;padding-right:.5rem;vertical-align:top">${escHTML(k)}</td><td>${escHTML(pm.dados[k])}</td></tr>`;
+    });
+    h += '</table>';
+  } else if(pm.descricao){
+    h += `<div style="margin-top:.3rem">${pm.descricao.replace(/</g,'&lt;')}</div>`;
+  }
+  return h || '<i>Sem nome</i>';
+}
+function escHTML(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function construirCamadas(arvore){
+  limparProjeto();
+  const camadasPastas = achataCamadas(arvore);
+  const bounds = L.latLngBounds([]);
+
+  camadasPastas.forEach(pasta=>{
+    const corPasta = corDeKML_ouPadrao(pasta);
+    const layer = L.layerGroup();
+    let count=0;
+
+    pasta.placemarks.forEach((pm,idxPm)=>{
+      const cor = pm.cor || corPasta;
+      const rotulo = rotuloPlacemark(pm, idxPm, pasta.nome);
+      pm.geoms.forEach(g=>{
+        let obj=null;
+        if(g.tipo==='point'){
+          obj = L.circleMarker([g.coords[0],g.coords[1]], {radius:5, color:'#fff', weight:1.5, fillColor:cor, fillOpacity:.95});
+          bounds.extend([g.coords[0],g.coords[1]]);
+        } else if(g.tipo==='line'){
+          obj = L.polyline(g.coords, {color:cor, weight:3, opacity:.9});
+          g.coords.forEach(c=>bounds.extend(c));
+        } else if(g.tipo==='polygon'){
+          const anel = [g.anel, ...g.buracos];
+          obj = L.polygon(anel, {color:cor, weight:2, fillColor:cor, fillOpacity:.18});
+          g.anel.forEach(c=>bounds.extend(c));
+        }
+        if(obj){
+          obj.bindPopup(popupHTML(pm, pasta.nome, rotulo));
+          layer.addLayer(obj);
+          count++;
+        }
+      });
+    });
+
+    if(count===0) return;
+    const ocultarPadrao = OCULTAR_POR_PADRAO.test(pasta.caminho) && !REALCAR.test(pasta.caminho);
+    grupoCamadas.push({pasta, layer, cor:corPasta, count, visivel:!ocultarPadrao});
+  });
+
+  // ordena: realcadas primeiro, depois alfabetico
+  grupoCamadas.sort((a,b)=>{
+    const ra = REALCAR.test(a.pasta.caminho) ? 0 : 1;
+    const rb = REALCAR.test(b.pasta.caminho) ? 0 : 1;
+    if(ra!==rb) return ra-rb;
+    return a.pasta.nome.localeCompare(b.pasta.nome,'pt-BR');
+  });
+
+  grupoCamadas.forEach(c=>{ if(c.visivel) c.layer.addTo(mapa); });
+
+  if(bounds.isValid()){ mapa.fitBounds(bounds, {padding:[30,30]}); }
+  renderizaListaCamadas();
+}
+function corDeKML_ouPadrao(pasta){
+  return corPadraoPasta(pasta.caminho);
+}
+
+function renderizaListaCamadas(){
+  const cont = document.getElementById('lista-camadas');
+  if(!grupoCamadas.length){ cont.innerHTML = '<div id="drawer-empty">Nenhuma camada com geometria neste arquivo.</div>'; return; }
+  cont.innerHTML = '';
+  grupoCamadas.forEach((c,i)=>{
+    const div = document.createElement('div');
+    div.className = 'camada-item';
+    div.innerHTML = `<span class="swatch" style="background:${c.cor}"></span>
+      <label for="cam-${i}">${escHTML(c.pasta.nome)}<br><small>${c.count} elemento${c.count>1?'s':''}</small></label>
+      <input type="checkbox" id="cam-${i}" ${c.visivel?'checked':''}>`;
+    div.querySelector('input').addEventListener('change', e=>{
+      c.visivel = e.target.checked;
+      if(c.visivel) c.layer.addTo(mapa); else mapa.removeLayer(c.layer);
+    });
+    cont.appendChild(div);
+  });
+}
+
+/* ==================================================================
+   LEITURA DE ARQUIVO (.kml / .kmz)
+   ================================================================== */
+async function abrirArquivo(file){
+  mostraCarregando('Lendo ' + file.name + '...');
+  try{
+    const buf = await file.arrayBuffer();
+    const arvore = parseKMLTree(await extraiTextoKML(file, buf));
+    construirCamadas(arvore);
+    definirTituloProjeto(file.name);
+    await salvarProjetoIndexedDB(file.name, buf);
+    toast('Projeto carregado: ' + file.name);
+  }catch(err){
+    console.error(err);
+    toast('Erro: ' + err.message, 4200);
+  }finally{
+    escondeCarregando();
+  }
+}
+function decodeTextoInteligente(buf){
+  // Muitos exportadores de CAD (inclusive o do IrriCAD) gravam o KML em
+  // Windows-1252 sem declarar o encoding. Tenta UTF-8 estrito primeiro;
+  // se houver byte invalido, cai para Windows-1252.
+  try{ return new TextDecoder('utf-8', {fatal:true}).decode(buf); }
+  catch(e){ return new TextDecoder('windows-1252').decode(buf); }
+}
+async function extraiTextoKML(file, buf){
+  const ext = file.name.toLowerCase().split('.').pop();
+  if(ext==='kmz'){
+    const zip = await JSZip.loadAsync(buf);
+    const alvo = Object.keys(zip.files).find(n=>n.toLowerCase().endsWith('.kml'));
+    if(!alvo) throw new Error('O arquivo .kmz não contém nenhum .kml dentro.');
+    const kmlBuf = await zip.files[alvo].async('arraybuffer');
+    return decodeTextoInteligente(kmlBuf);
+  }
+  if(ext==='kml') return decodeTextoInteligente(buf);
+  throw new Error('Formato não suportado. Use .kml ou .kmz.');
+}
+function definirTituloProjeto(nome){
+  const el = document.getElementById('titulo-proj');
+  el.classList.remove('vazio');
+  const n = grupoCamadas.reduce((s,c)=>s+c.count,0);
+  el.innerHTML = `<b>${escHTML(nome.replace(/\.(kmz|kml)$/i,''))}</b><span>${grupoCamadas.length} camadas &middot; ${n} elementos</span>`;
+}
+
+/* ==================================================================
+   PERSISTENCIA (IndexedDB) -- "Meus projetos"
+   ================================================================== */
+const DB_NOME = 'irricadViewerDB', DB_VERSAO = 1, STORE = 'projetos';
+function abrirDB(){
+  return new Promise((resolve,reject)=>{
+    const req = indexedDB.open(DB_NOME, DB_VERSAO);
+    req.onupgradeneeded = ()=>{
+      const db = req.result;
+      if(!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, {keyPath:'id'});
+    };
+    req.onsuccess = ()=>resolve(req.result);
+    req.onerror = ()=>reject(req.error);
+  });
+}
+async function salvarProjetoIndexedDB(nome, buf){
+  try{
+    const db = await abrirDB();
+    const id = nome; // um arquivo com mesmo nome substitui a versao salva
+    const registro = {id, nome, ts:Date.now(), buf};
+    await new Promise((resolve,reject)=>{
+      const tx = db.transaction(STORE,'readwrite');
+      tx.objectStore(STORE).put(registro);
+      tx.oncomplete = resolve; tx.onerror=()=>reject(tx.error);
+    });
+    projetoAtual = {id, nome, ts:registro.ts};
+  }catch(e){ console.warn('Não foi possível salvar offline:', e); }
+}
+async function listarProjetosSalvos(){
+  const db = await abrirDB();
+  return new Promise((resolve,reject)=>{
+    const tx = db.transaction(STORE,'readonly');
+    const req = tx.objectStore(STORE).getAll();
+    req.onsuccess = ()=>resolve(req.result.sort((a,b)=>b.ts-a.ts));
+    req.onerror = ()=>reject(req.error);
+  });
+}
+async function excluirProjetoSalvo(id){
+  const db = await abrirDB();
+  return new Promise((resolve,reject)=>{
+    const tx = db.transaction(STORE,'readwrite');
+    tx.objectStore(STORE).delete(id);
+    tx.oncomplete = resolve; tx.onerror=()=>reject(tx.error);
+  });
+}
+async function abrirProjetoSalvo(registro){
+  mostraCarregando('Abrindo ' + registro.nome + '...');
+  try{
+    const file = new File([registro.buf], registro.nome);
+    const arvore = parseKMLTree(await extraiTextoKML(file, registro.buf));
+    construirCamadas(arvore);
+    definirTituloProjeto(registro.nome);
+    projetoAtual = {id:registro.id, nome:registro.nome, ts:registro.ts};
+    toast('Projeto aberto: ' + registro.nome);
+    fecharDrawerProjetos();
+  }catch(err){
+    console.error(err);
+    toast('Erro ao abrir projeto salvo: ' + err.message, 4200);
+  }finally{
+    escondeCarregando();
+  }
+}
+async function renderizaListaProjetos(){
+  const cont = document.getElementById('dp-lista');
+  let lista;
+  try{ lista = await listarProjetosSalvos(); }catch(e){ lista=[]; }
+  if(!lista.length){ cont.innerHTML = '<div id="dp-empty">Nenhum projeto salvo neste aparelho ainda.</div>'; return; }
+  cont.innerHTML = '';
+  lista.forEach(reg=>{
+    const div = document.createElement('div');
+    div.className = 'proj-item';
+    const data = new Date(reg.ts).toLocaleDateString('pt-BR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+    div.innerHTML = `<div class="info"><b>${escHTML(reg.nome)}</b><small>${data} &middot; ${(reg.buf.byteLength/1024/1024).toFixed(1)} MB</small></div><button class="del" title="Excluir">&#128465;&#65039;</button>`;
+    div.querySelector('.info').addEventListener('click', ()=>abrirProjetoSalvo(reg));
+    div.querySelector('.del').addEventListener('click', async (e)=>{
+      e.stopPropagation();
+      if(confirm('Excluir "'+reg.nome+'" deste aparelho?')){
+        await excluirProjetoSalvo(reg.id);
+        renderizaListaProjetos();
+      }
+    });
+    cont.appendChild(div);
+  });
+}
+
+/* ==================================================================
+   UI: drawers, busca, drag&drop, file input
+   ================================================================== */
+const drawer = document.getElementById('drawer');
+const drawerProj = document.getElementById('drawer-proj');
+document.getElementById('btn-camadas').addEventListener('click', ()=>drawer.classList.add('aberto'));
+document.getElementById('drawer-close').addEventListener('click', ()=>drawer.classList.remove('aberto'));
+document.getElementById('btn-projetos').addEventListener('click', ()=>{ drawerProj.classList.add('aberto'); renderizaListaProjetos(); });
+document.getElementById('dp-close').addEventListener('click', fecharDrawerProjetos);
+function fecharDrawerProjetos(){ drawerProj.classList.remove('aberto'); }
+document.getElementById('titulo-proj').addEventListener('click', ()=>document.getElementById('file-input').click());
+document.getElementById('dp-abrir').addEventListener('click', ()=>document.getElementById('file-input').click());
+document.getElementById('btn-abrir').addEventListener('click', ()=>document.getElementById('file-input').click());
+
+document.getElementById('cam-todas').addEventListener('click', ()=>{
+  grupoCamadas.forEach(c=>{ c.visivel=true; c.layer.addTo(mapa); });
+  renderizaListaCamadas();
+});
+document.getElementById('cam-nenhuma').addEventListener('click', ()=>{
+  grupoCamadas.forEach(c=>{ c.visivel=false; mapa.removeLayer(c.layer); });
+  renderizaListaCamadas();
+});
+document.getElementById('cam-padrao').addEventListener('click', ()=>{
+  grupoCamadas.forEach(c=>{
+    c.visivel = !(OCULTAR_POR_PADRAO.test(c.pasta.caminho) && !REALCAR.test(c.pasta.caminho));
+    if(c.visivel) c.layer.addTo(mapa); else mapa.removeLayer(c.layer);
+  });
+  renderizaListaCamadas();
+});
+
+document.getElementById('file-input').addEventListener('change', e=>{
+  const f = e.target.files[0];
+  if(f) abrirArquivo(f);
+  e.target.value='';
+});
+
+// drag & drop
+const dropOverlay = document.getElementById('drop-overlay');
+let dragCount=0;
+window.addEventListener('dragenter', e=>{ e.preventDefault(); dragCount++; dropOverlay.classList.add('aberto'); });
+window.addEventListener('dragover', e=>e.preventDefault());
+window.addEventListener('dragleave', e=>{ dragCount--; if(dragCount<=0){ dragCount=0; dropOverlay.classList.remove('aberto'); } });
+window.addEventListener('drop', e=>{
+  e.preventDefault(); dragCount=0; dropOverlay.classList.remove('aberto');
+  const f = e.dataTransfer.files[0];
+  if(f) abrirArquivo(f);
+});
+
+// busca
+const buscaBar = document.getElementById('buscabar');
+const buscaInput = document.getElementById('busca-input');
+const buscaResultados = document.getElementById('busca-resultados');
+document.getElementById('btn-busca').addEventListener('click', ()=>{
+  buscaBar.classList.toggle('aberto');
+  if(buscaBar.classList.contains('aberto')) buscaInput.focus();
+  else { buscaResultados.classList.remove('aberto'); }
+});
+buscaInput.addEventListener('input', ()=>{
+  const q = buscaInput.value.trim().toLowerCase();
+  if(!q){ buscaResultados.classList.remove('aberto'); buscaResultados.innerHTML=''; return; }
+  const achados = [];
+  grupoCamadas.forEach(c=>{
+    c.pasta.placemarks.forEach((pm,idx)=>{
+      const rotulo = rotuloPlacemark(pm, idx, c.pasta.nome);
+      const valores = Object.values(pm.dados||{}).join(' ').toLowerCase();
+      if(rotulo.toLowerCase().includes(q) || c.pasta.nome.toLowerCase().includes(q) || valores.includes(q)){
+        achados.push({pm, camada:c, rotulo});
+      }
+    });
+  });
+  buscaResultados.innerHTML = achados.slice(0,40).map((a,i)=>
+    `<div class="busca-item" data-i="${i}"><span>${escHTML(a.rotulo)}</span><small>${escHTML(a.camada.pasta.nome)}</small></div>`
+  ).join('') || '<div class="busca-item"><span>Nada encontrado</span></div>';
+  if(achados.length>40) buscaResultados.innerHTML += `<div class="busca-item"><small>+ ${achados.length-40} resultado(s)... refine a busca</small></div>`;
+  buscaResultados.classList.add('aberto');
+  [...buscaResultados.children].forEach((el,i)=>{
+    if(!achados[i]) return;
+    el.addEventListener('click', ()=>{
+      const pm = achados[i].pm;
+      const g = pm.geoms[0];
+      let ll=null;
+      if(g.tipo==='point') ll=[g.coords[0],g.coords[1]];
+      else if(g.tipo==='line') ll=g.coords[Math.floor(g.coords.length/2)];
+      else if(g.tipo==='polygon') ll=L.polygon(g.anel).getBounds().getCenter();
+      if(ll){ mapa.setView(ll, Math.max(mapa.getZoom(),17)); }
+      buscaBar.classList.remove('aberto'); buscaResultados.classList.remove('aberto'); buscaInput.value='';
+    });
+  });
+});
+
+/* ==================================================================
+   GPS
+   ================================================================== */
+let marcadorGPS=null, circuloGPS=null, watchId=null, seguindo=false;
+function ativaGPS(){
+  if(!navigator.geolocation){ toast('GPS não disponível neste dispositivo.'); return; }
+  document.getElementById('btn-gps').classList.add('ativo');
+  navigator.geolocation.getCurrentPosition(pos=>{
+    atualizaGPS(pos);
+    mapa.setView([pos.coords.latitude,pos.coords.longitude], Math.max(mapa.getZoom(),17));
+  }, err=>toast('Não foi possível obter localização: '+err.message, 3500), {enableHighAccuracy:true, timeout:10000});
+  if(watchId==null){
+    watchId = navigator.geolocation.watchPosition(atualizaGPS, ()=>{}, {enableHighAccuracy:true, maximumAge:2000});
+  }
+}
+function atualizaGPS(pos){
+  const ll = [pos.coords.latitude, pos.coords.longitude];
+  if(!marcadorGPS){
+    marcadorGPS = L.circleMarker(ll, {radius:8, color:'#fff', weight:2, fillColor:'#1a73e8', fillOpacity:1}).addTo(mapa);
+    circuloGPS = L.circle(ll, {radius:pos.coords.accuracy, color:'#1a73e8', weight:1, fillColor:'#1a73e8', fillOpacity:.12}).addTo(mapa);
+  } else {
+    marcadorGPS.setLatLng(ll);
+    circuloGPS.setLatLng(ll); circuloGPS.setRadius(pos.coords.accuracy);
+  }
+  if(seguindo) mapa.setView(ll, mapa.getZoom());
+}
+document.getElementById('btn-gps').addEventListener('click', ativaGPS);
+document.getElementById('btn-seguir').addEventListener('click', ()=>{
+  seguindo = !seguindo;
+  document.getElementById('btn-seguir').classList.toggle('ativo', seguindo);
+  if(seguindo){ if(!marcadorGPS) ativaGPS(); toast('Seguindo sua posição'); }
+});
+
+/* ==================================================================
+   MEDIR DISTANCIA
+   ================================================================== */
+let medindo=false, pontosMedicao=[], linhaMedicao=null, marcadoresMedicao=[];
+function metrosEntre(a,b){ return mapa.distance(a,b); }
+function atualizaMedicao(){
+  const info = document.getElementById('med-info');
+  if(pontosMedicao.length<1){ info.classList.remove('aberto'); return; }
+  let total=0;
+  for(let i=1;i<pontosMedicao.length;i++) total += metrosEntre(pontosMedicao[i-1], pontosMedicao[i]);
+  info.textContent = (total<1000 ? total.toFixed(0)+' m' : (total/1000).toFixed(2)+' km') + (pontosMedicao.length>1 ? ' · toque para continuar, botão de novo para terminar' : ' · toque no mapa para medir');
+  info.classList.add('aberto');
+  if(linhaMedicao) mapa.removeLayer(linhaMedicao);
+  if(pontosMedicao.length>1) linhaMedicao = L.polyline(pontosMedicao, {color:'#ffb703', weight:3, dashArray:'6,6'}).addTo(mapa);
+}
+function cliqueMedicao(e){
+  const ll = [e.latlng.lat, e.latlng.lng];
+  pontosMedicao.push(ll);
+  const m = L.circleMarker(ll, {radius:5, color:'#fff', weight:1.5, fillColor:'#ffb703', fillOpacity:1}).addTo(mapa);
+  marcadoresMedicao.push(m);
+  atualizaMedicao();
+}
+document.getElementById('btn-medir').addEventListener('click', ()=>{
+  medindo = !medindo;
+  document.getElementById('btn-medir').classList.toggle('ativo', medindo);
+  if(medindo){
+    toast('Toque no mapa para marcar pontos e medir a distância');
+    mapa.on('click', cliqueMedicao);
+  } else {
+    mapa.off('click', cliqueMedicao);
+    pontosMedicao=[];
+    marcadoresMedicao.forEach(m=>mapa.removeLayer(m)); marcadoresMedicao=[];
+    if(linhaMedicao){ mapa.removeLayer(linhaMedicao); linhaMedicao=null; }
+    document.getElementById('med-info').classList.remove('aberto');
+  }
+});
+
+/* toque duplo no mapa alterna satélite/rua (botão dedicado tambem) */
+mapa.on('contextmenu', ()=>alternaBase());
+
+/* ==================================================================
+   PWA: service worker
+   ================================================================== */
+if('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('sw.js').catch(()=>{});
+  });
+}
+
+/* tenta reabrir o ultimo projeto automaticamente */
+(async function tentaReabrirUltimo(){
+  try{
+    const lista = await listarProjetosSalvos();
+    if(lista.length) await abrirProjetoSalvo(lista[0]);
+  }catch(e){}
+})();
+</script>
+</body>
+</html>
