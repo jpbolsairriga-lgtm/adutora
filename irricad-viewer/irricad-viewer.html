@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<!-- build 2026-09-24 v1.4.1 -->
+<!-- build 2026-09-24 v1.5.0 -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Visualizador IrriCAD v1.4.1 &middot; TophoFarm</title>
+<title>Visualizador IrriCAD v1.5.0 &middot; TophoFarm</title>
 <meta name="theme-color" content="#1f4e4c">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -101,6 +101,17 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 #dp-changelog .item b{color:#eaf2f6;display:block;font-size:.72rem}
 #dp-creditos{font-size:.66rem;color:#7fa0af;line-height:1.65}
 #dp-creditos a{color:var(--azul-cl);text-decoration:none}
+#dot-atualizacao{display:none;position:absolute;top:-1px;right:-1px;width:12px;height:12px;border-radius:50%;
+  background:var(--verde);border:2px solid var(--azul-esc);box-shadow:0 0 0 1px rgba(255,255,255,.4)}
+#dot-atualizacao.ativo{display:block;animation:pulsa-att 1.4s ease-in-out infinite}
+@keyframes pulsa-att{0%,100%{transform:scale(1)}50%{transform:scale(1.25)}}
+#btn-buscar-att{margin-top:.6rem;width:100%;background:#1c313e;color:#eaf2f6;border:1px solid #2b4757;border-radius:8px;
+  padding:.55rem;font-size:.78rem;font-weight:700;display:flex;align-items:center;justify-content:center;gap:.4rem;font-family:inherit}
+#btn-buscar-att.tem-novidade{background:var(--verde);border-color:var(--verde);color:#fff;animation:pulsa-att 1.6s ease-in-out infinite}
+#btn-buscar-att .ico-att{display:inline-block}
+#btn-buscar-att .ico-att.girando{animation:gira-att 1s linear infinite}
+@keyframes gira-att{to{transform:rotate(360deg)}}
+#status-att{font-size:.68rem;color:#7fa0af;margin-top:.4rem;line-height:1.5}
 
 /* ---------- overlays ---------- */
 #drop-overlay{position:fixed;inset:0;z-index:2000;background:rgba(0,61,92,.9);display:none;align-items:center;justify-content:center;
@@ -146,7 +157,10 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 <div id="mapa"></div>
 
 <div id="topbar">
-  <button id="btn-projetos" class="btn-round" title="Meus projetos e sobre o app"><img src="tophofarm-simbolo.png" alt="" style="width:26px;height:26px"></button>
+  <button id="btn-projetos" class="btn-round" title="Meus projetos e sobre o app" style="position:relative">
+    <img src="tophofarm-simbolo.png" alt="" style="width:26px;height:26px">
+    <span id="dot-atualizacao"></span>
+  </button>
   <div id="titulo-proj" class="vazio"><b>Nenhum projeto aberto</b><span>Toque para abrir um arquivo .kmz/.kml</span></div>
   <button id="btn-busca" class="btn-round" title="Buscar talh&#227;o">&#128269;</button>
   <button id="btn-camadas" class="btn-pill" title="Ligar/desligar camadas">
@@ -191,6 +205,8 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
     <div id="dp-versao">Visualizador IrriCAD <b id="dp-versao-num"></b></div>
     <button id="dp-ver-changelog">Ver hist&#243;rico de vers&#245;es</button>
     <div id="dp-changelog"></div>
+    <button id="btn-buscar-att"><span class="ico-att" id="ico-att">&#8635;</span><span id="lbl-att">Buscar Atualiza&#231;&#245;es</span></button>
+    <div id="status-att"></div>
     <div id="dp-creditos">
       Desenvolvido por <b>Jo&#227;o Paulo de Oliveira</b><br>
       Engenheiro Agr&#244;nomo &middot; Especialista em Irriga&#231;&#227;o<br>
@@ -213,8 +229,9 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 /* ==================================================================
    VERSAO / HISTORICO
    ================================================================== */
-const VERSAO_APP = '1.4.1';
+const VERSAO_APP = '1.5.0';
 const HISTORICO_VERSOES = [
+  {v:'1.5.0', d:'24/09/2026', t:'Botão "Buscar Atualizações" (dentro de Meus Projetos): verifica se há uma versão nova publicada e deixa atualizar com 1 toque — sem precisar de Ctrl+Shift+R no celular. Avisa sozinho ao abrir o app, com uma bolinha verde no ícone.'},
   {v:'1.4.1', d:'24/09/2026', t:'Pontos com informação agora ficam numa camada própria, sempre acima de linhas/talhões — corrige toques que caíam numa linha por baixo em vez de abrir o ponto.'},
   {v:'1.4.0', d:'24/09/2026', t:'Pontos com informação (Cota, Vazão, PS etc.) ganham alvo de toque maior e rótulo sempre visível no mapa — mais fácil de achar e tocar em campo, mesmo com zoom baixo.'},
   {v:'1.3.0', d:'24/09/2026', t:'Modo navegação: a tela agora gira de verdade seguindo pra onde você está andando (como o modo a pé do Google Maps), não só uma setinha — usa a bússola do celular; o marcador de GPS fica sempre "pra cima" mostrando sua frente.'},
@@ -233,6 +250,78 @@ function iniciaPainelSobre(){
   });
 }
 iniciaPainelSobre();
+
+/* ==================================================================
+   BUSCAR ATUALIZACOES
+   O service worker ja busca o HTML "network-first", mas isso nao
+   avisa o tecnico que existe versao nova nem resolve sozinho uma aba
+   que ficou aberta muito tempo com um SW antigo ainda ativo (comum em
+   campo, onde ninguem faz Ctrl+Shift+R no celular). Este botao:
+   1) forca o SW a checar se ha um sw.js novo publicado (reg.update());
+   2) busca o proprio irricad-viewer.html publicado agora mesmo,
+      ignorando cache (cache:'no-store' + query unica), e compara a
+      VERSAO_APP gravada nesse HTML com a desta pagina;
+   3) se for diferente, vira "Atualizar (vX.Y.Z)" pulsando + bolinha
+      verde no icone do topo -- 1 toque limpa os caches do SW,
+      desregistra ele e recarrega.
+   Roda sozinho (silencioso) ~4s depois de abrir, e de novo a cada
+   toque manual.
+   ================================================================== */
+let versaoDisponivel = null;
+function extraiVersaoDoHtml(texto){
+  const m = texto.match(/const VERSAO_APP = '([^']+)'/);
+  return m ? m[1] : null;
+}
+async function buscarAtualizacoes(silencioso){
+  const btn = document.getElementById('btn-buscar-att'), ico = document.getElementById('ico-att'),
+        lbl = document.getElementById('lbl-att'), st = document.getElementById('status-att'),
+        dot = document.getElementById('dot-atualizacao');
+  if(!silencioso){ btn.disabled = true; ico.classList.add('girando'); lbl.textContent = 'Verificando...'; }
+  try{
+    if('serviceWorker' in navigator){
+      try{ const reg = await navigator.serviceWorker.getRegistration(); if(reg) await reg.update(); }catch(e){}
+    }
+    const resp = await fetch(location.pathname + '?_chk=' + Date.now(), {cache:'no-store'});
+    if(!resp.ok) throw new Error('HTTP '+resp.status);
+    const html = await resp.text();
+    const versaoRemota = extraiVersaoDoHtml(html);
+    if(versaoRemota && versaoRemota !== VERSAO_APP){
+      versaoDisponivel = versaoRemota;
+      btn.classList.add('tem-novidade');
+      ico.innerHTML = '&#11015;&#65039;';
+      lbl.textContent = 'Atualizar (v'+versaoRemota+')';
+      st.innerHTML = `<b style="color:${'#4caf7d'}">Nova versão disponível!</b> Toque no botão acima pra atualizar.`;
+      if(dot) dot.classList.add('ativo');
+      if(!silencioso) toast('Nova versão disponível: v'+versaoRemota, 4000);
+    } else {
+      versaoDisponivel = null;
+      btn.classList.remove('tem-novidade');
+      ico.innerHTML = '&#8635;';
+      lbl.textContent = 'Buscar Atualizações';
+      st.textContent = 'Você já está na versão mais recente (v'+VERSAO_APP+').';
+      if(dot) dot.classList.remove('ativo');
+      if(!silencioso) toast('Você já está atualizado (v'+VERSAO_APP+')');
+    }
+  }catch(e){
+    st.textContent = 'Não foi possível verificar agora — confira sua conexão.';
+    if(!silencioso) toast('Não foi possível verificar atualizações — confira sua conexão.', 3500);
+  }finally{
+    if(!silencioso){ btn.disabled = false; ico.classList.remove('girando'); }
+  }
+}
+async function aplicarAtualizacao(){
+  toast('Atualizando para v'+(versaoDisponivel||'mais recente')+'...', 6000);
+  try{
+    if('caches' in window){ const nomes = await caches.keys(); await Promise.all(nomes.map(n=>caches.delete(n))); }
+    if('serviceWorker' in navigator){ const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r=>r.unregister())); }
+  }catch(e){}
+  location.reload();
+}
+document.getElementById('btn-buscar-att').addEventListener('click', ()=>{
+  if(versaoDisponivel) aplicarAtualizacao();
+  else buscarAtualizacoes(false);
+});
+setTimeout(()=>{ try{ buscarAtualizacoes(true); }catch(e){} }, 4000);
 
 /* ==================================================================
    MAPA
