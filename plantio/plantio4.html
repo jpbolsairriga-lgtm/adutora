@@ -366,7 +366,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.09 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.10 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -3549,6 +3549,19 @@ body.layout-lateral #status{grid-area:status;}
 // (chama aplicarAtualizacao() direto) ou "Depois" (só fecha, o botão/bolinha continuam avisando).
 // A bolinha do cabeçalho agora também abre o pop-up direto num clique (_cliqueDotAtualizacao), em
 // vez de só levar pra aba Início.
+// v5.10: BUG relatado com prints — foto embaçada na Vista 3D (tanto no modo "Satélite" quanto no
+// terreno com relevo — os dois usam a MESMA textura) mesmo nítida na página 2D principal. Causa
+// achada em _3da_captureMapTexture: html2canvas capturava a textura com `scale:1`, ou seja, no
+// tamanho em pixels CSS da própria caixa do #map na tela — normalmente bem menor que a resolução
+// disponível por baixo (satélite em zoom alto = muitos tiles de 256px empilhados; ortofoto local
+// importada = um raster único de altíssima resolução, até 9000px no lado maior após o downsample
+// de importação/ORTOFOTO_MAX_PX). A maior parte do detalhe disponível era descartada antes mesmo de
+// virar textura, e o pouco que sobrava saía esticado sobre o terreno inteiro (pode ser centenas de
+// ha) — visivelmente borrado. Confirmado com um caso real do usuário (ortofoto de drone
+// 56821×75307px original). Corrigido: escala de captura dinâmica, mirando num lado maior de ~4096px
+// de textura (bom equilíbrio nitidez/memória, dentro do limite de praticamente qualquer GPU) em vez
+// do tamanho fixo da caixa do mapa — até 4x de escala (até ~16x mais pixels capturados) em janelas
+// menores; em janelas grandes/ultrawide o alvo de 4096px evita estourar textura da GPU.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -12690,7 +12703,23 @@ async function _3da_captureMapTexture(latMin, latMax, lngMin, lngMax) {
     if(markerPane) markerPane.style.display = 'none';
     map.fitBounds([[latMin, lngMin], [latMax, lngMax]], { animate: false, padding: [0, 0] });
     await new Promise(res => setTimeout(res, 900)); // tempo dos tiles/ortofoto carregarem (maioria já em cache)
-    const canvas = await html2canvas(document.getElementById('map'), { useCORS: true, logging: false, scale: 1 });
+    // v5.10: BUG relatado — a foto (principalmente ortofoto local importada, alta resolução de
+    // verdade) saía embaçada na Vista 3D mesmo nítida na página 2D principal. Causa: `scale:1`
+    // capturava a textura no tamanho em pixels CSS do próprio elemento #map (a caixa do mapa na
+    // tela) — normalmente bem menor que a resolução real da imagem por baixo dele, então a maior
+    // parte do detalhe disponível (satélite em zoom alto = muitos tiles de 256px empilhados, ou a
+    // ortofoto importada = um raster único de altíssima resolução) era jogada fora antes mesmo de
+    // virar textura, e depois esse pouco esticado sobre o terreno inteiro (pode ser centenas de ha)
+    // ficava visivelmente borrado. Corrigido: escala dinâmica — mira num lado maior de ~4096px de
+    // textura (bom equilíbrio nitidez/memória, dentro do limite de praticamente qualquer GPU), em
+    // vez do tamanho fixo da caixa do mapa na tela. Numa janela pequena isso pode chegar a 4x de
+    // escala (captura em até ~16x mais pixels que antes); numa janela grande/ultrawide, o alvo de
+    // 4096px já evita estourar o limite de textura da GPU.
+    const _mapElCaptura = document.getElementById('map');
+    const _mapRectCaptura = _mapElCaptura.getBoundingClientRect();
+    const _maxDimCaptura = Math.max(_mapRectCaptura.width, _mapRectCaptura.height) || 1024;
+    const _scaleCaptura = Math.max(1, Math.min(4, 4096 / _maxDimCaptura));
+    const canvas = await html2canvas(_mapElCaptura, { useCORS: true, logging: false, scale: _scaleCaptura });
     const b = map.getBounds();
     return { canvas, north: b.getNorth(), south: b.getSouth(), east: b.getEast(), west: b.getWest() };
   } finally {
