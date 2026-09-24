@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<!-- build 2026-09-24 v1.4.0 -->
+<!-- build 2026-09-24 v1.4.1 -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Visualizador IrriCAD v1.4.0 &middot; TophoFarm</title>
+<title>Visualizador IrriCAD v1.4.1 &middot; TophoFarm</title>
 <meta name="theme-color" content="#1f4e4c">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -134,7 +134,7 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 /* ---------- pontos com informacao (Cota/Vazao/PS etc.) -- alvo de toque
    maior que o desenho, pra ficar facil de acertar mesmo com zoom baixo ---------- */
 .info-pt-wrap{background:transparent!important;border:none!important}
-.info-pt{position:relative;width:40px;height:40px;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.info-pt{position:relative;width:48px;height:48px;display:flex;align-items:center;justify-content:center;cursor:pointer}
 .info-pt-alvo{width:13px;height:13px;border-radius:50%;border:2.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.55)}
 .info-pt-rotulo{position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:1px;
   background:rgba(13,30,28,.9);color:#fff;font-size:.66rem;font-weight:700;padding:.14rem .4rem;border-radius:6px;
@@ -213,8 +213,9 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 /* ==================================================================
    VERSAO / HISTORICO
    ================================================================== */
-const VERSAO_APP = '1.4.0';
+const VERSAO_APP = '1.4.1';
 const HISTORICO_VERSOES = [
+  {v:'1.4.1', d:'24/09/2026', t:'Pontos com informação agora ficam numa camada própria, sempre acima de linhas/talhões — corrige toques que caíam numa linha por baixo em vez de abrir o ponto.'},
   {v:'1.4.0', d:'24/09/2026', t:'Pontos com informação (Cota, Vazão, PS etc.) ganham alvo de toque maior e rótulo sempre visível no mapa — mais fácil de achar e tocar em campo, mesmo com zoom baixo.'},
   {v:'1.3.0', d:'24/09/2026', t:'Modo navegação: a tela agora gira de verdade seguindo pra onde você está andando (como o modo a pé do Google Maps), não só uma setinha — usa a bússola do celular; o marcador de GPS fica sempre "pra cima" mostrando sua frente.'},
   {v:'1.2.0', d:'24/09/2026', t:'Visual com a identidade Agrolâmina/TophoFarm, painel "Sobre" com versão e créditos, localização com bússola e modo "seguir" contínuo em campo.'},
@@ -240,6 +241,14 @@ const mapa = L.map('mapa', {zoomControl:false, attributionControl:false, zoomSna
   rotate:true, rotateControl:false, bearing:0, touchRotate:false, compassBearing:false});
 mapa.setView([-15,-50], 5);
 L.control.zoom({position:'bottomleft'}).addTo(mapa);
+
+// pane dedicado pros pontos com informacao (Cota/Vazao/PS etc.): fica
+// SEMPRE acima de qualquer linha/poligono/vertice, nao depende da ordem
+// em que as camadas foram desenhadas. Criado dentro de _norotatePane
+// (o grupo de panes que o leaflet-rotate NAO gira com a bussola), com
+// z-index entre o dos marcadores normais (600) e o dos popups (700).
+mapa.createPane('pontosInfoPane', mapa._norotatePane || mapa._mapPane);
+mapa.getPane('pontosInfoPane').style.zIndex = 650;
 L.control.attribution({position:'bottomright', prefix:false}).addTo(mapa);
 
 const SERVIDORES_SAT = [
@@ -540,10 +549,10 @@ function construirCamadas(arvore){
         if(g.tipo==='point'){
           if(informativo){
             const icone = L.divIcon({
-              className:'info-pt-wrap', iconSize:[40,40], iconAnchor:[20,20],
+              className:'info-pt-wrap', iconSize:[48,48], iconAnchor:[24,24],
               html:`<div class="info-pt"><div class="info-pt-alvo" style="background:${corTraco}"></div><div class="info-pt-rotulo">${escHTML(rotulo)}</div></div>`
             });
-            obj = L.marker([g.coords[0],g.coords[1]], {icon:icone, zIndexOffset:500});
+            obj = L.marker([g.coords[0],g.coords[1]], {icon:icone, pane:'pontosInfoPane'});
           } else {
             obj = L.circleMarker([g.coords[0],g.coords[1]], {radius:3.5, color:'#fff', weight:1, fillColor:corTraco, fillOpacity:.85});
           }
