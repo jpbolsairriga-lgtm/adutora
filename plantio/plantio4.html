@@ -240,6 +240,7 @@ body.layout-lateral #status{grid-area:status;}
 #status.ok{color:var(--c-ok);}
 #status.err{color:var(--c-err);}
 #status.info{color:var(--acc-light);}
+#status.warn{color:var(--c-warn);}
 
 /* ── Modal tutorial chave API / licença ── */
 .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9999;align-items:center;justify-content:center;}
@@ -370,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.16 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.17 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -3649,6 +3650,18 @@ body.layout-lateral #status{grid-area:status;}
 // pequena. Adicionada margem de segurança (_3DA_MARGEM_SPLIT=1.25, ~26% de campo de visão a mais,
 // mesma lógica de compensação) — sobra mais espaço em branco ao redor (já tinha espaço sobrando nos
 // outros lados), mas garante que pontas/cantos mais distantes do centro não fiquem raspando a borda.
+// v5.17: BUG relatado com print — curvas de nível geradas com "Usar Talhão(ões) Selecionado(s)"
+// (v5.15) paravam antes de chegar na borda real do talhão. Causa: quando a área pedida se estende
+// além da cobertura real do DEM/curvas locais importadas, os pontos da grade fora dela voltam null
+// de _buscarElevacaoFundida — _preencherGradeVazios enche esses buracos ESTICANDO o valor da borda
+// coberta mais próxima (fica "achatado"), então a elevação não CRUZA nenhum nível de curva ali (uma
+// área chapada não tem por onde uma curva de 695m passar, por exemplo) — daí a curva parar de
+// repente, sem aviso nenhum. Não é bug de geometria (não dá pra desenhar curva onde não tem
+// elevação real) — é falta de aviso, o MESMO que Vista 3D e Declividade do Terreno já mostram há
+// tempos pro usuário (precisao3D.pctComDadoReal) e só faltava aqui. Corrigido: gerarCurvas() agora
+// calcula pctComDadoReal (mesmo cálculo, antes do preenchimento) e mostra o mesmo aviso no painel
+// (curvaInfo) e no status (tipo 'warn', nova classe #status.warn) quando <90% — some sozinho quando
+// a cobertura é boa. Testado com harness Node.js: aviso aparece certinho em 45%/85%, some em 95%/100%.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -7890,7 +7903,7 @@ function limparComprimentoTodos() {
 let curvaLayers = [], curvaLabels = [];
 let _pickingCurvaGuia = false;
 let curvaMinElev = 0, curvaMaxElev = 0;
-let _curvaUltimaPrecisao = null; // {sigmaMedio, fontesUsadas} da última geração — ver _buscarElevacaoFundida
+let _curvaUltimaPrecisao = null; // {sigmaMedio, fontesUsadas, pctComDadoReal} da última geração — ver _buscarElevacaoFundida
 // Polígono independente para área de curvas de nível
 let curvaPolyPts=[], curvaPolyMarkers=[], curvaPolyLayer=null, curvaPolyTempLine=null;
 let turfCurvaPoly=null, turfCurvaBound=null;
@@ -8105,7 +8118,19 @@ async function gerarCurvas() {
   // Busca elevação com fusão multi-fonte (ver _buscarElevacaoFundida) — Google + Open-Meteo sempre,
   // +SRTM/Mapzen/ASTER se o proxy estiver configurado (ver configurarDemProxy).
   const { valores: elevFlat, sigmaMedio, fontesUsadas } = await _buscarElevacaoFundida(allPts);
-  _curvaUltimaPrecisao = { sigmaMedio, fontesUsadas };
+  // v5.17: BUG relatado com print — curvas geradas com "Usar Talhão(ões) Selecionado(s)" (v5.15)
+  // paravam antes de chegar na borda real do talhão. Causa: quando o talhão (ou a área desenhada)
+  // se estende além da cobertura real do DEM/curvas locais importadas, os pontos da grade fora
+  // dessa cobertura voltam null de _buscarElevacaoFundida — _preencherGradeVazios (abaixo) enche
+  // esses buracos ESTICANDO o valor da borda coberta mais próxima (fica "achatado"), então a
+  // elevação não CRUZA nenhum nível de curva ali (uma área chapada não tem por onde uma curva de
+  // 695m passar, por exemplo) — daí a curva simplesmente parar de repente antes da borda real do
+  // talhão, sem aviso nenhum. Mesmo problema/mesmo aviso que Vista 3D e Declividade do Terreno já
+  // mostram pro usuário há tempos (ver precisao3D.pctComDadoReal) — só faltava aqui em Curvas de
+  // Nível. Não é bug de código (a curva não "pode" cruzar onde não tem elevação real nenhuma) — é
+  // falta de aviso disso pro usuário, corrigido abaixo.
+  const pctComDadoReal = elevFlat.filter(v => v != null).length / elevFlat.length * 100;
+  _curvaUltimaPrecisao = { sigmaMedio, fontesUsadas, pctComDadoReal };
 
   // Reorganiza em grade 2D: elevGrid[r][c]
   const elevGrid = _preencherGradeVazios(Array.from({length:n}, (_,r) =>
@@ -8181,14 +8206,18 @@ async function gerarCurvas() {
   $('btnLimparCurvas').style.display = '';
   $('btnUsarCurvaGuia').style.display = curvaLayers.length ? '' : 'none';
   $('curvaInfo').style.display = '';
+  const avisoCoberturaHtml = pctComDadoReal < 90
+    ? `<br><span style="color:var(--c-warn);">&#9888; só ${pctComDadoReal.toFixed(0)}% da área tem elevação real — o resto ficou achatado (repete a borda coberta mais próxima), por isso as curvas param antes de chegar lá. Importe um DEM/curvas locais que cubram a área inteira, ou use uma área de curvas menor (só a parte coberta).</span>`
+    : '';
   $('curvaInfo').innerHTML =
     `<span style="color:var(--acc2);font-weight:700;">Alt. mín:</span> ${minElev.toFixed(1)} m &nbsp;
      <span style="color:var(--acc2);font-weight:700;">Alt. máx:</span> ${maxElev.toFixed(1)} m<br>
      <span style="color:var(--acc2);font-weight:700;">Amplitude:</span> ${(maxElev-minElev).toFixed(1)} m &nbsp;
-     <span style="color:var(--acc2);font-weight:700;">Curvas:</span> ${lineCount}`;
+     <span style="color:var(--acc2);font-weight:700;">Curvas:</span> ${lineCount}${avisoCoberturaHtml}`;
   const precisaoTxt = sigmaMedio != null ? ` · precisão estimada ±${sigmaMedio.toFixed(1)}m (${fontesUsadas.length} fonte${fontesUsadas.length !== 1 ? 's' : ''})` : '';
   const clampTxt = nPedido !== n ? ` (resolução limitada a ${n}×${n} — sem DEM/curvas locais importadas, ${nPedido}×${nPedido} sobrecarregaria as APIs online)` : (usandoFonteLocal ? ` · grade ${n}×${n} amostrada direto da fonte local (${_demLocalDisponivel() ? 'DEM' : 'curvas'})` : '');
-  setStatus(`${lineCount} curvas de nível geradas (${minElev.toFixed(1)}–${maxElev.toFixed(1)} m)${precisaoTxt}${clampTxt}.`, 'ok');
+  const avisoCoberturaTxt = pctComDadoReal < 90 ? ` ⚠ só ${pctComDadoReal.toFixed(0)}% da área com elevação real — o resto ficou achatado, as curvas param antes da borda ali.` : '';
+  setStatus(`${lineCount} curvas de nível geradas (${minElev.toFixed(1)}–${maxElev.toFixed(1)} m)${precisaoTxt}${clampTxt}.${avisoCoberturaTxt}`, avisoCoberturaTxt ? 'warn' : 'ok');
 }
 
 function limparCurvas() {
