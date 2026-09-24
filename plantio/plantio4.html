@@ -370,7 +370,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.13 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.14 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -763,8 +763,14 @@ body.layout-lateral #status{grid-area:status;}
               <option value="30" selected>30 × 30 (padrão)</option>
               <option value="40">40 × 40 (detalhado)</option>
               <option value="50">50 × 50 (fino)</option>
+              <option value="80">80 × 80 (só com DEM/curvas locais)</option>
+              <option value="120">120 × 120 (só com DEM/curvas locais)</option>
+              <option value="160">160 × 160 (só com DEM/curvas locais)</option>
             </select>
           </div>
+        </div>
+        <div class="rgroup-body" id="curvaDemAviso" style="display:none;padding-top:2px;">
+          <div class="rbox" style="font-size:11px;">&#127756; DEM local importado — "Gerar Curvas de Nível" usa a elevação real dele (célula a célula, sem depender de API online) e cai nas mesmas camadas das curvas de satélite (Camadas &rarr; Curvas de Nível). Resoluções acima de 50×50 só funcionam com DEM/curvas locais importadas — sem isso, ficam limitadas a 50×50 pra não sobrecarregar as APIs online.</div>
         </div>
         <div class="rgroup-title">Parâmetros</div>
       </div>
@@ -3606,6 +3612,20 @@ body.layout-lateral #status{grid-area:status;}
 // (sempre no tamanho cheio) ficava ótima. Desligado sizeAttenuation nas gotas e no rastro — tamanho
 // agora é constante em pixels de tela nas duas câmeras, sem mudar nada na 2D (que já se comportava
 // assim) e sem precisar mexer no "size" compartilhado entre as duas.
+// v5.14: pedido — gerar curvas de nível a partir do DEM local importado, caindo nas mesmas camadas
+// das curvas "de satélite". Já funcionava por baixo: gerarCurvas() já prioriza o DEM local acima de
+// tudo (_buscarElevacaoFundida → _demLocalDisponivel() primeiro) e sempre empurra pra curvaLayers[]
+// (mesmo array das camadas "Curvas de Nível (mestras/menores)" no painel Camadas) — não importa a
+// fonte, cai sempre no mesmo lugar. O que faltava: a grade (#curvaGrid) tinha teto de 50×50, pensado
+// pra não estourar rate-limit das APIs online (cada ponto = 1 chamada de rede) — com DEM/curvas
+// locais a amostragem é local e instantânea (_construirAmostradorDem, bilinear no raster já
+// carregado), então não faz sentido o mesmo teto. Novas opções 80/120/160×160, liberadas só quando
+// _demLocalDisponivel() ou _elevacaoLocalDisponivel() — sem fonte local, gerarCurvas() faz o clamp
+// sozinha de volta pra 50×50 (com aviso no status). Novo aviso "curvaDemAviso" (aba Curvas de
+// Nível) aparece sozinho quando DEM/curvas locais estão ativas (reavaliado a cada setStatus, mesmo
+// padrão de _aplicarTodasCamadas/_atualizarBotoesExport). Testado com harness Node.js (stub de
+// _buscarElevacaoFundida capturando quantos pontos foram pedidos de verdade): confirma o clamp com
+// e sem fonte local, nos dois lados do teto.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -3873,6 +3893,15 @@ function setStatus(msg, tipo = '') {
   // antes das const _CAMADAS/_camadaVisivel serem inicializadas).
   try { _aplicarTodasCamadas(); } catch(e) {}
   try { _atualizarBotoesExport(); } catch(e) {}
+  try { _atualizarAvisoDemCurvas(); } catch(e) {}
+}
+
+// v5.14: mostra/esconde o aviso "DEM local importado — resoluções >50×50 liberadas" na aba Curvas
+// de Nível — reavaliado a cada setStatus (mesmo padrão de _aplicarTodasCamadas/_atualizarBotoesExport
+// acima), então reage sozinho a importar/remover DEM ou curvas locais sem precisar caçar cada função.
+function _atualizarAvisoDemCurvas() {
+  const el = $('curvaDemAviso');
+  if(el) el.style.display = (_demLocalDisponivel() || _elevacaoLocalDisponivel()) ? '' : 'none';
 }
 
 // ── Mapa ──────────────────────────────────────────────────────────────────────
@@ -7989,7 +8018,15 @@ async function gerarCurvas() {
   setStatus('Buscando elevações para a grade…', 'info');
 
   const interval  = parseFloat($('curvaInt').value);
-  const n         = parseInt($('curvaGrid').value);
+  // v5.14: resoluções acima de 50×50 (ver #curvaGrid) só existem pra quando tem DEM/curvas de nível
+  // locais importadas — nesses casos a "busca de elevação" é só amostragem local (bilinear no
+  // raster já carregado, _construirAmostradorDem), instantânea e sem custo nenhum de rede, então dá
+  // pra pedir uma grade bem mais fina sem problema. Sem fonte local, cada ponto da grade é uma
+  // chamada de API online de verdade (Google/Open-Meteo/SRTM/Mapzen/ASTER) — uma grade grande
+  // sobrecarregaria/estouraria limite de taxa dessas APIs, então o teto continua 50×50 ali.
+  const usandoFonteLocal = _demLocalDisponivel() || _elevacaoLocalDisponivel();
+  const nPedido = parseInt($('curvaGrid').value);
+  const n = usandoFonteLocal ? nPedido : Math.min(nPedido, 50);
   const bbox      = turf.bbox(polyRef);
   const [minLng, minLat, maxLng, maxLat] = bbox;
 
@@ -8086,7 +8123,8 @@ async function gerarCurvas() {
      <span style="color:var(--acc2);font-weight:700;">Amplitude:</span> ${(maxElev-minElev).toFixed(1)} m &nbsp;
      <span style="color:var(--acc2);font-weight:700;">Curvas:</span> ${lineCount}`;
   const precisaoTxt = sigmaMedio != null ? ` · precisão estimada ±${sigmaMedio.toFixed(1)}m (${fontesUsadas.length} fonte${fontesUsadas.length !== 1 ? 's' : ''})` : '';
-  setStatus(`${lineCount} curvas de nível geradas (${minElev.toFixed(1)}–${maxElev.toFixed(1)} m)${precisaoTxt}.`, 'ok');
+  const clampTxt = nPedido !== n ? ` (resolução limitada a ${n}×${n} — sem DEM/curvas locais importadas, ${nPedido}×${nPedido} sobrecarregaria as APIs online)` : (usandoFonteLocal ? ` · grade ${n}×${n} amostrada direto da fonte local (${_demLocalDisponivel() ? 'DEM' : 'curvas'})` : '');
+  setStatus(`${lineCount} curvas de nível geradas (${minElev.toFixed(1)}–${maxElev.toFixed(1)} m)${precisaoTxt}${clampTxt}.`, 'ok');
 }
 
 function limparCurvas() {
