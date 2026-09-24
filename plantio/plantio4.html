@@ -370,7 +370,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.14 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.15 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -735,6 +735,7 @@ body.layout-lateral #status{grid-area:status;}
       <div class="rgroup">
         <div class="rgroup-body">
           <button class="rbtn c-teal btn-curva" id="btnDesenharCurva" onclick="iniciarPoligonoCurva()"><span class="ico">&#9632;</span><span class="lbl">Desenhar Área de Curvas</span></button>
+          <button class="rbtn-sm" id="btnUsarTalhaoCurva" onclick="usarTalhoesSelecionadosParaCurvas()" title="Em vez de desenhar uma área nova, use o contorno de 1 ou mais talhões já travados — clique neles no mapa pra selecionar (mesma seleção usada em Carreador/Guia) e depois clique aqui.">&#128205; Usar Talhão(ões) Selecionado(s)</button>
           <div class="rcol">
             <button class="rbtn-sm ok finish" id="btnFecharCurva" onclick="fecharPoligonoCurva()">&#10003; Fechar Área</button>
             <button class="rbtn-sm clr" id="btnLimparAreaCurva" style="display:none;" onclick="limparPoligonoCurva()">&#10005; Limpar Área</button>
@@ -3626,6 +3627,18 @@ body.layout-lateral #status{grid-area:status;}
 // padrão de _aplicarTodasCamadas/_atualizarBotoesExport). Testado com harness Node.js (stub de
 // _buscarElevacaoFundida capturando quantos pontos foram pedidos de verdade): confirma o clamp com
 // e sem fonte local, nos dois lados do teto.
+// v5.15: pedido — em vez de só desenhar uma área nova do zero pra gerar curvas, poder ESCOLHER um
+// talhão já travado (ou vários) como área. Novo botão "Usar Talhão(ões) Selecionado(s)" (aba Curvas
+// de Nível): reaproveita a seleção de talhões que já existe em todo o resto do app (clicar num
+// talhão travado no mapa — talhoesMultiSel, mesma seleção de Carreador/Guia) — nenhuma UI de seleção
+// nova. Com 2+ talhões selecionados vira uma MultiPolygon (não precisa unir topologicamente como
+// unificarTalhoesSelecionados() — turf.booleanPointInPolygon, único jeito que gerarCurvas() consulta
+// o polígono, já entende MultiPolygon nativamente, mesmo com talhões desconexos/não-vizinhos
+// espalhados pela propriedade). Nova função usarTalhoesSelecionadosParaCurvas() só popula
+// turfCurvaPoly/turfCurvaBound (as mesmas variáveis que "Desenhar Área de Curvas" preenche) e
+// desenha o contorno — gerarCurvas() nem percebe a diferença de origem. Testado com harness Node.js:
+// 1 talhão vira Polygon simples, 2 talhões desconexos viram MultiPolygon com os dois reconhecidos
+// (e o "vazio" entre eles corretamente fora), turf.bbox funciona normal no MultiPolygon.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -7941,6 +7954,47 @@ function limparPoligonoCurva() {
   $('btnLimparAreaCurva').style.display='none';
   $('btnCurvas').disabled = !turfPoly;
   limparCurvas();
+}
+
+// v5.15: pedido do usuário — em vez de só desenhar uma área nova do zero, poder ESCOLHER um talhão
+// já travado (ou vários) como área de curvas. Reaproveita a seleção de talhões que já existe em
+// todo o resto do app (clicar num talhão travado no mapa — talhoesMultiSel — mesma seleção usada em
+// Carreador/Guia); nenhuma UI de seleção nova. Com 2+ talhões selecionados, gera uma MultiPolygon
+// (não precisa unir topologicamente como unificarTalhoesSelecionados() — turf.booleanPointInPolygon,
+// único jeito que gerarCurvas() consulta o polígono, já entende MultiPolygon nativamente, mesmo com
+// talhões desconexos/não-vizinhos) — cada talhão contribui sua própria área de curvas, mesmo que
+// espalhados pela propriedade.
+function usarTalhoesSelecionadosParaCurvas() {
+  if(talhoesMultiSel.size === 0) {
+    setStatus('Selecione um ou mais talhões travados no mapa primeiro (clique neles).', 'err');
+    return;
+  }
+  const alvos = [...talhoesMultiSel].map(uid => talhoesArquivados.find(t => t.uid === uid)).filter(Boolean);
+  if(!alvos.length) { setStatus('Talhão(ões) selecionado(s) não encontrado(s).', 'err'); return; }
+
+  const aneis = []; // [[ [lng,lat], ... ], ...] — 1 anel fechado por talhão
+  alvos.forEach(t => {
+    const ring = [...t.polyPts.map(p => [p.lng, p.lat]), [t.polyPts[0].lng, t.polyPts[0].lat]];
+    aneis.push(ring);
+  });
+
+  try {
+    turfCurvaPoly = alvos.length === 1 ? turf.polygon([aneis[0]]) : turf.multiPolygon(aneis.map(r => [r]));
+    turf.rewind(turfCurvaPoly, {mutate:true});
+    turfCurvaBound = turf.polygonToLine(turfCurvaPoly);
+  } catch(e) { setStatus('Erro ao processar o(s) polígono(s) selecionado(s): ' + e.message, 'err'); return; }
+
+  // Desenha o contorno igual ao fluxo de "Desenhar Área de Curvas" (mesmo curvaPolyLayer, mesmo
+  // estilo) — reaproveita limparPoligonoCurva() pra limpar depois, não importa a origem da área.
+  if(curvaPolyLayer) { curvaPolyLayer.remove(); curvaPolyLayer = null; }
+  curvaPolyLayer = L.polygon(aneis.map(ring => ring.map(([lng,lat]) => [lat,lng])),
+    {color:'#26a69a', fillColor:'#1de9b6', fillOpacity:.05, weight:2, interactive:false}).addTo(map);
+  curvaPolyPts = []; curvaPolyMarkers.forEach(m=>m.remove()); curvaPolyMarkers = []; // não é uma área "à mão" — sem vértices arrastáveis
+
+  $('btnLimparAreaCurva').style.display = 'flex';
+  $('btnCurvas').disabled = false;
+  const nomeTalhoes = alvos.map(t => `Talhão ${t.idx}`).join(', ');
+  setStatus(`Área de curvas definida a partir de ${alvos.length > 1 ? alvos.length + ' talhões' : nomeTalhoes} (${nomeTalhoes}). Configure e gere as curvas.`, 'ok');
 }
 
 function elevColorCurva(level, mn, mx) {
