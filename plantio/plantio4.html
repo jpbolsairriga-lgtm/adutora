@@ -370,7 +370,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.15 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.16 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -3639,6 +3639,16 @@ body.layout-lateral #status{grid-area:status;}
 // desenha o contorno — gerarCurvas() nem percebe a diferença de origem. Testado com harness Node.js:
 // 1 talhão vira Polygon simples, 2 talhões desconexos viram MultiPolygon com os dois reconhecidos
 // (e o "vazio" entre eles corretamente fora), turf.bbox funciona normal no MultiPolygon.
+// v5.16: usuário mandou print — mesmo com a compensação de FOV da v5.13, uma ponta fina do talhão
+// (contorno bem alongado/diagonal) ainda saía cortada na borda esquerda do lado 3D da tela dividida.
+// A fórmula da v5.13 preserva exatamente o campo de visão horizontal da vista cheia (matematicamente
+// correta, conferida com script Node.js), mas isso assume que a vista cheia já enquadra o talhão com
+// folga IGUAL em todos os lados — não é verdade pra um contorno bem alongado: a ponta mais longe do
+// centro geométrico (bcx,bcy) já nascia perto da borda mesmo na vista cheia, só que numa tela inteira
+// isso quase não aparecia; "preservar exatamente" o enquadramento no split preserva junto essa folga
+// pequena. Adicionada margem de segurança (_3DA_MARGEM_SPLIT=1.25, ~26% de campo de visão a mais,
+// mesma lógica de compensação) — sobra mais espaço em branco ao redor (já tinha espaço sobrando nos
+// outros lados), mas garante que pontas/cantos mais distantes do centro não fiquem raspando a borda.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -13253,9 +13263,22 @@ function _3da_renderSplitScreen() {
   // terreno cabe igual à vista cheia (com uma folga vertical a mais, que é só espaço sobrando, nunca
   // corta nada). _3da_renderFrame restaura o FOV normal (_3DA_PERSP_FOV) fora do split.
   if(_3da_cameraPersp) {
+    // v5.16: usuário mandou print — mesmo com a compensação de FOV da v5.13, uma ponta fina do
+    // talhão (a "cauda" mais longe do centro) ainda saía cortada na borda esquerda do lado 3D.
+    // A fórmula em si preserva exatamente o campo de visão HORIZONTAL da vista cheia (conferido
+    // com script Node.js) — mas ela assume que a vista cheia (câmera padrão, span*0.55/0.5/0.7)
+    // já enquadra o talhão com folga em TODOS os lados por igual, o que não é verdade pra um
+    // contorno bem alongado/diagonal como esse: a ponta mais longe do centro geométrico (bcx,bcy)
+    // já nascia perto da borda mesmo na vista cheia, só que numa tela inteira isso quase não
+    // aparecia — "preservar exatamente" o mesmo enquadramento no split preserva junto essa folga
+    // pequena. _3DA_MARGEM_SPLIT dá um respiro extra (adiciona ~26% de campo de visão a mais,
+    // ainda com a MESMA lógica de compensação) — sobra mais espaço em branco ao redor (aceitável,
+    // já tinha espaço sobrando nos outros lados), mas garante que pontas/cantos mais distantes do
+    // centro não fiquem raspando a borda.
     const aspNormal = w / h; // aspect de tela cheia, referência do enquadramento "normal" já testado
+    const _3DA_MARGEM_SPLIT = 1.25;
     const fovRad = _3DA_PERSP_FOV * Math.PI / 180;
-    const fovCompensado = 2 * Math.atan(Math.tan(fovRad / 2) * (aspNormal / aspHalf)) * 180 / Math.PI;
+    const fovCompensado = 2 * Math.atan(Math.tan(fovRad / 2) * (aspNormal / aspHalf) * _3DA_MARGEM_SPLIT) * 180 / Math.PI;
     _3da_cameraPersp.fov = fovCompensado;
     _3da_cameraPersp.aspect = aspHalf;
     _3da_cameraPersp.updateProjectionMatrix();
