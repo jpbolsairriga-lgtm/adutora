@@ -225,6 +225,12 @@ function textoDe(el, tag){
   const n = el.getElementsByTagName(tag)[0];
   return n ? n.textContent.trim() : '';
 }
+function limpaTextoKML(s){
+  // texto de CDATA do IrriCAD costuma vir com tags HTML cruas (<br />, <font...>)
+  // como texto literal, o que fica ilegivel na tela; troca por texto simples.
+  if(!s) return '';
+  return s.replace(/<br\s*\/?>/gi, '\n').replace(/<\/?font[^>]*>/gi, '').replace(/[ \t]+\n/g,'\n').trim();
+}
 function coordsDeTexto(txt){
   return txt.trim().split(/\s+/).filter(Boolean).map(par=>{
     const p = par.split(',').map(Number);
@@ -315,6 +321,17 @@ function parseKMLTree(texto){
   });
 
   function corDoPlacemark(pm){
+    // O IrriCAD grava a cor real (zona, tubulacao etc.) num <Style> embutido
+    // direto no Placemark, sem id -- so o styleUrl aponta pro site deles
+    // (generico e inacessivel). Prioriza esse estilo embutido.
+    const inline = pm.getElementsByTagName('Style')[0];
+    if(inline){
+      const ls = inline.getElementsByTagName('LineStyle')[0];
+      const ps = inline.getElementsByTagName('PolyStyle')[0];
+      const linha = ls ? corDeKML(textoDe(ls,'color')) : null;
+      const preench = ps ? corDeKML(textoDe(ps,'color')) : null;
+      if(linha || preench) return {linha, preench};
+    }
     const su = textoDe(pm,'styleUrl');
     if(su && estilos[su]) return estilos[su];
     return null;
@@ -333,11 +350,12 @@ function parseKMLTree(texto){
         if(!geoms.length) continue;
         const estilo = corDoPlacemark(filho);
         pasta.placemarks.push({
-          nome: textoDe(filho,'name') || '',
-          descricao: textoDe(filho,'description') || '',
+          nome: limpaTextoKML(textoDe(filho,'name')),
+          descricao: limpaTextoKML(textoDe(filho,'description')),
           dados: extendedDataDe(filho),
           geoms,
-          cor: (estilo && (estilo.linha || estilo.preench)) || null
+          corLinha: (estilo && estilo.linha) || null,
+          corPreench: (estilo && estilo.preench) || null
         });
       }
     }
@@ -366,14 +384,19 @@ function achataCamadas(arvore){
 
 /* ==================================================================
    REGRAS DE VISIBILIDADE PADRAO
-   Projetos reais de irrigacao exportados do IrriCAD costumam trazer
-   dezenas de camadas tecnicas (vertices, malha de triangulos, controle
-   de levantamento, perfis, textos de cota etc.) que nao ajudam o
-   tecnico em campo e deixam o mapa ilegivel se tudo vier ligado.
-   Por padrao mostra so o(s) limite(s) de talhao/propriedade; o resto
-   fica disponivel (desligado) na gaveta de Camadas para ligar sob demanda.
+   O KML do IrriCAD nao marca <visibility>0</visibility> em nada, ou
+   seja, no Google Earth TUDO vem ligado por padrao -- e e assim que o
+   tecnico espera ver o projeto (fiel ao que ele ve na empresa). Entao
+   por padrao mostra tudo, e so oculta automaticamente aquelas pastas
+   claramente tecnicas/de rascunho (malha de triangulos, controle de
+   levantamento, perfis/secoes de estrada, textos de cota, gabaritos)
+   que nunca ajudam em campo e so poluem o mapa. O resto fica disponivel
+   na gaveta de Camadas, que agora tem filtro de texto pra achar rapido.
    ================================================================== */
-const REALCAR = /(TALH|PROP-BNDY|\bLOTE\b|AREA[-_ ]?LOTE|LIMITE|PERIMETRO)/i;
+// obs: testado contra o caminho completo (Pasta / Subpasta / ...), entao
+// os itens usam \b em vez de ^..$ pra nao depender de estar no topo.
+const OCULTAR_POR_PADRAO = /(PROF|SECT|SCTN|MASS|GRID|TABL|VIEW|DIAG|CANT|SAMP|SPIR|CURV\b|ASSM|STAN|SGHT|TURNOUT|FOUNDATION|GIRDER|ABUTMENT|PIER|Defpoints|CONFRONTANTE|AZIMUTE|DIMENS|VERTICES|TRIANGULOS|\bMALHA\b|TEXTO_|C-CTRL|V-CTRL|C-ROAD|C-RAIL|C-BRDG|C-SSWR|C-STRM|A-BLDG|GEElevations|PLOT_TEMPLATE|\bDRAWING\b|\bREPORTS\b)/i;
+const REALCAR = /(TALH|PROP-BNDY|\bLOTE\b|AREA[-_ ]?LOTE|LIMITE|PERIMETRO|ZONE|PIPE|SPRAY|VALVE|HYDRAULIC|ADUTORA|WATR)/i;
 
 /* ==================================================================
    ESTADO DO PROJETO ATUAL
@@ -391,16 +414,20 @@ function limparProjeto(){
 
 // muitas exportacoes de CAD nomeiam toda geometria como "POLYLINE"/"Placemark";
 // nesses casos usa o nome da camada + um numero sequencial, senao fica tudo igual.
-const NOME_GENERICO = /^(polyline|placemark|path|untitled ?path|point|line)$/i;
+const NOME_GENERICO = /^(polyline|placemark|path|untitled ?path|point|line|fill|rectangle)$/i;
+function primeiraLinha(s){ return (s||'').split('\n')[0].trim(); }
 function rotuloPlacemark(pm, idxNaCamada, nomeCamada){
-  if(pm.nome && !NOME_GENERICO.test(pm.nome.trim())) return pm.nome;
+  const l1 = primeiraLinha(pm.nome);
+  if(l1 && !NOME_GENERICO.test(l1)) return l1;
   return nomeCamada + ' #' + (idxNaCamada+1);
 }
 
 function popupHTML(pm, tipoLabel, rotulo){
   let h = '';
-  h += `<b>${escHTML(rotulo || pm.nome || tipoLabel || 'Elemento')}</b>`;
+  h += `<b>${escHTML(rotulo || primeiraLinha(pm.nome) || tipoLabel || 'Elemento')}</b>`;
   if(tipoLabel) h += `<br><small style="color:#5a7a88">${tipoLabel}</small>`;
+  const restoDoNome = (pm.nome||'').split('\n').slice(1).join('\n').trim();
+  if(restoDoNome) h += `<div style="margin-top:.3rem">${escMultilinha(restoDoNome)}</div>`;
   const chaves = Object.keys(pm.dados||{});
   if(chaves.length){
     h += '<table style="margin-top:.4rem;font-size:.78rem;border-collapse:collapse">';
@@ -409,11 +436,12 @@ function popupHTML(pm, tipoLabel, rotulo){
     });
     h += '</table>';
   } else if(pm.descricao){
-    h += `<div style="margin-top:.3rem">${pm.descricao.replace(/</g,'&lt;')}</div>`;
+    h += `<div style="margin-top:.3rem">${escMultilinha(pm.descricao)}</div>`;
   }
   return h || '<i>Sem nome</i>';
 }
 function escHTML(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function escMultilinha(s){ return escHTML(s).replace(/\n/g,'<br>'); }
 
 function construirCamadas(arvore){
   limparProjeto();
@@ -426,19 +454,24 @@ function construirCamadas(arvore){
     let count=0;
 
     pasta.placemarks.forEach((pm,idxPm)=>{
-      const cor = pm.cor || corPasta;
+      // usa a cor real gravada pelo IrriCAD no placemark; só cai pra cor
+      // sintetica da camada quando o elemento nao tem nenhuma cor propria.
+      const corTraco = pm.corLinha || pm.corPreench || corPasta;
+      const corFundo = pm.corPreench || pm.corLinha || corPasta;
       const rotulo = rotuloPlacemark(pm, idxPm, pasta.nome);
       pm.geoms.forEach(g=>{
         let obj=null;
         if(g.tipo==='point'){
-          obj = L.circleMarker([g.coords[0],g.coords[1]], {radius:3.5, color:'#fff', weight:1, fillColor:cor, fillOpacity:.85});
+          obj = L.circleMarker([g.coords[0],g.coords[1]], {radius:3.5, color:'#fff', weight:1, fillColor:corTraco, fillOpacity:.85});
           bounds.extend([g.coords[0],g.coords[1]]);
         } else if(g.tipo==='line'){
-          obj = L.polyline(g.coords, {color:cor, weight:2.5, opacity:.85});
+          obj = L.polyline(g.coords, {color:corTraco, weight:2.5, opacity:.9});
           g.coords.forEach(c=>bounds.extend(c));
         } else if(g.tipo==='polygon'){
           const anel = [g.anel, ...g.buracos];
-          obj = L.polygon(anel, {color:cor, weight:2, fillColor:cor, fillOpacity:.1});
+          // se o IrriCAD definiu a cor de preenchimento de verdade, respeita
+          // (é intencional); senao usa só um leve realce pra nao pesar no mapa.
+          obj = L.polygon(anel, {color:corTraco, weight:2, fillColor:corFundo, fillOpacity: pm.corPreench ? .32 : .1});
           g.anel.forEach(c=>bounds.extend(c));
         }
         if(obj){
@@ -450,7 +483,8 @@ function construirCamadas(arvore){
     });
 
     if(count===0) return;
-    grupoCamadas.push({pasta, layer, cor:corPasta, count, visivel:REALCAR.test(pasta.caminho)});
+    const ocultarPadrao = OCULTAR_POR_PADRAO.test(pasta.caminho) && !REALCAR.test(pasta.caminho);
+    grupoCamadas.push({pasta, layer, cor:corPasta, count, visivel:!ocultarPadrao});
   });
 
   // ordena: realcadas primeiro, depois alfabetico
@@ -669,7 +703,7 @@ document.getElementById('cam-nenhuma').addEventListener('click', ()=>{
 });
 document.getElementById('cam-padrao').addEventListener('click', ()=>{
   grupoCamadas.forEach(c=>{
-    c.visivel = REALCAR.test(c.pasta.caminho);
+    c.visivel = !(OCULTAR_POR_PADRAO.test(c.pasta.caminho) && !REALCAR.test(c.pasta.caminho));
     if(c.visivel) c.layer.addTo(mapa); else mapa.removeLayer(c.layer);
   });
   renderizaListaCamadas(); atualizaBadgeCamadas();
