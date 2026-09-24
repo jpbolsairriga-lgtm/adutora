@@ -288,6 +288,10 @@ body.layout-lateral #status{grid-area:status;}
 #m3da-chuva .m3da-chuvaBtns{display:flex;gap:6px;margin-top:2px;}
 #m3da-chuva button{flex:1;background:rgba(255,255,255,.13);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:7px;padding:6px 8px;font-size:11.5px;font-weight:700;cursor:pointer;white-space:nowrap;}
 #m3da-chuva button:hover{background:rgba(255,255,255,.22);}
+#m3da-chuva input[type=checkbox]{accent-color:var(--acc2);cursor:pointer;}
+@keyframes m3daGravandoPulso{0%,100%{box-shadow:0 0 0 0 rgba(239,83,80,.6);}50%{box-shadow:0 0 0 6px rgba(239,83,80,0);}}
+#m3da-btnGravarChuva.rec-ativo{background:#c62828;border-color:#ef5350;animation:m3daGravandoPulso 1.4s ease-in-out infinite;}
+#m3da-btnGravarChuva.rec-ativo:hover{background:#d32f2f;}
 #m3da-chuvaProgresso{font-size:10.5px;color:#ffffffcc;text-align:center;}
 #m3da-slopeLegend{display:none;position:absolute;bottom:14px;left:14px;background:rgba(5,10,18,.75);color:#ffffffcc;font-size:11px;line-height:2;padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.18);pointer-events:none;}
 #m3da-slopeLegend b{display:block;font-size:10px;letter-spacing:.08em;color:var(--panel-text);text-transform:uppercase;margin-bottom:3px;}
@@ -366,7 +370,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.10 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.11 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1322,6 +1326,12 @@ body.layout-lateral #status{grid-area:status;}
       <button id="m3da-btnChuvaReset" onclick="reiniciarChuva3DAnalise()" style="display:none;">⟲ Reiniciar</button>
     </div>
     <div id="m3da-chuvaProgresso" style="display:none;"></div>
+    <label class="m3da-chuvaRow" style="cursor:pointer;margin-top:6px;" title="Grava a câmera de cima (2D) e a câmera 3D lado a lado, ao mesmo tempo — as duas mostram a MESMA simulação em sincronia, sem precisar de 2 gravações separadas.">
+      <input type="checkbox" id="m3da-gravarSplit"> <span>Tela dividida (2D + 3D)</span>
+    </label>
+    <div class="m3da-chuvaBtns">
+      <button id="m3da-btnGravarChuva" onclick="_3da_toggleGravacaoChuva()">⏺ Gravar Vídeo da Chuva</button>
+    </div>
   </div>
   <div id="m3da-slopeLegend">
     <b>Declividade</b>
@@ -3562,6 +3572,16 @@ body.layout-lateral #status{grid-area:status;}
 // de textura (bom equilíbrio nitidez/memória, dentro do limite de praticamente qualquer GPU) em vez
 // do tamanho fixo da caixa do mapa — até 4x de escala (até ~16x mais pixels capturados) em janelas
 // menores; em janelas grandes/ultrawide o alvo de 4096px evita estourar textura da GPU.
+// v5.11: nova ferramenta — "⏺ Gravar Vídeo da Chuva" (painel de Simulação de Chuva, Vista 3D).
+// Grava a animação com canvas.captureStream(30) + MediaRecorder, baixando um .webm/.mp4 ao parar
+// (manual ou quando a chuva termina sozinha). Checkbox "Tela dividida (2D + 3D)": quando marcado,
+// renderiza a câmera ortográfica (Vista de Cima) e a perspectiva lado a lado no MESMO frame
+// (viewport/scissor do Three.js, _3da_renderSplitScreen) — as duas mostram a mesma simulação em
+// sincronia perfeita, sem gravar duas vezes. Se a chuva ainda não estiver rodando ao clicar
+// gravar, já inicia ela sozinha. Fecha a Vista 3D ou clicar de novo no botão também encerra a
+// gravação. Novas funções: _3da_renderSplitScreen, _3da_renderFrame (substitui o render único do
+// loop de animação), _3da_escolherMimeVideo, _3da_toggleGravacaoChuva,
+// _3da_iniciarGravacaoChuva/_3da_pararGravacaoChuva/_3da_atualizarBotaoGravacao.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -12656,6 +12676,12 @@ let _3da_chuvaEstado = null, _3da_chuvaVidaFluxo = null, _3da_chuvaSample = null
 let _3da_chuvaMaxRaw = 0, _3da_chuvaUltimoTs = 0;
 let _3da_chuvaIntensidade = 40, _3da_chuvaDuracaoMin = 10, _3da_chuvaVelocidade = 6;
 let _3da_chuvaElapsedS = 0, _3da_chuvaTotalSimS = 0;
+// v5.11: gravação de vídeo da simulação de chuva (canvas.captureStream + MediaRecorder), com opção
+// de tela dividida — renderiza a câmera ortográfica (Vista de Cima, "2D") e a perspectiva ("3D") lado
+// a lado no MESMO frame (viewport/scissor do Three.js), então as duas são sempre a mesma simulação
+// em sincronia perfeita, sem precisar gravar duas vezes.
+let _3da_gravando = false, _3da_gravarSplit = false;
+let _3da_mediaRecorder = null, _3da_recChunks = [], _3da_recStartTs = 0, _3da_recTimerId = null;
 const _3DA_CHUVA_NPONTOS = 3500;
 let _3da_chuvaSprite = null; // THREE.CanvasTexture (gota com brilho) — gerada uma vez, reaproveitada
 // v4.99: a "névoa azul" (textura de canais de enxurrada sobre o terreno) saiu — ficam só as gotas,
@@ -12911,6 +12937,7 @@ function _3da_buildRibbon(segList, halfWidthM, colorList) {
 }
 
 function fecharVista3DAnalise() {
+  if(_3da_gravando) _3da_pararGravacaoChuva(); // não deixa gravação órfã rodando com a Vista 3D fechada
   $('modal3dAnalise').classList.remove('open');
   if(_3da_raf) { cancelAnimationFrame(_3da_raf); _3da_raf = null; }
   if(_3da_renderer) { _3da_renderer.dispose(); _3da_renderer = null; }
@@ -13062,6 +13089,126 @@ function capturarImagem3DAnalise() {
   const a = document.createElement('a');
   a.href = url; a.download = 'vista3d-plantio-' + new Date().toISOString().slice(0, 10) + '.png';
   document.body.appendChild(a); a.click(); a.remove();
+}
+
+// ══════════════════ Gravar Vídeo da Chuva (tela dividida 2D+3D opcional) ═══════════════════════
+// Renderiza a câmera ortográfica (Vista de Cima — "2D") e a perspectiva ("3D") lado a lado, no
+// mesmo frame, via viewport/scissor do Three.js — as duas mostram a MESMA cena (mesmas gotas, mesmo
+// instante), então ficam sempre em sincronia perfeita sem precisar gravar duas vezes/juntar depois.
+// Chamada pelo loop de animação (animate(), dentro de gerarVista3DAnalise) no lugar do render único
+// de sempre, só enquanto uma gravação com "Tela dividida" estiver ativa — fora disso, o render
+// continua exatamente como era (1 câmera, tela cheia).
+function _3da_renderSplitScreen() {
+  const cv = _3da_renderer.domElement, w = cv.width, h = cv.height;
+  if(!w || !h) return;
+  const halfW = Math.round(w / 2), aspHalf = halfW / h;
+  // A Vista 3D sempre chama toggleOrtografica3DAnalise() uma vez ao abrir (abre na Vista de Cima),
+  // então _3da_cameraOrtho já deveria existir — cria por segurança se faltar (mesma configuração
+  // daquela função: olhando reto de cima, "cima" na tela = norte).
+  if(!_3da_cameraOrtho) {
+    _3da_cameraOrtho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.5, _3da_span * 6);
+    _3da_cameraOrtho.position.set(_3da_bcx, _3da_span * 3, -_3da_bcy);
+    _3da_cameraOrtho.up.set(0, 0, -1);
+    _3da_cameraOrtho.lookAt(_3da_bcx, 0, -_3da_bcy);
+  }
+  _3da_resizeOrtho(aspHalf);
+  if(_3da_cameraPersp) { _3da_cameraPersp.aspect = aspHalf; _3da_cameraPersp.updateProjectionMatrix(); }
+  _3da_renderer.setScissorTest(true);
+  _3da_renderer.setViewport(0, 0, halfW, h);       // esquerda: 2D (ortográfica, de cima)
+  _3da_renderer.setScissor(0, 0, halfW, h);
+  _3da_renderer.render(_3da_scene, _3da_cameraOrtho);
+  _3da_renderer.setViewport(halfW, 0, w - halfW, h); // direita: 3D (perspectiva)
+  _3da_renderer.setScissor(halfW, 0, w - halfW, h);
+  _3da_renderer.render(_3da_scene, _3da_cameraPersp);
+  _3da_renderer.setScissorTest(false);
+  _3da_renderer.setViewport(0, 0, w, h);
+}
+
+// Substitui o render único de sempre (renderer.render(scene, _3da_camera)) no loop de animação —
+// decide sozinha, a cada frame, entre o split-screen (gravando com o checkbox marcado) e o normal
+// (tela cheia, 1 câmera). Fora de uma gravação split, sempre restaura o aspect/viewport de tela
+// cheia (senão uma gravação split anterior deixaria a câmera "achatada" pro resto da sessão).
+function _3da_renderFrame() {
+  if(!_3da_renderer || !_3da_scene || !_3da_camera) return;
+  if(_3da_gravando && _3da_gravarSplit) { _3da_renderSplitScreen(); return; }
+  const cv = _3da_renderer.domElement, asp = cv.width / (cv.height || 1);
+  if(_3da_cameraPersp) { _3da_cameraPersp.aspect = asp; _3da_cameraPersp.updateProjectionMatrix(); }
+  _3da_resizeOrtho(asp);
+  _3da_renderer.render(_3da_scene, _3da_camera);
+}
+
+function _3da_escolherMimeVideo() {
+  if(!window.MediaRecorder) return '';
+  const opcoes = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'];
+  for(const m of opcoes) { try { if(MediaRecorder.isTypeSupported(m)) return m; } catch(e) {} }
+  return '';
+}
+
+function _3da_toggleGravacaoChuva() {
+  if(_3da_gravando) _3da_pararGravacaoChuva();
+  else _3da_iniciarGravacaoChuva();
+}
+
+function _3da_iniciarGravacaoChuva() {
+  if(!_3da_renderer || !_3da_scene) { setStatus('Abra a Vista 3D antes de gravar.', 'err'); return; }
+  const cv = _3da_renderer.domElement;
+  if(!cv.captureStream) { setStatus('Seu navegador não suporta gravar vídeo aqui — tente Chrome, Edge ou Firefox atualizados.', 'err'); return; }
+  const mime = _3da_escolherMimeVideo();
+  if(!mime) { setStatus('Nenhum formato de vídeo suportado por este navegador.', 'err'); return; }
+
+  // Gravar sem chuva rodando não tem propósito nenhum — já inicia ela se ainda não estiver ativa
+  // (reaproveita o mesmo botão/lógica de "Simular Chuva").
+  if(!_3da_chuvaAtiva) toggleChuva3DAnalise();
+  if(_3da_chuvaPausada) toggleChuva3DAnalise(); // estava pausada de uma sessão anterior — retoma
+
+  _3da_gravarSplit = !!$('m3da-gravarSplit') && $('m3da-gravarSplit').checked;
+  _3da_recChunks = [];
+  let stream;
+  try { stream = cv.captureStream(30); }
+  catch(e) { setStatus('Não foi possível capturar o vídeo do canvas: ' + e.message, 'err'); return; }
+  try {
+    _3da_mediaRecorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000 });
+  } catch(e) { setStatus('Não foi possível iniciar a gravação: ' + e.message, 'err'); return; }
+
+  _3da_mediaRecorder.ondataavailable = e => { if(e.data && e.data.size > 0) _3da_recChunks.push(e.data); };
+  _3da_mediaRecorder.onstop = () => {
+    const blob = new Blob(_3da_recChunks, { type: mime.split(';')[0] });
+    const ext = mime.includes('mp4') ? 'mp4' : 'webm';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'chuva-plantio-' + new Date().toISOString().slice(0, 10) + '.' + ext;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 8000);
+    setStatus(`✓ Vídeo da chuva salvo (${(blob.size / 1e6).toFixed(1)} MB).`, 'ok');
+  };
+  _3da_mediaRecorder.start(1000); // junta em pedaços de 1s — não perde tudo se algo falhar no meio
+  _3da_gravando = true;
+  _3da_recStartTs = performance.now();
+  _3da_atualizarBotaoGravacao();
+  _3da_recTimerId = setInterval(_3da_atualizarBotaoGravacao, 500);
+  setStatus('⏺ Gravando vídeo da chuva' + (_3da_gravarSplit ? ' (tela dividida 2D + 3D)' : '') + '… clique de novo pra parar antes do fim, se quiser.', 'info');
+}
+
+function _3da_pararGravacaoChuva() {
+  if(!_3da_gravando) return;
+  _3da_gravando = false;
+  if(_3da_recTimerId) { clearInterval(_3da_recTimerId); _3da_recTimerId = null; }
+  if(_3da_mediaRecorder && _3da_mediaRecorder.state !== 'inactive') { try { _3da_mediaRecorder.stop(); } catch(e) {} }
+  _3da_atualizarBotaoGravacao();
+}
+
+function _3da_atualizarBotaoGravacao() {
+  const btn = $('m3da-btnGravarChuva');
+  if(!btn) return;
+  if(_3da_gravando) {
+    const s = Math.max(0, Math.floor((performance.now() - _3da_recStartTs) / 1000));
+    const mm = String(Math.floor(s / 60)).padStart(2, '0'), ss = String(s % 60).padStart(2, '0');
+    btn.textContent = `⏹ Parar Gravação (${mm}:${ss})`;
+    btn.classList.add('rec-ativo');
+  } else {
+    btn.textContent = '⏺ Gravar Vídeo da Chuva';
+    btn.classList.remove('rec-ativo');
+  }
 }
 
 // ══════════════════ Simulação de chuva (Vista 3D) ══════════════════════════════════════════
@@ -13412,6 +13559,7 @@ function _3da_tickChuva() {
       _3da_chuvaAtiva = false;
       const btn = $('m3da-btnChuvaIniciar'); if(btn) btn.textContent = '🌧️ Simular Chuva';
       if(prog) prog.textContent = 'Chuva finalizada (' + _3da_chuvaDuracaoMin.toFixed(0) + ' min simulados) — Reiniciar pra rodar de novo.';
+      if(_3da_gravando) _3da_pararGravacaoChuva(); // chuva acabou sozinha — encerra a gravação junto, sem esperar o usuário clicar
       return;
     }
   }
@@ -13904,7 +14052,7 @@ async function gerarVista3DAnalise() {
     });
     // animate() lê _3da_camera/_3da_controls (globais, não as const locais) — assim o botão de vista
     // ortogonal pode trocar qual câmera está ativa sem precisar reiniciar o loop de render.
-    (function animate() { _3da_raf = requestAnimationFrame(animate); if(_3da_controls) _3da_controls.update(); _3da_tickChuva(); if(_3da_camera) renderer.render(scene, _3da_camera); })();
+    (function animate() { _3da_raf = requestAnimationFrame(animate); if(_3da_controls) _3da_controls.update(); _3da_tickChuva(); _3da_renderFrame(); })();
 
     // ── Foto de satélite = a imagem capturada do próprio mapa 2D (mapTexPromise, disparada em
     // paralelo com a busca de elevação — ver _3da_captureMapTexture). A malha já aparece verde e a
