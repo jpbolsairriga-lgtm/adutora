@@ -1,8 +1,8 @@
 /* Service worker - app e projetos abertos funcionam offline em campo */
-var CACHE = "irricad-viewer-v2";
+var CACHE = "irricad-viewer-v3";
 var TILES = "tiles-esri-v1"; /* imagens de satelite ja vistas; nao apaga nas atualizacoes */
 var ARQS = ["./", "./irricad-viewer.html", "./manifest.json", "./icon-192.png", "./icon-512.png", "./icon-maskable.png",
-  "./tophofarm-simbolo.png", "./tophofarm-logo-completo.png",
+  "./tophofarm-simbolo.png", "./tophofarm-logo-completo.png", "./irricad-logo.png",
   "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css",
   "https://unpkg.com/leaflet@1.9.4/dist/leaflet-src.js",
   "https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js",
