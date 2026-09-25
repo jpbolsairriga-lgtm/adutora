@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.20 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.21 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -768,6 +768,15 @@ body.layout-lateral #status{grid-area:status;}
               <option value="80">80 × 80 (só com DEM/curvas locais)</option>
               <option value="120">120 × 120 (só com DEM/curvas locais)</option>
               <option value="160">160 × 160 (só com DEM/curvas locais)</option>
+            </select>
+          </div>
+          <div class="rcol">
+            <label>Suavização</label>
+            <select id="curvaSuavizacao" class="rfield wide" title="Suaviza a grade de elevação (média de vizinhança 3×3, poucas passadas) e o traçado final de cada curva (simplificação Douglas-Peucker) antes de desenhar — sem isso, DEM/drone de alta resolução gera curvas 'cabeludas', seguindo cada micro-ondulação do terreno (sulco, cobertura vegetal) em vez de um acabamento liso. Passadas demais na grade achatam a amplitude real perto da borda da área — por isso o teto aqui é baixo; a simplificação do traçado (que não mexe na elevação) é que faz a maior parte do trabalho visual.">
+              <option value="0">Nenhuma (relevo bruto)</option>
+              <option value="1" selected>Leve (padrão)</option>
+              <option value="2">Média</option>
+              <option value="4">Forte</option>
             </select>
           </div>
         </div>
@@ -3700,6 +3709,20 @@ body.layout-lateral #status{grid-area:status;}
 // sem proxy) continua existindo do jeito que está; GLO-30 é só mais precisa E precisa do proxy.
 // Testado com harness Node.js: σ corrigidos conferidos, GLO-30 aparece em fontesUsadas e domina a
 // fusão (maior peso, menor σ), ASTER continua sendo rejeitado como outlier no cenário de teste.
+// v5.21: pedido do usuário — comparou print das curvas do IrrigaModel com as do app: as nossas
+// saíam "cabeludas"/irregulares (sem acabamento), enquanto as deles ficam lisas. Causa: gerarCurvas()
+// nunca suavizava a grade de elevação antes de rodar o marching squares (a função _suavizarGrade já
+// existia — box-blur 3×3 iterado, N passadas — só era usada em outra ferramenta, "Usar Curva como
+// Guia"). Fix em duas partes: (1) novo seletor "Suavização" no painel de Curvas de Nível (Nenhuma /
+// Leve[padrão] / Média / Forte = 0/1/2/4 passadas de _suavizarGrade na grade ANTES do marching
+// squares); (2) turf.simplify (Douglas-Peucker) aplicado em cada linha já traçada, tolerância
+// proporcional ao tamanho de célula da grade — tira o zigue-zague sub-resolução sem tocar nos
+// valores de elevação. Achado durante os testes: passadas demais de box-blur iterado (testado com 8)
+// achatam a amplitude real do relevo perto da borda da grade — por isso o teto ficou em 4 passadas
+// ("Forte"), não 8; testado com harness Node.js sintético (rampa de tendência real + ruído
+// célula-a-célula determinístico) medindo variação de alta frequência (cai a cada nível de
+// suavização) E amplitude da tendência real via média de linha inteira (fica a ~1m da amplitude
+// verdadeira mesmo no nível mais forte, longe de achatar).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -8204,8 +8227,27 @@ async function gerarCurvas() {
   _curvaUltimaPrecisao = { sigmaMedio, fontesUsadas, pctComDadoReal };
 
   // Reorganiza em grade 2D: elevGrid[r][c]
-  const elevGrid = _preencherGradeVazios(Array.from({length:n}, (_,r) =>
+  const elevGridBruta = _preencherGradeVazios(Array.from({length:n}, (_,r) =>
     Array.from({length:n}, (_,c) => elevFlat[r*n+c])), n);
+  // v5.21: BUG relatado com prints (comparação lado a lado com o IrrigaModel) — nossas curvas
+  // saíam "cabeludas"/irregulares, sem o acabamento liso deles. Causa: gerarCurvas() nunca suavizava
+  // a grade de elevação antes do marching squares — direto do DEM/drone de alta resolução (ou até
+  // da fusão online), cada micro-ondulação real do terreno (sulco de plantio, cobertura vegetal,
+  // ruído de interpolação) virava um zigue-zague na curva. O app já tinha essa suavização pronta
+  // (_suavizarGrade — média de vizinhança 3×3, N passadas) só que só usada em OUTRA ferramenta
+  // ("Usar Curva como Guia") — nunca na geração principal. Aplicada aqui também, com um seletor novo
+  // ("Suavização") pra controlar a força sem precisar mexer em código. Teto baixo de propósito (1-4
+  // passadas, não 8+): testado com harness Node.js que muitas passadas do blur 3×3 iterado achatam
+  // um pouco a amplitude real perto da borda da área (efeito conhecido de blur iterado repetido) —
+  // a maior parte da limpeza visual vem da simplificação do TRAÇADO final (abaixo, turf.simplify),
+  // que não mexe em elevação nenhuma, só reduz vértice redundante da linha já traçada.
+  const passesSuavizacao = parseInt($('curvaSuavizacao').value) || 0;
+  const elevGrid = passesSuavizacao > 0 ? _suavizarGrade(elevGridBruta, n, passesSuavizacao) : elevGridBruta;
+  // Tolerância da simplificação Douglas-Peucker (turf.simplify) proporcional ao tamanho da célula da
+  // grade (bbox/n) — nunca "come" um detalhe maior que a própria resolução amostrada, só limpa o
+  // zigue-zague sub-célula que o marching squares produz ao reamostrar o grid em linhas retas.
+  const cellSizeGrausAprox = Math.max(maxLng - minLng, maxLat - minLat) / Math.max(1, n - 1);
+  const toleranciaSimplify = passesSuavizacao > 0 ? cellSizeGrausAprox * 0.4 : 0;
 
   const validElevs = elevFlat.filter(v=>v!=null);
   const minElev = Math.min(...validElevs), maxElev = Math.max(...validElevs);
@@ -8244,7 +8286,20 @@ async function gerarCurvas() {
       let seg = [];
       const flush = () => {
         if(seg.length >= 2) {
-          const pl = L.polyline(seg.map(p=>[p.lat,p.lng]), {
+          // v5.21: simplificação Douglas-Peucker (turf.simplify) no TRAÇADO já clipado — reduz o
+          // zigue-zague sub-célula do marching squares sem tocar em nenhum valor de elevação (só
+          // remove vértice redundante que não muda visualmente o caminho além da tolerância). Fica
+          // de fora quando "Suavização"=0 (toleranciaSimplify=0) — comportamento antigo intacto.
+          let segFinal = seg;
+          if(toleranciaSimplify > 0 && seg.length > 2) {
+            try {
+              const linha = turf.lineString(seg.map(p => [p.lng, p.lat]));
+              const simples = turf.simplify(linha, { tolerance: toleranciaSimplify, highQuality: true });
+              const coords = simples.geometry.coordinates;
+              if(coords.length >= 2) segFinal = coords.map(([lng,lat]) => ({lat,lng}));
+            } catch(e) {} // se der erro por algum motivo, segue com o traçado original sem simplificar
+          }
+          const pl = L.polyline(segFinal.map(p=>[p.lat,p.lng]), {
             color:cor, weight:isMaster?2.5:1.2, opacity:isMaster?0.95:0.75,
             interactive:true
           }).addTo(map);
