@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.18 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.19 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -3676,6 +3676,18 @@ body.layout-lateral #status{grid-area:status;}
 // vez de parar no último amostrado — a curva sempre encosta na borda real, não importa o tamanho da
 // célula da grade. Testado com harness Node.js: polígono triangular + grade propositalmente grossa
 // (gap de 15m sem o fix) — com o fix, a linha bate exatamente na borda geométrica real.
+// v5.19: pedido do usuário — revisitando o site oficial do IrrigaModel (irrigamodel.pro/info,
+// referência já citada desde a v4.6x na fusão multi-fonte de elevação), que documenta ALOS AW3D30
+// (JAXA) como uma das 4 fontes da camada "DEM Fusion". Boa parte do que o site descreve já existia
+// no app (fusão σ-ponderada, conversão UTM por Snyder, TIN/IDW pra curvas locais — a própria fusão
+// já foi inspirada nesse mesmo site) — o que faltava, escolhido pelo usuário entre as opções
+// levantadas, foi adicionar AW3D30 como 6ª fonte. Reaproveita 100% da infra já existente pro SRTM/
+// Mapzen/ASTER (mesmo proxy OpenTopoData, só mais um dataset — "aw3d30"): nova entrada em
+// _DEM_FONTES (σ=5m, spec oficial JAXA — mesma classe de precisão do SRTM), 4ª consulta sequencial
+// dentro do mesmo bloco pOpenTopo de _buscarElevacaoFundida(), participa do mesmo filtro de
+// outlier + média ponderada por inverso da variância de sempre. Nenhuma infra nova, nenhum HTML
+// novo. Testado com harness Node.js: AW3D30 aparece em fontesUsadas, participa corretamente da
+// fusão (grupo SRTM/Mapzen/AW3D30 com valores próximos puxa a média, outlier ASTER é rejeitado).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -4101,7 +4113,7 @@ function _atualizarStatusDemProxy() {
   const el = $('demProxyStatus');
   if(!el) return;
   if(modoRapido) { el.textContent = 'Modo rápido ativo — só Google (1 fonte). Proxy abaixo é ignorado nesse modo.'; el.style.color = 'var(--panel-text-dim)'; return; }
-  el.textContent = 'Fusão de elevação: Google + Open-Meteo + SRTM + Mapzen + ASTER (5 fontes)'; el.style.color = 'var(--c-ok)';
+  el.textContent = 'Fusão de elevação: Google + Open-Meteo + SRTM + Mapzen + ASTER + AW3D30 (6 fontes)'; el.style.color = 'var(--c-ok)';
 }
 function salvarDemProxy() {
   const url = $('demProxyUrl').value.trim();
@@ -5564,22 +5576,27 @@ function _percentuaisPorPeso(pesoPorFaixa) {
 // numa fonte só — descarta leituras que fogem da mediana além de 2× o desvio da própria fonte, e
 // funde o que sobra numa média ponderada pelo inverso da variância (estimador BLUE — Best Linear
 // Unbiased Estimator — peso = 1/σ², fonte mais precisa pesa mais). O Google Elevation (que o app já
-// usa e já paga) entra como uma das fontes, junto com 4 fontes GRATUITAS: Open-Meteo (Copernicus
+// usa e já paga) entra como uma das fontes, junto com 5 fontes GRATUITAS: Open-Meteo (Copernicus
 // GLO-90, funciona direto do navegador — CORS liberado) e, se configurado um proxy (ver
-// configurarDemProxy), SRTM v3, Mapzen (composto SRTM+ASTER+NED) e ASTER GDEM via OpenTopoData —
-// esse serviço não libera CORS pra chamada direta do navegador, por isso precisa de um Cloudflare
-// Worker gratuito como ponte (instruções na conversa/README). Sem o proxy configurado, a fusão
-// continua funcionando com Google+Open-Meteo (2 fontes) — já uma melhoria sobre usar só uma fonte,
-// só que mais modesta. σ de cada fonte: valores documentados quando existem (SRTM/Mapzen ±5m,
-// Copernicus GLO-90 ±10m — os mesmos citados no vídeo de referência) ou estimativas de literatura
-// de validação quando não há spec oficial (Google ~±8m, ASTER GDEM v3 ~±17m, Tachikawa et al. 2011)
-// — deixado explícito no código pra quem for conferir/ajustar.
+// configurarDemProxy), SRTM v3, Mapzen (composto SRTM+ASTER+NED), ASTER GDEM e ALOS AW3D30 via
+// OpenTopoData — esse serviço não libera CORS pra chamada direta do navegador, por isso precisa de
+// um Cloudflare Worker gratuito como ponte (instruções na conversa/README). Sem o proxy configurado,
+// a fusão continua funcionando com Google+Open-Meteo (2 fontes) — já uma melhoria sobre usar só uma
+// fonte, só que mais modesta. σ de cada fonte: valores documentados quando existem (SRTM/Mapzen/
+// AW3D30 ±5m — spec oficial JAXA pro AW3D30, mesma classe de precisão do SRTM; Copernicus GLO-90
+// ±10m — os mesmos citados no vídeo de referência) ou estimativas de literatura de validação quando
+// não há spec oficial (Google ~±8m, ASTER GDEM v3 ~±17m, Tachikawa et al. 2011) — deixado explícito
+// no código pra quem for conferir/ajustar.
+// v5.19: pedido do usuário (revisitando o site oficial do IrrigaModel, irrigamodel.pro/info, que
+// lista ALOS AW3D30 na camada "DEM Fusion" de 4 fontes) — adicionada como 6ª fonte da fusão. Mesma
+// infraestrutura do SRTM/Mapzen/ASTER (OpenTopoData via proxy), dataset "aw3d30" — sem infra nova.
 const _DEM_FONTES = {
   google: { sigma: 8,  nome: 'Google Elevation' },
   glo90:  { sigma: 10, nome: 'Copernicus GLO-90 (Open-Meteo)' },
   srtm:   { sigma: 5,  nome: 'SRTM v3 30m' },
   mapzen: { sigma: 5,  nome: 'Mapzen (composto SRTM+ASTER+NED)' },
-  aster:  { sigma: 17, nome: 'ASTER GDEM v3' }
+  aster:  { sigma: 17, nome: 'ASTER GDEM v3' },
+  aw3d30: { sigma: 5,  nome: 'ALOS AW3D30' }
 };
 
 // Fusão de leituras de um único ponto: [{valor, sigma}, ...] → {valor, sigma, nFontes} fundido.
@@ -5677,7 +5694,7 @@ async function _buscarOpenTopoData(pontos, dataset, proxyBase) {
 
 // Ponto de entrada único: busca elevação de TODAS as fontes disponíveis (Google se tiver chave
 // ativa, Open-Meteo sempre, SRTM/Mapzen/ASTER se o proxy estiver configurado) e devolve já fundida
-// — substitui a busca "só Google" que existia antes em cada função separadamente. As 3 consultas ao
+// — substitui a busca "só Google" que existia antes em cada função separadamente. As 4 consultas ao
 // OpenTopoData rodam em SEQUÊNCIA entre si (mesmo destino final, evita estourar limite de taxa),
 // mas em PARALELO com Google e Open-Meteo (destinos diferentes, sem esse risco).
 async function _buscarElevacaoFundida(pontos) {
@@ -5692,9 +5709,9 @@ async function _buscarElevacaoFundida(pontos) {
   const temGoogle = !!(window.google && window.google.maps && google.maps.ElevationService);
 
   // Modo rápido: só Google, sem Open-Meteo/proxy — a fusão multi-fonte deixa o app bem mais lento
-  // (Open-Meteo já soma uma rodada de lotes extra; com o proxy configurado, mais 3 rodadas
-  // sequenciais de SRTM/Mapzen/ASTER, com espera de ~1,1s entre lotes pra respeitar o limite de
-  // taxa do OpenTopoData — numa grade grande isso pode levar bem mais tempo que só o Google
+  // (Open-Meteo já soma uma rodada de lotes extra; com o proxy configurado, mais 4 rodadas
+  // sequenciais de SRTM/Mapzen/ASTER/AW3D30, com espera de ~1,1s entre lotes pra respeitar o limite
+  // de taxa do OpenTopoData — numa grade grande isso pode levar bem mais tempo que só o Google
   // sozinho). Pedido explícito pra poder escolher velocidade em vez de precisão quando não precisa
   // do ganho de exatidão (ex: rascunho rápido, área já conhecida, terreno bem plano).
   if(localStorage.getItem('elevacaoModo') === 'google') {
@@ -5710,11 +5727,14 @@ async function _buscarElevacaoFundida(pontos) {
     const srtm = await _buscarOpenTopoData(pontos, 'srtm30m', proxyBase).catch(() => null);
     const mapzen = await _buscarOpenTopoData(pontos, 'mapzen', proxyBase).catch(() => null);
     const aster = await _buscarOpenTopoData(pontos, 'aster30m', proxyBase).catch(() => null);
-    return { srtm, mapzen, aster };
-  })() : Promise.resolve({ srtm: null, mapzen: null, aster: null });
+    // v5.19: ALOS AW3D30 (JAXA) — 4ª consulta sequencial ao mesmo proxy OpenTopoData, dataset
+    // "aw3d30" (nome oficial do dataset lá). Mesmo padrão das 3 anteriores, nenhuma infra nova.
+    const aw3d30 = await _buscarOpenTopoData(pontos, 'aw3d30', proxyBase).catch(() => null);
+    return { srtm, mapzen, aster, aw3d30 };
+  })() : Promise.resolve({ srtm: null, mapzen: null, aster: null, aw3d30: null });
 
   const [google_, glo90, openTopo] = await Promise.all([pGoogle, pGlo90, pOpenTopo]);
-  const { srtm, mapzen, aster } = openTopo;
+  const { srtm, mapzen, aster, aw3d30 } = openTopo;
 
   const fontesUsadas = [];
   // Cada busca engole o próprio erro internamente e sempre devolve um array (nunca rejeita) — se
@@ -5727,6 +5747,7 @@ async function _buscarElevacaoFundida(pontos) {
   if(_temAlgumValor(srtm)) fontesUsadas.push(_DEM_FONTES.srtm.nome);
   if(_temAlgumValor(mapzen)) fontesUsadas.push(_DEM_FONTES.mapzen.nome);
   if(_temAlgumValor(aster)) fontesUsadas.push(_DEM_FONTES.aster.nome);
+  if(_temAlgumValor(aw3d30)) fontesUsadas.push(_DEM_FONTES.aw3d30.nome);
 
   const valores = new Array(pontos.length).fill(null);
   let somaSigma = 0, nSigma = 0;
@@ -5737,6 +5758,7 @@ async function _buscarElevacaoFundida(pontos) {
     if(srtm && srtm[i] != null) leituras.push({ valor: srtm[i], sigma: _DEM_FONTES.srtm.sigma });
     if(mapzen && mapzen[i] != null) leituras.push({ valor: mapzen[i], sigma: _DEM_FONTES.mapzen.sigma });
     if(aster && aster[i] != null) leituras.push({ valor: aster[i], sigma: _DEM_FONTES.aster.sigma });
+    if(aw3d30 && aw3d30[i] != null) leituras.push({ valor: aw3d30[i], sigma: _DEM_FONTES.aw3d30.sigma });
     const fundido = _fundirElevacao(leituras);
     if(fundido) { valores[i] = fundido.valor; somaSigma += fundido.sigma; nSigma++; }
   }
