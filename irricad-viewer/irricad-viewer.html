@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<!-- build 2026-09-28 v1.8.0 -->
+<!-- build 2026-09-28 v1.8.1 -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Visualizador IrriCAD v1.8.0 &middot; TophoFarm</title>
+<title>Visualizador IrriCAD v1.8.1 &middot; TophoFarm</title>
 <meta name="theme-color" content="#1f4e4c">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -252,8 +252,9 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 /* ==================================================================
    VERSAO / HISTORICO
    ================================================================== */
-const VERSAO_APP = '1.8.0';
+const VERSAO_APP = '1.8.1';
 const HISTORICO_VERSOES = [
+  {v:'1.8.1', d:'28/09/2026', t:'Achada a causa real do mapa girar errado no modo navegação: o comando que gira o mapa (setBearing) tinha o sentido invertido — girava para o lado oposto ao necessário. Corrigido e conferido nas 4 direções (Norte/Sul/Leste/Oeste): agora, pra onde você anda fica de verdade voltado pra cima na tela.'},
   {v:'1.8.0', d:'28/09/2026', t:'Corrige a orientação do modo navegação, que a v1.7 tinha deixado pior: trocado o rumo vindo da bússola/magnetômetro do celular (pouco confiável, sofria interferência) pelo rumo do próprio GPS — a direção real do seu deslocamento, do jeito que o Google Maps faz no modo a pé. Removido o ajuste manual de bússola (não é mais necessário).'},
   {v:'1.7.0', d:'28/09/2026', t:'Tela sempre acesa enquanto o app estiver aberto (não apaga mais sozinha em campo). Vários projetos podem ficar ligados ao mesmo tempo no mapa, cada um com liga/desliga próprio em "Meus Projetos" — só o que está ligado é desenhado, pra manter leve.'},
   {v:'1.6.0', d:'24/09/2026', t:'Corrige a tela desviando do centro (indo pro canto superior direito) durante o modo navegação — a animação de seguir a posição brigava com o giro da bússola. Splash de abertura e logo do IrriCAD adicionados (tela inicial, cartão do site e painel Sobre).'},
@@ -1051,7 +1052,12 @@ function atualizaRumoPorGPS(coords){
   const temRumoValido = typeof coords.heading==='number' && !isNaN(coords.heading)
     && (coords.speed==null || coords.speed > 0.4); // ~1,4 km/h -- filtra ruido do GPS parado
   if(temRumoValido){
-    mapa.setBearing(coords.heading);
+    // mapa.setBearing(x) gira o CONTEUDO do mapa em sentido horario por x
+    // graus -- pra deixar a direcao em que voce anda voltada "pra cima"
+    // na tela (heading-up), o conteudo precisa girar no sentido CONTRARIO
+    // ao rumo, por isso 360-heading (confirmado testando: setBearing(rumo)
+    // direto deixava o destino exatamente invertido, 180 graus errado).
+    mapa.setBearing((360 - coords.heading) % 360);
     marcaComRumo(true);
   }
 }
