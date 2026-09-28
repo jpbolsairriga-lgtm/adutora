@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Cálculo Avançado de Adutora v1.2 — Bolsa Irriga</title>
+<title>Cálculo Avançado de Adutora v1.3 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -123,7 +123,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>C&#225;lculo Avan&#231;ado de Adutora <span class="ver-badge" id="ver-badge">v1.1</span></h1>
+      <h1>C&#225;lculo Avan&#231;ado de Adutora <span class="ver-badge" id="ver-badge">v1.3</span></h1>
       <p>Tra&#231;ado do Percurso &middot; Perfil de Eleva&#231;&#227;o &middot; C&#225;lculo Hidr&#225;ulico Multi-PN</p>
     </div>
   </div>
@@ -260,9 +260,9 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
       <div class="iu"><input type="number" id="slackP" value="" min="0" max="50" onchange="calc()"><span class="u">%</span></div>
     </div>
     <div class="fg">
-      <label>Perdas locais</label>
-      <div class="iu"><input type="number" id="kLoc" value="" min="0" max="50" onchange="calc()"><span class="u">%</span></div>
-      <small>% das perdas distribu&#237;das</small>
+      <label>Perdas localizadas</label>
+      <div class="iu"><input type="number" id="kLoc" value="" min="0" onchange="calc()"><span class="u">mca</span></div>
+      <small>Registros, curvas, conex&#245;es (valor fixo, como o filtro)</small>
     </div>
   </div>
   <div class="g3">
@@ -332,8 +332,8 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
 
 <!-- Perfil de pressão -->
 <div class="card" id="card-pressao" style="display:none">
-  <div class="ct">&#128200; Perfil Longitudinal da Adutora — Terreno + Piezom&#233;trico</div>
-  <canvas id="c-perfil" width="900" height="320" style="width:100%;max-width:900px;display:block;margin:0 auto"></canvas>
+  <div class="ct">&#128200; Perfil Longitudinal da Adutora — Terreno + Piezom&#233;trico + Linha de Press&#227;o</div>
+  <canvas id="c-perfil" width="900" height="418" style="width:100%;max-width:900px;display:block;margin:0 auto"></canvas>
 </div>
 
 <!-- Botão PDF -->
@@ -367,6 +367,18 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
 
 <script>
 // ── Controle de versão ───────────────────────────────────────────────
+// v1.3 (2026-09-28): "Perdas localizadas" passa de % (sobre o atrito) para
+//   valor fixo em mca, somado como o filtro — corrige o total com margem,
+//   que antes ficava incompleto quando esse campo era deixado em branco.
+//   A margem de projeto (slackP) agora incide só sobre as perdas (atrito +
+//   filtro + perdas localizadas), não mais sobre desnível/pressão residual.
+//   Novo tile "Pressão Início Tubulação" no resumo rápido, mostrando o valor
+//   físico real (sem margem) logo após filtro+perdas — o mesmo do gráfico.
+//   Tabela Multi-PN: faixa de PN e pressão do trecho agora em colunas
+//   separadas (antes vinham agrupadas na mesma célula, confuso). Gráfico de
+//   pressão ganhou um painel inferior dedicado com a linha de pressão real
+//   (mca) ao longo da distância. Traçado no mapa (e no mapa estático do
+//   relatório PDF) agora é colorido por classe de PN, com legenda.
 // v1.2 (2026-07-31): adiciona importação de traçado via arquivo KML
 //   (importarKML) — substitui o traçado manual por pontos lidos do KML,
 //   reaproveitando os marcadores/perfil já existentes.
@@ -375,7 +387,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
 //   para decidir a faixa de PN de cada trecho — causava trechos exibidos como
 //   PN mais alto que a pressão real (P_start/P_end) da tabela indicava.
 // v1.0: versão inicial (traçado, perfil de elevação, cálculo multi-PN).
-const APP_VERSION='v1.2';
+const APP_VERSION='v1.3';
 document.addEventListener('DOMContentLoaded',()=>{const vb=$('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 // ── Utilidades ────────────────────────────────────────────────────────
@@ -432,12 +444,12 @@ function findBestNominal(Q,Vmax){const Di=dIdeal_mm(Q,Vmax),pn125=PIPES.filter(p
 
 function calcMultiPN(Q_calc,L,Hg,CHW,nom,kLoc,filtro,pRes,slackP,lim){
   const pipeByPN={},jByPN={};
-  for(const pn of PN_CLASSES){pipeByPN[pn]=getPipeByNominal(nom,pn);if(pipeByPN[pn])jByPN[pn]=hfPerMeter(Q_calc,CHW,pipeByPN[pn][3])*(1+kLoc);}
+  for(const pn of PN_CLASSES){pipeByPN[pn]=getPipeByNominal(nom,pn);if(pipeByPN[pn])jByPN[pn]=hfPerMeter(Q_calc,CHW,pipeByPN[pn][3]);}
   const ts=Hg/L,STEP=Math.max(1,Math.round(L/500));
-  let AMT_hid=Hg+pRes+filtro+30,segs=[],totalHf=0;
+  let AMT_hid=Hg+pRes+filtro+kLoc+30,segs=[],totalHf=0;
   for(let iter=0;iter<20;iter++){
     // Classificação de PN usa a pressão real (hidráulica, sem margem de projeto) — a mesma que é exibida ao usuário
-    let x=0,P=AMT_hid-filtro,s_=[];
+    let x=0,P=AMT_hid-filtro-kLoc,s_=[];
     let sPN=pnForPressure(P,lim),sX=0,sP=P;
     while(x<L){
       const dx=Math.min(STEP,L-x),pn=pnForPressure(P,lim);
@@ -448,9 +460,13 @@ function calcMultiPN(Q_calc,L,Hg,CHW,nom,kLoc,filtro,pRes,slackP,lim){
     segs=[];
     for(const s of s_){if(segs.length&&segs[segs.length-1].pn===s.pn){segs[segs.length-1].len+=s.len;segs[segs.length-1].to=s.to;segs[segs.length-1].P_end=s.P_end;}else segs.push({...s});}
     totalHf=0;for(const s of segs)totalHf+=(jByPN[s.pn]??jByPN[125]??jByPN[80]??0)*s.len;
-    const an=Hg+totalHf+filtro+pRes;if(Math.abs(an-AMT_hid)<0.05){AMT_hid=an;break;}AMT_hid=an;
+    const an=Hg+totalHf+filtro+kLoc+pRes;if(Math.abs(an-AMT_hid)<0.05){AMT_hid=an;break;}AMT_hid=an;
   }
-  return{AMT_hid,AMT_design:AMT_hid*(1+slackP),totalHf,filtro,segs,pipeByPN,jByPN,pnsUsados:new Set(segs.map(s=>s.pn))};
+  // Margem de projeto (slackP) incide só sobre as perdas (atrito + filtro + perdas localizadas) —
+  // desnível geométrico e pressão residual são valores fixos de projeto, não "incertezas" a margear.
+  const AMT_design=Hg+pRes+(totalHf+filtro+kLoc)*(1+slackP);
+  const pIni=AMT_hid-filtro-kLoc;
+  return{AMT_hid,AMT_design,pIni,totalHf,filtro,kLoc,segs,pipeByPN,jByPN,pnsUsados:new Set(segs.map(s=>s.pn))};
 }
 function pressurePoints(multi,L,Hg){
   const ts=Hg/L,pts=[{x:0,P:multi.AMT_design}];let P=multi.AMT_design;
@@ -464,15 +480,15 @@ function calcMultiPNProfile(Q_calc,profile,CHW,nom,kLoc,filtro,pRes,slackP,lim){
   const pipeByPN={},jByPN={};
   for(const pn of PN_CLASSES){
     pipeByPN[pn]=getPipeByNominal(nom,pn);
-    if(pipeByPN[pn])jByPN[pn]=hfPerMeter(Q_calc,CHW,pipeByPN[pn][3])*(1+kLoc);
+    if(pipeByPN[pn])jByPN[pn]=hfPerMeter(Q_calc,CHW,pipeByPN[pn][3]);
   }
   const n=profile.length,z0=profile[0].elev,L=profile[n-1].dist;
   const maxGain=Math.max(...profile.map(p=>p.elev-z0));
-  let AMT_hid=maxGain+pRes+filtro+30,segs=[],totalHf=0,criticalIdx=n-1;
+  let AMT_hid=maxGain+pRes+filtro+kLoc+30,segs=[],totalHf=0,criticalIdx=n-1,critHf=0,critGain=maxGain;
 
   for(let iter=0;iter<20;iter++){
     // Classificação de PN usa a pressão real (hidráulica, sem margem de projeto) — a mesma que é exibida ao usuário
-    let P=AMT_hid-filtro,hfAcc=0,maxReq=0;
+    let P=AMT_hid-filtro-kLoc,hfAcc=0,maxReq=0,hfAtCrit=0,gainAtCrit=maxGain;
     const s_=[];
     let sPN=pnForPressure(P,lim),sFrom=0,sPstart=P;
 
@@ -485,17 +501,22 @@ function calcMultiPNProfile(Q_calc,profile,CHW,nom,kLoc,filtro,pRes,slackP,lim){
       hfAcc+=j*dx;
       P-=j*dx+dz;
       // ponto crítico: onde é necessário maior AMT para manter pressão >= pRes
-      const req=hfAcc+(profile[i].elev-z0)+pRes+filtro;
-      if(req>maxReq){maxReq=req;criticalIdx=i;}
+      const gain=profile[i].elev-z0;
+      const req=hfAcc+gain+pRes+filtro+kLoc;
+      if(req>maxReq){maxReq=req;criticalIdx=i;hfAtCrit=hfAcc;gainAtCrit=gain;}
     }
     s_.push({pn:sPN,from:sFrom,to:L,len:L-sFrom,P_start:sPstart,P_end:P});
     segs=[];
     for(const s of s_){if(segs.length&&segs[segs.length-1].pn===s.pn){segs[segs.length-1].len+=s.len;segs[segs.length-1].to=s.to;segs[segs.length-1].P_end=s.P_end;}else segs.push({...s});}
-    totalHf=hfAcc;
+    totalHf=hfAcc;critHf=hfAtCrit;critGain=gainAtCrit;
     if(Math.abs(maxReq-AMT_hid)<0.05){AMT_hid=maxReq;break;}
     AMT_hid=maxReq;
   }
-  return{AMT_hid,AMT_design:AMT_hid*(1+slackP),totalHf,filtro,segs,pipeByPN,jByPN,
+  // Margem de projeto (slackP) incide só sobre as perdas (atrito até o ponto crítico + filtro +
+  // perdas localizadas) — desnível geométrico e pressão residual são valores fixos de projeto.
+  const AMT_design=critGain+pRes+(critHf+filtro+kLoc)*(1+slackP);
+  const pIni=AMT_hid-filtro-kLoc;
+  return{AMT_hid,AMT_design,pIni,totalHf,filtro,kLoc,segs,pipeByPN,jByPN,
     pnsUsados:new Set(segs.map(s=>s.pn)),L,
     criticalDist:profile[criticalIdx].dist,criticalElev:profile[criticalIdx].elev};
 }
@@ -524,7 +545,7 @@ function calc(){
   const Q=gv('Q'),L=gv('L'),cotaS_=gv('cotaS'),cotaR_=gv('cotaR');
   const slackQ=gv('slackQ')||0,slackP=gv('slackP')||0;
   const Q_calc=Q*(1+slackQ/100);
-  const eff=gv('eff')||70,kLoc=gv('kLoc')/100,pRes=gv('pRes')||10;
+  const eff=gv('eff')||70,kLoc=gv('kLoc')||0,pRes=gv('pRes')||10;
   const filtro=$('filtro').value===''?5:parseFloat($('filtro').value)||0;
   const Vmax=gv('Vmax')||1.5,CHW=getCHW(),lim=getLimits();
   $('cotaMaxInfo').style.display='none';
@@ -554,6 +575,7 @@ function calc(){
   buildQuick(multi,Q_calc,Vmax,L,cotaR_-cotaS_,nominal,CHW);
   buildBomba(multi,Q_calc,eff,Pkw,Pcv);
   drawPressao(multi,Q_calc,cotaR_-cotaS_,L,lim,cotaS_,cotaR_,pRes);
+  desenharOverlayPN(multi);
 }
 
 function buildQuick(multi,Q_calc,Vmax,L,Hg,nom,CHW){
@@ -566,11 +588,12 @@ function buildQuick(multi,Q_calc,Vmax,L,Hg,nom,CHW){
   const modoTag=usaPerfil
     ?`<div class="sbox ok" style="margin-top:.6rem;font-size:.78rem">&#10003; C&#225;lculo com perfil real — ponto cr&#237;tico a <b>${fmt(multi.criticalDist,0)} m</b> (cota ${fmt(multi.criticalElev,1)} m)</div>`
     :`<div class="sbox info" style="margin-top:.6rem;font-size:.78rem">&#8505; C&#225;lculo com inclina&#231;&#227;o linear. Gere o perfil para c&#225;lculo preciso.</div>`;
-  $('quick-results').innerHTML=`<div class="card"><div class="ct">&#9889; Resumo R&#225;pido</div><div class="g4">
+  $('quick-results').innerHTML=`<div class="card"><div class="ct">&#9889; Resumo R&#225;pido</div><div class="g5">
+    <div class="tile tt"><div class="tl">Press&#227;o In&#237;cio Tubula&#231;&#227;o</div><div class="tv lg">${fmt(multi.pIni)} <small>mca</small></div><div style="font-size:.65rem;color:var(--mu)">real, s/ margem, ap&#243;s filtro+perdas</div></div>
     <div class="tile tb2"><div class="tl">AMH Hidr&#225;ulica</div><div class="tv lg">${fmt(multi.AMT_hid)} <small>mca</small></div></div>
-    <div class="tile tg"><div class="tl">AMH Projeto (c/ margem)</div><div class="tv lg">${fmt(multi.AMT_design)} <small>mca</small></div></div>
+    <div class="tile tg"><div class="tl">Press&#227;o de Trabalho (bomba, c/ margem)</div><div class="tv lg">${fmt(multi.AMT_design)} <small>mca</small></div></div>
     ${critico}
-    <div class="tile tt"><div class="tl">Classes PN Utilizadas</div><div class="tv" style="font-size:.9rem">${badges}</div></div>
+    <div class="tile" style="background:linear-gradient(135deg,#ede7f6,#d1c4e9);border:1px solid #b39ddb"><div class="tl">Classes PN Utilizadas</div><div class="tv" style="font-size:.9rem">${badges}</div></div>
   </div>${modoTag}</div>`;
 }
 
@@ -587,7 +610,7 @@ function buildDiamCard(nom,Q_calc,CHW,kLoc,L,multi){
     rows+=`<tr><td><span class="pn-badge ${PN_CSS[pn]}">PN ${pn}</span></td>
       <td>${p[1]} mm</td><td>${p[2]} mm</td><td><b>${fmt(p[3])} mm</b></td>
       <td><span style="${cl}">${fmt(V)} m/s</span></td>
-      <td>${fmt(J,4)} m/m</td><td>${fmt(J*(1+kLoc)*L)} m</td></tr>`;
+      <td>${fmt(J,4)} m/m</td><td>${fmt(J*L)} m</td></tr>`;
   }
   $('card-diam').innerHTML=`<div class="ct">&#128200; Di&#226;metro &amp; Velocidades</div>
     <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:.8rem;align-items:center">
@@ -610,8 +633,8 @@ function buildMultiCard(multi,Q_calc,L,eff,slackP,Pkw,Pcv,lim){
   for(const s of multi.segs){
     const p=multi.pipeByPN[s.pn];
     rows+=`<tr><td><span class="pn-badge ${PN_CSS[s.pn]}">PN ${s.pn}</span></td>
-      <td><div style="font-size:.75rem;font-weight:700;color:${PN_COLOR[s.pn]}">${fmt(pnPrev[s.pn],0)} – ${fmt(lim[s.pn],0)} mca</div>
-          <div style="font-size:.68rem;color:var(--mu)">${fmt(s.P_start,1)} → ${fmt(s.P_end,1)} mca</div></td>
+      <td style="font-size:.74rem;font-weight:700;color:${PN_COLOR[s.pn]}">${fmt(pnPrev[s.pn],0)} – ${fmt(lim[s.pn],0)} mca</td>
+      <td style="white-space:nowrap"><b style="color:#1b6e3a">${fmt(s.P_start,1)}</b> <span style="color:var(--mu)">&#8594;</span> <b style="color:#c62828">${fmt(s.P_end,1)}</b> <span style="font-size:.65rem;color:var(--mu)">mca</span></td>
       <td>${fmt(s.from,0)} – ${fmt(s.to,0)} m</td>
       <td>${fmt(s.len,0)} m</td><td>${(s.len/L*100).toFixed(1)}%</td>
       <td>${p?p[1]+' mm':'—'}</td><td>${p?fmt(p[3])+' mm':'—'}</td>
@@ -620,7 +643,7 @@ function buildMultiCard(multi,Q_calc,L,eff,slackP,Pkw,Pcv,lim){
   }
   $('card-multi').innerHTML=`<div class="ct">&#128200; Distribui&#231;&#227;o Multi-PN</div>${bar}
     <div class="cmp-wrap"><table class="cmp"><thead><tr>
-      <th style="text-align:left">PN</th><th>Faixa Pres.</th><th>Trecho</th><th>Comprimento</th><th>%</th>
+      <th style="text-align:left">PN</th><th>Faixa PN (mca)</th><th>Press&#227;o no trecho</th><th>Trecho</th><th>Comprimento</th><th>%</th>
       <th>D. Ext.</th><th>D. Int.</th><th>Velocidade</th><th>hf trecho</th>
     </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
@@ -639,18 +662,19 @@ function buildBomba(multi,Q_calc,eff,Pkw,Pcv){
 function drawPressao(multi,Q_calc,Hg,L,lim,cotaS_,cotaR_,pRes){
   $('card-pressao').style.display='';
   const cv=$('c-perfil'),ctx=cv.getContext('2d');
-  cv.width=900;cv.height=300;
-  const W=cv.width,H=cv.height;
+  const W=900,mainT=36,mainH=208,gapH=36,subT=mainT+mainH+gapH,subH=104,subB=34;
+  const H=subT+subH+subB;
+  cv.width=W;cv.height=H;
   ctx.clearRect(0,0,W,H);
   ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);
   if(!multi||!L)return;
-  const mg={t:36,b:46,l:62,r:18};
-  const cW=W-mg.l-mg.r,cH=H-mg.t-mg.b;
+  const mg={t:mainT,b:H-mainT-mainH,l:62,r:18};
+  const cW=W-mg.l-mg.r,cH=mainH;
   const usaPerfil=_profileData&&_profileData.length>=4;
   const ts=Hg/L;
 
-  // ── Pressão de partida sem slackP e sem filtro → P_final = pRes ──
-  const startP=multi.AMT_hid-(multi.filtro??0);
+  // ── Pressão de partida sem slackP, sem filtro e sem perdas localizadas → P_final = pRes ──
+  const startP=multi.pIni??(multi.AMT_hid-(multi.filtro??0)-(multi.kLoc??0));
 
   // ── Montar pontos unificados [{x, z, P, piezo}] ──────────────────
   let pts=[];
@@ -702,12 +726,9 @@ function drawPressao(multi,Q_calc,Hg,L,lim,cotaS_,cotaR_,pRes){
     const xv=L*i/6,x=pxF(xv);
     ctx.strokeStyle='rgba(0,80,160,.06)';
     ctx.beginPath();ctx.moveTo(x,mg.t);ctx.lineTo(x,mg.t+cH);ctx.stroke();
-    ctx.fillStyle='#8a9fb5';ctx.font='10px Segoe UI';ctx.textAlign='center';
-    ctx.fillText(fmt(xv,0)+'m',x,mg.t+cH+14);
   }
-  ctx.fillStyle='#8a9fb5';ctx.font='9px Segoe UI';ctx.textAlign='center';
-  ctx.fillText('Distância (m)',mg.l+cW/2,H-4);
   ctx.save();ctx.translate(10,mg.t+cH/2);ctx.rotate(-Math.PI/2);
+  ctx.fillStyle='#8a9fb5';ctx.font='9px Segoe UI';ctx.textAlign='center';
   ctx.fillText('Cota (m)',0,0);ctx.restore();
 
   // ── Terreno preenchido ─────────────────────────────────────────────
@@ -748,14 +769,59 @@ function drawPressao(multi,Q_calc,Hg,L,lim,cotaS_,cotaR_,pRes){
     ctx.fillText('PN '+sb.pn,lx,ly);
   }
 
+  // ── Painel inferior: Linha de Pressão real (mca) ao longo da distância ──
+  ctx.fillStyle='#f7fbfd';ctx.fillRect(mg.l,subT,cW,subH);
+  ctx.strokeStyle='#d8e6ef';ctx.lineWidth=1;ctx.strokeRect(mg.l,subT,cW,subH);
+  const pMaxRaw=Math.max(...pts.map(p=>p.P),pRes);
+  const pMaxS=Math.ceil((pMaxRaw*1.12)/10)*10||10;
+  const pyS=v=>subT+subH*(1-(v/pMaxS));
+  for(let i=0;i<=4;i++){
+    const pv=pMaxS*i/4,y=pyS(pv);
+    ctx.strokeStyle='rgba(0,80,160,.08)';
+    ctx.beginPath();ctx.moveTo(mg.l,y);ctx.lineTo(mg.l+cW,y);ctx.stroke();
+    ctx.fillStyle='#8a9fb5';ctx.font='9px Segoe UI';ctx.textAlign='right';
+    ctx.fillText(Math.round(pv),mg.l-4,y+3);
+  }
+  for(let i=0;i<=6;i++){
+    const xv=L*i/6,x=pxF(xv);
+    ctx.strokeStyle='rgba(0,80,160,.06)';
+    ctx.beginPath();ctx.moveTo(x,subT);ctx.lineTo(x,subT+subH);ctx.stroke();
+    ctx.fillStyle='#8a9fb5';ctx.font='10px Segoe UI';ctx.textAlign='center';
+    ctx.fillText(fmt(xv,0)+'m',x,subT+subH+14);
+  }
+  ctx.fillStyle='#8a9fb5';ctx.font='9px Segoe UI';ctx.textAlign='center';
+  ctx.fillText('Distância (m)',mg.l+cW/2,H-6);
+  ctx.save();ctx.translate(10,subT+subH/2);ctx.rotate(-Math.PI/2);
+  ctx.fillText('Pressão (mca)',0,0);ctx.restore();
+  ctx.fillStyle='#00838f';ctx.font='bold 9px Segoe UI';ctx.textAlign='left';
+  ctx.fillText('◤ Linha de Pressão — varia com a distância e a topografia',mg.l+2,subT-8);
+  const gradFill=ctx.createLinearGradient(0,subT,0,subT+subH);
+  gradFill.addColorStop(0,'rgba(0,150,180,.30)');gradFill.addColorStop(1,'rgba(0,150,180,.02)');
+  ctx.beginPath();
+  pts.forEach((p,i)=>i===0?ctx.moveTo(pxF(p.x),pyS(p.P)):ctx.lineTo(pxF(p.x),pyS(p.P)));
+  ctx.lineTo(pxF(pts[pts.length-1].x),subT+subH);ctx.lineTo(pxF(pts[0].x),subT+subH);
+  ctx.closePath();ctx.fillStyle=gradFill;ctx.fill();
+  for(const sb of segBands){
+    const sp=sb.pts;if(sp.length<2)continue;
+    ctx.beginPath();
+    sp.forEach((p,i)=>i===0?ctx.moveTo(pxF(p.x),pyS(p.P)):ctx.lineTo(pxF(p.x),pyS(p.P)));
+    ctx.strokeStyle=PN_COLOR[sb.pn];ctx.lineWidth=2.4;ctx.lineJoin='round';ctx.stroke();
+  }
+  ctx.setLineDash([3,3]);ctx.strokeStyle='rgba(198,40,40,.55)';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(mg.l,pyS(pRes));ctx.lineTo(mg.l+cW,pyS(pRes));ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle='#c62828';ctx.font='8px Segoe UI';ctx.textAlign='left';
+  ctx.fillText('mín. residual '+fmt(pRes,0)+' mca',mg.l+4,pyS(pRes)-3);
+
   // ── Ponto crítico (modo perfil real) ──────────────────────────────
   if(usaPerfil&&multi.criticalDist!=null){
     const critPt=pts.reduce((a,b)=>Math.abs(b.x-multi.criticalDist)<Math.abs(a.x-multi.criticalDist)?b:a);
     const cpX=pxF(multi.criticalDist);
     ctx.setLineDash([4,3]);ctx.strokeStyle='rgba(224,123,0,.5)';ctx.lineWidth=1.2;
-    ctx.beginPath();ctx.moveTo(cpX,mg.t);ctx.lineTo(cpX,mg.t+cH);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(cpX,mg.t);ctx.lineTo(cpX,subT+subH);ctx.stroke();
     ctx.setLineDash([]);
     ctx.fillStyle='#e07b00';ctx.beginPath();ctx.arc(cpX,pyF(critPt.piezo),4,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#e07b00';ctx.beginPath();ctx.arc(cpX,pyS(critPt.P),4,0,Math.PI*2);ctx.fill();
     ctx.fillStyle='#e07b00';ctx.font='bold 8px Segoe UI';ctx.textAlign='center';
     ctx.fillText('▲ crítico '+fmt(multi.criticalDist,0)+'m',cpX,mg.t-4);
   }
@@ -766,7 +832,7 @@ function drawPressao(multi,Q_calc,Hg,L,lim,cotaS_,cotaR_,pRes){
   ctx.fillStyle='#2e7d32';ctx.beginPath();ctx.arc(pxF(0),pyF(c0.piezo),dotR,0,Math.PI*2);ctx.fill();
   ctx.fillStyle='rgba(255,255,255,.9)';ctx.beginPath();ctx.arc(pxF(0),pyF(c0.piezo),2,0,Math.PI*2);ctx.fill();
   ctx.fillStyle='#1b5e20';ctx.font='bold 9px Segoe UI';ctx.textAlign='left';
-  ctx.fillText('AMH = '+fmt(c0.P,0)+' mca',pxF(0)+8,pyF(c0.piezo)+4);
+  ctx.fillText('P. início tubulação = '+fmt(c0.P,0)+' mca',pxF(0)+8,pyF(c0.piezo)+4);
   // Fim — pressão residual
   ctx.fillStyle='#c62828';ctx.beginPath();ctx.arc(pxF(L),pyF(cf.piezo),dotR,0,Math.PI*2);ctx.fill();
   ctx.fillStyle='rgba(255,255,255,.9)';ctx.beginPath();ctx.arc(pxF(L),pyF(cf.piezo),2,0,Math.PI*2);ctx.fill();
@@ -780,6 +846,37 @@ function drawPressao(multi,Q_calc,Hg,L,lim,cotaS_,cotaR_,pRes){
 
 // ── Google Maps ───────────────────────────────────────────────────
 let map,elevService,tracePolyline=null,traceMarkers=[],tracePoints=[],modoDesenho=false;
+let pnOverlayLines=[];
+
+function limparOverlayPN(){
+  pnOverlayLines.forEach(l=>l.setMap(null));pnOverlayLines=[];
+  if(tracePolyline)tracePolyline.setOptions({strokeOpacity:.9});
+  const lg=document.getElementById('pnLegend');if(lg)lg.style.display='none';
+}
+// Colore o traçado no mapa (satélite) por classe de PN, usando as amostras reais do perfil de elevação
+function desenharOverlayPN(multi){
+  limparOverlayPN();
+  if(!map||!_perfilSamples||_perfilSamples.length<2||!multi||!multi.segs||!multi.segs.length)return;
+  const dists=[0];
+  for(let i=1;i<_perfilSamples.length;i++)dists.push(dists[i-1]+haversine(_perfilSamples[i-1].location,_perfilSamples[i].location));
+  for(const seg of multi.segs){
+    const path=[];
+    for(let i=0;i<_perfilSamples.length;i++){if(dists[i]>=seg.from-1&&dists[i]<=seg.to+1)path.push(_perfilSamples[i].location);}
+    if(path.length<2)continue;
+    const line=new google.maps.Polyline({path,map,strokeColor:PN_COLOR[seg.pn],strokeWeight:6,strokeOpacity:.88,zIndex:8});
+    pnOverlayLines.push(line);
+  }
+  if(tracePolyline)tracePolyline.setOptions({strokeOpacity:.2});
+  let lg=document.getElementById('pnLegend');
+  if(!lg){
+    lg=document.createElement('div');lg.id='pnLegend';
+    lg.style.cssText='position:absolute;left:8px;bottom:8px;background:rgba(255,255,255,.92);border-radius:8px;padding:.4rem .6rem;font-size:.68rem;font-weight:700;box-shadow:0 2px 10px rgba(0,0,0,.18);display:flex;gap:.5rem;flex-wrap:wrap;z-index:5';
+    $('map-div').style.position='relative';$('map-div').appendChild(lg);
+  }
+  const pnsA=[...multi.pnsUsados].sort((a,b)=>b-a);
+  lg.innerHTML=pnsA.map(pn=>`<span style="display:flex;align-items:center;gap:.25rem"><span style="width:12px;height:12px;border-radius:3px;background:${PN_COLOR[pn]};display:inline-block"></span>PN ${pn}</span>`).join('');
+  lg.style.display='flex';
+}
 
 function salvarKey(){const k=$('apiKey').value.trim();if(k){localStorage.setItem('mapskey_aa',k);setMStatus('Chave salva.','ok');}}
 
@@ -887,6 +984,7 @@ function limparTrace(){
   $('traceInfo').style.display='none';$('btnPerfil').disabled=true;$('btnLimpar').disabled=true;
   $('capDiv').style.display='none';$('elev-canvas').style.display='none';
   _perfilSamples=null;_cotaMax=null;_profileData=null;
+  limparOverlayPN();
   if(modoDesenho)toggleDesenho();setMStatus('Traçado limpo.','info');
 }
 
@@ -1016,14 +1114,36 @@ function gerarPDF(){
     const zL=Math.floor(Math.log(H/T/(Math.abs(Math.log((1+Math.sin(Math.max(...lats)*Math.PI/180))/(1-Math.sin(Math.max(...lats)*Math.PI/180)))/2-Math.log((1+Math.sin(Math.min(...lats)*Math.PI/180))/(1-Math.sin(Math.min(...lats)*Math.PI/180)))/2)/Math.PI))/Math.LN2);
     const zG=Math.floor(Math.log(W/T/(lngSpan/360))/Math.LN2);
     const zoom=Math.min(zL,zG,19);
-    const path='path=color:0xff6b00ff|weight:3|'+pts.map(p=>`${p.lat()},${p.lng()}`).join('|');
-    mapImg=`https://maps.googleapis.com/maps/api/staticmap?center=${cLat},${cLng}&zoom=${zoom}&size=600x300&maptype=satellite&${path}&key=${key}`;
+    // Traçado colorido por classe de PN (usa as amostras reais do perfil, quando disponíveis)
+    let pathParams='';
+    if(_perfilSamples&&_perfilSamples.length>=2&&_multi.segs&&_multi.segs.length){
+      const dists=[0];
+      for(let i=1;i<_perfilSamples.length;i++)dists.push(dists[i-1]+haversine(_perfilSamples[i-1].location,_perfilSamples[i].location));
+      for(const seg of _multi.segs){
+        const idxs=[];
+        for(let i=0;i<_perfilSamples.length;i++){if(dists[i]>=seg.from-1&&dists[i]<=seg.to+1)idxs.push(i);}
+        if(idxs.length<2)continue;
+        const step=Math.max(1,Math.floor(idxs.length/22));
+        const chosen=[];
+        for(let k=0;k<idxs.length;k+=step)chosen.push(idxs[k]);
+        if(chosen[chosen.length-1]!==idxs[idxs.length-1])chosen.push(idxs[idxs.length-1]);
+        const hex=PN_COLOR[seg.pn].replace('#','');
+        const coords=chosen.map(i=>{const loc=_perfilSamples[i].location;return `${loc.lat()},${loc.lng()}`;}).join('|');
+        pathParams+=`&path=color:0x${hex}ff|weight:5|${coords}`;
+      }
+    }
+    if(!pathParams)pathParams='&'+'path=color:0xff6b00ff|weight:3|'+pts.map(p=>`${p.lat()},${p.lng()}`).join('|');
+    mapImg=`https://maps.googleapis.com/maps/api/staticmap?center=${cLat},${cLng}&zoom=${zoom}&size=600x300&maptype=satellite${pathParams}&key=${key}`;
   }
   const pnPrev={180:lim[145],145:lim[125],125:lim[80],80:lim[60],60:0};
-  let pnRows='';
+  let pnRows='',pnLegendPdf='';
+  for(const pn of [...(_multi.pnsUsados||[])].sort((a,b)=>b-a)){
+    pnLegendPdf+=`<span style="display:inline-flex;align-items:center;gap:.2rem;margin-right:.6rem"><span style="width:9px;height:9px;border-radius:2px;background:${PN_COLOR[pn]};display:inline-block"></span>PN ${pn}</span>`;
+  }
   for(const s of _multi.segs){
     const p=_multi.pipeByPN[s.pn];
-    pnRows+=`<tr><td><b>PN ${s.pn}</b></td><td>${fmt(pnPrev[s.pn],0)} – ${fmt(lim[s.pn],0)} mca</td>
+    pnRows+=`<tr><td><b style="color:${PN_COLOR[s.pn]}">PN ${s.pn}</b></td><td>${fmt(pnPrev[s.pn],0)} – ${fmt(lim[s.pn],0)} mca</td>
+      <td style="white-space:nowrap">${fmt(s.P_start,1)} &#8594; ${fmt(s.P_end,1)} mca</td>
       <td>${fmt(s.from,0)} – ${fmt(s.to,0)} m</td><td>${fmt(s.len,0)} m</td><td>${(s.len/L*100).toFixed(1)}%</td>
       <td>${p?p[1]+' mm':'—'}</td><td>${p?fmt(p[3])+' mm':'—'}</td>
       <td>${p?fmt(velocity(Q_calc,p[3]))+' m/s':'—'}</td></tr>`;
@@ -1058,7 +1178,7 @@ img.chart{width:100%;display:block;border:1px solid #d0e4f0;border-radius:3px}
   </div>
   <div class="hdr-r"><b>${$('consultor').value||'João Paulo de Oliveira'}</b>Eng. Agr&#244;nomo &middot; Irriga&#231;&#227;o<br>bolsairriga.com.br &middot; (16) 99401-2495<br>${date}</div>
 </div>
-${mapImg?`<div class="sec"><h2>&#127758; Percurso da Adutora</h2><img class="mapa" id="smap" src="${mapImg}" onerror="this.style.background='#f0ede8'"></div>`:''}
+${mapImg?`<div class="sec"><h2>&#127758; Percurso da Adutora — colorido por classe de PN</h2><img class="mapa" id="smap" src="${mapImg}" onerror="this.style.background='#f0ede8'">${pnLegendPdf?`<div style="margin-top:.25rem">${pnLegendPdf}</div>`:''}</div>`:''}
 ${elevImg?`<div class="sec"><h2>&#128200; Perfil de Eleva&#231;&#227;o — Terreno</h2><img class="chart" src="${elevImg}"></div>`:''}
 <div class="sec"><h2>&#9881; Par&#226;metros</h2><div class="grid">
   <div class="box"><div class="bv">${fmt(Q)} m&#179;/h</div><div class="bl">Vaz&#227;o nominal</div></div>
@@ -1068,14 +1188,15 @@ ${elevImg?`<div class="sec"><h2>&#128200; Perfil de Eleva&#231;&#227;o — Terre
   <div class="box"><div class="bv">${fmt(cotaR_,1)} m</div><div class="bl">Cota recalque</div></div>
   <div class="box"><div class="bv">${fmt(Hg,1)} m</div><div class="bl">Desnível est&#225;tico</div></div>
   ${_cotaMax?`<div class="box" style="background:#fff8e1;border-color:#ffe082"><div class="bv" style="color:#e07b00">${fmt(_cotaMax,1)} m</div><div class="bl">Cota m&#225;xima</div></div>`:''}
+  <div class="box"><div class="bv">${fmt(_multi.pIni)} mca</div><div class="bl">Press&#227;o In&#237;cio Tubula&#231;&#227;o</div></div>
   <div class="box"><div class="bv">${fmt(_multi.AMT_hid)} mca</div><div class="bl">AMH Hidr&#225;ulica</div></div>
-  <div class="box"><div class="bv">${fmt(_multi.AMT_design)} mca</div><div class="bl">AMH Projeto</div></div>
+  <div class="box" style="background:#e8f5e9;border-color:#a5d6a7"><div class="bv" style="color:#1b6e3a">${fmt(_multi.AMT_design)} mca</div><div class="bl">Press&#227;o de Trabalho (bomba, c/ margem)</div></div>
   <div class="box"><div class="bv">${motorCV} CV</div><div class="bl">Motor comercial</div></div>
   <div class="box"><div class="bv">${fmt(Pkw,1)} kW</div><div class="bl">Pot. hidr&#225;ulica</div></div>
   <div class="box"><div class="bv">${fmtR(en.r_mes)}</div><div class="bl">Custo mensal</div></div>
 </div></div>
 <div class="sec"><h2>&#128200; Distribui&#231;&#227;o Multi-PN</h2>
-<table><thead><tr><th>PN</th><th>Faixa Press.</th><th>Trecho</th><th>Comprimento</th><th>%</th><th>D. Ext.</th><th>D. Int.</th><th>Velocidade</th></tr></thead>
+<table><thead><tr><th>PN</th><th>Faixa PN (mca)</th><th>Press&#227;o no trecho</th><th>Trecho</th><th>Comprimento</th><th>%</th><th>D. Ext.</th><th>D. Int.</th><th>Velocidade</th></tr></thead>
 <tbody>${pnRows}</tbody></table></div>
 ${pressImg?`<div class="sec"><h2>&#128200; Perfil de Press&#227;o — Adutora</h2><img class="chart" src="${pressImg}"></div>`:''}
 <div class="footer">Bolsa Irriga&#174; &mdash; Av. Elias Abr&#227;o, n&#186; 140 &middot; Franca &ndash; SP &middot; (16) 99401-2495 &middot; bolsairriga.com.br<br>&#169; 2025 Jo&#227;o Paulo de Oliveira &middot; Gerado em ${date}</div>
