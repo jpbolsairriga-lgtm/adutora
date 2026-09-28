@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Cálculo Avançado de Adutora v1.4 — Bolsa Irriga</title>
+<title>Cálculo Avançado de Adutora v1.5 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -123,7 +123,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>C&#225;lculo Avan&#231;ado de Adutora <span class="ver-badge" id="ver-badge">v1.4</span></h1>
+      <h1>C&#225;lculo Avan&#231;ado de Adutora <span class="ver-badge" id="ver-badge">v1.5</span></h1>
       <p>Tra&#231;ado do Percurso &middot; Perfil de Eleva&#231;&#227;o &middot; C&#225;lculo Hidr&#225;ulico Multi-PN</p>
     </div>
   </div>
@@ -330,6 +330,13 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
 <div id="card-multi" class="card" style="display:none"></div>
 <div id="bomba-results"></div>
 
+<!-- Curva teórica da bomba -->
+<div class="card" id="card-curva-bomba" style="display:none">
+  <div class="ct">&#128201; Curva Te&#243;rica da Bomba (estimada) — Ponto de Opera&#231;&#227;o</div>
+  <div class="sbox info" style="margin-bottom:.7rem;font-size:.76rem">&#8505; Estimativa te&#243;rica a partir do ponto de projeto (Q, AMH). N&#227;o substitui a curva real do fabricante — use para pr&#233;-sele&#231;&#227;o e compara&#231;&#227;o com o cat&#225;logo.</div>
+  <canvas id="c-curva-bomba" width="900" height="320" style="width:100%;max-width:900px;display:block;margin:0 auto"></canvas>
+</div>
+
 <!-- Perfil de pressão -->
 <div class="card" id="card-pressao" style="display:none">
   <div class="ct">&#128200; Perfil Longitudinal da Adutora — Terreno + Piezom&#233;trico + Linha de Press&#227;o</div>
@@ -372,6 +379,13 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
 
 <script>
 // ── Controle de versão ───────────────────────────────────────────────
+// v1.5 (2026-09-28): novo tile "Vazão de Projeto (c/ folga)" no resumo
+//   rápido, junto das pressões. Novo card "Curva Teórica da Bomba
+//   (estimada)": estima uma curva H×Q de bomba (parábola calibrada pelo
+//   ponto de projeto, shutoff ≈1,2×AMH) e a curva real do sistema (mesma
+//   física Hazen-Williams do app, variando Q nos diâmetros já
+//   selecionados), marcando o ponto de projeto e, quando divergem, o ponto
+//   de operação real estimado pela interseção das duas curvas.
 // v1.4 (2026-09-28): corrige a fórmula do total com margem — AMT_design
 //   volta a ser AMT_hid × (1+slackP), ou seja: (pressão início tubulação +
 //   filtro + perdas localizadas) × (1+margem), igual à conta manual
@@ -396,7 +410,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
 //   para decidir a faixa de PN de cada trecho — causava trechos exibidos como
 //   PN mais alto que a pressão real (P_start/P_end) da tabela indicava.
 // v1.0: versão inicial (traçado, perfil de elevação, cálculo multi-PN).
-const APP_VERSION='v1.4';
+const APP_VERSION='v1.5';
 document.addEventListener('DOMContentLoaded',()=>{const vb=$('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 // ── Utilidades ────────────────────────────────────────────────────────
@@ -561,7 +575,8 @@ function calc(){
   if(!Q||!L){
     $('quick-results').innerHTML='<div class="card"><div class="sbox warn">Preencha Q e gere o perfil de elevação (ou informe L, cotaS e cotaR manualmente).</div></div>';
     $('card-diam').style.display='none';$('card-multi').style.display='none';
-    $('bomba-results').innerHTML='';$('card-pressao').style.display='none';return;
+    $('bomba-results').innerHTML='';$('card-pressao').style.display='none';
+    $('card-curva-bomba').style.display='none';return;
   }
   const nominal=findBestNominal(Q_calc,Vmax);_nominal=nominal;
 
@@ -582,6 +597,7 @@ function calc(){
   buildMultiCard(multi,Q_calc,L,eff,slackP,Pkw,Pcv,lim);
   buildQuick(multi,Q_calc,Vmax,L,cotaR_-cotaS_,nominal,CHW);
   buildBomba(multi,Q_calc,eff,Pkw,Pcv);
+  drawCurvaBomba(multi,Q_calc,CHW);
   drawPressao(multi,Q_calc,cotaR_-cotaS_,L,lim,cotaS_,cotaR_,pRes);
   desenharOverlayPN(multi);
 }
@@ -596,7 +612,8 @@ function buildQuick(multi,Q_calc,Vmax,L,Hg,nom,CHW){
   const modoTag=usaPerfil
     ?`<div class="sbox ok" style="margin-top:.6rem;font-size:.78rem">&#10003; C&#225;lculo com perfil real — ponto cr&#237;tico a <b>${fmt(multi.criticalDist,0)} m</b> (cota ${fmt(multi.criticalElev,1)} m)</div>`
     :`<div class="sbox info" style="margin-top:.6rem;font-size:.78rem">&#8505; C&#225;lculo com inclina&#231;&#227;o linear. Gere o perfil para c&#225;lculo preciso.</div>`;
-  $('quick-results').innerHTML=`<div class="card"><div class="ct">&#9889; Resumo R&#225;pido</div><div class="g5">
+  $('quick-results').innerHTML=`<div class="card"><div class="ct">&#9889; Resumo R&#225;pido</div><div class="g5" style="grid-template-columns:repeat(auto-fit,minmax(155px,1fr))">
+    <div class="tile" style="background:linear-gradient(135deg,#e0f2f1,#b2dfdb);border:1px solid #80cbc4"><div class="tl">Vaz&#227;o de Projeto (c/ folga)</div><div class="tv lg">${fmt(Q_calc)} <small>m&#179;/h</small></div><div style="font-size:.68rem;color:var(--mu)">${fmt(Q_calc/3.6,2)} L/s</div></div>
     <div class="tile tt"><div class="tl">Press&#227;o In&#237;cio Tubula&#231;&#227;o</div><div class="tv lg">${fmt(multi.pIni)} <small>mca</small></div><div style="font-size:.65rem;color:var(--mu)">real, s/ margem, ap&#243;s filtro+perdas</div></div>
     <div class="tile tb2"><div class="tl">AMH Hidr&#225;ulica</div><div class="tv lg">${fmt(multi.AMT_hid)} <small>mca</small></div></div>
     <div class="tile tg"><div class="tl">Press&#227;o de Trabalho (bomba, c/ margem)</div><div class="tv lg">${fmt(multi.AMT_design)} <small>mca</small></div></div>
@@ -665,6 +682,95 @@ function buildBomba(multi,Q_calc,eff,Pkw,Pcv){
     <div class="tile tt"><div class="tl">Chave de Partida</div><div class="tv" style="font-size:.85rem;margin-top:.3rem"><span class="${ch.cls}">${ch.texto}</span></div></div>
     <div class="tile to"><div class="tl">Consumo Mensal</div><div class="tv lg">${fmt(en.kwh_mes,0)} <small>kWh/m&#234;s</small></div><div style="font-size:.72rem;color:var(--mu)">${fmtR(en.r_mes)}/m&#234;s</div></div>
   </div></div>`;
+}
+
+// ── Curva teórica da bomba (estimada) + curva real do sistema ───────
+// A curva da bomba é uma parábola H=H0-k·Q² calibrada para passar pelo
+// ponto de projeto (Q_calc, AMT_design), assumindo altura de shutoff (Q=0)
+// ≈ 1,2× a altura de projeto (faixa típica pra bombas centrífugas de
+// rotor radial de especificação média) — é só uma estimativa ilustrativa
+// pra pré-seleção, não substitui a curva real do fabricante.
+// A curva do sistema é calculada com a física real do app (Hazen-Williams
+// nos diâmetros já selecionados), variando Q — por isso ela é "real" e a
+// interseção com a curva da bomba mostra pra onde o ponto de operação
+// tende a deslizar quando a bomba tem folga de pressão em relação à rede.
+function drawCurvaBomba(multi,Q_calc,CHW){
+  const card=$('card-curva-bomba');
+  if(!multi||!multi.segs||!multi.segs.length||!Q_calc||!multi.AMT_design){if(card)card.style.display='none';return;}
+  card.style.display='';
+  const cv=$('c-curva-bomba'),ctx=cv.getContext('2d');
+  const W=900,H=320;cv.width=W;cv.height=H;
+  ctx.clearRect(0,0,W,H);ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);
+  const mg={t:30,b:44,l:64,r:20};
+  const cW=W-mg.l-mg.r,cH=H-mg.t-mg.b;
+
+  const staticHead=Math.max(0,multi.AMT_hid-multi.totalHf);
+  const hfAt=Q=>{let s=0;for(const seg of multi.segs){const p=multi.pipeByPN[seg.pn];if(p)s+=hfPerMeter(Q,CHW,p[3])*seg.len;}return s;};
+  const Hsys=Q=>staticHead+hfAt(Q);
+
+  const H0=multi.AMT_design*1.2;
+  const k=(H0-multi.AMT_design)/(Q_calc*Q_calc);
+  const Hbomba=Q=>Math.max(0,H0-k*Q*Q);
+
+  const Qmax=Q_calc*1.8;
+  let Qop=Q_calc,best=Infinity;
+  for(let i=0;i<=400;i++){const Q=Qmax*i/400,d=Math.abs(Hbomba(Q)-Hsys(Q));if(d<best){best=d;Qop=Q;}}
+  const Hop=Hbomba(Qop);
+
+  const yMax=Math.max(H0,Hsys(Qmax))*1.08||10;
+  const pxF=Qv=>mg.l+(Qv/Qmax)*cW;
+  const pyF=Hv=>mg.t+cH*(1-Hv/yMax);
+
+  ctx.lineWidth=1;
+  for(let i=0;i<=5;i++){
+    const hv=yMax*i/5,y=pyF(hv);
+    ctx.strokeStyle='rgba(0,80,160,.07)';ctx.beginPath();ctx.moveTo(mg.l,y);ctx.lineTo(mg.l+cW,y);ctx.stroke();
+    ctx.fillStyle='#8a9fb5';ctx.font='10px Segoe UI';ctx.textAlign='right';ctx.fillText(Math.round(hv),mg.l-6,y+3);
+  }
+  for(let i=0;i<=6;i++){
+    const qv=Qmax*i/6,x=pxF(qv);
+    ctx.strokeStyle='rgba(0,80,160,.06)';ctx.beginPath();ctx.moveTo(x,mg.t);ctx.lineTo(x,mg.t+cH);ctx.stroke();
+    ctx.fillStyle='#8a9fb5';ctx.font='10px Segoe UI';ctx.textAlign='center';ctx.fillText(fmt(qv,0),x,mg.t+cH+14);
+  }
+  ctx.fillStyle='#8a9fb5';ctx.font='9px Segoe UI';ctx.textAlign='center';
+  ctx.fillText('Vazão Q (m³/h)',mg.l+cW/2,H-6);
+  ctx.save();ctx.translate(14,mg.t+cH/2);ctx.rotate(-Math.PI/2);ctx.fillText('Altura Manométrica H (mca)',0,0);ctx.restore();
+
+  ctx.beginPath();
+  for(let i=0;i<=100;i++){const Q=Qmax*i/100,y=pyF(Hsys(Q)),x=pxF(Q);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);}
+  ctx.strokeStyle='#e07b00';ctx.lineWidth=2.4;ctx.stroke();
+
+  ctx.beginPath();
+  for(let i=0;i<=100;i++){const Q=Qmax*i/100,y=pyF(Hbomba(Q)),x=pxF(Q);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);}
+  ctx.strokeStyle='#6a1b9a';ctx.lineWidth=2.6;ctx.stroke();
+
+  const pdX=pxF(Q_calc),pdY=pyF(multi.AMT_design);
+  ctx.fillStyle='#1b6e3a';ctx.beginPath();ctx.arc(pdX,pdY,5,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(pdX,pdY,2,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#1b6e3a';ctx.font='bold 9px Segoe UI';ctx.textAlign='left';
+  ctx.fillText('Ponto de Projeto',pdX+8,pdY-6);
+  ctx.font='9px Segoe UI';
+  ctx.fillText(fmt(Q_calc,1)+' m³/h · '+fmt(multi.AMT_design,1)+' mca',pdX+8,pdY+8);
+
+  if(Math.abs(Qop-Q_calc)>Q_calc*0.03){
+    const opX=pxF(Qop),opY=pyF(Hop);
+    ctx.fillStyle='#c62828';ctx.beginPath();ctx.arc(opX,opY,5,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(opX,opY,2,0,Math.PI*2);ctx.fill();
+    // Rótulo sempre abaixo do ponto (o "Ponto de Projeto" fica acima do dele) pra não sobrepor
+    // quando os dois pontos ficam próximos horizontalmente.
+    const closeX=Math.abs(opX-pdX)<80;
+    const olx=opX+(closeX&&opX>=pdX?10:8);
+    ctx.fillStyle='#c62828';ctx.font='bold 9px Segoe UI';ctx.textAlign='left';
+    ctx.fillText('Operação real (estim.)',olx,opY+18);
+    ctx.font='9px Segoe UI';
+    ctx.fillText(fmt(Qop,1)+' m³/h · '+fmt(Hop,1)+' mca',olx,opY+32);
+  }
+
+  const lgX=mg.l+cW-215,lgY=mg.t+6;
+  ctx.fillStyle='rgba(255,255,255,.88)';ctx.fillRect(lgX-6,lgY-4,215,40);
+  ctx.font='bold 9px Segoe UI';ctx.textAlign='left';
+  ctx.fillStyle='#6a1b9a';ctx.fillText('▬ Curva da Bomba (estimada)',lgX,lgY+10);
+  ctx.fillStyle='#e07b00';ctx.fillText('▬ Curva do Sistema (real)',lgX,lgY+26);
 }
 
 function drawPressao(multi,Q_calc,Hg,L,lim,cotaS_,cotaR_,pRes){
