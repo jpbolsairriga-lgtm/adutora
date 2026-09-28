@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<!-- build 2026-09-24 v1.6.0 -->
+<!-- build 2026-09-28 v1.7.0 -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Visualizador IrriCAD v1.6.0 &middot; TophoFarm</title>
+<title>Visualizador IrriCAD v1.7.0 &middot; TophoFarm</title>
 <meta name="theme-color" content="#1f4e4c">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -82,8 +82,9 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 #dp-close{background:none;border:none;color:#fff;font-size:1.4rem;line-height:1;padding:.2rem .4rem}
 #dp-abrir{margin:.8rem 1rem;padding:.75rem;border-radius:10px;border:2px dashed #2b4757;background:#162732;color:#eaf2f6;font-size:.85rem;text-align:center}
 #dp-lista{flex:1;overflow:auto;padding:.2rem 0}
-.proj-item{padding:.7rem 1rem;border-bottom:1px solid rgba(255,255,255,.05);display:flex;justify-content:space-between;align-items:center;gap:.5rem}
-.proj-item .info{flex:1;min-width:0;cursor:pointer}
+.proj-item{padding:.7rem 1rem;border-bottom:1px solid rgba(255,255,255,.05);display:flex;justify-content:space-between;align-items:center;gap:.6rem}
+.proj-check{width:19px;height:19px;flex-shrink:0}
+.proj-item .info{flex:1;min-width:0}
 .proj-item b{display:block;font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .proj-item small{color:#7fa0af;font-size:.7rem}
 .proj-item .del{background:none;border:none;color:#e07a7a;font-size:1.1rem;padding:.3rem .5rem}
@@ -146,6 +147,16 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
   color:#fff;padding:.5rem 1rem;border-radius:20px;font-size:.82rem;display:none;box-shadow:0 4px 14px rgba(0,0,0,.4)}
 #med-info.aberto{display:block}
 
+/* ---------- calibracao manual da bussola (so aparece com o modo navegacao ligado) ---------- */
+#calib-bussola{position:fixed;left:50%;bottom:9rem;transform:translateX(-50%);z-index:1250;
+  background:rgba(13,30,28,.88);color:#fff;padding:.4rem .6rem;border-radius:22px;font-size:.78rem;
+  display:none;align-items:center;gap:.5rem;box-shadow:0 4px 14px rgba(0,0,0,.4)}
+#calib-bussola.aberto{display:flex}
+#calib-bussola .calib-label{color:#a9c6cf;font-size:.7rem;white-space:nowrap}
+#calib-bussola button{width:28px;height:28px;border-radius:50%;border:none;background:var(--azul-cl);color:#fff;
+  font-size:.95rem;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+#calib-valor{min-width:2.6em;text-align:center;font-weight:700;font-size:.76rem}
+
 /* ---------- marcador de GPS com seta de rumo ---------- */
 .gps-icon-wrap{background:transparent!important;border:none!important}
 .gps-seta{position:relative;width:40px;height:40px;transition:transform .25s linear}
@@ -196,6 +207,13 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 <div id="busca-resultados"></div>
 
 <div id="med-info"></div>
+
+<div id="calib-bussola">
+  <span class="calib-label">B&#250;ssola desviada?</span>
+  <button id="calib-esq" title="Girar mapa um pouco pra esquerda">&#8634;</button>
+  <span id="calib-valor">0&#176;</span>
+  <button id="calib-dir" title="Girar mapa um pouco pra direita">&#8635;</button>
+</div>
 
 <div id="toolbar">
   <button id="btn-abrir" class="btn-round" title="Abrir arquivo">&#128194;</button>
@@ -251,8 +269,9 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 /* ==================================================================
    VERSAO / HISTORICO
    ================================================================== */
-const VERSAO_APP = '1.6.0';
+const VERSAO_APP = '1.7.0';
 const HISTORICO_VERSOES = [
+  {v:'1.7.0', d:'28/09/2026', t:'Tela sempre acesa enquanto o app estiver aberto (não apaga mais sozinha em campo). Bússola do modo navegação agora compensa a orientação da tela (retrato/paisagem) e ganhou um ajuste manual (± alguns graus) pra corrigir qualquer desvio que sobrar. Vários projetos podem ficar ligados ao mesmo tempo no mapa, cada um com liga/desliga próprio em "Meus Projetos" — só o que está ligado é desenhado, pra manter leve.'},
   {v:'1.6.0', d:'24/09/2026', t:'Corrige a tela desviando do centro (indo pro canto superior direito) durante o modo navegação — a animação de seguir a posição brigava com o giro da bússola. Splash de abertura e logo do IrriCAD adicionados (tela inicial, cartão do site e painel Sobre).'},
   {v:'1.5.0', d:'24/09/2026', t:'Botão "Buscar Atualizações" (dentro de Meus Projetos): verifica se há uma versão nova publicada e deixa atualizar com 1 toque — sem precisar de Ctrl+Shift+R no celular. Avisa sozinho ao abrir o app, com uma bolinha verde no ícone.'},
   {v:'1.4.1', d:'24/09/2026', t:'Pontos com informação agora ficam numa camada própria, sempre acima de linhas/talhões — corrige toques que caíam numa linha por baixo em vez de abrir o ponto.'},
@@ -588,17 +607,25 @@ const OCULTAR_POR_PADRAO = /(PROF|SECT|SCTN|MASS|GRID|TABL|VIEW|DIAG|CANT|SAMP|S
 const REALCAR = /(TALH|PROP-BNDY|\bLOTE\b|AREA[-_ ]?LOTE|LIMITE|PERIMETRO|ZONE|PIPE|SPRAY|VALVE|HYDRAULIC|ADUTORA|WATR)/i;
 
 /* ==================================================================
-   ESTADO DO PROJETO ATUAL
+   ESTADO DOS PROJETOS ATIVOS
+   Varios projetos podem ficar ligados ao mesmo tempo (cada um se
+   comporta como um grupo de camadas); cada entrada de grupoCamadas
+   carrega projId/projNome pra saber de qual projeto ela e.
    ================================================================== */
-let grupoCamadas = []; // {info:pastaObj, layer:L.LayerGroup, cor, visivel}
-let projetoAtual = null; // {id, nome, ts}
+let grupoCamadas = []; // {pasta, layer, cor, count, visivel, projId, projNome}
+const projetosCarregadosIds = new Set(); // ids com pelo menos 1 camada no mapa agora
 
-function limparProjeto(){
-  grupoCamadas.forEach(c=>mapa.removeLayer(c.layer));
-  grupoCamadas = [];
-  corPorCaminhoAtribuida.clear();
-  proximoIndiceCorCamada = 0;
-  document.getElementById('lista-camadas').innerHTML = '<div id="drawer-empty">Abra um projeto para ver as camadas.</div>';
+function removeProjetoDoMapa(projId){
+  const restantes = [];
+  grupoCamadas.forEach(c=>{
+    if(c.projId===projId) mapa.removeLayer(c.layer);
+    else restantes.push(c);
+  });
+  grupoCamadas = restantes;
+  projetosCarregadosIds.delete(projId);
+  renderizaListaCamadas();
+  atualizaBadgeCamadas();
+  atualizaTituloGeral();
 }
 
 // muitas exportacoes de CAD nomeiam toda geometria como "POLYLINE"/"Placemark";
@@ -639,8 +666,12 @@ function popupHTML(pm, tipoLabel, rotulo){
 function escHTML(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function escMultilinha(s){ return escHTML(s).replace(/\n/g,'<br>'); }
 
-function construirCamadas(arvore){
-  limparProjeto();
+function construirCamadas(arvore, projId, projNome, opcoes){
+  opcoes = opcoes || {};
+  // se esse projeto ja estava carregado (reabrindo um arquivo atualizado,
+  // ou reativando pela lista), tira a versao antiga antes de por a nova.
+  if(projetosCarregadosIds.has(projId)) removeProjetoDoMapa(projId);
+  const novasCamadas = [];
   const camadasPastas = achataCamadas(arvore);
   const bounds = L.latLngBounds([]);
 
@@ -689,35 +720,40 @@ function construirCamadas(arvore){
 
     if(count===0) return;
     const ocultarPadrao = OCULTAR_POR_PADRAO.test(pasta.caminho) && !REALCAR.test(pasta.caminho);
-    grupoCamadas.push({pasta, layer, cor:corPasta, count, visivel:!ocultarPadrao});
+    novasCamadas.push({pasta, layer, cor:corPasta, count, visivel:!ocultarPadrao, projId, projNome});
   });
 
-  // ordena: realcadas primeiro, depois alfabetico
+  grupoCamadas = grupoCamadas.concat(novasCamadas);
+  projetosCarregadosIds.add(projId);
+
+  // ordena tudo: realcadas primeiro, depois por projeto, depois alfabetico
   grupoCamadas.sort((a,b)=>{
     const ra = REALCAR.test(a.pasta.caminho) ? 0 : 1;
     const rb = REALCAR.test(b.pasta.caminho) ? 0 : 1;
     if(ra!==rb) return ra-rb;
+    if(a.projNome!==b.projNome) return a.projNome.localeCompare(b.projNome,'pt-BR');
     return a.pasta.nome.localeCompare(b.pasta.nome,'pt-BR');
   });
 
-  grupoCamadas.forEach(c=>{ if(c.visivel) c.layer.addTo(mapa); });
+  novasCamadas.forEach(c=>{ if(c.visivel) c.layer.addTo(mapa); });
 
-  if(bounds.isValid()){ mapa.fitBounds(bounds, {padding:[30,30]}); }
+  if(opcoes.ajustarView!==false && bounds.isValid()) mapa.fitBounds(bounds, {padding:[30,30]});
   renderizaListaCamadas();
   atualizaBadgeCamadas();
-  avisaSobreCamadasNaPrimeiraVez();
+  atualizaTituloGeral();
+  avisaSobreCamadasNaPrimeiraVez(novasCamadas);
 }
-function avisaSobreCamadasNaPrimeiraVez(){
-  if(!grupoCamadas.length) return;
-  const ativos = grupoCamadas.filter(c=>c.visivel).length;
+function avisaSobreCamadasNaPrimeiraVez(novasCamadas){
+  if(!novasCamadas.length) return;
+  const ativos = novasCamadas.filter(c=>c.visivel).length;
   let jaViu=false;
   try{ jaViu = localStorage.getItem('irricadViewerViuCamadas')==='1'; }catch(e){}
   if(!jaViu){
     try{ localStorage.setItem('irricadViewerViuCamadas','1'); }catch(e){}
     document.getElementById('drawer').classList.add('aberto');
-    toast(`Este projeto tem ${grupoCamadas.length} camadas — deixamos ${ativos} ligada(s) por padrão. Toque no checkbox pra ligar as outras.`, 5500);
-  } else if(grupoCamadas.length > ativos){
-    toast(`${ativos} de ${grupoCamadas.length} camadas ligadas. Toque em "Camadas" pra ver as demais.`, 3500);
+    toast(`Este projeto tem ${novasCamadas.length} camadas — deixamos ${ativos} ligada(s) por padrão. Toque no checkbox pra ligar as outras.`, 5500);
+  } else if(novasCamadas.length > ativos){
+    toast(`${ativos} de ${novasCamadas.length} camadas ligadas. Toque em "Camadas" pra ver as demais.`, 3500);
   }
 }
 function corDeKML_ouPadrao(pasta){
@@ -736,14 +772,16 @@ function renderizaListaCamadas(){
   const cont = document.getElementById('lista-camadas');
   if(!grupoCamadas.length){ cont.innerHTML = '<div id="drawer-empty">Abra um projeto para ver as camadas.</div>'; return; }
   const q = (document.getElementById('cam-filtro').value||'').trim().toLowerCase();
-  const visiveis = grupoCamadas.map((c,i)=>({c,i})).filter(({c})=>!q || c.pasta.nome.toLowerCase().includes(q));
+  const multiProjeto = new Set(grupoCamadas.map(c=>c.projId)).size > 1;
+  const visiveis = grupoCamadas.map((c,i)=>({c,i})).filter(({c})=>!q || c.pasta.nome.toLowerCase().includes(q) || c.projNome.toLowerCase().includes(q));
   if(!visiveis.length){ cont.innerHTML = '<div id="drawer-empty">Nenhuma camada com esse nome.</div>'; return; }
   cont.innerHTML = '';
   visiveis.forEach(({c,i})=>{
     const div = document.createElement('div');
     div.className = 'camada-item';
+    const nomeExibido = multiProjeto ? `<small style="color:#6f97a3">${escHTML(c.projNome)}</small><br>${escHTML(c.pasta.nome)}` : escHTML(c.pasta.nome);
     div.innerHTML = `<span class="swatch" style="background:${c.cor}"></span>
-      <label for="cam-${i}">${escHTML(c.pasta.nome)}<br><small>${c.count} elemento${c.count>1?'s':''}</small></label>
+      <label for="cam-${i}">${nomeExibido}<br><small>${c.count} elemento${c.count>1?'s':''}</small></label>
       <input type="checkbox" id="cam-${i}" ${c.visivel?'checked':''}>`;
     div.querySelector('input').addEventListener('change', e=>{
       c.visivel = e.target.checked;
@@ -762,8 +800,7 @@ async function abrirArquivo(file){
   try{
     const buf = await file.arrayBuffer();
     const arvore = parseKMLTree(await extraiTextoKML(file, buf));
-    construirCamadas(arvore);
-    definirTituloProjeto(file.name);
+    construirCamadas(arvore, file.name, file.name.replace(/\.(kmz|kml)$/i,''), {ajustarView:true});
     await salvarProjetoIndexedDB(file.name, buf);
     toast('Projeto carregado: ' + file.name);
   }catch(err){
@@ -792,11 +829,18 @@ async function extraiTextoKML(file, buf){
   if(ext==='kml') return decodeTextoInteligente(buf);
   throw new Error('Formato não suportado. Use .kml ou .kmz.');
 }
-function definirTituloProjeto(nome){
+function atualizaTituloGeral(){
   const el = document.getElementById('titulo-proj');
+  const nomes = [...new Set(grupoCamadas.map(c=>c.projNome))];
+  if(!nomes.length){
+    el.classList.add('vazio');
+    el.innerHTML = '<b>Nenhum projeto aberto</b><span>Toque para abrir um arquivo .kmz/.kml</span>';
+    return;
+  }
   el.classList.remove('vazio');
   const n = grupoCamadas.reduce((s,c)=>s+c.count,0);
-  el.innerHTML = `<b>${escHTML(nome.replace(/\.(kmz|kml)$/i,''))}</b><span>${grupoCamadas.length} camadas &middot; ${n} elementos</span>`;
+  const titulo = nomes.length===1 ? escHTML(nomes[0]) : `${nomes.length} projetos ativos`;
+  el.innerHTML = `<b>${titulo}</b><span>${grupoCamadas.length} camadas &middot; ${n} elementos</span>`;
 }
 
 /* ==================================================================
@@ -824,7 +868,6 @@ async function salvarProjetoIndexedDB(nome, buf){
       tx.objectStore(STORE).put(registro);
       tx.oncomplete = resolve; tx.onerror=()=>reject(tx.error);
     });
-    projetoAtual = {id, nome, ts:registro.ts};
   }catch(e){ console.warn('Não foi possível salvar offline:', e); }
 }
 async function listarProjetosSalvos(){
@@ -844,16 +887,13 @@ async function excluirProjetoSalvo(id){
     tx.oncomplete = resolve; tx.onerror=()=>reject(tx.error);
   });
 }
-async function abrirProjetoSalvo(registro){
+async function ativarProjetoSalvo(registro, ajustarView){
   mostraCarregando('Abrindo ' + registro.nome + '...');
   try{
     const file = new File([registro.buf], registro.nome);
     const arvore = parseKMLTree(await extraiTextoKML(file, registro.buf));
-    construirCamadas(arvore);
-    definirTituloProjeto(registro.nome);
-    projetoAtual = {id:registro.id, nome:registro.nome, ts:registro.ts};
-    toast('Projeto aberto: ' + registro.nome);
-    fecharDrawerProjetos();
+    construirCamadas(arvore, registro.id, registro.nome, {ajustarView: ajustarView!==false});
+    toast('Projeto ligado: ' + registro.nome);
   }catch(err){
     console.error(err);
     toast('Erro ao abrir projeto salvo: ' + err.message, 4200);
@@ -871,11 +911,18 @@ async function renderizaListaProjetos(){
     const div = document.createElement('div');
     div.className = 'proj-item';
     const data = new Date(reg.ts).toLocaleDateString('pt-BR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
-    div.innerHTML = `<div class="info"><b>${escHTML(reg.nome)}</b><small>${data} &middot; ${(reg.buf.byteLength/1024/1024).toFixed(1)} MB</small></div><button class="del" title="Excluir">&#128465;&#65039;</button>`;
-    div.querySelector('.info').addEventListener('click', ()=>abrirProjetoSalvo(reg));
+    const ligado = projetosCarregadosIds.has(reg.id);
+    div.innerHTML = `<input type="checkbox" class="proj-check" ${ligado?'checked':''}>
+      <div class="info"><b>${escHTML(reg.nome)}</b><small>${data} &middot; ${(reg.buf.byteLength/1024/1024).toFixed(1)} MB</small></div>
+      <button class="del" title="Excluir">&#128465;&#65039;</button>`;
+    div.querySelector('.proj-check').addEventListener('change', async e=>{
+      if(e.target.checked) await ativarProjetoSalvo(reg, true);
+      else removeProjetoDoMapa(reg.id);
+    });
     div.querySelector('.del').addEventListener('click', async (e)=>{
       e.stopPropagation();
-      if(confirm('Excluir "'+reg.nome+'" deste aparelho?')){
+      if(confirm('Excluir "'+reg.nome+'" deste aparelho? (isso tira ele do mapa também, se estiver ligado)')){
+        removeProjetoDoMapa(reg.id);
         await excluirProjetoSalvo(reg.id);
         renderizaListaProjetos();
       }
@@ -1022,12 +1069,51 @@ function marcaComRumo(ligado){
   const el = marcadorGPS && marcadorGPS.getElement();
   const seta = el && el.querySelector('.gps-seta');
   if(seta) seta.classList.toggle('com-rumo', ligado);
+  document.getElementById('calib-bussola').classList.toggle('aberto', ligado);
 }
+// ajuste manual do usuario (graus), pra corrigir qualquer desvio residual
+// do sensor/aparelho -- persistido, entao so precisa calibrar uma vez.
+let calibracaoBussola = 0;
+try{ calibracaoBussola = parseFloat(localStorage.getItem('irricadViewerCalibracaoBussola')) || 0; }catch(e){}
+function atualizaLabelCalibracao(){
+  document.getElementById('calib-valor').textContent = Math.round(calibracaoBussola)+'°';
+}
+function ajustaCalibracaoBussola(delta){
+  calibracaoBussola = ((calibracaoBussola + delta) % 360 + 360) % 360;
+  try{ localStorage.setItem('irricadViewerCalibracaoBussola', String(calibracaoBussola)); }catch(e){}
+  atualizaLabelCalibracao();
+}
+function anguloTela(){
+  // orientacao da TELA (retrato/paisagem) em relacao ao sensor do aparelho --
+  // a bussola do leaflet-rotate nao compensava isso pra eventos "absolute"
+  // (o caso mais comum no Android), o que deixava o rumo torto.
+  if(window.screen && screen.orientation && typeof screen.orientation.angle==='number') return screen.orientation.angle;
+  if(typeof window.orientation==='number') return window.orientation;
+  return 0;
+}
+function calculaRumo(e){
+  let heading;
+  if(typeof e.webkitCompassHeading==='number') heading = e.webkitCompassHeading; // iOS Safari: ja e o rumo real
+  else if(typeof e.alpha==='number') heading = 360 - e.alpha; // Android: alpha cresce anti-horario a partir do norte
+  else return null;
+  heading = heading - anguloTela() + calibracaoBussola;
+  return ((heading % 360) + 360) % 360;
+}
+function handleOrientacaoBussola(e){
+  const h = calculaRumo(e);
+  if(h==null) return;
+  mapa.setBearing(h);
+  marcaComRumo(true);
+}
+let eventoBussolaAtivo = null;
 function ativaBussola(){
-  if(!mapa.compassBearing){ return; } // plugin de rotacao nao carregou (ex.: sem internet na 1a visita)
   const DOE = window.DeviceOrientationEvent;
   if(!DOE){ toast('Este navegador não dá acesso à bússola do aparelho.', 3500); return; }
-  const liga = ()=>{ mapa.compassBearing.enable(); marcaComRumo(true); };
+  const liga = ()=>{
+    eventoBussolaAtivo = ('ondeviceorientationabsolute' in window) ? 'deviceorientationabsolute' : 'deviceorientation';
+    window.addEventListener(eventoBussolaAtivo, handleOrientacaoBussola);
+    atualizaLabelCalibracao();
+  };
   if(typeof DOE.requestPermission === 'function'){
     // iOS 13+: o pedido de permissão precisa partir de um toque do usuário
     DOE.requestPermission().then(resp=>{ if(resp==='granted') liga(); else toast('Permissão de bússola negada.', 3000); }).catch(()=>{});
@@ -1036,10 +1122,12 @@ function ativaBussola(){
   }
 }
 function desativaBussola(){
-  if(mapa.compassBearing) mapa.compassBearing.disable();
+  if(eventoBussolaAtivo){ window.removeEventListener(eventoBussolaAtivo, handleOrientacaoBussola); eventoBussolaAtivo=null; }
   mapa.setBearing(0);
   marcaComRumo(false);
 }
+document.getElementById('calib-esq').addEventListener('click', ()=>ajustaCalibracaoBussola(-5));
+document.getElementById('calib-dir').addEventListener('click', ()=>ajustaCalibracaoBussola(5));
 document.getElementById('btn-gps').addEventListener('click', ativaGPS);
 document.getElementById('btn-seguir').addEventListener('click', ()=>{
   seguindo = !seguindo;
@@ -1048,6 +1136,7 @@ document.getElementById('btn-seguir').addEventListener('click', ()=>{
     if(!marcadorGPS) ativaGPS();
     if(marcadorGPS) mapa.setView(marcadorGPS.getLatLng(), mapa.getZoom(), {animate:false});
     ativaBussola();
+    pedeTelaAcesa();
     toast('Modo navegação: tela segue sua posição e gira com a direção que você está andando');
   } else {
     desativaBussola();
@@ -1104,11 +1193,34 @@ if('serviceWorker' in navigator){
   });
 }
 
-/* tenta reabrir o ultimo projeto automaticamente */
+/* ==================================================================
+   TELA SEMPRE ACESA
+   Em campo o técnico olha o mapa sem tocar na tela por um tempo (parado
+   olhando o talhão, andando) e o celular apaga a tela sozinho -- pede
+   pro navegador segurar a tela ligada enquanto o app estiver aberto e
+   visível. O sistema libera esse "cadeado" sozinho quando a aba vai
+   pra segundo plano ou a tela apaga; por isso pede de novo sempre que a
+   aba volta a ficar visível, e de novo no toque em "Seguir" (reforça
+   com um gesto do usuário, que alguns navegadores exigem).
+   ================================================================== */
+let wakeLock = null;
+async function pedeTelaAcesa(){
+  if(!('wakeLock' in navigator)) return;
+  try{
+    wakeLock = await navigator.wakeLock.request('screen');
+  }catch(e){ /* alguns navegadores recusam sem gesto do usuario -- sem problema, tenta de novo depois */ }
+}
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState==='visible') pedeTelaAcesa();
+});
+pedeTelaAcesa();
+
+/* tenta reabrir o ultimo projeto automaticamente (so esse -- os outros
+   salvos ficam desligados por padrao, pra abrir leve) */
 (async function tentaReabrirUltimo(){
   try{
     const lista = await listarProjetosSalvos();
-    if(lista.length) await abrirProjetoSalvo(lista[0]);
+    if(lista.length) await ativarProjetoSalvo(lista[0], true);
   }catch(e){}
 })();
 
