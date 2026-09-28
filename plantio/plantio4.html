@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.28 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.29 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -814,12 +814,21 @@ body.layout-lateral #status{grid-area:status;}
         <div class="rgroup-body">
           <div class="rcol">
             <label>Suavização do traçado</label>
-            <select id="curvaSuavizacaoImportada" class="rfield wide" onchange="_redesenharCurvasLocaisImportadas()" title="Suaviza a POSIÇÃO dos vértices das curvas IMPORTADAS (DXF/KML) — média ponderada com os vizinhos dentro de um RAIO REAL (em metros) ao longo da própria linha, não um número fixo de vértices — útil pra apagar entalhes/degraus de digitalização (ortho/grid-snap do CAD de origem ligado sem querer) ou ruído de GPS, de qualquer tamanho de vértice. Escolha um raio maior que o defeito que quer sumir. Sem depender só do acabamento em curva (spline, seletor ao lado). Puramente visual: só redesenha, nunca muda cl.pontos/TIN/IDW (a elevação real) nem o que é exportado de volta pro DXF/KML. Redesenha na hora, sem precisar reimportar.">
+            <select id="curvaSuavizacaoImportada" class="rfield wide" onchange="_redesenharCurvasLocaisImportadas()" title="Suaviza a POSIÇÃO dos vértices das curvas IMPORTADAS (DXF/KML) — média ponderada (repetida em várias passadas, força crescente) com os vizinhos dentro de um RAIO REAL (em metros) ao longo da própria linha, não um número fixo de vértices — útil pra apagar entalhes/degraus de digitalização (ortho/grid-snap do CAD de origem ligado sem querer) ou ruído de GPS, de qualquer tamanho de vértice. Escolha um raio maior que o defeito que quer sumir. Sem depender só do acabamento em curva (spline, seletor ao lado). Puramente visual: só redesenha, nunca muda cl.pontos/TIN/IDW (a elevação real) nem o que é exportado de volta pro DXF/KML. Redesenha na hora, sem precisar reimportar.">
               <option value="0" selected>Nenhuma (traçado bruto)</option>
               <option value="3">Leve (raio 3 m)</option>
               <option value="8">Média (raio 8 m)</option>
               <option value="15">Forte (raio 15 m)</option>
               <option value="30">Muito forte (raio 30 m)</option>
+            </select>
+          </div>
+          <div class="rcol">
+            <label>Malha de amostragem</label>
+            <select id="curvaMalhaImportada" class="rfield wide" onchange="_redesenharCurvasLocaisImportadas()" title="Reamostra a linha numa malha de distância REGULAR (tipo 'Densify'/'Weed' do Civil3D ou 'Densificar por intervalo' do QGIS) — troca os vértices originais (espaçamento irregular, de onde vêm as quinas) por uma grade uniforme nesse intervalo em metros, interpolando ao longo do caminho real. Roda DEPOIS da 'Suavização do traçado' (acima) — assim reduz a malha de um traçado já limpo, sem risco de a nova malha cair bem em cima de um defeito ainda não tratado por coincidência. Puramente visual: não muda cl.pontos/TIN/IDW nem a exportação.">
+              <option value="0" selected>Nenhuma (malha original)</option>
+              <option value="5">5 m</option>
+              <option value="10">10 m</option>
+              <option value="20">20 m</option>
             </select>
           </div>
           <div class="rcol">
@@ -830,7 +839,7 @@ body.layout-lateral #status{grid-area:status;}
           </div>
           <div class="rcol">
             <label>Intensidade do spline</label>
-            <select id="curvaSplineIntensidadeImportada" class="rfield wide" onchange="_redesenharCurvasLocaisImportadas()" title="Quantas passadas de corte de canto (Chaikin) rodam quando 'Acabamento suave (spline)' está ligado — mais passadas = curva mais arredondada/lisa (converge rápido pro limite de uma B-spline; depois de ~6 passadas o ganho visual já é bem pequeno). Cada passada dobra o número de pontos da linha desenhada (só desenho, não mexe em elevação nem no traçado real). Combine com 'Suavização do traçado' se ainda sobrar entalhe — o raio em metros apaga o defeito, o spline arredonda o resultado.">
+            <select id="curvaSplineIntensidadeImportada" class="rfield wide" onchange="_redesenharCurvasLocaisImportadas()" title="Quantas passadas de corte de canto (Chaikin) rodam quando 'Acabamento suave (spline)' está ligado — mais passadas = curva mais arredondada/lisa (converge rápido pro limite de uma B-spline; depois de ~6 passadas o ganho visual já é bem pequeno). Cada passada dobra o número de pontos da linha desenhada (só desenho, não mexe em elevação nem no traçado real). Combine os 3 controles pra máximo efeito: raio apaga o defeito, malha reduz a densidade de vértices, spline arredonda o resultado final.">
               <option value="1">Leve</option>
               <option value="3" selected>Média (padrão)</option>
               <option value="6">Forte</option>
@@ -3893,6 +3902,35 @@ body.layout-lateral #status{grid-area:status;}
 // dos pontos originais, não importa quantas passadas — ver v5.23). Testado com harness Node.js:
 // "Forte" produz bem mais pontos que "Leve" pro mesmo traçado de entrada, nos dois lugares (curvas
 // geradas e importadas).
+// v5.29: pedido do usuário — "as mudanças foram bem poucas... não estamos tendo bons resultados",
+// quer as curvas importadas com bem menos quinas; sugeriu mudar a MALHA DE AMOSTRAGEM (tipo
+// Civil3D ou QGIS) e reforçou que a IMPORTAÇÃO em si deve continuar sem tratamento nenhum (o app já
+// seguia isso à risca desde a v5.25 — todo o acabamento é só visual, em cima de cl.contornosDecimados
+// pro DESENHO, nunca em cl.pontos/indiceTin/indiceEspacial nem no que é exportado — mantido). Duas
+// melhorias:
+// (1) _suavizarPontosPorRaio virou ITERATIVA (parâmetro `passes`, novo helper interno
+// _suavizarPontosPorRaioUmaPassada) — uma passada só, mesmo com raio grande, ainda deixava resíduo
+// (os PRÓPRIOS pontos de um defeito, bem próximos entre si, ainda pesam bastante na média dele
+// mesmo); iterar ataca o resíduo de cada passada anterior, efeito bem mais forte sem precisar de um
+// raio absurdo que distorceria trechos que já estavam bons. Passadas agora crescem junto com o raio
+// escolhido (1/2/3/4 pra Leve/Média/Forte/Muito forte) — no teste sintético do entalhe (3m largura,
+// 6m altura), raio de 30m foi de 1,9m (1 passada, v5.27) pra 1,2m de pico (4 passadas, v5.29).
+// (2) Nova ferramenta "Malha de amostragem" (_reamostrarPorIntervalo) — reamostra a linha numa
+// malha de distância REGULAR em metros, interpolando ao longo do caminho real, exatamente o que o
+// "Densify/Weed" do Civil3D ou o "Densificar por intervalo" do QGIS fazem: troca os vértices
+// originais (espaçamento irregular, de onde vêm boa parte das quinas — um trecho digitalizado rápido
+// fica com vértices grudados, um trecho mais cuidadoso fica espaçado) por uma malha uniforme.
+// Deliberadamente roda DEPOIS da "Suavização do traçado", não antes — reamostrar puro (sem suavizar
+// antes) tem "sorte de fase": um ponto da malha nova pode cair bem em cima do pico de um defeito
+// ainda intacto por coincidência da posição exata ao longo do arco, e o defeito sobrevive quase
+// igual; suavizando primeiro, qualquer defeito já foi atenuado antes da malha nova reduzir a
+// densidade de vértices. Ordem final do pipeline: raio (ataca o defeito) → malha (reduz densidade,
+// "muda a malha de amostragem" como pedido) → spline (arredonda o resultado). Testado com harness
+// Node.js: reamostragem numa reta perfeita não desvia dela (interpola exato), preserva pontas em
+// arco aberto e fecha laço certo em curva fechada, reduz a contagem de vértices de um traçado
+// irregular pra malha uniforme; suavização iterada reduz um defeito bem mais que 1 passada só no
+// mesmo raio; os 3 controles juntos (raio+malha+spline) rodam sem quebrar e entregam o entalhe
+// sintético reduzido de 6m pra ~1,2m de pico.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -6896,11 +6934,16 @@ function _classificarMestraMenor(contornosLatLng) {
 // justamente por poder fazer duas curvas de nível vizinhas se cruzarem) — é uma MÉDIA PONDERADA
 // (combinação convexa) dos próprios pontos vizinhos da linha, então o resultado fica sempre dentro
 // do corredor local original, não "estoura" pra fora e não risca de cruzar uma curva vizinha.
-function _suavizarPontosPorRaio(pontos, fechada, raioM) {
-  if(raioM <= 0 || pontos.length < 3) return pontos;
-  const pts = fechada ? pontos.slice(0, -1) : pontos; // tira o ponto duplicado (fim==início) do laço
-  const n = pts.length;
-  if(n < 3) return pontos;
+// v5.29: pedido do usuário — "não estamos tendo bons resultados", quer as linhas com bem menos
+// quinas, sugeriu mudar a MALHA DE AMOSTRAGEM (tipo Civil3D/QGIS). Uma única passada da média
+// ponderada por raio (mesmo com raio grande) ainda deixa resíduo: no teste sintético do entalhe
+// (v5.27), raio de 30m derrubava o pico de 6m pra 1,9m — bem melhor, mas não zerava, porque os
+// PRÓPRIOS pontos do entalhe (bem próximos entre si) ainda contribuem com peso significativo na
+// média dele mesmo. _suavizarPontosPorRaio virou ITERATIVA (parâmetro `passes` novo) — cada passada
+// atenua ainda mais o que sobrou da anterior (mesmo princípio de _suavizarGrade, que já usa blur
+// iterado pra grade de elevação), com efeito bem mais forte que só aumentar o raio numa passada só,
+// sem precisar de um raio absurdamente grande que distorceria trechos que já estavam bons.
+function _suavizarPontosPorRaioUmaPassada(pts, fechada, n, raioM) {
   const out = new Array(n);
   for(let i = 0; i < n; i++) {
     if(!fechada && (i === 0 || i === n - 1)) { out[i] = pts[i]; continue; } // pontas fixas em arco aberto
@@ -6931,7 +6974,63 @@ function _suavizarPontosPorRaio(pontos, fechada, raioM) {
     }
     out[i] = { lat: somaLat / somaPeso, lng: somaLng / somaPeso };
   }
-  if(fechada) return [...out, out[0]]; // fecha o laço de novo (convenção: 1º = último)
+  return out;
+}
+function _suavizarPontosPorRaio(pontos, fechada, raioM, passes) {
+  if(raioM <= 0 || pontos.length < 3) return pontos;
+  let pts = fechada ? pontos.slice(0, -1) : pontos; // tira o ponto duplicado (fim==início) do laço
+  const n = pts.length;
+  if(n < 3) return pontos;
+  for(let it = 0; it < Math.max(1, passes || 1); it++) pts = _suavizarPontosPorRaioUmaPassada(pts, fechada, n, raioM);
+  if(fechada) return [...pts, pts[0]]; // fecha o laço de novo (convenção: 1º = último)
+  return pts;
+}
+// Reamostra a linha em intervalos REGULARES de distância real (não vértice a vértice) — é
+// literalmente "mudar a malha de amostragem" que o usuário pediu, o mesmo princípio por trás do
+// "Densify"/"Weed" do Civil3D e do "Densificar por intervalo" do QGIS: reduz a densidade de
+// vértices pra uma malha uniforme em metros. Aplicada DEPOIS da suavização por raio (acima) — nessa
+// ordem, qualquer entalhe já foi atenuado antes, então reamostrar só reduz o número de pontos sem
+// risco de "acertar" por acaso o pico de um defeito ainda não tratado (se reamostrasse ANTES, um
+// ponto da malha nova podia cair bem em cima do pico por coincidência de fase e preservar o
+// defeito). Interpola linearmente ao longo do caminho real (não pega o vértice mais próximo) —
+// preciso mesmo com espaçamento original bem irregular.
+function _reamostrarPorIntervalo(pontos, fechada, intervaloM) {
+  if(intervaloM <= 0 || pontos.length < 3) return pontos;
+  const pts = fechada ? pontos.slice(0, -1) : pontos;
+  const n = pts.length;
+  if(n < 2) return pontos;
+  const acumulada = [0];
+  for(let i = 1; i < n; i++) acumulada.push(acumulada[i-1] + haversineM(pts[i-1], pts[i]));
+  let compTotal = acumulada[n-1];
+  if(fechada) compTotal += haversineM(pts[n-1], pts[0]);
+  if(compTotal < intervaloM * 2) return pontos; // curta demais pra compensar reamostrar
+
+  const pontoEm = (d) => {
+    if(d <= acumulada[n-1]) {
+      let i = 0;
+      while(i < n - 2 && acumulada[i+1] < d) i++;
+      const d0 = acumulada[i], d1 = acumulada[i+1];
+      const f = d1 > d0 ? (d - d0) / (d1 - d0) : 0;
+      return { lat: pts[i].lat + (pts[i+1].lat - pts[i].lat) * f, lng: pts[i].lng + (pts[i+1].lng - pts[i].lng) * f };
+    }
+    // trecho de fechamento do laço (só chega aqui quando `fechada`)
+    const restante = d - acumulada[n-1];
+    const compFechamento = compTotal - acumulada[n-1];
+    const f = compFechamento > 0 ? restante / compFechamento : 0;
+    return { lat: pts[n-1].lat + (pts[0].lat - pts[n-1].lat) * f, lng: pts[n-1].lng + (pts[0].lng - pts[n-1].lng) * f };
+  };
+
+  const out = [];
+  if(fechada) {
+    const numAmostras = Math.max(3, Math.round(compTotal / intervaloM));
+    for(let k = 0; k < numAmostras; k++) out.push(pontoEm((k / numAmostras) * compTotal));
+    out.push(out[0]);
+  } else {
+    out.push(pts[0]); // ponta original fixa
+    const numInternos = Math.max(0, Math.round(compTotal / intervaloM) - 1);
+    for(let k = 1; k <= numInternos; k++) out.push(pontoEm((k / (numInternos + 1)) * compTotal));
+    out.push(pts[n-1]); // idem na outra ponta
+  }
   return out;
 }
 function _redesenharCurvasLocaisImportadas() {
@@ -6940,7 +7039,14 @@ function _redesenharCurvasLocaisImportadas() {
   if(cl.layerPreview) map.removeLayer(cl.layerPreview);
   const usarSpline = $('curvaSplineImportada') ? $('curvaSplineImportada').checked : true;
   const raioSuavizacaoM = $('curvaSuavizacaoImportada') ? (parseFloat($('curvaSuavizacaoImportada').value) || 0) : 0;
+  const malhaM = $('curvaMalhaImportada') ? (parseFloat($('curvaMalhaImportada').value) || 0) : 0;
   const intensidadeSpline = $('curvaSplineIntensidadeImportada') ? (parseInt($('curvaSplineIntensidadeImportada').value) || 3) : 3;
+  // v5.29: número de passadas da suavização por raio cresce junto com o raio escolhido (1/2/3/4
+  // pra Leve/Média/Forte/Muito forte) — uma passada só, mesmo com raio grande, ainda deixava
+  // resíduo visível (os PRÓPRIOS pontos do defeito, bem próximos entre si, ainda pesam na média
+  // dele mesmo); iterar ataca o que sobra de cada passada anterior, efeito bem mais forte.
+  const _PASSES_POR_RAIO_IMPORTADA = { 3: 1, 8: 2, 15: 3, 30: 4 };
+  const passesSuavizacao = _PASSES_POR_RAIO_IMPORTADA[raioSuavizacaoM] || (raioSuavizacaoM > 0 ? 2 : 0);
   // Desenha com a densidade DECIMADA (cl.contornosDecimados), não a original — 3315 polylines de
   // um KML denso do Google Earth com todos os pontos originais deixaria o mapa pesado à toa; a
   // decimação já preserva o formato geral (ver _decimarContornos).
@@ -6950,7 +7056,11 @@ function _redesenharCurvasLocaisImportadas() {
     const cor = _corPorElevacao(c.z, cl.elevMin, cl.elevMax);
     let pontos = c.pontos;
     const fechada = pontos.length > 2 && haversineM(pontos[0], pontos[pontos.length-1]) < 0.5;
-    if(raioSuavizacaoM > 0 && pontos.length > 2) pontos = _suavizarPontosPorRaio(pontos, fechada, raioSuavizacaoM);
+    // v5.29: ordem importa — suaviza (atenua defeitos) ANTES de reamostrar (reduz densidade de
+    // vértices num traçado já limpo) ANTES do spline (arredonda o resultado final). Ver comentário
+    // completo em _reamostrarPorIntervalo sobre por que essa ordem específica.
+    if(raioSuavizacaoM > 0 && pontos.length > 2) pontos = _suavizarPontosPorRaio(pontos, fechada, raioSuavizacaoM, passesSuavizacao);
+    if(malhaM > 0 && pontos.length > 2) pontos = _reamostrarPorIntervalo(pontos, fechada, malhaM);
     if(usarSpline && pontos.length > 2) pontos = _suavizarTracoCurva(pontos, fechada, intensidadeSpline);
     L.polyline(pontos.map(p => [p.lat, p.lng]), {
       // v4.53: interactive:false — por padrão toda polyline do Leaflet captura clique/hover, e
