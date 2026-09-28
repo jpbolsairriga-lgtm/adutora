@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.27 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.28 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -786,6 +786,14 @@ body.layout-lateral #status{grid-area:status;}
               <input type="checkbox" id="curvaSpline" checked title="Redesenha o traçado (já clipado na borda do talhão) como uma curva suave (Chaikin — corte de cantos por subdivisão, o mesmo tipo por trás do 'curva suave' do AutoCAD Civil3D), em vez dos segmentos retos crus que o marching squares produz célula a célula. Puramente visual — não muda elevação nem o desenho de dentro/fora do polígono, só o caminho ENTRE os pontos já traçados. Desmarque pra ver o traçado bruto (mais fiel célula a célula, com as quinas da grade aparecendo)."> Acabamento suave (spline) — curvas geradas
             </label>
           </div>
+          <div class="rcol">
+            <label>Intensidade do spline</label>
+            <select id="curvaSplineIntensidade" class="rfield wide" title="Quantas passadas de corte de canto (Chaikin) rodam quando 'Acabamento suave (spline)' está ligado — mais passadas = curva mais arredondada/lisa (converge rápido pro limite de uma B-spline; depois de ~6 passadas o ganho visual já é bem pequeno). Cada passada dobra o número de pontos da linha desenhada (só desenho, não mexe em elevação nem no traçado real).">
+              <option value="1">Leve</option>
+              <option value="3" selected>Média (padrão)</option>
+              <option value="6">Forte</option>
+            </select>
+          </div>
         </div>
         <div class="rgroup-body" id="curvaDemAviso" style="display:none;padding-top:2px;">
           <div class="rbox" style="font-size:11px;">&#127756; DEM local importado — "Gerar Curvas de Nível" usa a elevação real dele (célula a célula, sem depender de API online) e cai nas mesmas camadas das curvas de satélite (Camadas &rarr; Curvas de Nível). Resoluções acima de 50×50 só funcionam com DEM/curvas locais importadas — sem isso, ficam limitadas a 50×50 pra não sobrecarregar as APIs online.</div>
@@ -819,6 +827,14 @@ body.layout-lateral #status{grid-area:status;}
             <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--panel-text);cursor:pointer;height:26px;">
               <input type="checkbox" id="curvaSplineImportada" checked onchange="_redesenharCurvasLocaisImportadas()" title="Redesenha as curvas de nível IMPORTADAS (DXF/KML) como uma curva suave (Chaikin — mesmo acabamento das curvas geradas), em vez do traçado bruto do levantamento. Puramente visual: não muda a elevação usada pelo TIN/IDW nem o que é exportado de volta pra DXF/KML — só como a linha aparece no mapa. Redesenha na hora, sem precisar reimportar o arquivo. Ligado por padrão."> Acabamento suave (spline) — curvas importadas
             </label>
+          </div>
+          <div class="rcol">
+            <label>Intensidade do spline</label>
+            <select id="curvaSplineIntensidadeImportada" class="rfield wide" onchange="_redesenharCurvasLocaisImportadas()" title="Quantas passadas de corte de canto (Chaikin) rodam quando 'Acabamento suave (spline)' está ligado — mais passadas = curva mais arredondada/lisa (converge rápido pro limite de uma B-spline; depois de ~6 passadas o ganho visual já é bem pequeno). Cada passada dobra o número de pontos da linha desenhada (só desenho, não mexe em elevação nem no traçado real). Combine com 'Suavização do traçado' se ainda sobrar entalhe — o raio em metros apaga o defeito, o spline arredonda o resultado.">
+              <option value="1">Leve</option>
+              <option value="3" selected>Média (padrão)</option>
+              <option value="6">Forte</option>
+            </select>
           </div>
         </div>
         <div class="rgroup-title">Curvas Importadas (DXF/KML)</div>
@@ -3863,6 +3879,20 @@ body.layout-lateral #status{grid-area:status;}
 // retangular (3m de largura, 6m de altura) — raio de 1m (menor que o entalhe) quase não muda o pico
 // (continua ~6m), raio de 30m (maior que o entalhe inteiro) apaga o pico de verdade (cai pra ~1,9m,
 // mais da metade da redução) — prova numérica de que o alcance agora é controlável em metros reais.
+// v5.28: pedido do usuário — quer poder ajustar a intensidade do SPLINE (Chaikin) também, não só a
+// "Suavização do traçado" (raio em metros, v5.27) e a "Suavização do relevo"/"...da grade". Até
+// aqui o número de passadas de Chaikin era fixo em 3, direto no código (_suavizarTracoCurva(pontos,
+// fechada, 3), tanto nas curvas GERADAS quanto nas IMPORTADAS). Novo seletor "Intensidade do
+// spline" (Leve=1/Média=3 [padrão, igual ao valor fixo de antes — comportamento default não muda]/
+// Forte=6 passadas) em cada um dos 2 lugares onde o checkbox de spline já existe (curvas geradas e
+// curvas importadas), lendo o valor e passando pra _suavizarTracoCurva em vez do "3" fixo. Cada
+// passada de Chaikin dobra o número de pontos da linha (converge rápido pro limite de uma B-spline
+// quadrática — por isso o teto ficou em 6, não mais que isso: o ganho visual depois disso já é bem
+// pequeno pra justificar multiplicar ainda mais o número de pontos desenhados). Continua puramente
+// visual e com a mesma garantia de segurança de sempre (Chaikin nunca estoura pra fora do corredor
+// dos pontos originais, não importa quantas passadas — ver v5.23). Testado com harness Node.js:
+// "Forte" produz bem mais pontos que "Leve" pro mesmo traçado de entrada, nos dois lugares (curvas
+// geradas e importadas).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -6910,6 +6940,7 @@ function _redesenharCurvasLocaisImportadas() {
   if(cl.layerPreview) map.removeLayer(cl.layerPreview);
   const usarSpline = $('curvaSplineImportada') ? $('curvaSplineImportada').checked : true;
   const raioSuavizacaoM = $('curvaSuavizacaoImportada') ? (parseFloat($('curvaSuavizacaoImportada').value) || 0) : 0;
+  const intensidadeSpline = $('curvaSplineIntensidadeImportada') ? (parseInt($('curvaSplineIntensidadeImportada').value) || 3) : 3;
   // Desenha com a densidade DECIMADA (cl.contornosDecimados), não a original — 3315 polylines de
   // um KML denso do Google Earth com todos os pontos originais deixaria o mapa pesado à toa; a
   // decimação já preserva o formato geral (ver _decimarContornos).
@@ -6920,7 +6951,7 @@ function _redesenharCurvasLocaisImportadas() {
     let pontos = c.pontos;
     const fechada = pontos.length > 2 && haversineM(pontos[0], pontos[pontos.length-1]) < 0.5;
     if(raioSuavizacaoM > 0 && pontos.length > 2) pontos = _suavizarPontosPorRaio(pontos, fechada, raioSuavizacaoM);
-    if(usarSpline && pontos.length > 2) pontos = _suavizarTracoCurva(pontos, fechada, 3);
+    if(usarSpline && pontos.length > 2) pontos = _suavizarTracoCurva(pontos, fechada, intensidadeSpline);
     L.polyline(pontos.map(p => [p.lat, p.lng]), {
       // v4.53: interactive:false — por padrão toda polyline do Leaflet captura clique/hover, e
       // como as curvas ficam no topo do SVG compartilhado (_garantirCurvasNoTopo, pra aparecer
@@ -8544,6 +8575,9 @@ async function gerarCurvas() {
   // v5.24: pedido do usuário — o acabamento suave (Chaikin, ver _suavizarTracoCurva) virou OPCIONAL
   // em vez de regra fixa. Checkbox "Acabamento suave (spline)" no painel, ligado por padrão.
   const usarSpline = $('curvaSpline').checked;
+  // v5.28: pedido do usuário — intensidade do spline (número de passadas de Chaikin) virou
+  // configurável em vez de fixa em 3. Seletor "Intensidade do spline" (Leve=1/Média=3/Forte=6).
+  const intensidadeSpline = parseInt($('curvaSplineIntensidade').value) || 3;
   // v5.23: v5.21/v5.22 tinham um passo de simplificação Douglas-Peucker (turf.simplify) aqui, com
   // tolerância proporcional ao tamanho de célula da grade — REMOVIDO. Era o causador real do
   // cruzamento entre curvas de nível vizinhas (ver investigação completa em _suavizarTracoCurva): a
@@ -8605,7 +8639,7 @@ async function gerarCurvas() {
           // mexe em elevação nenhuma. v5.24: agora OPCIONAL (checkbox "Acabamento suave") — desligado,
           // usa o traçado bruto do marching squares (já clipado na borda), sem nenhum redesenho.
           let segFinal = seg;
-          if(usarSpline && segFinal.length > 2) segFinal = _suavizarTracoCurva(segFinal, fechada, 3);
+          if(usarSpline && segFinal.length > 2) segFinal = _suavizarTracoCurva(segFinal, fechada, intensidadeSpline);
           const pl = L.polyline(segFinal.map(p=>[p.lat,p.lng]), {
             color:cor, weight:isMaster?2.5:1.2, opacity:isMaster?0.95:0.75,
             interactive:true
