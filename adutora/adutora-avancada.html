@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Cálculo Avançado de Adutora v1.3 — Bolsa Irriga</title>
+<title>Cálculo Avançado de Adutora v1.4 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -123,7 +123,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
   <div class="hdr-logo">
     <img src="../logo perfil branca.png" alt="Bolsa Irriga" onerror="this.style.display='none'">
     <div class="hdr-brand">
-      <h1>C&#225;lculo Avan&#231;ado de Adutora <span class="ver-badge" id="ver-badge">v1.3</span></h1>
+      <h1>C&#225;lculo Avan&#231;ado de Adutora <span class="ver-badge" id="ver-badge">v1.4</span></h1>
       <p>Tra&#231;ado do Percurso &middot; Perfil de Eleva&#231;&#227;o &middot; C&#225;lculo Hidr&#225;ulico Multi-PN</p>
     </div>
   </div>
@@ -333,7 +333,12 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
 <!-- Perfil de pressão -->
 <div class="card" id="card-pressao" style="display:none">
   <div class="ct">&#128200; Perfil Longitudinal da Adutora — Terreno + Piezom&#233;trico + Linha de Press&#227;o</div>
-  <canvas id="c-perfil" width="900" height="418" style="width:100%;max-width:900px;display:block;margin:0 auto"></canvas>
+  <div id="perfilChartWrap" style="position:relative;max-width:900px;margin:0 auto;cursor:crosshair">
+    <canvas id="c-perfil" width="900" height="418" style="width:100%;display:block"></canvas>
+    <canvas id="c-perfil-overlay" width="900" height="418" style="width:100%;display:block;position:absolute;left:0;top:0;pointer-events:none"></canvas>
+    <div id="perfilTooltip" style="position:absolute;display:none;pointer-events:none;background:rgba(20,32,48,.94);color:#fff;font-size:.72rem;padding:.45rem .65rem;border-radius:7px;line-height:1.6;white-space:nowrap;box-shadow:0 4px 16px rgba(0,0,0,.3);z-index:10"></div>
+  </div>
+  <div style="text-align:center;font-size:.68rem;color:var(--mu);margin-top:.3rem">&#128433;&#65039; Passe o mouse sobre o gr&#225;fico para ver os valores em cada ponto</div>
 </div>
 
 <!-- Botão PDF -->
@@ -367,11 +372,15 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
 
 <script>
 // ── Controle de versão ───────────────────────────────────────────────
+// v1.4 (2026-09-28): corrige a fórmula do total com margem — AMT_design
+//   volta a ser AMT_hid × (1+slackP), ou seja: (pressão início tubulação +
+//   filtro + perdas localizadas) × (1+margem), igual à conta manual
+//   (ex.: 101,35 + 10 + 6 = 117,35 → ×1,10 = 129,08). O gráfico de pressão
+//   ganha hover: passe o mouse sobre o gráfico para ver cota, cota
+//   piezométrica e pressão real em qualquer ponto do traçado.
 // v1.3 (2026-09-28): "Perdas localizadas" passa de % (sobre o atrito) para
 //   valor fixo em mca, somado como o filtro — corrige o total com margem,
 //   que antes ficava incompleto quando esse campo era deixado em branco.
-//   A margem de projeto (slackP) agora incide só sobre as perdas (atrito +
-//   filtro + perdas localizadas), não mais sobre desnível/pressão residual.
 //   Novo tile "Pressão Início Tubulação" no resumo rápido, mostrando o valor
 //   físico real (sem margem) logo após filtro+perdas — o mesmo do gráfico.
 //   Tabela Multi-PN: faixa de PN e pressão do trecho agora em colunas
@@ -387,7 +396,7 @@ input[readonly]{background:#f0f7ff;color:#003d5c;font-weight:700;border-color:#a
 //   para decidir a faixa de PN de cada trecho — causava trechos exibidos como
 //   PN mais alto que a pressão real (P_start/P_end) da tabela indicava.
 // v1.0: versão inicial (traçado, perfil de elevação, cálculo multi-PN).
-const APP_VERSION='v1.3';
+const APP_VERSION='v1.4';
 document.addEventListener('DOMContentLoaded',()=>{const vb=$('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 // ── Utilidades ────────────────────────────────────────────────────────
@@ -462,9 +471,9 @@ function calcMultiPN(Q_calc,L,Hg,CHW,nom,kLoc,filtro,pRes,slackP,lim){
     totalHf=0;for(const s of segs)totalHf+=(jByPN[s.pn]??jByPN[125]??jByPN[80]??0)*s.len;
     const an=Hg+totalHf+filtro+kLoc+pRes;if(Math.abs(an-AMT_hid)<0.05){AMT_hid=an;break;}AMT_hid=an;
   }
-  // Margem de projeto (slackP) incide só sobre as perdas (atrito + filtro + perdas localizadas) —
-  // desnível geométrico e pressão residual são valores fixos de projeto, não "incertezas" a margear.
-  const AMT_design=Hg+pRes+(totalHf+filtro+kLoc)*(1+slackP);
+  // Margem de projeto (slackP) multiplica o total (pressão início tubulação + filtro + perdas
+  // localizadas, já embutidos no AMT_hid): AMT_design = AMT_hid × (1 + slackP).
+  const AMT_design=AMT_hid*(1+slackP);
   const pIni=AMT_hid-filtro-kLoc;
   return{AMT_hid,AMT_design,pIni,totalHf,filtro,kLoc,segs,pipeByPN,jByPN,pnsUsados:new Set(segs.map(s=>s.pn))};
 }
@@ -484,11 +493,11 @@ function calcMultiPNProfile(Q_calc,profile,CHW,nom,kLoc,filtro,pRes,slackP,lim){
   }
   const n=profile.length,z0=profile[0].elev,L=profile[n-1].dist;
   const maxGain=Math.max(...profile.map(p=>p.elev-z0));
-  let AMT_hid=maxGain+pRes+filtro+kLoc+30,segs=[],totalHf=0,criticalIdx=n-1,critHf=0,critGain=maxGain;
+  let AMT_hid=maxGain+pRes+filtro+kLoc+30,segs=[],totalHf=0,criticalIdx=n-1;
 
   for(let iter=0;iter<20;iter++){
     // Classificação de PN usa a pressão real (hidráulica, sem margem de projeto) — a mesma que é exibida ao usuário
-    let P=AMT_hid-filtro-kLoc,hfAcc=0,maxReq=0,hfAtCrit=0,gainAtCrit=maxGain;
+    let P=AMT_hid-filtro-kLoc,hfAcc=0,maxReq=0;
     const s_=[];
     let sPN=pnForPressure(P,lim),sFrom=0,sPstart=P;
 
@@ -501,20 +510,19 @@ function calcMultiPNProfile(Q_calc,profile,CHW,nom,kLoc,filtro,pRes,slackP,lim){
       hfAcc+=j*dx;
       P-=j*dx+dz;
       // ponto crítico: onde é necessário maior AMT para manter pressão >= pRes
-      const gain=profile[i].elev-z0;
-      const req=hfAcc+gain+pRes+filtro+kLoc;
-      if(req>maxReq){maxReq=req;criticalIdx=i;hfAtCrit=hfAcc;gainAtCrit=gain;}
+      const req=hfAcc+(profile[i].elev-z0)+pRes+filtro+kLoc;
+      if(req>maxReq){maxReq=req;criticalIdx=i;}
     }
     s_.push({pn:sPN,from:sFrom,to:L,len:L-sFrom,P_start:sPstart,P_end:P});
     segs=[];
     for(const s of s_){if(segs.length&&segs[segs.length-1].pn===s.pn){segs[segs.length-1].len+=s.len;segs[segs.length-1].to=s.to;segs[segs.length-1].P_end=s.P_end;}else segs.push({...s});}
-    totalHf=hfAcc;critHf=hfAtCrit;critGain=gainAtCrit;
+    totalHf=hfAcc;
     if(Math.abs(maxReq-AMT_hid)<0.05){AMT_hid=maxReq;break;}
     AMT_hid=maxReq;
   }
-  // Margem de projeto (slackP) incide só sobre as perdas (atrito até o ponto crítico + filtro +
-  // perdas localizadas) — desnível geométrico e pressão residual são valores fixos de projeto.
-  const AMT_design=critGain+pRes+(critHf+filtro+kLoc)*(1+slackP);
+  // Margem de projeto (slackP) multiplica o total (pressão início tubulação + filtro + perdas
+  // localizadas, já embutidos no AMT_hid): AMT_design = AMT_hid × (1 + slackP).
+  const AMT_design=AMT_hid*(1+slackP);
   const pIni=AMT_hid-filtro-kLoc;
   return{AMT_hid,AMT_design,pIni,totalHf,filtro,kLoc,segs,pipeByPN,jByPN,
     pnsUsados:new Set(segs.map(s=>s.pn)),L,
@@ -538,7 +546,7 @@ function pressurePointsProfile(multi,profile,startP){
 }
 
 // ── Estado global ─────────────────────────────────────────────────
-let _multi=null,_nominal=null,_cotaMax=null,_perfilSamples=null,_profileData=null;
+let _multi=null,_nominal=null,_cotaMax=null,_perfilSamples=null,_profileData=null,_pressaoState=null;
 
 // ── Cálculo principal ────────────────────────────────────────────
 function calc(){
@@ -662,11 +670,14 @@ function buildBomba(multi,Q_calc,eff,Pkw,Pcv){
 function drawPressao(multi,Q_calc,Hg,L,lim,cotaS_,cotaR_,pRes){
   $('card-pressao').style.display='';
   const cv=$('c-perfil'),ctx=cv.getContext('2d');
+  const ov=$('c-perfil-overlay');
   const W=900,mainT=36,mainH=208,gapH=36,subT=mainT+mainH+gapH,subH=104,subB=34;
   const H=subT+subH+subB;
   cv.width=W;cv.height=H;
+  if(ov){ov.width=W;ov.height=H;ov.getContext('2d').clearRect(0,0,W,H);}
   ctx.clearRect(0,0,W,H);
   ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);
+  _pressaoState=null;
   if(!multi||!L)return;
   const mg={t:mainT,b:H-mainT-mainH,l:62,r:18};
   const cW=W-mg.l-mg.r,cH=mainH;
@@ -842,7 +853,62 @@ function drawPressao(multi,Q_calc,Hg,L,lim,cotaS_,cotaR_,pRes){
   // ── Indicador de modo ──────────────────────────────────────────────
   ctx.fillStyle=usaPerfil?'#2e7d32':'#b45800';ctx.font='8px Segoe UI';ctx.textAlign='left';
   ctx.fillText(usaPerfil?'✓ Perfil real — cálculo ponto a ponto':'⚠ Inclinação linear — gere o perfil de elevação para cálculo preciso',mg.l+2,mg.t-6);
+
+  // ── Guarda o estado do desenho para o hover interativo (mousemove) ──
+  _pressaoState={pts,segs:multi.segs,mg,cW,mainT,mainH,subT,subH,W,H,L,pRes,pxF,pyF,pyS};
 }
+
+// ── Hover interativo no gráfico de pressão (crosshair + tooltip) ────
+function setupPressaoHover(){
+  const wrap=$('perfilChartWrap'),ov=$('c-perfil-overlay'),tip=$('perfilTooltip');
+  if(!wrap||!ov||!tip)return;
+  wrap.addEventListener('mousemove',e=>{
+    const st=_pressaoState;
+    if(!st||!st.pts.length){hidePressaoHover();return;}
+    const rect=ov.getBoundingClientRect();
+    if(rect.width<=0){hidePressaoHover();return;}
+    const scaleX=ov.width/rect.width;
+    const mx=(e.clientX-rect.left)*scaleX;
+    if(mx<st.mg.l-4||mx>st.mg.l+st.cW+4){hidePressaoHover();return;}
+    const xVal=Math.max(0,Math.min(st.L,(mx-st.mg.l)/st.cW*st.L));
+    let nearest=st.pts[0],best=Infinity;
+    for(const p of st.pts){const d=Math.abs(p.x-xVal);if(d<best){best=d;nearest=p;}}
+    const seg=st.segs.find(s=>nearest.x>=s.from-0.5&&nearest.x<=s.to+0.5)||st.segs[st.segs.length-1];
+    drawPressaoHover(nearest,seg,st,e,wrap);
+  });
+  wrap.addEventListener('mouseleave',hidePressaoHover);
+}
+function hidePressaoHover(){
+  const ov=$('c-perfil-overlay');
+  if(ov){const ctx=ov.getContext('2d');ctx.clearRect(0,0,ov.width,ov.height);}
+  const tip=$('perfilTooltip');if(tip)tip.style.display='none';
+}
+function drawPressaoHover(p,seg,st,e,wrap){
+  const ov=$('c-perfil-overlay'),ctx=ov.getContext('2d');
+  ctx.clearRect(0,0,st.W,st.H);
+  const x=st.pxF(p.x);
+  ctx.setLineDash([4,3]);ctx.strokeStyle='rgba(0,50,90,.55)';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(x,st.mainT);ctx.lineTo(x,st.subT+st.subH);ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle='#5a3d1e';ctx.strokeStyle='#fff';ctx.lineWidth=1.5;
+  ctx.beginPath();ctx.arc(x,st.pyF(p.z),4,0,Math.PI*2);ctx.fill();ctx.stroke();
+  ctx.fillStyle=seg?PN_COLOR[seg.pn]:'#0077b6';
+  ctx.beginPath();ctx.arc(x,st.pyF(p.piezo),4.5,0,Math.PI*2);ctx.fill();ctx.stroke();
+  ctx.beginPath();ctx.arc(x,st.pyS(p.P),4.5,0,Math.PI*2);ctx.fill();ctx.stroke();
+  const tip=$('perfilTooltip');
+  tip.innerHTML=`<b>${fmt(p.x,0)} m</b> da capta&#231;&#227;o${seg?` &middot; <span style="color:${PN_COLOR[seg.pn]}">PN ${seg.pn}</span>`:''}<br>
+    Cota terreno: <b>${fmt(p.z,1)} m</b><br>
+    Cota piezom&#233;trica: <b>${fmt(p.piezo,1)} m</b><br>
+    Press&#227;o real: <b>${fmt(p.P,1)} mca</b>`;
+  tip.style.display='block';
+  const wrapRect=wrap.getBoundingClientRect();
+  const scaleDisp=wrapRect.width/st.W;
+  let left=x*scaleDisp+14,top=(st.pyF(p.piezo))*scaleDisp-14;
+  if(left>wrapRect.width-175)left=x*scaleDisp-190;
+  if(top<0)top=4;
+  tip.style.left=left+'px';tip.style.top=top+'px';
+}
+document.addEventListener('DOMContentLoaded',setupPressaoHover);
 
 // ── Google Maps ───────────────────────────────────────────────────
 let map,elevService,tracePolyline=null,traceMarkers=[],tracePoints=[],modoDesenho=false;
