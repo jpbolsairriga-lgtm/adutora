@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.21 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.22 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -772,7 +772,7 @@ body.layout-lateral #status{grid-area:status;}
           </div>
           <div class="rcol">
             <label>Suavização</label>
-            <select id="curvaSuavizacao" class="rfield wide" title="Suaviza a grade de elevação (média de vizinhança 3×3, poucas passadas) e o traçado final de cada curva (simplificação Douglas-Peucker) antes de desenhar — sem isso, DEM/drone de alta resolução gera curvas 'cabeludas', seguindo cada micro-ondulação do terreno (sulco, cobertura vegetal) em vez de um acabamento liso. Passadas demais na grade achatam a amplitude real perto da borda da área — por isso o teto aqui é baixo; a simplificação do traçado (que não mexe na elevação) é que faz a maior parte do trabalho visual.">
+            <select id="curvaSuavizacao" class="rfield wide" title="Suaviza a grade de ELEVAÇÃO em si (média de vizinhança 3×3, poucas passadas) antes de traçar — útil quando o DEM/drone tem micro-ondulação real do terreno (sulco de plantio, cobertura vegetal) que você quer filtrar dos NÚMEROS, não só do desenho. O acabamento visual liso da linha (spline + simplificação do traçado) roda sempre, mesmo em 'Nenhuma' — esse seletor só decide se o RELEVO usado é o bruto ou um filtrado. Passadas demais achatam a amplitude real perto da borda da área — por isso o teto aqui é baixo.">
               <option value="0">Nenhuma (relevo bruto)</option>
               <option value="1" selected>Leve (padrão)</option>
               <option value="2">Média</option>
@@ -3723,6 +3723,25 @@ body.layout-lateral #status{grid-area:status;}
 // célula-a-célula determinístico) medindo variação de alta frequência (cai a cada nível de
 // suavização) E amplitude da tendência real via média de linha inteira (fica a ~1m da amplitude
 // verdadeira mesmo no nível mais forte, longe de achatar).
+// v5.22: pedido do usuário — viu o v5.21 (comparou de novo print a print com o IrrigaModel) e
+// corrigiu o diagnóstico: o problema não é suavizar a GRADE de elevação, é o TRAÇADO em si — o
+// marching squares sempre produz segmentos retos ponto-a-ponto, então mesmo com relevo perfeitamente
+// limpo a curva tem "quina" em cada célula da grade. Pediu spline/contornos suaves, tipo o
+// IrrigaModel usa. Implementado _splineCatmullRom() — spline Catmull-Rom CENTRÍPETO (alpha=0,5,
+// interpolação Barry-Goldman): redesenha o traçado já clipado/simplificado como curva suave que
+// passa EXATAMENTE pelos pontos originais (não desloca a curva do relevo real, só arredonda o
+// caminho entre eles) — puramente visual, zero mudança em elevação. Parametrização por distância^0,5
+// (não uniforme) evita cúspides/laços em cantos apertados, problema clássico do Catmull-Rom uniforme
+// fora de uma grade regular. Trata laço fechado (curva inteira dentro do polígono) e arco aberto
+// (cortado pela borda do talhão) separadamente, senão a "costura" do fechamento fica torta. A
+// simplificação Douglas-Peucker (turf.simplify, já existia desde v5.21) agora roda SEMPRE antes do
+// spline, não só quando "Suavização">0 — ela e o spline são o acabamento visual da linha, e não têm
+// mais nada a ver com o seletor "Suavização" (esse continua só controlando se a GRADE de elevação
+// usada pro marching squares é a bruta ou uma filtrada — mesmo em "Nenhuma", a linha final agora sai
+// curva). Testado com harness Node.js: propriedades matemáticas do spline isoladas (passa exato
+// pelos pontos originais incluindo os do meio, não "balança" pra fora de uma reta perfeita, fecha
+// certo em laço, não quebra com ≤2 pontos) e gerarCurvas() ponta a ponta confirmando que mesmo com
+// "Suavização"="Nenhuma" a linha final sai bem mais densa/curva que a chain crua do marching squares.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -8138,6 +8157,50 @@ function chainSegments(segs) {
   return chains;
 }
 
+// v5.22: pedido do usuário — v5.21 tentou consertar o "sem acabamento" das curvas suavizando a
+// GRADE de elevação (blur 3×3) antes do marching squares. Usuário comparou print a print com o
+// IrrigaModel e apontou o caminho certo: o problema não é a grade, é o TRAÇADO — o marching squares
+// sempre devolve segmentos retos ponto-a-ponto, então mesmo sem ruído nenhum no relevo a curva tem
+// "quinas" em cada célula da grade. IrrigaModel usa spline. Catmull-Rom CENTRÍPETO (alpha=0,5):
+// redesenha o traçado já clipado/simplificado como uma curva suave que passa EXATAMENTE pelos
+// pontos originais (não desloca a curva do relevo real, só arredonda o caminho ENTRE os pontos) —
+// puramente visual, não toca em nenhum valor de elevação. Parametrização por distância^0,5 (em vez
+// de uniforme, índice 0,1,2...) é o que evita cúspides/laços em cantos apertados ou trechos com
+// pontos muito próximos — problema clássico do Catmull-Rom uniforme em traçados reais (que não são
+// uma grade equiespaçada). Interpolação por Barry-Goldman (forma padrão/recursiva de calcular
+// Catmull-Rom centrípeto). Trata laço fechado (curva de nível inteira dentro do polígono, sem
+// cruzar a borda — primeiro ponto = último) separado de arco aberto (curva cortada pela borda do
+// talhão), senão a "costura" do fechamento fica torta.
+function _splineCatmullRom(pontos, fechada, pontosPorSegmento) {
+  if(pontos.length < 3) return pontos;
+  const P = fechada ? pontos.slice(0, -1) : pontos; // tira o ponto duplicado (fim==início) do laço fechado
+  const nP = P.length;
+  if(nP < 3) return pontos;
+  const get = i => fechada ? P[((i % nP) + nP) % nP] : P[Math.max(0, Math.min(nP - 1, i))];
+  const dist = (a, b) => Math.sqrt((b.lng - a.lng) ** 2 + (b.lat - a.lat) ** 2);
+  const lerpPt = (a, b, ta, tb, t) => {
+    const f = tb === ta ? 0 : (t - ta) / (tb - ta);
+    return { lat: a.lat + (b.lat - a.lat) * f, lng: a.lng + (b.lng - a.lng) * f };
+  };
+  const out = [];
+  const nSegs = fechada ? nP : nP - 1;
+  for(let i = 0; i < nSegs; i++) {
+    const p0 = get(i-1), p1 = get(i), p2 = get(i+1), p3 = get(i+2);
+    const t0 = 0;
+    const t1 = t0 + Math.max(Math.sqrt(dist(p0,p1)), 1e-9);
+    const t2 = t1 + Math.max(Math.sqrt(dist(p1,p2)), 1e-9);
+    const t3 = t2 + Math.max(Math.sqrt(dist(p2,p3)), 1e-9);
+    for(let s = 0; s < pontosPorSegmento; s++) {
+      const t = t1 + (t2 - t1) * (s / pontosPorSegmento);
+      const A1 = lerpPt(p0, p1, t0, t1, t), A2 = lerpPt(p1, p2, t1, t2, t), A3 = lerpPt(p2, p3, t2, t3, t);
+      const B1 = lerpPt(A1, A2, t0, t2, t), B2 = lerpPt(A2, A3, t1, t3, t);
+      out.push(lerpPt(B1, B2, t1, t2, t));
+    }
+  }
+  out.push(fechada ? out[0] : P[nP-1]);
+  return out;
+}
+
 function marchingSquaresCurva(elev, lts, lns, level) {
   const rows=elev.length, cols=elev[0].length, segs=[];
   for(let r=0;r<rows-1;r++) {
@@ -8246,8 +8309,12 @@ async function gerarCurvas() {
   // Tolerância da simplificação Douglas-Peucker (turf.simplify) proporcional ao tamanho da célula da
   // grade (bbox/n) — nunca "come" um detalhe maior que a própria resolução amostrada, só limpa o
   // zigue-zague sub-célula que o marching squares produz ao reamostrar o grid em linhas retas.
+  // v5.22: aplicada SEMPRE agora (antes só entrava com "Suavização">0) — ela e o spline logo abaixo
+  // (ver _splineCatmullRom) são a base do acabamento natural da curva e não têm nada a ver com
+  // suavizar a GRADE de elevação (isso continua controlado só pelo seletor "Suavização", que só
+  // mexe nos valores de relevo, não no desenho da linha).
   const cellSizeGrausAprox = Math.max(maxLng - minLng, maxLat - minLat) / Math.max(1, n - 1);
-  const toleranciaSimplify = passesSuavizacao > 0 ? cellSizeGrausAprox * 0.4 : 0;
+  const toleranciaSimplify = cellSizeGrausAprox * 0.4;
 
   const validElevs = elevFlat.filter(v=>v!=null);
   const minElev = Math.min(...validElevs), maxElev = Math.max(...validElevs);
@@ -8286,12 +8353,19 @@ async function gerarCurvas() {
       let seg = [];
       const flush = () => {
         if(seg.length >= 2) {
-          // v5.21: simplificação Douglas-Peucker (turf.simplify) no TRAÇADO já clipado — reduz o
-          // zigue-zague sub-célula do marching squares sem tocar em nenhum valor de elevação (só
-          // remove vértice redundante que não muda visualmente o caminho além da tolerância). Fica
-          // de fora quando "Suavização"=0 (toleranciaSimplify=0) — comportamento antigo intacto.
+          // v5.22: laço fechado (curva inteira dentro do polígono, nunca saiu — primeiro ponto =
+          // último) precisa de tratamento diferente do arco aberto (cortado pela borda do talhão) no
+          // spline logo abaixo, senão o "fechamento" do laço fica torto. Precisa ser medido AQUI, em
+          // cima do `seg` cru, antes de simplificar/splinar (que mudam os pontos).
+          const fechada = seg.length > 2 &&
+            Math.abs(seg[0].lat - seg[seg.length-1].lat) < 1e-9 &&
+            Math.abs(seg[0].lng - seg[seg.length-1].lng) < 1e-9;
+          // Simplificação Douglas-Peucker (turf.simplify) no TRAÇADO já clipado — reduz o zigue-zague
+          // sub-célula do marching squares sem tocar em nenhum valor de elevação (só remove vértice
+          // redundante que não muda visualmente o caminho além da tolerância). Roda sempre agora
+          // (v5.22) — é o passo que prepara o traçado pro spline logo abaixo.
           let segFinal = seg;
-          if(toleranciaSimplify > 0 && seg.length > 2) {
+          if(seg.length > 2) {
             try {
               const linha = turf.lineString(seg.map(p => [p.lng, p.lat]));
               const simples = turf.simplify(linha, { tolerance: toleranciaSimplify, highQuality: true });
@@ -8299,6 +8373,12 @@ async function gerarCurvas() {
               if(coords.length >= 2) segFinal = coords.map(([lng,lat]) => ({lat,lng}));
             } catch(e) {} // se der erro por algum motivo, segue com o traçado original sem simplificar
           }
+          // v5.22: spline Catmull-Rom centrípeto (ver _splineCatmullRom) — o acabamento natural/curvo
+          // pedido pelo usuário comparando com o IrrigaModel. Puramente visual (redesenha o CAMINHO
+          // entre os pontos já traçados/clipados, não move nenhum ponto original nem mexe em
+          // elevação) — troca os segmentos retos do marching squares por uma curva suave que ainda
+          // passa exatamente pelos mesmos pontos.
+          if(segFinal.length > 2) segFinal = _splineCatmullRom(segFinal, fechada, 8);
           const pl = L.polyline(segFinal.map(p=>[p.lat,p.lng]), {
             color:cor, weight:isMaster?2.5:1.2, opacity:isMaster?0.95:0.75,
             interactive:true
