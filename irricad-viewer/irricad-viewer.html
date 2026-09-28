@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<!-- build 2026-09-28 v1.7.0 -->
+<!-- build 2026-09-28 v1.8.0 -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Visualizador IrriCAD v1.7.0 &middot; TophoFarm</title>
+<title>Visualizador IrriCAD v1.8.0 &middot; TophoFarm</title>
 <meta name="theme-color" content="#1f4e4c">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -147,16 +147,6 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
   color:#fff;padding:.5rem 1rem;border-radius:20px;font-size:.82rem;display:none;box-shadow:0 4px 14px rgba(0,0,0,.4)}
 #med-info.aberto{display:block}
 
-/* ---------- calibracao manual da bussola (so aparece com o modo navegacao ligado) ---------- */
-#calib-bussola{position:fixed;left:50%;bottom:9rem;transform:translateX(-50%);z-index:1250;
-  background:rgba(13,30,28,.88);color:#fff;padding:.4rem .6rem;border-radius:22px;font-size:.78rem;
-  display:none;align-items:center;gap:.5rem;box-shadow:0 4px 14px rgba(0,0,0,.4)}
-#calib-bussola.aberto{display:flex}
-#calib-bussola .calib-label{color:#a9c6cf;font-size:.7rem;white-space:nowrap}
-#calib-bussola button{width:28px;height:28px;border-radius:50%;border:none;background:var(--azul-cl);color:#fff;
-  font-size:.95rem;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-#calib-valor{min-width:2.6em;text-align:center;font-weight:700;font-size:.76rem}
-
 /* ---------- marcador de GPS com seta de rumo ---------- */
 .gps-icon-wrap{background:transparent!important;border:none!important}
 .gps-seta{position:relative;width:40px;height:40px;transition:transform .25s linear}
@@ -207,13 +197,6 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 <div id="busca-resultados"></div>
 
 <div id="med-info"></div>
-
-<div id="calib-bussola">
-  <span class="calib-label">B&#250;ssola desviada?</span>
-  <button id="calib-esq" title="Girar mapa um pouco pra esquerda">&#8634;</button>
-  <span id="calib-valor">0&#176;</span>
-  <button id="calib-dir" title="Girar mapa um pouco pra direita">&#8635;</button>
-</div>
 
 <div id="toolbar">
   <button id="btn-abrir" class="btn-round" title="Abrir arquivo">&#128194;</button>
@@ -269,9 +252,10 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 /* ==================================================================
    VERSAO / HISTORICO
    ================================================================== */
-const VERSAO_APP = '1.7.0';
+const VERSAO_APP = '1.8.0';
 const HISTORICO_VERSOES = [
-  {v:'1.7.0', d:'28/09/2026', t:'Tela sempre acesa enquanto o app estiver aberto (não apaga mais sozinha em campo). Bússola do modo navegação agora compensa a orientação da tela (retrato/paisagem) e ganhou um ajuste manual (± alguns graus) pra corrigir qualquer desvio que sobrar. Vários projetos podem ficar ligados ao mesmo tempo no mapa, cada um com liga/desliga próprio em "Meus Projetos" — só o que está ligado é desenhado, pra manter leve.'},
+  {v:'1.8.0', d:'28/09/2026', t:'Corrige a orientação do modo navegação, que a v1.7 tinha deixado pior: trocado o rumo vindo da bússola/magnetômetro do celular (pouco confiável, sofria interferência) pelo rumo do próprio GPS — a direção real do seu deslocamento, do jeito que o Google Maps faz no modo a pé. Removido o ajuste manual de bússola (não é mais necessário).'},
+  {v:'1.7.0', d:'28/09/2026', t:'Tela sempre acesa enquanto o app estiver aberto (não apaga mais sozinha em campo). Vários projetos podem ficar ligados ao mesmo tempo no mapa, cada um com liga/desliga próprio em "Meus Projetos" — só o que está ligado é desenhado, pra manter leve.'},
   {v:'1.6.0', d:'24/09/2026', t:'Corrige a tela desviando do centro (indo pro canto superior direito) durante o modo navegação — a animação de seguir a posição brigava com o giro da bússola. Splash de abertura e logo do IrriCAD adicionados (tela inicial, cartão do site e painel Sobre).'},
   {v:'1.5.0', d:'24/09/2026', t:'Botão "Buscar Atualizações" (dentro de Meus Projetos): verifica se há uma versão nova publicada e deixa atualizar com 1 toque — sem precisar de Ctrl+Shift+R no celular. Avisa sozinho ao abrir o app, com uma bolinha verde no ícone.'},
   {v:'1.4.1', d:'24/09/2026', t:'Pontos com informação agora ficam numa camada própria, sempre acima de linhas/talhões — corrige toques que caíam numa linha por baixo em vez de abrir o ponto.'},
@@ -1023,13 +1007,15 @@ buscaInput.addEventListener('input', ()=>{
 });
 
 /* ==================================================================
-   GPS + BUSSOLA (modo navegacao)
+   GPS + RUMO (modo navegacao)
    "Seguir" liga os dois juntos: a tela fica centralizada na posicao
-   atual E gira acompanhando pra onde o celular esta apontando (como
-   o modo de navegacao a pe do Google Maps/Waze) -- usa o handler
-   nativo do leaflet-rotate (map.compassBearing) pra ler a bussola do
-   aparelho e girar o mapa; o marcador de GPS fica parado (nao gira
-   junto), entao a setinha aponta sempre "pra cima" = sua frente.
+   atual E gira acompanhando pra onde voce esta andando (como o modo
+   de navegacao a pe do Google Maps/Waze). O rumo vem do proprio GPS
+   (coords.heading, a direcao real do deslocamento) -- nao da bussola/
+   magnetometro do celular, que sofre interferencia e ja tinha causado
+   dois desvios diferentes tentando corrigir por software (v1.6 e
+   v1.7). O marcador de GPS fica parado (nao gira junto), entao a
+   setinha aponta sempre "pra cima" = sua frente.
    ================================================================== */
 let marcadorGPS=null, circuloGPS=null, watchId=null, seguindo=false;
 const iconeGPS = L.divIcon({
@@ -1049,6 +1035,26 @@ function ativaGPS(){
       {enableHighAccuracy:true, maximumAge:2000});
   }
 }
+function marcaComRumo(ligado){
+  const el = marcadorGPS && marcadorGPS.getElement();
+  const seta = el && el.querySelector('.gps-seta');
+  if(seta) seta.classList.toggle('com-rumo', ligado);
+}
+// Rumo do modo navegação vem da própria trajetória do GPS (pra onde você
+// está de fato andando) -- igual Google Maps/Waze no modo a pé -- e não
+// da bússola/magnetômetro do celular, que sofre interferência (case,
+// suporte, estrutura metálica) e não tem como corrigir de forma
+// confiável por software. Só gira o mapa quando há velocidade suficiente
+// pra confiar na direção; parado, mantém o último rumo (não fica
+// girando à toa quando você para de andar).
+function atualizaRumoPorGPS(coords){
+  const temRumoValido = typeof coords.heading==='number' && !isNaN(coords.heading)
+    && (coords.speed==null || coords.speed > 0.4); // ~1,4 km/h -- filtra ruido do GPS parado
+  if(temRumoValido){
+    mapa.setBearing(coords.heading);
+    marcaComRumo(true);
+  }
+}
 function atualizaGPS(pos){
   const ll = [pos.coords.latitude, pos.coords.longitude];
   if(!marcadorGPS){
@@ -1058,76 +1064,14 @@ function atualizaGPS(pos){
     marcadorGPS.setLatLng(ll);
     circuloGPS.setLatLng(ll); circuloGPS.setRadius(pos.coords.accuracy);
   }
-  // sem animacao: uma animacao de panTo em andamento ao mesmo tempo que a
-  // bussola gira o mapa (a cada ~100ms) faz o pivo da rotacao ser capturado
-  // no meio da transicao, e a tela acumula um desvio (foi visto indo pro
-  // canto superior direito com o uso). Trocar a posicao na hora evita a
-  // corrida entre as duas animacoes.
-  if(seguindo) mapa.setView(ll, mapa.getZoom(), {animate:false});
-}
-function marcaComRumo(ligado){
-  const el = marcadorGPS && marcadorGPS.getElement();
-  const seta = el && el.querySelector('.gps-seta');
-  if(seta) seta.classList.toggle('com-rumo', ligado);
-  document.getElementById('calib-bussola').classList.toggle('aberto', ligado);
-}
-// ajuste manual do usuario (graus), pra corrigir qualquer desvio residual
-// do sensor/aparelho -- persistido, entao so precisa calibrar uma vez.
-let calibracaoBussola = 0;
-try{ calibracaoBussola = parseFloat(localStorage.getItem('irricadViewerCalibracaoBussola')) || 0; }catch(e){}
-function atualizaLabelCalibracao(){
-  document.getElementById('calib-valor').textContent = Math.round(calibracaoBussola)+'°';
-}
-function ajustaCalibracaoBussola(delta){
-  calibracaoBussola = ((calibracaoBussola + delta) % 360 + 360) % 360;
-  try{ localStorage.setItem('irricadViewerCalibracaoBussola', String(calibracaoBussola)); }catch(e){}
-  atualizaLabelCalibracao();
-}
-function anguloTela(){
-  // orientacao da TELA (retrato/paisagem) em relacao ao sensor do aparelho --
-  // a bussola do leaflet-rotate nao compensava isso pra eventos "absolute"
-  // (o caso mais comum no Android), o que deixava o rumo torto.
-  if(window.screen && screen.orientation && typeof screen.orientation.angle==='number') return screen.orientation.angle;
-  if(typeof window.orientation==='number') return window.orientation;
-  return 0;
-}
-function calculaRumo(e){
-  let heading;
-  if(typeof e.webkitCompassHeading==='number') heading = e.webkitCompassHeading; // iOS Safari: ja e o rumo real
-  else if(typeof e.alpha==='number') heading = 360 - e.alpha; // Android: alpha cresce anti-horario a partir do norte
-  else return null;
-  heading = heading - anguloTela() + calibracaoBussola;
-  return ((heading % 360) + 360) % 360;
-}
-function handleOrientacaoBussola(e){
-  const h = calculaRumo(e);
-  if(h==null) return;
-  mapa.setBearing(h);
-  marcaComRumo(true);
-}
-let eventoBussolaAtivo = null;
-function ativaBussola(){
-  const DOE = window.DeviceOrientationEvent;
-  if(!DOE){ toast('Este navegador não dá acesso à bússola do aparelho.', 3500); return; }
-  const liga = ()=>{
-    eventoBussolaAtivo = ('ondeviceorientationabsolute' in window) ? 'deviceorientationabsolute' : 'deviceorientation';
-    window.addEventListener(eventoBussolaAtivo, handleOrientacaoBussola);
-    atualizaLabelCalibracao();
-  };
-  if(typeof DOE.requestPermission === 'function'){
-    // iOS 13+: o pedido de permissão precisa partir de um toque do usuário
-    DOE.requestPermission().then(resp=>{ if(resp==='granted') liga(); else toast('Permissão de bússola negada.', 3000); }).catch(()=>{});
-  } else {
-    liga();
+  if(seguindo){
+    // sem animacao: uma animacao de panTo em andamento ao mesmo tempo que o
+    // mapa gira faz o pivo da rotacao ser capturado no meio da transicao, e
+    // a tela acumula um desvio. Trocar a posicao na hora evita essa corrida.
+    mapa.setView(ll, mapa.getZoom(), {animate:false});
+    atualizaRumoPorGPS(pos.coords);
   }
 }
-function desativaBussola(){
-  if(eventoBussolaAtivo){ window.removeEventListener(eventoBussolaAtivo, handleOrientacaoBussola); eventoBussolaAtivo=null; }
-  mapa.setBearing(0);
-  marcaComRumo(false);
-}
-document.getElementById('calib-esq').addEventListener('click', ()=>ajustaCalibracaoBussola(-5));
-document.getElementById('calib-dir').addEventListener('click', ()=>ajustaCalibracaoBussola(5));
 document.getElementById('btn-gps').addEventListener('click', ativaGPS);
 document.getElementById('btn-seguir').addEventListener('click', ()=>{
   seguindo = !seguindo;
@@ -1135,11 +1079,11 @@ document.getElementById('btn-seguir').addEventListener('click', ()=>{
   if(seguindo){
     if(!marcadorGPS) ativaGPS();
     if(marcadorGPS) mapa.setView(marcadorGPS.getLatLng(), mapa.getZoom(), {animate:false});
-    ativaBussola();
     pedeTelaAcesa();
-    toast('Modo navegação: tela segue sua posição e gira com a direção que você está andando');
+    toast('Modo navegação: tela segue sua posição e gira conforme você anda');
   } else {
-    desativaBussola();
+    mapa.setBearing(0);
+    marcaComRumo(false);
     toast('Modo navegação desligado — mapa voltou pro norte pra cima');
   }
 });
