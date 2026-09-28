@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.24 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.25 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -511,6 +511,9 @@ body.layout-lateral #status{grid-area:status;}
             <button class="rbtn-sm" onclick="$('inputCurvasDxf').click()">&#128193; Importar Curvas de Nível (DXF/KML)</button>
             <input type="file" id="inputCurvasDxf" accept=".dxf,.kml" style="display:none" onchange="if(this.files[0]){importarCurvas(this.files[0]);this.value='';}">
             <div id="dxfCurvasStatus" style="font-size:10px;color:var(--panel-text-dim);max-width:190px;white-space:normal;"></div>
+            <label style="display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--panel-text-dim);cursor:pointer;margin:1px 0;">
+              <input type="checkbox" id="curvaSplineImportada" checked onchange="_redesenharCurvasLocaisImportadas()" title="Redesenha as curvas de nível IMPORTADAS (DXF/KML) como uma curva suave (Chaikin — mesmo acabamento usado nas curvas geradas online), em vez do traçado bruto do levantamento. Puramente visual: não muda a elevação usada pelo TIN/IDW nem o que é exportado de volta pra DXF/KML — só como a linha aparece no mapa. Pode alternar a qualquer momento sem reimportar o arquivo. Ligado por padrão."> Acabamento suave (spline)
+            </label>
             <button class="rbtn-sm clr" id="btnRemoverCurvasLocais" style="display:none;" onclick="removerCurvasLocais()">&#10005; Remover Curvas Locais</button>
             <div class="rdiv" style="margin:4px 0;width:100%;height:1px;align-self:auto;"></div>
             <button class="rbtn-sm" onclick="$('inputOrtofotoTiff').click()">&#128247; Importar Ortofoto (TIFF)</button>
@@ -3775,6 +3778,26 @@ body.layout-lateral #status{grid-area:status;}
 // squares (já clipado exato na borda do talhão — v5.18 — mas sem nenhum redesenho de linha por
 // cima). Testado com harness Node.js: ligado densifica/curva a linha como antes; desligado devolve
 // exatamente a mesma contagem e as mesmas coordenadas da chain original (sem Chaikin nenhum).
+// v5.25: pedido do usuário — o mesmo acabamento suave opcional (Chaikin), agora pras curvas de
+// nível IMPORTADAS (DXF/KML — "Importar Curvas de Nível" no painel de Dados Locais), não só as
+// GERADAS online/DEM. Um levantamento real vem com o zigue-zague de precisão do equipamento/
+// desenhista (não de resolução de grade), mas o resultado visual "cabeludo" é o mesmo problema.
+// Novo checkbox "Acabamento suave (spline)" (#curvaSplineImportada) junto do botão de importar,
+// ligado por padrão. MELHORIA em cima do pedido: alternar o checkbox REDESENHA na hora, sem
+// precisar reimportar o arquivo — extraí a lógica de desenho de dentro de
+// _finalizarImportacaoCurvas() pra função própria (_redesenharCurvasLocaisImportadas), reaproveitando
+// os pontos já decimados/triangulados em memória (cl.contornosDecimados) em vez de reprocessar o
+// DXF/KML do zero (evita rodar de novo a triangulação Delaunay, cara pra KML denso — ver comentário
+// de _dedupPontosGrade). Igual às curvas geradas: PURAMENTE VISUAL — o Chaikin roda só em cima dos
+// pontos que vão pro desenho (layerPreview), nunca em cl.pontos/indiceTin/indiceEspacial (usados de
+// verdade pra elevação/TIN/IDW) nem no que _exportarKML/_exportarDXF mandam de volta pro arquivo.
+// Fechamento de laço (curva fechada de verdade, tipo hilltop/depressão, vs arco aberto de talude)
+// detectado por DISTÂNCIA REAL (haversineM < 0,5m) em vez de igualdade exata de lat/lng — curvas
+// importadas passam por conversão UTM→lat/lng (às vezes reprojeção de origens diferentes), com mais
+// ruído de ponto flutuante que uma chain gerada internamente pelo marching squares. Testado com
+// harness Node.js: liga/desliga redesenha sem reimportar, curva fechada continua fechada depois do
+// Chaikin, dados de origem (contornosDecimados) nunca são alterados pela suavização, chamar sem
+// nenhuma curva importada ainda não quebra.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -6734,6 +6757,55 @@ function _classificarMestraMenor(contornosLatLng) {
   });
 }
 
+// v5.25: pedido do usuário — depois do acabamento suave (Chaikin) ter virado opcional nas curvas
+// GERADAS online (v5.24), pediu o mesmo pras curvas IMPORTADAS (DXF/KML — um levantamento real vem
+// com o zigue-zague de precisão do equipamento/desenhista, não da resolução de uma grade, mas o
+// resultado visual "cabeludo" é o mesmo problema). Extraído do meio de _finalizarImportacaoCurvas
+// (v4.49) pra função própria — permite REDESENHAR ao alternar o checkbox "Acabamento suave" sem
+// reimportar o arquivo (TIN/IDW e a triangulação de _construirCurvasLocais, que são caros pra KML
+// denso — ver comentário de _dedupPontosGrade — não precisam rodar de novo, só o desenho). Chaikin
+// (_suavizarTracoCurva, mesma função das curvas geradas — ver v5.23 pra por que Chaikin e não
+// Catmull-Rom/Douglas-Peucker) roda só em cima dos pontos JÁ DECIMADOS que vão pro desenho
+// (cl.contornosDecimados) — nunca em cl.pontos/indiceTin/indiceEspacial (usados pra elevação de
+// verdade, TIN/IDW) nem no que é exportado de volta pra DXF/KML (_exportarKML/_exportarDXF usam
+// cl.contornosDecimados direto, sem passar por aqui) — puramente visual, como nas curvas geradas.
+// Fechamento de laço detectado por DISTÂNCIA REAL (haversineM), não por igualdade exata de
+// lat/lng — curvas importadas vêm de conversão UTM→lat/lng (às vezes passando por reprojeção de
+// KML/DXF de origens diferentes), com mais ruído de ponto flutuante que uma chain gerada
+// internamente pelo marching squares; comparar por distância em metros é robusto a isso.
+function _redesenharCurvasLocaisImportadas() {
+  const cl = _curvasLocais;
+  if(!cl || !cl.contornosDecimados) return;
+  if(cl.layerPreview) map.removeLayer(cl.layerPreview);
+  const usarSpline = $('curvaSplineImportada') ? $('curvaSplineImportada').checked : true;
+  // Desenha com a densidade DECIMADA (cl.contornosDecimados), não a original — 3315 polylines de
+  // um KML denso do Google Earth com todos os pontos originais deixaria o mapa pesado à toa; a
+  // decimação já preserva o formato geral (ver _decimarContornos).
+  const classificadas = _classificarMestraMenor(cl.contornosDecimados);
+  const grp = L.featureGroup(); // (não layerGroup) — precisa de bringToFront(), que só FeatureGroup tem
+  classificadas.forEach(c => {
+    const cor = _corPorElevacao(c.z, cl.elevMin, cl.elevMax);
+    let pontos = c.pontos;
+    if(usarSpline && pontos.length > 2) {
+      const fechada = haversineM(pontos[0], pontos[pontos.length-1]) < 0.5;
+      pontos = _suavizarTracoCurva(pontos, fechada, 3);
+    }
+    L.polyline(pontos.map(p => [p.lat, p.lng]), {
+      // v4.53: interactive:false — por padrão toda polyline do Leaflet captura clique/hover, e
+      // como as curvas ficam no topo do SVG compartilhado (_garantirCurvasNoTopo, pra aparecer
+      // sobre a ortofoto), onde uma linha de plantio CRUZA uma curva o clique era capturado pela
+      // curva (que não tem ação nenhuma) em vez de chegar na linha de plantio embaixo — bug
+      // relatado: "não estou mais conseguindo selecionar 01 linha para pegar o perfil de
+      // elevação" (começou a acontecer depois do fix de z-order das curvas). Curva é só desenho,
+      // não precisa ser clicável.
+      color: cor, weight: c.mestra ? 2.6 : 1.4, opacity: c.mestra ? .95 : .85, interactive: false
+    }).addTo(grp);
+  });
+  grp.addTo(map);
+  cl.layerPreview = grp;
+  _garantirCurvasNoTopo(); // sempre acima da ortofoto, não importa a ordem de importação (ver importarOrtofotoTiff)
+}
+
 // v4.49: lógica compartilhada entre a importação DXF e a nova importação KML (pedido do usuário,
 // "facilita muito") — constrói o TIN, valida sanidade geográfica, desenha e atualiza o status. Só
 // muda o PARSER e a conversão de coordenadas antes de chegar aqui; dali pra frente é idêntico.
@@ -6751,29 +6823,9 @@ function _finalizarImportacaoCurvas(contornosLatLng, puladas, dicaErro) {
     return false;
   }
 
-  if(_curvasLocais && _curvasLocais.layerPreview) map.removeLayer(_curvasLocais.layerPreview);
-  // Desenha com a densidade DECIMADA (cl.contornosDecimados), não a original — 3315 polylines de
-  // um KML denso do Google Earth com todos os pontos originais deixaria o mapa pesado à toa; a
-  // decimação já preserva o formato geral (ver _decimarContornos).
-  const classificadas = _classificarMestraMenor(cl.contornosDecimados);
-  const grp = L.featureGroup(); // (não layerGroup) — precisa de bringToFront(), que só FeatureGroup tem
-  classificadas.forEach(c => {
-    const cor = _corPorElevacao(c.z, cl.elevMin, cl.elevMax);
-    L.polyline(c.pontos.map(p => [p.lat, p.lng]), {
-      // v4.53: interactive:false — por padrão toda polyline do Leaflet captura clique/hover, e
-      // como as curvas ficam no topo do SVG compartilhado (_garantirCurvasNoTopo, pra aparecer
-      // sobre a ortofoto), onde uma linha de plantio CRUZA uma curva o clique era capturado pela
-      // curva (que não tem ação nenhuma) em vez de chegar na linha de plantio embaixo — bug
-      // relatado: "não estou mais conseguindo selecionar 01 linha para pegar o perfil de
-      // elevação" (começou a acontecer depois do fix de z-order das curvas). Curva é só desenho,
-      // não precisa ser clicável.
-      color: cor, weight: c.mestra ? 2.6 : 1.4, opacity: c.mestra ? .95 : .85, interactive: false
-    }).addTo(grp);
-  });
-  grp.addTo(map);
-  cl.layerPreview = grp;
+  if(_curvasLocais && _curvasLocais.layerPreview) map.removeLayer(_curvasLocais.layerPreview); // remove o layer da importação ANTERIOR, se houver, antes de trocar o objeto
   _curvasLocais = cl;
-  _garantirCurvasNoTopo(); // sempre acima da ortofoto, não importa a ordem de importação (ver importarOrtofotoTiff)
+  _redesenharCurvasLocaisImportadas(); // desenha (com/sem spline, ver função) + _garantirCurvasNoTopo()
   _atualizarIndicadorFonteElevacao();
   _atualizarBotaoAlinharOrtofoto();
 
