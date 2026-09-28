@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.22 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.23 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -3742,6 +3742,27 @@ body.layout-lateral #status{grid-area:status;}
 // pelos pontos originais incluindo os do meio, não "balança" pra fora de uma reta perfeita, fecha
 // certo em laço, não quebra com ≤2 pontos) e gerarCurvas() ponta a ponta confirmando que mesmo com
 // "Suavização"="Nenhuma" a linha final sai bem mais densa/curva que a chain crua do marching squares.
+// v5.23: pedido do usuário (com print) — curvas de nível se CRUZANDO depois do v5.22, o que nunca
+// pode acontecer de verdade (cada nível é uma "fatia" de altura diferente; fatias diferentes nunca
+// se tocam). Suspeitou do spline ("acha que a transformação em spline está muito pesada"). Investiguei
+// isolando CADA etapa com harness Node.js (DEM sintético íngreme/ondulado, ~40 níveis próximos,
+// contando cruzamentos entre linhas de níveis ADJACENTES): marching squares cru = 0, +clipping na
+// borda (v5.18) = 0, +Douglas-Peucker (v5.21/v5.22) sem suavização nenhuma = 640(!), +Douglas-Peucker
+// com QUALQUER acabamento por cima (Catmull-Rom ou Chaikin) = ~640 também (o acabamento em si quase
+// não muda o total), SEM Douglas-Peucker + só Chaikin = 0 de novo. Ou seja: o suspeito certo era o
+// vizinho errado — o culpado é o DOUGLAS-PEUCKER (desde v5.21), não o spline. A tolerância dele era
+// baseada só no tamanho de célula da grade, sem noção nenhuma de quão perto duas curvas de níveis
+// DIFERENTES ficam entre si de verdade — em terreno íngreme/intervalo apertado elas podem estar mais
+// próximas que a própria tolerância, e simplificar cada uma independente deixa cada linha "andar" o
+// suficiente pra cruzar a vizinha (problema clássico de generalização cartográfica). Fix: Douglas-
+// Peucker REMOVIDO de vez de gerarCurvas(). Acabamento agora é só Chaikin (_suavizarTracoCurva,
+// substitui _splineCatmullRom) — corte de cantos por subdivisão iterativa, o tipo de spline
+// realmente por trás do PEDIT/"curva suave" do AutoCAD Civil3D pra polilinhas: aproxima (não
+// interpola pontos esparsos), cada ponto novo é combinação CONVEXA de 2 pontos vizinhos do traçado
+// JÁ TRAÇADO pelo marching squares — fica matematicamente preso à caixa dos pontos originais, sem
+// como estourar. Testado com harness Node.js: propriedades isoladas do Chaikin (nunca sai da caixa
+// delimitadora, pontas fixas em arco aberto, fecha certo em laço) + gerarCurvas() ponta a ponta no
+// MESMO DEM íngreme confirmando ZERO cruzamentos entre níveis adjacentes (era 640 antes do fix).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -8161,44 +8182,63 @@ function chainSegments(segs) {
 // GRADE de elevação (blur 3×3) antes do marching squares. Usuário comparou print a print com o
 // IrrigaModel e apontou o caminho certo: o problema não é a grade, é o TRAÇADO — o marching squares
 // sempre devolve segmentos retos ponto-a-ponto, então mesmo sem ruído nenhum no relevo a curva tem
-// "quinas" em cada célula da grade. IrrigaModel usa spline. Catmull-Rom CENTRÍPETO (alpha=0,5):
-// redesenha o traçado já clipado/simplificado como uma curva suave que passa EXATAMENTE pelos
-// pontos originais (não desloca a curva do relevo real, só arredonda o caminho ENTRE os pontos) —
-// puramente visual, não toca em nenhum valor de elevação. Parametrização por distância^0,5 (em vez
-// de uniforme, índice 0,1,2...) é o que evita cúspides/laços em cantos apertados ou trechos com
-// pontos muito próximos — problema clássico do Catmull-Rom uniforme em traçados reais (que não são
-// uma grade equiespaçada). Interpolação por Barry-Goldman (forma padrão/recursiva de calcular
-// Catmull-Rom centrípeto). Trata laço fechado (curva de nível inteira dentro do polígono, sem
-// cruzar a borda — primeiro ponto = último) separado de arco aberto (curva cortada pela borda do
-// talhão), senão a "costura" do fechamento fica torta.
-function _splineCatmullRom(pontos, fechada, pontosPorSegmento) {
+// "quinas" em cada célula da grade. v5.22 tentou resolver com spline Catmull-Rom centrípeto.
+// v5.23: pedido do usuário (com print) — curvas de nível se CRUZANDO depois do acabamento, o que
+// nunca pode acontecer com curva de nível de verdade; suspeitou do spline ("acha que a transformação
+// em spline está muito pesada"). Investigação com harness Node.js (DEM sintético íngreme e ondulado,
+// intervalo 2m, ~40 níveis, grade 60×60, contando cruzamentos entre linhas de níveis ADJACENTES com
+// turf.lineIntersect) testou CADA ETAPA isolada pra achar a causa real, não só a mais óbvia:
+//   • marching squares cru (sem clip/simplify/suavização): 0 cruzamentos
+//   • + clipping na borda do talhão (lógica da v5.18), sem mais nada: 0 cruzamentos
+//   • + Douglas-Peucker (turf.simplify, v5.21/v5.22), sem suavização nenhuma: 640 cruzamentos
+//   • + Douglas-Peucker + Chaikin OU + Catmull-Rom (o acabamento em si): ~640 nos dois — a suavização
+//     não piora nem melhora quase nada por cima do que o Douglas-Peucker já quebrou sozinho
+//   • SEM Douglas-Peucker, só Chaikin direto no traçado clipado cru: 0 cruzamentos de novo
+// Ou seja: o suspeito certo era o vizinho errado — não é o SPLINE que "pesa demais", é o
+// DOUGLAS-PEUCKER (já presente desde a v5.21, só passou a rodar sempre na v5.22) que causa o
+// cruzamento. A tolerância dele era baseada só no tamanho de célula da grade, sem nenhuma noção de
+// quão PERTO duas curvas de níveis DIFERENTES ficam uma da outra de verdade — em terreno íngreme com
+// intervalo de curva apertado, duas curvas vizinhas podem estar mais perto entre si do que a própria
+// tolerância; simplificar cada uma de forma independente deixa cada linha "andar" dentro da sua
+// tolerância o suficiente pra cruzar a vizinha (problema clássico de generalização cartográfica:
+// simplificação aplicada linha a linha, sem noção de topologia entre linhas próximas, pode gerar
+// cruzamento mesmo quando as linhas originais nunca se cruzavam). Fix: Douglas-Peucker REMOVIDO
+// (ver gerarCurvas — não existe mais o passo turf.simplify ali). O acabamento agora é só Chaikin
+// (corte de cantos por subdivisão iterativa) — o tipo de suavização "spline" realmente por trás do
+// PEDIT/"curva suave" do AutoCAD Civil3D pra polilinhas (aproxima por uma B-spline quadrática, não
+// interpola pontos de controle esparsos como o Catmull-Rom da v5.22). Cada passada troca cada aresta
+// por 2 pontos, a 1/4 e a 3/4 do caminho entre as duas pontas — cada ponto novo é uma combinação
+// convexa de 2 pontos VIZINHOS do traçado JÁ TRAÇADO PELO MARCHING SQUARES (não de pontos
+// simplificados/esparsos), então a curva final fica MATEMATICAMENTE PRESA perto do caminho original
+// — testado (ver acima) e confirmado 0 cruzamentos tanto isolado quanto no pipeline completo. Mantém
+// as 2 pontas fixas em arco aberto (cortado pela borda do talhão, ponto exato de _achaCruzamento)
+// pra não perder o encontro com a borda; em laço fechado, corta os cantos ao redor do anel inteiro
+// (sem pontas fixas).
+function _suavizarTracoCurva(pontos, fechada, iteracoes) {
   if(pontos.length < 3) return pontos;
-  const P = fechada ? pontos.slice(0, -1) : pontos; // tira o ponto duplicado (fim==início) do laço fechado
-  const nP = P.length;
-  if(nP < 3) return pontos;
-  const get = i => fechada ? P[((i % nP) + nP) % nP] : P[Math.max(0, Math.min(nP - 1, i))];
-  const dist = (a, b) => Math.sqrt((b.lng - a.lng) ** 2 + (b.lat - a.lat) ** 2);
-  const lerpPt = (a, b, ta, tb, t) => {
-    const f = tb === ta ? 0 : (t - ta) / (tb - ta);
-    return { lat: a.lat + (b.lat - a.lat) * f, lng: a.lng + (b.lng - a.lng) * f };
-  };
-  const out = [];
-  const nSegs = fechada ? nP : nP - 1;
-  for(let i = 0; i < nSegs; i++) {
-    const p0 = get(i-1), p1 = get(i), p2 = get(i+1), p3 = get(i+2);
-    const t0 = 0;
-    const t1 = t0 + Math.max(Math.sqrt(dist(p0,p1)), 1e-9);
-    const t2 = t1 + Math.max(Math.sqrt(dist(p1,p2)), 1e-9);
-    const t3 = t2 + Math.max(Math.sqrt(dist(p2,p3)), 1e-9);
-    for(let s = 0; s < pontosPorSegmento; s++) {
-      const t = t1 + (t2 - t1) * (s / pontosPorSegmento);
-      const A1 = lerpPt(p0, p1, t0, t1, t), A2 = lerpPt(p1, p2, t1, t2, t), A3 = lerpPt(p2, p3, t2, t3, t);
-      const B1 = lerpPt(A1, A2, t0, t2, t), B2 = lerpPt(A2, A3, t1, t3, t);
-      out.push(lerpPt(B1, B2, t1, t2, t));
+  let pts = fechada ? pontos.slice(0, -1) : pontos; // tira o ponto duplicado (fim==início) do laço
+  if(pts.length < 3) return pontos;
+  for(let it = 0; it < iteracoes; it++) {
+    const n = pts.length, out = [];
+    if(fechada) {
+      for(let i = 0; i < n; i++) {
+        const p0 = pts[i], p1 = pts[(i+1) % n];
+        out.push({ lat: p0.lat*0.75 + p1.lat*0.25, lng: p0.lng*0.75 + p1.lng*0.25 });
+        out.push({ lat: p0.lat*0.25 + p1.lat*0.75, lng: p0.lng*0.25 + p1.lng*0.75 });
+      }
+    } else {
+      out.push(pts[0]); // ponta original fixa (ex: ponto exato de cruzamento com a borda do talhão)
+      for(let i = 0; i < n - 1; i++) {
+        const p0 = pts[i], p1 = pts[i+1];
+        out.push({ lat: p0.lat*0.75 + p1.lat*0.25, lng: p0.lng*0.75 + p1.lng*0.25 });
+        out.push({ lat: p0.lat*0.25 + p1.lat*0.75, lng: p0.lng*0.25 + p1.lng*0.75 });
+      }
+      out.push(pts[n-1]); // idem na outra ponta
     }
+    pts = out;
   }
-  out.push(fechada ? out[0] : P[nP-1]);
-  return out;
+  if(fechada) pts.push(pts[0]); // fecha o laço de novo (convenção do resto do código: 1º = último)
+  return pts;
 }
 
 function marchingSquaresCurva(elev, lts, lns, level) {
@@ -8306,15 +8346,14 @@ async function gerarCurvas() {
   // que não mexe em elevação nenhuma, só reduz vértice redundante da linha já traçada.
   const passesSuavizacao = parseInt($('curvaSuavizacao').value) || 0;
   const elevGrid = passesSuavizacao > 0 ? _suavizarGrade(elevGridBruta, n, passesSuavizacao) : elevGridBruta;
-  // Tolerância da simplificação Douglas-Peucker (turf.simplify) proporcional ao tamanho da célula da
-  // grade (bbox/n) — nunca "come" um detalhe maior que a própria resolução amostrada, só limpa o
-  // zigue-zague sub-célula que o marching squares produz ao reamostrar o grid em linhas retas.
-  // v5.22: aplicada SEMPRE agora (antes só entrava com "Suavização">0) — ela e o spline logo abaixo
-  // (ver _splineCatmullRom) são a base do acabamento natural da curva e não têm nada a ver com
-  // suavizar a GRADE de elevação (isso continua controlado só pelo seletor "Suavização", que só
-  // mexe nos valores de relevo, não no desenho da linha).
-  const cellSizeGrausAprox = Math.max(maxLng - minLng, maxLat - minLat) / Math.max(1, n - 1);
-  const toleranciaSimplify = cellSizeGrausAprox * 0.4;
+  // v5.23: v5.21/v5.22 tinham um passo de simplificação Douglas-Peucker (turf.simplify) aqui, com
+  // tolerância proporcional ao tamanho de célula da grade — REMOVIDO. Era o causador real do
+  // cruzamento entre curvas de nível vizinhas (ver investigação completa em _suavizarTracoCurva): a
+  // tolerância era baseada só na resolução da grade, sem noção nenhuma de quão PERTO duas curvas de
+  // níveis diferentes ficam uma da outra de verdade — em terreno íngreme com intervalo apertado elas
+  // podem estar mais perto entre si do que a própria tolerância, e simplificar cada uma
+  // independentemente deixa cada linha "andar" o suficiente pra cruzar a vizinha. O acabamento visual
+  // agora é só o Chaikin logo abaixo (_suavizarTracoCurva), que não tem esse risco.
 
   const validElevs = elevFlat.filter(v=>v!=null);
   const minElev = Math.min(...validElevs), maxElev = Math.max(...validElevs);
@@ -8360,25 +8399,14 @@ async function gerarCurvas() {
           const fechada = seg.length > 2 &&
             Math.abs(seg[0].lat - seg[seg.length-1].lat) < 1e-9 &&
             Math.abs(seg[0].lng - seg[seg.length-1].lng) < 1e-9;
-          // Simplificação Douglas-Peucker (turf.simplify) no TRAÇADO já clipado — reduz o zigue-zague
-          // sub-célula do marching squares sem tocar em nenhum valor de elevação (só remove vértice
-          // redundante que não muda visualmente o caminho além da tolerância). Roda sempre agora
-          // (v5.22) — é o passo que prepara o traçado pro spline logo abaixo.
+          // v5.23: NADA de Douglas-Peucker (turf.simplify) aqui — ver comentário completo em
+          // _suavizarTracoCurva sobre por que ele foi REMOVIDO (era o causador real do cruzamento
+          // entre curvas, não o spline). Chaikin direto no traçado cru já clipado — troca os
+          // segmentos retos do marching squares por uma curva suave tipo B-spline, sem risco de
+          // cruzar uma curva vizinha, e sem precisar reduzir vértice antes. Puramente visual, não
+          // mexe em elevação nenhuma.
           let segFinal = seg;
-          if(seg.length > 2) {
-            try {
-              const linha = turf.lineString(seg.map(p => [p.lng, p.lat]));
-              const simples = turf.simplify(linha, { tolerance: toleranciaSimplify, highQuality: true });
-              const coords = simples.geometry.coordinates;
-              if(coords.length >= 2) segFinal = coords.map(([lng,lat]) => ({lat,lng}));
-            } catch(e) {} // se der erro por algum motivo, segue com o traçado original sem simplificar
-          }
-          // v5.22: spline Catmull-Rom centrípeto (ver _splineCatmullRom) — o acabamento natural/curvo
-          // pedido pelo usuário comparando com o IrrigaModel. Puramente visual (redesenha o CAMINHO
-          // entre os pontos já traçados/clipados, não move nenhum ponto original nem mexe em
-          // elevação) — troca os segmentos retos do marching squares por uma curva suave que ainda
-          // passa exatamente pelos mesmos pontos.
-          if(segFinal.length > 2) segFinal = _splineCatmullRom(segFinal, fechada, 8);
+          if(segFinal.length > 2) segFinal = _suavizarTracoCurva(segFinal, fechada, 3);
           const pl = L.polyline(segFinal.map(p=>[p.lat,p.lng]), {
             color:cor, weight:isMaster?2.5:1.2, opacity:isMaster?0.95:0.75,
             interactive:true
