@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.23 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.24 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -772,12 +772,18 @@ body.layout-lateral #status{grid-area:status;}
           </div>
           <div class="rcol">
             <label>Suavização</label>
-            <select id="curvaSuavizacao" class="rfield wide" title="Suaviza a grade de ELEVAÇÃO em si (média de vizinhança 3×3, poucas passadas) antes de traçar — útil quando o DEM/drone tem micro-ondulação real do terreno (sulco de plantio, cobertura vegetal) que você quer filtrar dos NÚMEROS, não só do desenho. O acabamento visual liso da linha (spline + simplificação do traçado) roda sempre, mesmo em 'Nenhuma' — esse seletor só decide se o RELEVO usado é o bruto ou um filtrado. Passadas demais achatam a amplitude real perto da borda da área — por isso o teto aqui é baixo.">
+            <select id="curvaSuavizacao" class="rfield wide" title="Suaviza a grade de ELEVAÇÃO em si (média de vizinhança 3×3, poucas passadas) antes de traçar — útil quando o DEM/drone tem micro-ondulação real do terreno (sulco de plantio, cobertura vegetal) que você quer filtrar dos NÚMEROS, não só do desenho. Independente do acabamento visual da linha (spline, seletor ao lado) — esse aqui só decide se o RELEVO usado é o bruto ou um filtrado. Passadas demais achatam a amplitude real perto da borda da área — por isso o teto aqui é baixo.">
               <option value="0">Nenhuma (relevo bruto)</option>
               <option value="1" selected>Leve (padrão)</option>
               <option value="2">Média</option>
               <option value="4">Forte</option>
             </select>
+          </div>
+          <div class="rcol">
+            <label>&nbsp;</label>
+            <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--panel-text);cursor:pointer;height:26px;">
+              <input type="checkbox" id="curvaSpline" checked title="Redesenha o traçado (já clipado na borda do talhão) como uma curva suave (Chaikin — corte de cantos por subdivisão, o mesmo tipo por trás do 'curva suave' do AutoCAD Civil3D), em vez dos segmentos retos crus que o marching squares produz célula a célula. Puramente visual — não muda elevação nem o desenho de dentro/fora do polígono, só o caminho ENTRE os pontos já traçados. Desmarque pra ver o traçado bruto (mais fiel célula a célula, com as quinas da grade aparecendo)."> Acabamento suave (spline)
+            </label>
           </div>
         </div>
         <div class="rgroup-body" id="curvaDemAviso" style="display:none;padding-top:2px;">
@@ -3763,6 +3769,12 @@ body.layout-lateral #status{grid-area:status;}
 // como estourar. Testado com harness Node.js: propriedades isoladas do Chaikin (nunca sai da caixa
 // delimitadora, pontas fixas em arco aberto, fecha certo em laço) + gerarCurvas() ponta a ponta no
 // MESMO DEM íngreme confirmando ZERO cruzamentos entre níveis adjacentes (era 640 antes do fix).
+// v5.24: pedido do usuário — o acabamento suave (Chaikin) virou OPCIONAL em vez de regra fixa. Novo
+// checkbox "Acabamento suave (spline)" no painel de Curvas de Nível (#curvaSpline), ligado por
+// padrão (mantém o comportamento atual). Desligado, gerarCurvas() usa o traçado BRUTO do marching
+// squares (já clipado exato na borda do talhão — v5.18 — mas sem nenhum redesenho de linha por
+// cima). Testado com harness Node.js: ligado densifica/curva a linha como antes; desligado devolve
+// exatamente a mesma contagem e as mesmas coordenadas da chain original (sem Chaikin nenhum).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -8342,10 +8354,13 @@ async function gerarCurvas() {
   // ("Suavização") pra controlar a força sem precisar mexer em código. Teto baixo de propósito (1-4
   // passadas, não 8+): testado com harness Node.js que muitas passadas do blur 3×3 iterado achatam
   // um pouco a amplitude real perto da borda da área (efeito conhecido de blur iterado repetido) —
-  // a maior parte da limpeza visual vem da simplificação do TRAÇADO final (abaixo, turf.simplify),
-  // que não mexe em elevação nenhuma, só reduz vértice redundante da linha já traçada.
+  // a maior parte da limpeza visual vem do acabamento do TRAÇADO final (abaixo, _suavizarTracoCurva),
+  // que não mexe em elevação nenhuma, só redesenha o caminho da linha já traçada.
   const passesSuavizacao = parseInt($('curvaSuavizacao').value) || 0;
   const elevGrid = passesSuavizacao > 0 ? _suavizarGrade(elevGridBruta, n, passesSuavizacao) : elevGridBruta;
+  // v5.24: pedido do usuário — o acabamento suave (Chaikin, ver _suavizarTracoCurva) virou OPCIONAL
+  // em vez de regra fixa. Checkbox "Acabamento suave (spline)" no painel, ligado por padrão.
+  const usarSpline = $('curvaSpline').checked;
   // v5.23: v5.21/v5.22 tinham um passo de simplificação Douglas-Peucker (turf.simplify) aqui, com
   // tolerância proporcional ao tamanho de célula da grade — REMOVIDO. Era o causador real do
   // cruzamento entre curvas de nível vizinhas (ver investigação completa em _suavizarTracoCurva): a
@@ -8404,9 +8419,10 @@ async function gerarCurvas() {
           // entre curvas, não o spline). Chaikin direto no traçado cru já clipado — troca os
           // segmentos retos do marching squares por uma curva suave tipo B-spline, sem risco de
           // cruzar uma curva vizinha, e sem precisar reduzir vértice antes. Puramente visual, não
-          // mexe em elevação nenhuma.
+          // mexe em elevação nenhuma. v5.24: agora OPCIONAL (checkbox "Acabamento suave") — desligado,
+          // usa o traçado bruto do marching squares (já clipado na borda), sem nenhum redesenho.
           let segFinal = seg;
-          if(segFinal.length > 2) segFinal = _suavizarTracoCurva(segFinal, fechada, 3);
+          if(usarSpline && segFinal.length > 2) segFinal = _suavizarTracoCurva(segFinal, fechada, 3);
           const pl = L.polyline(segFinal.map(p=>[p.lat,p.lng]), {
             color:cor, weight:isMaster?2.5:1.2, opacity:isMaster?0.95:0.75,
             interactive:true
