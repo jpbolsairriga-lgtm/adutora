@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.29 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.30 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -781,6 +781,25 @@ body.layout-lateral #status{grid-area:status;}
             </select>
           </div>
           <div class="rcol">
+            <label>Suavização do traçado — curvas geradas</label>
+            <select id="curvaSuavizacaoTracado" class="rfield wide" title="Suaviza a POSIÇÃO dos pontos JÁ TRAÇADOS (marching squares) — média ponderada (várias passadas, força crescente) com os vizinhos dentro de um RAIO REAL em metros ao longo da própria linha, não um número fixo de vértices. Funciona igual em curvas de fonte ONLINE, DEM LOCAL ou curvas de nível locais como elevação. Diferente de 'Suavização do relevo' (que filtra os NÚMEROS de elevação antes de traçar) — este aqui mexe só no DESENHO da linha já traçada. Escolha um raio maior que a imperfeição que quer sumir. Puramente visual — não muda elevação nenhuma.">
+              <option value="0" selected>Nenhuma</option>
+              <option value="3">Leve (raio 3 m)</option>
+              <option value="8">Média (raio 8 m)</option>
+              <option value="15">Forte (raio 15 m)</option>
+              <option value="30">Muito forte (raio 30 m)</option>
+            </select>
+          </div>
+          <div class="rcol">
+            <label>Malha de amostragem — curvas geradas</label>
+            <select id="curvaMalha" class="rfield wide" title="Reamostra a linha JÁ TRAÇADA numa malha de distância REGULAR (tipo 'Densify/Weed' do Civil3D ou 'Densificar por intervalo' do QGIS) — troca os pontos da grade original por uma malha uniforme nesse intervalo em metros, interpolando ao longo do caminho real. Funciona igual em curvas de fonte ONLINE, DEM LOCAL ou curvas de nível locais como elevação. Roda DEPOIS da 'Suavização do traçado' (ao lado) — assim reduz a malha de um traçado já limpo. Puramente visual — não muda elevação nenhuma.">
+              <option value="0" selected>Nenhuma (malha original)</option>
+              <option value="5">5 m</option>
+              <option value="10">10 m</option>
+              <option value="20">20 m</option>
+            </select>
+          </div>
+          <div class="rcol">
             <label>&nbsp;</label>
             <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--panel-text);cursor:pointer;height:26px;">
               <input type="checkbox" id="curvaSpline" checked title="Redesenha o traçado (já clipado na borda do talhão) como uma curva suave (Chaikin — corte de cantos por subdivisão, o mesmo tipo por trás do 'curva suave' do AutoCAD Civil3D), em vez dos segmentos retos crus que o marching squares produz célula a célula. Puramente visual — não muda elevação nem o desenho de dentro/fora do polígono, só o caminho ENTRE os pontos já traçados. Desmarque pra ver o traçado bruto (mais fiel célula a célula, com as quinas da grade aparecendo)."> Acabamento suave (spline) — curvas geradas
@@ -813,7 +832,7 @@ body.layout-lateral #status{grid-area:status;}
       <div class="rgroup">
         <div class="rgroup-body">
           <div class="rcol">
-            <label>Suavização do traçado</label>
+            <label>Suavização do traçado — curvas importadas</label>
             <select id="curvaSuavizacaoImportada" class="rfield wide" onchange="_redesenharCurvasLocaisImportadas()" title="Suaviza a POSIÇÃO dos vértices das curvas IMPORTADAS (DXF/KML) — média ponderada (repetida em várias passadas, força crescente) com os vizinhos dentro de um RAIO REAL (em metros) ao longo da própria linha, não um número fixo de vértices — útil pra apagar entalhes/degraus de digitalização (ortho/grid-snap do CAD de origem ligado sem querer) ou ruído de GPS, de qualquer tamanho de vértice. Escolha um raio maior que o defeito que quer sumir. Sem depender só do acabamento em curva (spline, seletor ao lado). Puramente visual: só redesenha, nunca muda cl.pontos/TIN/IDW (a elevação real) nem o que é exportado de volta pro DXF/KML. Redesenha na hora, sem precisar reimportar.">
               <option value="0" selected>Nenhuma (traçado bruto)</option>
               <option value="3">Leve (raio 3 m)</option>
@@ -823,7 +842,7 @@ body.layout-lateral #status{grid-area:status;}
             </select>
           </div>
           <div class="rcol">
-            <label>Malha de amostragem</label>
+            <label>Malha de amostragem — curvas importadas</label>
             <select id="curvaMalhaImportada" class="rfield wide" onchange="_redesenharCurvasLocaisImportadas()" title="Reamostra a linha numa malha de distância REGULAR (tipo 'Densify'/'Weed' do Civil3D ou 'Densificar por intervalo' do QGIS) — troca os vértices originais (espaçamento irregular, de onde vêm as quinas) por uma grade uniforme nesse intervalo em metros, interpolando ao longo do caminho real. Roda DEPOIS da 'Suavização do traçado' (acima) — assim reduz a malha de um traçado já limpo, sem risco de a nova malha cair bem em cima de um defeito ainda não tratado por coincidência. Puramente visual: não muda cl.pontos/TIN/IDW nem a exportação.">
               <option value="0" selected>Nenhuma (malha original)</option>
               <option value="5">5 m</option>
@@ -3931,6 +3950,39 @@ body.layout-lateral #status{grid-area:status;}
 // irregular pra malha uniforme; suavização iterada reduz um defeito bem mais que 1 passada só no
 // mesmo raio; os 3 controles juntos (raio+malha+spline) rodam sem quebrar e entregam o entalhe
 // sintético reduzido de 6m pra ~1,2m de pico.
+// v5.30: pedido do usuário — "as novas ferramentas não parecem funcionar em DEM e suas curvas
+// geradas, tem que funcionar em todas as curvas". "Suavização do traçado" (raio) e "Malha de
+// amostragem" existiam só nas curvas IMPORTADAS (v5.27/v5.29) — gerarCurvas() é a MESMA função pra
+// curvas de fonte ONLINE, DEM LOCAL e curvas de nível LOCAIS como elevação (só muda de onde vem o
+// número; o traçado/acabamento roda depois, idêntico), então os mesmos 2 controles (rótulos com
+// sufixo "— curvas geradas" pra não colidir com os "— curvas importadas") passaram a existir também
+// no painel de curvas geradas e valem pra qualquer fonte de elevação.
+// ACHADO IMPORTANTE testando isso no mesmo terreno íngreme/ondulado do v5.23: raio ou malha GRANDES
+// (isolados OU juntos) podem reintroduzir o cruzamento entre curvas de nível vizinhas — o mesmo bug
+// corrigido na v5.23, só que por um caminho DIFERENTE do Douglas-Peucker. Cada um sozinho é "preso
+// ao corredor local" (média ponderada/interpolação = combinação convexa, nunca estoura sozinho —
+// essa parte continua verdadeira e testada), mas em terreno íngreme com curvas bem próximas isso
+// não impede DUAS linhas DIFERENTES de generalizarem parecido o suficiente pra trocarem de posição
+// relativa uma com a outra. Testei sistematicamente (raio isolado, malha isolada, e várias
+// combinações) e NÃO existe um valor "seguro" fixo — o limite depende de quão perto as curvas de
+// verdade ficam, que muda de talhão pra talhão; cheguei a achar combinações NÃO-MONOTÔNICAS (um
+// raio MAIOR ficando seguro onde um MENOR não ficava, com a mesma malha), então nenhum teto de UI
+// sozinho garante segurança. Única garantia real: gerar os candidatos de linha SEM desenhar
+// (_construirCandidatosCurvas, extraída do meio de gerarCurvas), CONFERIR se cruzou alguma curva de
+// nível vizinha (_temCruzamentoEntreCandidatosCurvas — compara só níveis adjacentes, por
+// desempenho) e, se cruzou, refazer os candidatos SEM raio/malha (mantém o spline, comprovadamente
+// seguro — ver v5.23/test_curvas_chaikin.js) antes de desenhar de verdade — nunca entrega ao
+// usuário um resultado com curvas se cruzando, mesmo que isso signifique não aplicar a suavização
+// pedida naquela área específica (com aviso claro do motivo em #curvaInfo e no status). MESMO
+// mecanismo replicado nas curvas IMPORTADAS (_construirCandidatosCurvasImportadas/
+// _temCruzamentoEntreCandidatosImportadas dentro de _redesenharCurvasLocaisImportadas — mesmos
+// algoritmos, mesmo risco). Testado com harness Node.js: a MESMA varredura de raio/malha que antes
+// causava até 938 cruzamentos (malha=20m sozinha) agora dá ZERO em toda combinação testada,
+// inclusive nos tetos da UI (raio 30m + malha 20m + spline) — o detector isolado confirma que só
+// compara níveis/cotas VIZINHOS (não todos-contra-todos) e reconhece corretamente cruzamento x
+// não-cruzamento numa geometria construída pra cada caso; um teste de integração com o detector
+// stubado confirma que _redesenharCurvasLocaisImportadas() realmente chama o detector e refaz sem
+// raio/malha quando ele acusa cruzamento, avisando o usuário.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -7033,6 +7085,50 @@ function _reamostrarPorIntervalo(pontos, fechada, intervaloM) {
   }
   return out;
 }
+// v5.30: extraída de dentro de _redesenharCurvasLocaisImportadas() pelo mesmo motivo de
+// _construirCandidatosCurvas — permite gerar os candidatos SEM desenhar, conferir cruzamento e
+// (se precisar) regenerar sem raio/malha antes de decidir o que mostrar de verdade.
+function _construirCandidatosCurvasImportadas(classificadas, raioM, passesRaio, malhaM, usarSpline, intensidadeSpline) {
+  return classificadas.map(c => {
+    let pontos = c.pontos;
+    const fechada = pontos.length > 2 && haversineM(pontos[0], pontos[pontos.length-1]) < 0.5;
+    // Ordem importa — suaviza (atenua defeitos) ANTES de reamostrar (reduz densidade de vértices
+    // num traçado já limpo) ANTES do spline (arredonda o resultado final). Ver comentário completo
+    // em _reamostrarPorIntervalo sobre por que essa ordem específica.
+    if(raioM > 0 && pontos.length > 2) pontos = _suavizarPontosPorRaio(pontos, fechada, raioM, passesRaio);
+    if(malhaM > 0 && pontos.length > 2) pontos = _reamostrarPorIntervalo(pontos, fechada, malhaM);
+    if(usarSpline && pontos.length > 2) pontos = _suavizarTracoCurva(pontos, fechada, intensidadeSpline);
+    return { pontos, z: c.z, mestra: c.mestra };
+  });
+}
+// Confere se algum par de curvas de cotas VIZINHAS (as duas cotas mais próximas entre si, uma
+// acima da outra, em toda a lista) se cruza de verdade — mesma lógica de
+// _temCruzamentoEntreCandidatosCurvas, adaptada pra cotas de levantamento real (não igualmente
+// espaçadas como as curvas geradas, então compara direto o par consecutivo na ordem ordenada por
+// altura, sem filtro de "1 intervalo" — em dados importados, cotas consecutivas JÁ SÃO as vizinhas
+// mais próximas por definição).
+function _temCruzamentoEntreCandidatosImportadas(candidatos) {
+  const porZ = new Map();
+  candidatos.forEach(c => {
+    const k = Math.round(c.z * 1000);
+    if(!porZ.has(k)) porZ.set(k, []);
+    porZ.get(k).push(c);
+  });
+  const zs = [...porZ.keys()].sort((a,b) => a-b);
+  for(let i = 0; i < zs.length - 1; i++) {
+    const grupoA = porZ.get(zs[i]), grupoB = porZ.get(zs[i+1]);
+    for(const a of grupoA) {
+      if(a.pontos.length < 2) continue;
+      const la = turf.lineString(a.pontos.map(p=>[p.lng,p.lat]));
+      for(const b of grupoB) {
+        if(b.pontos.length < 2) continue;
+        const lb = turf.lineString(b.pontos.map(p=>[p.lng,p.lat]));
+        try { if(turf.lineIntersect(la, lb).features.length) return true; } catch(e) {}
+      }
+    }
+  }
+  return false;
+}
 function _redesenharCurvasLocaisImportadas() {
   const cl = _curvasLocais;
   if(!cl || !cl.contornosDecimados) return;
@@ -7051,18 +7147,20 @@ function _redesenharCurvasLocaisImportadas() {
   // um KML denso do Google Earth com todos os pontos originais deixaria o mapa pesado à toa; a
   // decimação já preserva o formato geral (ver _decimarContornos).
   const classificadas = _classificarMestraMenor(cl.contornosDecimados);
+  // v5.30: SEGURANÇA — mesmo achado das curvas geradas (ver comentário completo em gerarCurvas):
+  // raio ou malha grandes podem reintroduzir o cruzamento entre curvas de cota vizinhas, mesmo
+  // sendo cada um "preso ao corredor local" — não existe um valor fixo garantidamente seguro.
+  // Gera, confere, e se cruzou, refaz sem raio/malha (mantém spline) em vez de arriscar.
+  let candidatos = _construirCandidatosCurvasImportadas(classificadas, raioSuavizacaoM, passesSuavizacao, malhaM, usarSpline, intensidadeSpline);
+  let suavizacaoDesativadaPorSeguranca = false;
+  if((raioSuavizacaoM > 0 || malhaM > 0) && _temCruzamentoEntreCandidatosImportadas(candidatos)) {
+    candidatos = _construirCandidatosCurvasImportadas(classificadas, 0, 0, 0, usarSpline, intensidadeSpline);
+    suavizacaoDesativadaPorSeguranca = true;
+  }
   const grp = L.featureGroup(); // (não layerGroup) — precisa de bringToFront(), que só FeatureGroup tem
-  classificadas.forEach(c => {
+  candidatos.forEach(c => {
     const cor = _corPorElevacao(c.z, cl.elevMin, cl.elevMax);
-    let pontos = c.pontos;
-    const fechada = pontos.length > 2 && haversineM(pontos[0], pontos[pontos.length-1]) < 0.5;
-    // v5.29: ordem importa — suaviza (atenua defeitos) ANTES de reamostrar (reduz densidade de
-    // vértices num traçado já limpo) ANTES do spline (arredonda o resultado final). Ver comentário
-    // completo em _reamostrarPorIntervalo sobre por que essa ordem específica.
-    if(raioSuavizacaoM > 0 && pontos.length > 2) pontos = _suavizarPontosPorRaio(pontos, fechada, raioSuavizacaoM, passesSuavizacao);
-    if(malhaM > 0 && pontos.length > 2) pontos = _reamostrarPorIntervalo(pontos, fechada, malhaM);
-    if(usarSpline && pontos.length > 2) pontos = _suavizarTracoCurva(pontos, fechada, intensidadeSpline);
-    L.polyline(pontos.map(p => [p.lat, p.lng]), {
+    L.polyline(c.pontos.map(p => [p.lat, p.lng]), {
       // v4.53: interactive:false — por padrão toda polyline do Leaflet captura clique/hover, e
       // como as curvas ficam no topo do SVG compartilhado (_garantirCurvasNoTopo, pra aparecer
       // sobre a ortofoto), onde uma linha de plantio CRUZA uma curva o clique era capturado pela
@@ -7076,6 +7174,9 @@ function _redesenharCurvasLocaisImportadas() {
   grp.addTo(map);
   cl.layerPreview = grp;
   _garantirCurvasNoTopo(); // sempre acima da ortofoto, não importa a ordem de importação (ver importarOrtofotoTiff)
+  if(suavizacaoDesativadaPorSeguranca) {
+    setStatus('⚠ "Suavização do traçado"/"Malha de amostragem" desativadas automaticamente nessa área — causariam curvas de nível se cruzando. Tente valores menores, ou use só o "Acabamento suave (spline)".', 'warn');
+  }
 }
 
 // v4.49: lógica compartilhada entre a importação DXF e a nova importação KML (pedido do usuário,
@@ -8605,6 +8706,94 @@ function marchingSquaresCurva(elev, lts, lns, level) {
   return chainSegments(segs);
 }
 
+// v5.30: extraída de dentro de gerarCurvas() — constrói os candidatos de linha (marching squares +
+// clipping exato na borda + raio/malha/spline aplicados) SEM tocar no mapa/DOM. Permite chamar DUAS
+// VEZES (com os parâmetros pedidos pelo usuário e, se detectar cruzamento, de novo sem raio/malha)
+// antes de decidir o que realmente desenhar — ver _temCruzamentoEntreCandidatosCurvas e o comentário
+// completo em gerarCurvas sobre por que isso é necessário (raio/malha grandes podem reintroduzir o
+// cruzamento entre curvas vizinhas corrigido na v5.23, por um caminho diferente do Douglas-Peucker).
+function _construirCandidatosCurvas(elevGrid, lats, lngs, minElev, maxElev, interval, polyRef, polyBoundRef, raioM, passesRaio, malhaM, usarSpline, intensidadeSpline) {
+  const candidatos = [];
+  const first = Math.ceil(minElev/interval)*interval;
+  const MASTER_EVERY = 5;
+  for(let lv=first; lv<=maxElev; lv+=interval) {
+    const chains = marchingSquaresCurva(elevGrid, lats, lngs, lv);
+    if(!chains.length) continue;
+    const isMaster = Math.round(lv/interval) % MASTER_EVERY === 0;
+    chains.forEach(chain => {
+      if(chain.length < 2) return;
+      // Filtra pontos fora do polígono (clipping por segmento, com ponto de cruzamento exato — ver
+      // v5.18). Quando um trecho passa de dentro pra fora (ou vice-versa), acha onde ele cruza a
+      // borda de verdade e usa ESSE ponto em vez de parar no último amostrado.
+      const inside = chain.map(p => turf.booleanPointInPolygon(turf.point([p.lng,p.lat]), polyRef));
+      const achaCruzamento = (a, b) => {
+        try {
+          const ix = turf.lineIntersect(turf.lineString([[a.lng,a.lat],[b.lng,b.lat]]), polyBoundRef);
+          if(ix.features.length) { const [lng,lat] = ix.features[0].geometry.coordinates; return {lat,lng}; }
+        } catch(e) {}
+        return null;
+      };
+      let seg = [];
+      const flush = () => {
+        if(seg.length >= 2) {
+          // Laço fechado (curva inteira dentro do polígono, nunca saiu — primeiro ponto = último)
+          // precisa de tratamento diferente do arco aberto (cortado pela borda) no raio/malha/spline
+          // abaixo, senão o "fechamento" do laço fica torto.
+          const fechada = seg.length > 2 &&
+            Math.abs(seg[0].lat - seg[seg.length-1].lat) < 1e-9 &&
+            Math.abs(seg[0].lng - seg[seg.length-1].lng) < 1e-9;
+          // Ordem do pipeline (igual às curvas importadas, v5.29): raio (ataca defeito local) →
+          // malha (reduz densidade de vértices) → spline (arredonda o resultado final).
+          let segFinal = seg;
+          if(raioM > 0 && segFinal.length > 2) segFinal = _suavizarPontosPorRaio(segFinal, fechada, raioM, passesRaio);
+          if(malhaM > 0 && segFinal.length > 2) segFinal = _reamostrarPorIntervalo(segFinal, fechada, malhaM);
+          if(usarSpline && segFinal.length > 2) segFinal = _suavizarTracoCurva(segFinal, fechada, intensidadeSpline);
+          candidatos.push({ pontos: segFinal, level: lv, isMaster });
+        }
+        seg = [];
+      };
+      chain.forEach((p,i) => {
+        if(inside[i]) {
+          if(i > 0 && !inside[i-1]) { const cruz = achaCruzamento(chain[i-1], p); if(cruz) seg.push(cruz); }
+          seg.push(p);
+        } else {
+          if(i > 0 && inside[i-1]) { const cruz = achaCruzamento(chain[i-1], p); if(cruz) seg.push(cruz); }
+          flush();
+        }
+      });
+      flush();
+    });
+  }
+  return candidatos;
+}
+// Confere se algum par de curvas de níveis ADJACENTES (diferença de 1 intervalo, os únicos que
+// poderiam legitimamente ficar bem próximos um do outro) se cruza de verdade — ver comentário
+// completo em gerarCurvas. Compara só vizinhos diretos (não todos contra todos) por desempenho —
+// curvas de níveis distantes já estão geometricamente longe umas das outras de qualquer jeito.
+function _temCruzamentoEntreCandidatosCurvas(candidatos, interval) {
+  const porNivel = new Map();
+  candidatos.forEach(c => {
+    const k = Math.round(c.level * 1000); // chave inteira — evita ruído de ponto flutuante no nível
+    if(!porNivel.has(k)) porNivel.set(k, []);
+    porNivel.get(k).push(c);
+  });
+  const niveis = [...porNivel.keys()].sort((a,b) => a-b);
+  for(let i = 0; i < niveis.length - 1; i++) {
+    if((niveis[i+1] - niveis[i]) / 1000 > interval + 0.01) continue; // só vizinhos de verdade
+    const grupoA = porNivel.get(niveis[i]), grupoB = porNivel.get(niveis[i+1]);
+    for(const a of grupoA) {
+      if(a.pontos.length < 2) continue;
+      const la = turf.lineString(a.pontos.map(p=>[p.lng,p.lat]));
+      for(const b of grupoB) {
+        if(b.pontos.length < 2) continue;
+        const lb = turf.lineString(b.pontos.map(p=>[p.lng,p.lat]));
+        try { if(turf.lineIntersect(la, lb).features.length) return true; } catch(e) {}
+      }
+    }
+  }
+  return false;
+}
+
 async function gerarCurvas() {
   const polyRef = turfCurvaPoly || turfPoly;
   if(!polyRef) { setStatus('Desenhe a área de curvas (ou o talhão) primeiro.', 'err'); return; }
@@ -8688,6 +8877,18 @@ async function gerarCurvas() {
   // v5.28: pedido do usuário — intensidade do spline (número de passadas de Chaikin) virou
   // configurável em vez de fixa em 3. Seletor "Intensidade do spline" (Leve=1/Média=3/Forte=6).
   const intensidadeSpline = parseInt($('curvaSplineIntensidade').value) || 3;
+  // v5.30: pedido do usuário — "as novas ferramentas não parecem funcionar em DEM e suas curvas
+  // geradas, tem que funcionar em todas as curvas". "Suavização do traçado" (raio real em metros,
+  // iterativa) e "Malha de amostragem" (reamostragem regular) existiam só pras curvas IMPORTADAS
+  // (v5.27/v5.29) — gerarCurvas() é a MESMA função pra curvas de fonte online, DEM local E curvas
+  // de nível locais como elevação (só muda de onde vem o número de elevação, o traçado/acabamento é
+  // idêntico depois), então os mesmos 2 controles (com os mesmos nomes/comportamento, sufixo "—
+  // curvas geradas" pra não colidir com os das curvas importadas na mesma aba) agora existem aqui
+  // também e funcionam pra QUALQUER fonte de elevação usada por essa função.
+  const raioSuavizacaoTracado = parseFloat($('curvaSuavizacaoTracado').value) || 0;
+  const _PASSES_POR_RAIO_TRACADO = { 3: 1, 8: 2, 15: 3, 30: 4 };
+  const passesSuavizacaoTracado = _PASSES_POR_RAIO_TRACADO[raioSuavizacaoTracado] || (raioSuavizacaoTracado > 0 ? 2 : 0);
+  const malhaM = parseFloat($('curvaMalha').value) || 0;
   // v5.23: v5.21/v5.22 tinham um passo de simplificação Douglas-Peucker (turf.simplify) aqui, com
   // tolerância proporcional ao tamanho de célula da grade — REMOVIDO. Era o causador real do
   // cruzamento entre curvas de nível vizinhas (ver investigação completa em _suavizarTracoCurva): a
@@ -8706,102 +8907,62 @@ async function gerarCurvas() {
     $('btnCurvas').disabled = false; return;
   }
 
-  // Gera curvas com Marching Squares
-  const first = Math.ceil(minElev/interval)*interval;
-  let lineCount = 0;
-  const MASTER_EVERY = 5;
-
-  for(let lv=first; lv<=maxElev; lv+=interval) {
-    const chains = marchingSquaresCurva(elevGrid, lats, lngs, lv);
-    if(!chains.length) continue;
-    const isMaster = Math.round(lv/interval) % MASTER_EVERY === 0;
-    const cor = elevColorCurva(lv, minElev, maxElev);
-
-    chains.forEach(chain => {
-      if(chain.length < 2) return;
-      // Filtra pontos fora do polígono (clipping por segmento, com ponto de cruzamento exato — ver
-      // v5.18 acima). Quando um trecho passa de dentro pra fora (ou vice-versa), acha onde ele
-      // cruza a borda de verdade e usa ESSE ponto em vez de parar no último amostrado — a linha
-      // encosta na borda real do talhão, não importa o tamanho da célula da grade.
-      const inside = chain.map(p => turf.booleanPointInPolygon(turf.point([p.lng,p.lat]), polyRef));
-      const achaCruzamento = (a, b) => {
-        try {
-          const ix = turf.lineIntersect(turf.lineString([[a.lng,a.lat],[b.lng,b.lat]]), polyBoundRef);
-          if(ix.features.length) { const [lng,lat] = ix.features[0].geometry.coordinates; return {lat,lng}; }
-        } catch(e) {}
-        return null;
-      };
-      let seg = [];
-      const flush = () => {
-        if(seg.length >= 2) {
-          // v5.22: laço fechado (curva inteira dentro do polígono, nunca saiu — primeiro ponto =
-          // último) precisa de tratamento diferente do arco aberto (cortado pela borda do talhão) no
-          // spline logo abaixo, senão o "fechamento" do laço fica torto. Precisa ser medido AQUI, em
-          // cima do `seg` cru, antes de simplificar/splinar (que mudam os pontos).
-          const fechada = seg.length > 2 &&
-            Math.abs(seg[0].lat - seg[seg.length-1].lat) < 1e-9 &&
-            Math.abs(seg[0].lng - seg[seg.length-1].lng) < 1e-9;
-          // v5.23: NADA de Douglas-Peucker (turf.simplify) aqui — ver comentário completo em
-          // _suavizarTracoCurva sobre por que ele foi REMOVIDO (era o causador real do cruzamento
-          // entre curvas, não o spline). Chaikin direto no traçado cru já clipado — troca os
-          // segmentos retos do marching squares por uma curva suave tipo B-spline, sem risco de
-          // cruzar uma curva vizinha, e sem precisar reduzir vértice antes. Puramente visual, não
-          // mexe em elevação nenhuma. v5.24: agora OPCIONAL (checkbox "Acabamento suave") — desligado,
-          // usa o traçado bruto do marching squares (já clipado na borda), sem nenhum redesenho.
-          let segFinal = seg;
-          if(usarSpline && segFinal.length > 2) segFinal = _suavizarTracoCurva(segFinal, fechada, intensidadeSpline);
-          const pl = L.polyline(segFinal.map(p=>[p.lat,p.lng]), {
-            color:cor, weight:isMaster?2.5:1.2, opacity:isMaster?0.95:0.75,
-            interactive:true
-          }).addTo(map);
-          pl._level = lv;
-          pl._isMaster = isMaster;
-          pl.on('click', () => _cliqueNaCurvaDeNivel(pl));
-          pl.on('mouseover', () => { if(_pickingCurvaGuia) pl.setStyle({weight:(isMaster?2.5:1.2)+2.5}); });
-          pl.on('mouseout', () => { if(_pickingCurvaGuia) pl.setStyle({weight:isMaster?2.5:1.2}); });
-          curvaLayers.push(pl);
-          lineCount++;
-          // Cotas no início e fim — apenas curvas mestras com segmento suficientemente longo
-          if(isMaster) {
-            const pts = pl.getLatLngs();
-            const len = pts.length;
-            if(len >= 2) {
-              const segLen = haversineM(pts[0], pts[len-1]);
-              if(segLen > 40) {
-                const mkLabel = ll => L.marker(ll, {
-                  icon: L.divIcon({
-                    className:'',
-                    html:`<div style="background:rgba(0,0,0,.65);color:#fff;font-size:8.5px;font-weight:700;padding:1px 4px;border-radius:2px;white-space:nowrap;pointer-events:none;">${lv.toFixed(0)} m</div>`,
-                    iconAnchor:[0,8]
-                  }),
-                  interactive:false, zIndexOffset:-50
-                }).addTo(map);
-                curvaLabels.push(mkLabel(pts[0]));
-                curvaLabels.push(mkLabel(pts[len-1]));
-              }
-            }
-          }
-        }
-        seg = [];
-      };
-      chain.forEach((p,i) => {
-        if(inside[i]) {
-          if(i > 0 && !inside[i-1]) { // estava fora, entrou agora — insere o ponto de entrada exato na borda
-            const cruz = achaCruzamento(chain[i-1], p);
-            if(cruz) seg.push(cruz);
-          }
-          seg.push(p);
-        } else {
-          if(i > 0 && inside[i-1]) { // estava dentro, saiu agora — insere o ponto de saída exato antes de fechar
-            const cruz = achaCruzamento(chain[i-1], p);
-            if(cruz) seg.push(cruz);
-          }
-          flush();
-        }
-      });
-      flush();
-    });
+  // v5.30: pedido do usuário — testando "Suavização do traçado"/"Malha de amostragem" nas curvas
+  // GERADAS (mesmo teste de terreno íngreme/ondulado do v5.23) achei que raio ou malha GRANDES
+  // (isolados OU juntos) podem reintroduzir o cruzamento entre curvas de nível vizinhas — o mesmo
+  // bug corrigido na v5.23, só que por um caminho diferente do Douglas-Peucker. Cada um sozinho é
+  // "preso ao corredor local" (média ponderada/interpolação = combinação convexa, nunca estoura),
+  // mas em terreno íngreme com curvas bem próximas isso não impede DUAS linhas DIFERENTES de
+  // generalizarem parecido o suficiente pra trocar de posição relativa uma com a outra — testei e
+  // NÃO existe um raio/malha "seguro" fixo (o limite depende de quão perto as curvas de verdade
+  // ficam, que muda de talhão pra talhão — cheguei a achar combinações onde um valor MAIOR ficava
+  // seguro e um MENOR não, nada garantidamente monotônico). Única garantia real: gerar, CONFERIR se
+  // cruzou alguma curva vizinha (_temCruzamentoEntreCandidatosCurvas) e, se cruzou, refazer sem
+  // raio/malha (mantém o spline, comprovadamente seguro — ver v5.23/test_curvas_chaikin.js) — nunca
+  // entrega ao usuário um resultado com curvas se cruzando, mesmo que isso signifique não aplicar a
+  // suavização pedida naquela área específica (com aviso claro do porquê).
+  let candidatos = _construirCandidatosCurvas(elevGrid, lats, lngs, minElev, maxElev, interval, polyRef, polyBoundRef, raioSuavizacaoTracado, passesSuavizacaoTracado, malhaM, usarSpline, intensidadeSpline);
+  let suavizacaoDesativadaPorSeguranca = false;
+  if((raioSuavizacaoTracado > 0 || malhaM > 0) && _temCruzamentoEntreCandidatosCurvas(candidatos, interval)) {
+    candidatos = _construirCandidatosCurvas(elevGrid, lats, lngs, minElev, maxElev, interval, polyRef, polyBoundRef, 0, 0, 0, usarSpline, intensidadeSpline);
+    suavizacaoDesativadaPorSeguranca = true;
   }
+
+  let lineCount = 0;
+  candidatos.forEach(({ pontos: segFinal, level: lv, isMaster }) => {
+    const cor = elevColorCurva(lv, minElev, maxElev);
+    const pl = L.polyline(segFinal.map(p=>[p.lat,p.lng]), {
+      color:cor, weight:isMaster?2.5:1.2, opacity:isMaster?0.95:0.75,
+      interactive:true
+    }).addTo(map);
+    pl._level = lv;
+    pl._isMaster = isMaster;
+    pl.on('click', () => _cliqueNaCurvaDeNivel(pl));
+    pl.on('mouseover', () => { if(_pickingCurvaGuia) pl.setStyle({weight:(isMaster?2.5:1.2)+2.5}); });
+    pl.on('mouseout', () => { if(_pickingCurvaGuia) pl.setStyle({weight:isMaster?2.5:1.2}); });
+    curvaLayers.push(pl);
+    lineCount++;
+    // Cotas no início e fim — apenas curvas mestras com segmento suficientemente longo
+    if(isMaster) {
+      const pts = pl.getLatLngs();
+      const len = pts.length;
+      if(len >= 2) {
+        const segLen = haversineM(pts[0], pts[len-1]);
+        if(segLen > 40) {
+          const mkLabel = ll => L.marker(ll, {
+            icon: L.divIcon({
+              className:'',
+              html:`<div style="background:rgba(0,0,0,.65);color:#fff;font-size:8.5px;font-weight:700;padding:1px 4px;border-radius:2px;white-space:nowrap;pointer-events:none;">${lv.toFixed(0)} m</div>`,
+              iconAnchor:[0,8]
+            }),
+            interactive:false, zIndexOffset:-50
+          }).addTo(map);
+          curvaLabels.push(mkLabel(pts[0]));
+          curvaLabels.push(mkLabel(pts[len-1]));
+        }
+      }
+    }
+  });
 
   $('btnCurvas').disabled = false;
   $('btnLimparCurvas').style.display = '';
@@ -8810,15 +8971,19 @@ async function gerarCurvas() {
   const avisoCoberturaHtml = pctComDadoReal < 90
     ? `<br><span style="color:var(--c-warn);">&#9888; só ${pctComDadoReal.toFixed(0)}% da área tem elevação real — o resto ficou achatado (repete a borda coberta mais próxima), por isso as curvas param antes de chegar lá. Importe um DEM/curvas locais que cubram a área inteira, ou use uma área de curvas menor (só a parte coberta).</span>`
     : '';
+  const avisoSuavizacaoHtml = suavizacaoDesativadaPorSeguranca
+    ? `<br><span style="color:var(--c-warn);">&#9888; "Suavização do traçado"/"Malha de amostragem" desativadas automaticamente nessa área — causariam curvas de nível se cruzando (terreno íngreme/curvas bem próximas). Tente valores menores, ou use só o "Acabamento suave (spline)".</span>`
+    : '';
   $('curvaInfo').innerHTML =
     `<span style="color:var(--acc2);font-weight:700;">Alt. mín:</span> ${minElev.toFixed(1)} m &nbsp;
      <span style="color:var(--acc2);font-weight:700;">Alt. máx:</span> ${maxElev.toFixed(1)} m<br>
      <span style="color:var(--acc2);font-weight:700;">Amplitude:</span> ${(maxElev-minElev).toFixed(1)} m &nbsp;
-     <span style="color:var(--acc2);font-weight:700;">Curvas:</span> ${lineCount}${avisoCoberturaHtml}`;
+     <span style="color:var(--acc2);font-weight:700;">Curvas:</span> ${lineCount}${avisoCoberturaHtml}${avisoSuavizacaoHtml}`;
   const precisaoTxt = sigmaMedio != null ? ` · precisão estimada ±${sigmaMedio.toFixed(1)}m (${fontesUsadas.length} fonte${fontesUsadas.length !== 1 ? 's' : ''})` : '';
   const clampTxt = nPedido !== n ? ` (resolução limitada a ${n}×${n} — sem DEM/curvas locais importadas, ${nPedido}×${nPedido} sobrecarregaria as APIs online)` : (usandoFonteLocal ? ` · grade ${n}×${n} amostrada direto da fonte local (${_demLocalDisponivel() ? 'DEM' : 'curvas'})` : '');
   const avisoCoberturaTxt = pctComDadoReal < 90 ? ` ⚠ só ${pctComDadoReal.toFixed(0)}% da área com elevação real — o resto ficou achatado, as curvas param antes da borda ali.` : '';
-  setStatus(`${lineCount} curvas de nível geradas (${minElev.toFixed(1)}–${maxElev.toFixed(1)} m)${precisaoTxt}${clampTxt}.${avisoCoberturaTxt}`, avisoCoberturaTxt ? 'warn' : 'ok');
+  const avisoSuavizacaoTxt = suavizacaoDesativadaPorSeguranca ? ` ⚠ suavização do traçado/malha desativadas automaticamente nessa área (causariam curvas se cruzando) — tente valores menores.` : '';
+  setStatus(`${lineCount} curvas de nível geradas (${minElev.toFixed(1)}–${maxElev.toFixed(1)} m)${precisaoTxt}${clampTxt}.${avisoCoberturaTxt}${avisoSuavizacaoTxt}`, (avisoCoberturaTxt || avisoSuavizacaoTxt) ? 'warn' : 'ok');
 }
 
 function limparCurvas() {
