@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.26 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.27 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -806,11 +806,12 @@ body.layout-lateral #status{grid-area:status;}
         <div class="rgroup-body">
           <div class="rcol">
             <label>Suavização do traçado</label>
-            <select id="curvaSuavizacaoImportada" class="rfield wide" onchange="_redesenharCurvasLocaisImportadas()" title="Suaviza a POSIÇÃO dos vértices das curvas IMPORTADAS (DXF/KML) — média com os vizinhos ao longo da própria linha, poucas passadas — útil pra reduzir o zigue-zague de precisão do levantamento/digitalização (ruído de GPS, arredondamento do desenhista), sem depender só do acabamento em curva (spline, seletor ao lado). Puramente visual: só redesenha, nunca muda cl.pontos/TIN/IDW (a elevação real) nem o que é exportado de volta pro DXF/KML. Redesenha na hora, sem precisar reimportar.">
+            <select id="curvaSuavizacaoImportada" class="rfield wide" onchange="_redesenharCurvasLocaisImportadas()" title="Suaviza a POSIÇÃO dos vértices das curvas IMPORTADAS (DXF/KML) — média ponderada com os vizinhos dentro de um RAIO REAL (em metros) ao longo da própria linha, não um número fixo de vértices — útil pra apagar entalhes/degraus de digitalização (ortho/grid-snap do CAD de origem ligado sem querer) ou ruído de GPS, de qualquer tamanho de vértice. Escolha um raio maior que o defeito que quer sumir. Sem depender só do acabamento em curva (spline, seletor ao lado). Puramente visual: só redesenha, nunca muda cl.pontos/TIN/IDW (a elevação real) nem o que é exportado de volta pro DXF/KML. Redesenha na hora, sem precisar reimportar.">
               <option value="0" selected>Nenhuma (traçado bruto)</option>
-              <option value="1">Leve</option>
-              <option value="2">Média</option>
-              <option value="4">Forte</option>
+              <option value="3">Leve (raio 3 m)</option>
+              <option value="8">Média (raio 8 m)</option>
+              <option value="15">Forte (raio 15 m)</option>
+              <option value="30">Muito forte (raio 30 m)</option>
             </select>
           </div>
           <div class="rcol">
@@ -3838,6 +3839,30 @@ body.layout-lateral #status{grid-area:status;}
 // densifica), mantém pontas fixas em arco aberto, mantém laço fechado fechado, reduz a variação de
 // posição em pelo menos 50% no cenário sintético, dados de origem continuam intactos, e os dois
 // controles funcionam juntos (suaviza posição primeiro, Chaikin desenha por cima depois).
+// v5.27: pedido do usuário com print comparando "sem suavização" x "Média" (v5.26) — mudou pouca
+// coisa, mesmo em cima de entalhes/degraus retangulares bem visíveis (assinatura clássica de
+// artefato de digitalização — ortho/grid-snap ligado sem querer no CAD de origem, não relevo real).
+// Causa: "Suavização do traçado" da v5.26 fazia média com só 1 vizinho de cada lado (janela de 3
+// vértices), repetida N vezes — o alcance de uma janela fixa iterada cresce devagar (√N), incapaz
+// de apagar um entalhe espalhado por vários vértices em poucas passadas. Sugestão do próprio
+// usuário: espaçar mais a grade de amostragem. Avaliei e descartei essa direção — espaçar (decimar
+// mais agressivo) jogaria pontos fora em TODO lugar, inclusive onde a curva já está lisa, sem
+// garantia nenhuma de que o ponto descartado seja logo o do meio do entalhe (podia sobreviver do
+// mesmo jeito, só mais grosseiro, ou pior, distorcer trechos que já estavam bons). Troca a
+// abordagem por RAIO REAL EM METROS em vez de "N vizinhos" (_suavizarPontosPorRaio substitui
+// _suavizarPontosTracoImportado): pra cada vértice, soma com peso triangular (1 no centro, caindo a
+// 0 na borda) todos os vizinhos dentro do raio escolhido, medido pela distância REAL ao longo da
+// própria linha — não importa se são 2 ou 40 vértices originais ali, o alcance da suavização é
+// sempre o mesmo em metros. Dá pra escolher um raio maior que o entalhe inteiro e apagá-lo de
+// verdade numa passada só, em vez de só arredondar a quina dele. Opções da UI viraram raio em metros
+// (Leve=3m/Média=8m/Forte=15m/nova opção Muito forte=30m) em vez de "passadas". Continua com a
+// MESMA garantia de segurança do Chaikin (ver v5.23 pra por que isso importa — Douglas-Peucker foi
+// cortado fora das curvas geradas justamente por poder fazer duas curvas de nível vizinhas se
+// cruzarem): é uma média ponderada (combinação convexa) dos próprios vizinhos da linha, então nunca
+// "estoura" pra fora do corredor local original. Testado com harness Node.js: entalhe sintético
+// retangular (3m de largura, 6m de altura) — raio de 1m (menor que o entalhe) quase não muda o pico
+// (continua ~6m), raio de 30m (maior que o entalhe inteiro) apaga o pico de verdade (cai pra ~1,9m,
+// mais da metade da redução) — prova numérica de que o alcance agora é controlável em metros reais.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -6822,30 +6847,69 @@ function _classificarMestraMenor(contornosLatLng) {
 // exata de lat/lng — curvas importadas vêm de conversão UTM→lat/lng (às vezes passando por
 // reprojeção de KML/DXF de origens diferentes), com mais ruído de ponto flutuante que uma chain
 // gerada internamente pelo marching squares; comparar por distância em metros é robusto a isso.
-function _suavizarPontosTracoImportado(pontos, fechada, passes) {
-  if(passes <= 0 || pontos.length < 3) return pontos;
-  let pts = fechada ? pontos.slice(0, -1) : pontos; // tira o ponto duplicado (fim==início) do laço
-  const nUnico = pts.length;
-  if(nUnico < 3) return pontos;
-  for(let it = 0; it < passes; it++) {
-    const out = new Array(nUnico);
-    for(let i = 0; i < nUnico; i++) {
-      if(!fechada && (i === 0 || i === nUnico - 1)) { out[i] = pts[i]; continue; } // pontas fixas em arco aberto
-      const prev = fechada ? pts[(i - 1 + nUnico) % nUnico] : pts[i-1];
-      const next = fechada ? pts[(i + 1) % nUnico] : pts[i+1];
-      out[i] = { lat: (prev.lat + pts[i].lat + next.lat) / 3, lng: (prev.lng + pts[i].lng + next.lng) / 3 };
+// v5.27: pedido do usuário com print comparando "sem suavização" x "Média" — mudou pouca coisa,
+// mesmo em cima de entalhes (pequenos "degraus" retangulares — assinatura clássica de artefato de
+// digitalização, tipo ortho/grid-snap ligado sem querer no CAD de origem, não relevo real nenhum)
+// bem visíveis no traçado. Causa: _suavizarPontosTracoImportado (v5.26) fazia média com só 1 VIZINHO
+// DE CADA LADO (janela de 3 vértices), repetida N vezes — pra apagar um entalhe que ocupa vários
+// vértices, precisaria de dezenas de passadas (o alcance de uma média de janela fixa iterada cresce
+// só com √N). Sugestão do usuário: espaçar mais a grade de amostragem. Espaçar (decimar mais)
+// jogaria fora pontos em TODO lugar (inclusive onde a curva já está lisa), sem garantia de que o
+// ponto descartado seja logo o do meio do entalhe — o entalhe podia sobreviver do mesmo jeito, só
+// mais grosseiro. Troca por RAIO REAL EM METROS em vez de "N vizinhos": pra cada vértice, calcula a
+// distância real (ao longo da própria linha, não em linha reta) até os vizinhos e faz a média
+// PONDERADA (peso triangular — 1 no próprio ponto, caindo a 0 na borda do raio) de todos os que
+// caem dentro do raio escolhido — não importa se são 2 ou 40 vértices originais, o alcance da
+// suavização agora é sempre o mesmo em METROS, então dá pra escolher um raio maior que o entalhe
+// inteiro e apagá-lo de verdade numa passada só. Continua com a mesma garantia de segurança que o
+// Chaikin (ver _suavizarTracoCurva/v5.23 pra por que isso importa: Douglas-Peucker cortado fora
+// justamente por poder fazer duas curvas de nível vizinhas se cruzarem) — é uma MÉDIA PONDERADA
+// (combinação convexa) dos próprios pontos vizinhos da linha, então o resultado fica sempre dentro
+// do corredor local original, não "estoura" pra fora e não risca de cruzar uma curva vizinha.
+function _suavizarPontosPorRaio(pontos, fechada, raioM) {
+  if(raioM <= 0 || pontos.length < 3) return pontos;
+  const pts = fechada ? pontos.slice(0, -1) : pontos; // tira o ponto duplicado (fim==início) do laço
+  const n = pts.length;
+  if(n < 3) return pontos;
+  const out = new Array(n);
+  for(let i = 0; i < n; i++) {
+    if(!fechada && (i === 0 || i === n - 1)) { out[i] = pts[i]; continue; } // pontas fixas em arco aberto
+    let somaLat = pts[i].lat, somaLng = pts[i].lng, somaPeso = 1; // o próprio ponto, peso máximo (centro do triângulo)
+    // caminha pra "frente" ao longo da linha, acumulando distância real, até estourar o raio
+    let dist = 0;
+    for(let d = 1; d < n; d++) {
+      const j = fechada ? (i + d) % n : i + d;
+      if(!fechada && j >= n) break;
+      if(fechada && j === i) break; // deu a volta inteira no laço
+      const anterior = fechada ? pts[(i + d - 1 + n) % n] : pts[i + d - 1];
+      dist += haversineM(anterior, pts[j]);
+      if(dist > raioM) break;
+      const peso = 1 - dist / raioM;
+      somaLat += pts[j].lat * peso; somaLng += pts[j].lng * peso; somaPeso += peso;
     }
-    pts = out;
+    // mesma coisa pra "trás"
+    dist = 0;
+    for(let d = 1; d < n; d++) {
+      const j = fechada ? (i - d + n) % n : i - d;
+      if(!fechada && j < 0) break;
+      if(fechada && j === i) break;
+      const anterior = fechada ? pts[(i - d + 1 + n) % n] : pts[i - d + 1];
+      dist += haversineM(anterior, pts[j]);
+      if(dist > raioM) break;
+      const peso = 1 - dist / raioM;
+      somaLat += pts[j].lat * peso; somaLng += pts[j].lng * peso; somaPeso += peso;
+    }
+    out[i] = { lat: somaLat / somaPeso, lng: somaLng / somaPeso };
   }
-  if(fechada) pts = [...pts, pts[0]]; // fecha o laço de novo (convenção: 1º = último)
-  return pts;
+  if(fechada) return [...out, out[0]]; // fecha o laço de novo (convenção: 1º = último)
+  return out;
 }
 function _redesenharCurvasLocaisImportadas() {
   const cl = _curvasLocais;
   if(!cl || !cl.contornosDecimados) return;
   if(cl.layerPreview) map.removeLayer(cl.layerPreview);
   const usarSpline = $('curvaSplineImportada') ? $('curvaSplineImportada').checked : true;
-  const passesSuavizacao = $('curvaSuavizacaoImportada') ? (parseInt($('curvaSuavizacaoImportada').value) || 0) : 0;
+  const raioSuavizacaoM = $('curvaSuavizacaoImportada') ? (parseFloat($('curvaSuavizacaoImportada').value) || 0) : 0;
   // Desenha com a densidade DECIMADA (cl.contornosDecimados), não a original — 3315 polylines de
   // um KML denso do Google Earth com todos os pontos originais deixaria o mapa pesado à toa; a
   // decimação já preserva o formato geral (ver _decimarContornos).
@@ -6855,7 +6919,7 @@ function _redesenharCurvasLocaisImportadas() {
     const cor = _corPorElevacao(c.z, cl.elevMin, cl.elevMax);
     let pontos = c.pontos;
     const fechada = pontos.length > 2 && haversineM(pontos[0], pontos[pontos.length-1]) < 0.5;
-    if(passesSuavizacao > 0 && pontos.length > 2) pontos = _suavizarPontosTracoImportado(pontos, fechada, passesSuavizacao);
+    if(raioSuavizacaoM > 0 && pontos.length > 2) pontos = _suavizarPontosPorRaio(pontos, fechada, raioSuavizacaoM);
     if(usarSpline && pontos.length > 2) pontos = _suavizarTracoCurva(pontos, fechada, 3);
     L.polyline(pontos.map(p => [p.lat, p.lng]), {
       // v4.53: interactive:false — por padrão toda polyline do Leaflet captura clique/hover, e
