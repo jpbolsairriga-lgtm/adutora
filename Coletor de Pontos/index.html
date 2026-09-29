@@ -394,7 +394,8 @@ function startGPS(){
   }
   navigator.geolocation.watchPosition(function(p){
     live=p;
-    var cc=p.coords; if(cc.heading!=null&&!isNaN(cc.heading)&&cc.speed>0.8) hdgG=cc.heading;
+    var cc=p.coords;
+    if(typeof cc.heading==="number"&&!isNaN(cc.heading)&&(cc.speed==null||cc.speed>0.4)){ hdgG=cc.heading; hdgGt=Date.now(); }
     pintaLive(); checaAuto(); aplicaRotMapa();
     var m=document.getElementById("msg");
     if(m.querySelector(".msg.err")) m.innerHTML="";
@@ -637,8 +638,10 @@ function limites(){
 function centralizar(){
   if(!map) return;
   var b=limites(); if(!b) return;
-  if(b.getNorth()===b.getSouth()&&b.getEast()===b.getWest()) map.setView(b.getCenter(),18);
-  else map.fitBounds(b,{padding:[35,35],maxZoom:18});
+  /* sem animação: um pan animado ao mesmo tempo que o mapa gira faz o pivô da rotação
+     ser capturado no meio da transição e o giro fica "puxando" pro lado errado. */
+  if(b.getNorth()===b.getSouth()&&b.getEast()===b.getWest()) map.setView(b.getCenter(),18,{animate:false});
+  else map.fitBounds(b,{padding:[35,35],maxZoom:18,animate:false});
 }
 function linhasDe(){
   var m={},ord=[];
@@ -737,7 +740,7 @@ function marcadores(){
   if(ant<=0 && pontos.length>0) centralizar();
   else if(pontos.length>ant && pontos.length){
     var u=pontos[pontos.length-1], ll=L.latLng(u.lat,u.lon);
-    if(!map.getBounds().pad(-0.1).contains(ll)) map.panTo(ll);
+    if(!map.getBounds().pad(-0.1).contains(ll)) map.panTo(ll,{animate:false});
   }
 }
 var prevMed=null;
@@ -850,7 +853,7 @@ function renderCroqui(){
 }
 
 /* ---------- navegação até pontos (alvos importados) ---------- */
-var KEYA="alvos_gps_v1", alvos=[], navAlvo=null, hdgC=null, hdgCt=0, hdgG=null, bussolaOn=false, chegouAvisado=false;
+var KEYA="alvos_gps_v1", alvos=[], navAlvo=null, hdgC=null, hdgCt=0, hdgG=null, hdgGt=0, bussolaOn=false, chegouAvisado=false;
 function loadAlvos(){
   try{ var r=localStorage.getItem(KEYA); alvos=r?JSON.parse(r):[]; }catch(e){ alvos=[]; }
   if(!Array.isArray(alvos)) alvos=[];
@@ -961,8 +964,11 @@ function maisProximo(excluiId){
   return cand[0];
 }
 function headingEf(){
+  /* prioriza o rumo do GPS (vem da trajetória real, sem sofrer interferência magnética de
+     case/suporte/estrutura metálica); a bússola do celular só entra como reserva, parado
+     ou sem sinal de GPS suficiente. */
+  if(hdgG!=null&&Date.now()-hdgGt<6000) return {h:hdgG,src:"direção do GPS"};
   if(hdgC!=null&&Date.now()-hdgCt<3000) return {h:hdgC,src:"bússola"};
-  if(hdgG!=null) return {h:hdgG,src:"direção do GPS (em movimento)"};
   return null;
 }
 function onOri(e){
