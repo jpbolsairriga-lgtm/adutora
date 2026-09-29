@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.30 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.31 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -3983,6 +3983,28 @@ body.layout-lateral #status{grid-area:status;}
 // não-cruzamento numa geometria construída pra cada caso; um teste de integração com o detector
 // stubado confirma que _redesenharCurvasLocaisImportadas() realmente chama o detector e refaz sem
 // raio/malha quando ele acusa cruzamento, avisando o usuário.
+// v5.31: pedido do usuário — "erro na exportação pro Trimble GPS, aparecem só os talhões, não as
+// linhas de plantio; convertendo com AgroCAD deu certo". Investigação: usuário mandou os dois
+// exports reais (o do app e o do AgroCAD, mesma fazenda "Nivaldo/Fazenda") — comparei byte a byte
+// (7-Zip + .NET ZipFile, pra não confiar em display de terminal com acento). Resultado: AgGPS/Data/
+// .../Boundary.shp e LineFeature.shp do app batem 100% com o do AgroCAD, incluindo a pasta
+// "Executado" vazia — LineFeature.shp com conteúdo real (~500KB por talhão), nada vazio. O gerador
+// de shapefile em si estava CORRETO o tempo todo, não era bug de conteúdo. A diferença real: o
+// AgroCAD entrega DUAS pastas, "AgGPS" (a de cima, já certa) e "AgData" (Fields/<uuid>.agf) — abri
+// um .agf de verdade e é um .zip com um manifest.xml (tem um <iv>, vetor de inicialização) + um
+// payload ".xml.gz.enc" de alta entropia: GENUINAMENTE CRIPTOGRAFADO com chave proprietária da
+// Trimble/AgroCAD, sem documentação pública. Impossível gerar um .agf funcional sem essa chave (e
+// não é algo que devêssemos tentar quebrar). Perguntei ao usuário o que fazer diante dessa
+// limitação real — escolheu gerar as duas pastas mesmo assim (pra manter a mesma árvore que o
+// AgroCAD entrega, o prestador de serviço testa qual funciona no monitor dele), com a AgData
+// claramente sinalizada como NÃO-funcional (novo LEIA-ME.txt dentro de AgData/Fields/ explicando a
+// criptografia e recomendando AgroCAD/software oficial a partir do KML/DXF já exportado por este
+// app) em vez de fingir um .agf que pareceria válido mas falharia silenciosamente no monitor.
+// _gerarPastaAgGpsTalhao/_gerarShpShx/_gerarDbf (o gerador da pasta AgGPS em si) INTOCADOS — só
+// _exportarTrimbleAgGPS ganhou a chamada extra pra empacotar a pasta AgData no mesmo .zip. Testado
+// com harness Node.js (JSZip real): pasta AgGPS continua idêntica (Boundary+LineFeature com
+// conteúdo real, pasta Executado presente), nova AgData/Fields/LEIA-ME.txt existe, menciona os
+// talhões do export e a limitação, e nenhum .agf falso é gerado.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -10065,7 +10087,7 @@ function _atualizarAvisoMonitorGPS() {
   const el = $('avisoMonitorGPS');
   if(!el) return;
   if(marca === 'trimble') {
-    el.textContent = 'Pasta AgGPS/Data (Boundary + LineFeature) — testada contra um export real do AgroCAD.';
+    el.textContent = 'Pasta AgGPS/Data (Boundary + LineFeature) — testada byte a byte contra um export real do AgroCAD, contorno e linhas batem 100%. Gera também uma pasta "AgData" só de estrutura (o formato .agf real é criptografado pela Trimble — se o SEU monitor exigir especificamente essa pasta, use o AgroCAD/software oficial a partir do KML/DXF exportado aqui).';
   } else if(marca === 'johndeere') {
     el.textContent = 'Pasta Gen4 (MasterData.xml + SpatialFiles) — testada contra um export real do AgroCAD (mesmo talhão da Trimble). Pra display GS3 2630 use a opção RCD abaixo — o Gen4 é pra CommandCenter.';
   } else if(marca === 'johndeere_gs3') {
@@ -10102,6 +10124,38 @@ async function exportarMonitorGPS() {
   }
 }
 
+// v5.31: pedido do usuário — "erro na exportação pro Trimble GPS, aparecem só os talhões, não as
+// linhas de plantio; convertendo com AgroCAD deu certo". Investigação byte a byte (harness com
+// pyshp/7z, comparando o export real do app contra um export do AgroCAD DA MESMA fazenda/talhões):
+// AgGPS/Data/.../Boundary.shp e LineFeature.shp do app batem 100% byte a byte com o do AgroCAD
+// (LineFeature.shp com conteúdo real, ~500KB, nada vazio) — ou seja, o gerador de shapefile em si
+// está correto, não é bug de conteúdo. A diferença real: o AgroCAD entrega DUAS pastas,
+// "AgGPS" (o formato clássico acima, que a gente já gera certinho) E "AgData"
+// (Fields/<uuid>.agf) — abrindo um .agf de verdade, é um .zip contendo manifest.xml (com um <iv>,
+// vetor de inicialização) + um payload ".xml.gz.enc" de alta entropia — ou seja, GENUINAMENTE
+// CRIPTOGRAFADO com uma chave proprietária da Trimble/AgroCAD, sem documentação pública nenhuma.
+// Não dá pra gerar um .agf que funcione de verdade sem essa chave (e não é algo que devêssemos
+// tentar quebrar). Perguntei ao usuário o que fazer diante dessa limitação real — escolheu gerar as
+// DUAS pastas mesmo assim (pra manter a mesma árvore que o AgroCAD entrega, útil pro prestador de
+// serviço comparar/organizar), com a AgData claramente sinalizada como não-funcional em vez de
+// fingir um .agf que pareceria válido mas falharia silenciosamente no monitor — ver
+// _gerarLeiaMeAgData.
+async function _gerarLeiaMeAgData(fontes) {
+  return `Esta pasta "AgData" existe só pra manter a mesma estrutura de pastas que o AgroCAD entrega\r\n`
+    + `(AgGPS + AgData juntas), mas o CONTEÚDO dela não pôde ser gerado.\r\n\r\n`
+    + `Por quê: o formato real do AgData (arquivos .agf dentro de "Fields") é CRIPTOGRAFADO com uma\r\n`
+    + `chave proprietária da Trimble/AgroCAD — não é documentado publicamente e não temos acesso a\r\n`
+    + `essa chave. Um .agf gerado por este app não teria conteúdo válido; o monitor não conseguiria\r\n`
+    + `ler nada dele (mesmo que o arquivo existisse com o nome certo).\r\n\r\n`
+    + `A pasta "AgGPS" (Boundary.shp + LineFeature.shp por talhão) É o formato completo e funcional —\r\n`
+    + `testada byte a byte contra um export real do AgroCAD da mesma fazenda: contorno e linhas de\r\n`
+    + `plantio batem 100%.\r\n\r\n`
+    + `Se o SEU monitor especificamente exigir a pasta AgData/.agf pra mostrar as linhas (alguns\r\n`
+    + `modelos mais novos usam esse formato pra sincronização, além do AgGPS clássico), a única forma\r\n`
+    + `de gerar um .agf válido é usando o software oficial da Trimble ou o AgroCAD, a partir do KML/\r\n`
+    + `DXF que este app já exporta (aba Exportar & Relatório).\r\n\r\n`
+    + `Talhão(ões) neste export: ${fontes.map(f => f.nome).join(', ')}\r\n`;
+}
 async function _exportarTrimbleAgGPS(produtor, fazenda, fontes) {
   if(typeof JSZip === 'undefined') { setStatus('Biblioteca de compactação (JSZip) não carregou — verifique sua conexão com a internet.', 'err'); return; }
   const zip = new JSZip();
@@ -10117,10 +10171,14 @@ async function _exportarTrimbleAgGPS(produtor, fazenda, fontes) {
   });
   if(!algumTalhao) { setStatus('Nenhum talhão com contorno pra exportar.', 'err'); return; }
 
-  setStatus('Gerando pacote AgGPS para o monitor Trimble…', 'info');
+  // v5.31: segunda pasta "AgData" (mesma árvore do AgroCAD), com aviso claro no lugar de um .agf
+  // fingido — ver comentário completo acima em _gerarLeiaMeAgData.
+  zip.folder('AgData').folder('Fields').file('LEIA-ME.txt', await _gerarLeiaMeAgData(fontes));
+
+  setStatus('Gerando pacote AgGPS/AgData para o monitor Trimble…', 'info');
   const blob = await zip.generateAsync({ type: 'blob' });
   baixarArquivo(blob, `AgGPS_${produtor}_${fazenda}.zip`, 'application/zip');
-  setStatus(`✓ Exportado pra Trimble AgGPS — ${algumTalhao} talhão(ões). Extraia o .zip e copie a pasta "AgGPS" pra raiz do pendrive.`, 'ok');
+  setStatus(`✓ Exportado pra Trimble — ${algumTalhao} talhão(ões), pastas "AgGPS" (completa e funcional) + "AgData" (estrutura só, veja o LEIA-ME.txt dentro — o formato .agf é criptografado pela Trimble, não temos como gerar). Extraia o .zip e copie as pastas pra raiz do pendrive.`, 'ok');
 }
 
 // ── Exportar para Monitor GPS (Trator) — John Deere (Gen4 Setup File) ───────────────────────
