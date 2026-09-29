@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.31 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.32 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -552,6 +552,12 @@ body.layout-lateral #status{grid-area:status;}
           <button class="rbtn-sm clr" id="btnCancelarMulti" style="display:none;" onclick="cancelarMultiSelect()" title="Clique num talhão travado pra selecionar (clique de novo pra tirar); clique em vários pra multi-selecionar.">&#10005; Limpar Seleção</button>
         </div>
         <div class="rgroup-title">Seleção — clique nos talhões travados</div>
+      </div>
+      <div class="rgroup">
+        <div class="rgroup-body">
+          <button class="rbtn c-blue" id="btnResumoTalhoes" onclick="abrirResumoTalhoes()"><span class="ico">&#128203;</span><span class="lbl">Resumo dos Talhões</span></button>
+        </div>
+        <div class="rgroup-title">Visão Geral</div>
       </div>
     </div>
 
@@ -1093,6 +1099,23 @@ body.layout-lateral #status{grid-area:status;}
   </div>
 </div>
 
+<!-- ── Modal: Resumo dos Talhões ── -->
+<div class="modal-bg" id="modalResumoTalhoes" onclick="if(event.target===this)fecharResumoTalhoes()">
+  <div class="modal" style="max-width:1000px;width:97%">
+    <button class="modal-close" onclick="fecharResumoTalhoes()">&#10005;</button>
+    <h2>&#128203; Resumo dos Talhões</h2>
+    <div id="resumoTalhoesInfo" style="font-size:11px;color:var(--panel-text-dim);margin:4px 0 10px;"></div>
+    <div style="overflow:auto;max-height:60vh;border:1px solid var(--panel-border);border-radius:6px;">
+      <table id="tabelaResumoTalhoes" style="width:100%;border-collapse:collapse;font-size:11.5px;"></table>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px;">
+      <div style="font-size:10.5px;color:var(--panel-text-dim);">&#128073; Clique numa linha pra selecionar/dar zoom no talhão (mesma seleção do resto do app — dá pra clicar em vários).</div>
+      <div style="flex:1;"></div>
+      <button class="rbtn-sm" id="btnCopiarResumoTalhoes" onclick="_copiarResumoTalhoes()">&#128203; Copiar Resumo</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── Modal: Otimizar Cenário de Plantio ── -->
 <div class="modal-bg" id="modalCenarios" onclick="if(event.target===this)fecharModalCenarios()">
   <div class="modal" style="max-width:960px;width:97%">
@@ -1457,7 +1480,9 @@ body.layout-lateral #status{grid-area:status;}
     </div>
     <div class="ifbody">
       <div class="info-box">
-        <div class="info-row"><span class="info-label">Talhões:</span><span class="info-val" id="iTalhoes">0</span></div>
+        <div class="info-row" id="rowInfoTalhoes" onclick="abrirResumoTalhoes()" style="cursor:pointer;" title="Ver resumo de todos os talhões">
+          <span class="info-label">Talhões:</span><span class="info-val" id="iTalhoes">0</span>
+        </div>
         <div class="info-row"><span class="info-label">Área ativo:</span><span class="info-val" id="iArea">—</span></div>
         <div class="info-row"><span class="info-label">Linhas:</span><span class="info-val" id="iLinhas">—</span></div>
         <div class="info-row"><span class="info-label">Espaçamento:</span><span class="info-val" id="iEspac">—</span></div>
@@ -4005,6 +4030,25 @@ body.layout-lateral #status{grid-area:status;}
 // com harness Node.js (JSZip real): pasta AgGPS continua idêntica (Boundary+LineFeature com
 // conteúdo real, pasta Executado presente), nova AgData/Fields/LEIA-ME.txt existe, menciona os
 // talhões do export e a limitação, e nenhum .agf falso é gerado.
+// v5.32: pedido do usuário — "um lugar onde vou vendo dentro do app o resumo dos talhões criados,
+// não sei se seria bom dentro da própria ribbon Talhão ou uma janela pop-up... faça isso e melhor
+// tudo que for possível". Implementei os dois juntos, não escolhi um ou outro: botão "Resumo dos
+// Talhões" na aba Talhão do ribbon + o próprio contador "Talhões: N" do painel flutuante
+// "Informações" virou clicável — os dois abrem o MESMO modal novo (#modalResumoTalhoes), tabela com
+// TODOS os talhões (travados + o que está sendo editado agora, se já tiver contorno fechado, mesmo
+// sem linhas ainda). Melhorias além do pedido básico ("melhor tudo que for possível"): (1) cada
+// linha da tabela é CLICÁVEL — reaproveita selecionarTalhao()/talhoesMultiSel de verdade (o mesmo
+// sistema de seleção do resto do app, não um paralelo novo) e dá zoom automático (map.fitBounds) no
+// talhão clicado; por ser o Set de multi-seleção real, dá pra clicar em várias linhas pra
+// selecionar vários de uma vez (útil antes de "Unificar Selecionados", por exemplo — sem precisar
+// sair do modal pra clicar no mapa); (2) linha de TOTAIS (soma de área/linhas/metros lineares) no
+// rodapé da tabela; (3) indicador de status por talhão (travado / selecionado — reflete
+// talhoesMultiSel em tempo real / ainda em edição) com a cor real de cada talhão no mapa (mesma
+// swatch); (4) botão "Copiar Resumo" — gera texto TSV que cola direto no Excel/Sheets já com as
+// colunas certas. Testado com harness Node.js: lista vazia não quebra (aviso amigável), junta
+// travados + o ativo certo, soma os totais certo, talhão em edição entra sem uid (não clicável),
+// clique numa linha chama selecionarTalhao() de verdade e dá zoom, destaque de "Selecionado"
+// reflete talhoesMultiSel, TSV do "Copiar Resumo" sai com as colunas certas.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -5120,6 +5164,118 @@ function renumerarTalhoes() {
     }
   });
   $('iTalhoes').textContent = talhoesArquivados.length;
+}
+
+// v5.32: pedido do usuário — "um lugar onde vou vendo dentro do app o resumo dos talhões criados,
+// não sei se seria bom dentro da própria ribbon Talhão ou uma janela pop-up". Implementei os dois
+// juntos: um botão "Resumo dos Talhões" na aba Talhão do ribbon + o próprio contador "Talhões: N"
+// do painel flutuante "Informações" virou clicável — os dois abrem o MESMO modal (tabela com todos
+// os talhões, travados + o que está sendo editado agora, se já tiver contorno). Melhorias além do
+// pedido básico: (1) cada linha é CLICÁVEL — reaproveita selecionarTalhao()/talhoesMultiSel (o
+// mesmo sistema de seleção do resto do app, não um paralelo novo) e dá zoom automático (fitBounds)
+// no talhão clicado; como é o Set de multi-seleção de verdade, dá pra clicar em várias linhas pra
+// selecionar vários de uma vez (útil antes de "Unificar Selecionados", por exemplo); (2) linha de
+// totais (soma de área/linhas/metros lineares) no rodapé da tabela; (3) indicador visual de status
+// por talhão (travado / selecionado / ainda em edição) com a cor real do talhão no mapa; (4) botão
+// "Copiar Resumo" — gera texto TSV (colado no Excel/Sheets já cai nas colunas certas).
+function abrirResumoTalhoes() {
+  _renderizarResumoTalhoes();
+  $('modalResumoTalhoes').classList.add('open');
+}
+function fecharResumoTalhoes() {
+  $('modalResumoTalhoes').classList.remove('open');
+}
+// Clique numa linha da tabela: seleciona (toggle, igual clicar no talhão no mapa) e dá zoom nele.
+function _zoomESelecionarTalhaoResumo(uid) {
+  const t = talhoesArquivados.find(x => x.uid === uid);
+  if(!t) return;
+  selecionarTalhao(uid);
+  if(t.polyPts && t.polyPts.length) {
+    try { map.fitBounds(L.latLngBounds(t.polyPts.map(p => [p.lat, p.lng])), {padding:[40,40]}); } catch(e) {}
+  }
+  _renderizarResumoTalhoes(); // reflete o destaque da seleção nova
+}
+// Monta a lista de linhas do resumo: todos os talhões TRAVADOS + o que está sendo editado agora
+// (se já tiver contorno fechado, mesmo sem linhas de plantio ainda) — nome genérico `itens` de
+// propósito, pra não sombrear o array global `linhas` (as linhas de plantio do talhão ATIVO, usado
+// em dezenas de lugares no resto do app).
+function _listaResumoTalhoes() {
+  const itens = talhoesArquivados.map(t => ({
+    uid: t.uid, idx: t.idx, cor: t.cor, areaHa: t.areaHa, spacing: t.spacing,
+    count: t.count || 0, metrosLin: t.metrosLin || 0, travado: true,
+  }));
+  if(polyPts.length >= 3) {
+    itens.push({
+      uid: null, idx: talhoesArquivados.length + 1, cor: '#42a5f5',
+      areaHa: areaHaAtual || 0, spacing: spacingAtual || null,
+      count: countLinhasAtual || 0, metrosLin: metrosLinAtual || 0, travado: false,
+    });
+  }
+  return itens;
+}
+function _renderizarResumoTalhoes() {
+  const itens = _listaResumoTalhoes();
+  if(!itens.length) {
+    $('tabelaResumoTalhoes').innerHTML = '';
+    $('resumoTalhoesInfo').textContent = 'Nenhum talhão desenhado ainda — desenhe um contorno na aba "Talhão" pra começar.';
+    return;
+  }
+
+  const somaArea = itens.reduce((s,l) => s + l.areaHa, 0);
+  const somaLinhas = itens.reduce((s,l) => s + l.count, 0);
+  const somaMetros = itens.reduce((s,l) => s + l.metrosLin, 0);
+  const fmt = n => Math.round(n).toLocaleString('pt-BR');
+
+  const head = `<tr style="background:var(--panel-bg-2);color:var(--acc2);text-align:left;">
+    <th style="padding:6px 10px;"></th><th style="padding:6px 10px;">Talhão</th>
+    <th style="padding:6px 10px;">Status</th><th style="padding:6px 10px;">Área</th>
+    <th style="padding:6px 10px;">Espaçamento</th><th style="padding:6px 10px;">Linhas</th>
+    <th style="padding:6px 10px;">Metros lineares</th></tr>`;
+
+  const corpo = itens.map(l => {
+    const selecionado = l.uid !== null && talhoesMultiSel.has(l.uid);
+    const bg = selecionado ? 'background:var(--acc);color:#fff;' : (!l.travado ? 'background:var(--panel-bg-2);' : '');
+    const clicavel = l.uid !== null;
+    const attrOnclick = clicavel ? ` onclick="_zoomESelecionarTalhaoResumo(${l.uid})"` : '';
+    const cursor = clicavel ? 'cursor:pointer;' : '';
+    const tituloLinha = clicavel ? 'Clique pra selecionar/dar zoom' : 'Trave o talhão (aba Talhão → Travar Talhão) pra poder selecioná-lo aqui';
+    const statusTxt = l.travado ? (selecionado ? '&#128993; Selecionado' : '&#128274; Travado') : '&#9998; Em edição';
+    return `<tr${attrOnclick} style="border-top:1px solid var(--panel-border);${cursor}${bg}" title="${tituloLinha}">
+      <td style="padding:5px 10px;"><span style="display:inline-block;width:11px;height:11px;border-radius:2px;background:${l.cor};vertical-align:middle;"></span></td>
+      <td style="padding:5px 10px;font-weight:700;">Talhão ${l.idx}</td>
+      <td style="padding:5px 10px;">${statusTxt}</td>
+      <td style="padding:5px 10px;">${l.areaHa.toFixed(2)} ha</td>
+      <td style="padding:5px 10px;">${l.spacing ? l.spacing + ' m' : '—'}</td>
+      <td style="padding:5px 10px;">${l.count || '—'}</td>
+      <td style="padding:5px 10px;">${l.metrosLin ? fmt(l.metrosLin) + ' m' : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  const rodape = `<tr style="border-top:2px solid var(--panel-border);font-weight:700;background:var(--panel-bg-2);">
+    <td style="padding:6px 10px;"></td><td style="padding:6px 10px;">Total (${itens.length})</td>
+    <td style="padding:6px 10px;"></td><td style="padding:6px 10px;">${somaArea.toFixed(2)} ha</td>
+    <td style="padding:6px 10px;"></td><td style="padding:6px 10px;">${somaLinhas}</td>
+    <td style="padding:6px 10px;">${fmt(somaMetros)} m</td></tr>`;
+
+  $('tabelaResumoTalhoes').innerHTML = head + corpo + rodape;
+  $('resumoTalhoesInfo').textContent = `${itens.length} talhão(ões) · ${somaArea.toFixed(2)} ha no total · clique numa linha pra selecionar/dar zoom.`;
+}
+function _copiarResumoTalhoes() {
+  const itens = _listaResumoTalhoes();
+  if(!itens.length) { setStatus('Nenhum talhão pra copiar.', 'err'); return; }
+  const linhasTxt = [['Talhão','Status','Área (ha)','Espaçamento (m)','Linhas','Metros lineares (m)'].join('\t')];
+  itens.forEach(l => {
+    linhasTxt.push([`Talhão ${l.idx}`, l.travado ? 'Travado' : 'Em edição', l.areaHa.toFixed(2),
+      l.spacing || '', l.count || 0, Math.round(l.metrosLin || 0)].join('\t'));
+  });
+  const texto = linhasTxt.join('\n');
+  if(navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(texto)
+      .then(() => setStatus('✓ Resumo copiado — cole numa planilha (Excel/Sheets), as colunas já vêm certinho.', 'ok'))
+      .catch(() => setStatus('Não consegui copiar automaticamente — selecione o texto da tabela manualmente.', 'err'));
+  } else {
+    setStatus('Não consegui copiar automaticamente — selecione o texto da tabela manualmente.', 'err');
+  }
 }
 
 // ── Legenda do polígono ───────────────────────────────────────────────────────
