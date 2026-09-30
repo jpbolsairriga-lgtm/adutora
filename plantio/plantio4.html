@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.35 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.36 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1076,6 +1076,7 @@ body.layout-lateral #status{grid-area:status;}
               <option value="trimble">Trimble (AgGPS)</option>
               <option value="johndeere">John Deere (Gen4 Setup File)</option>
               <option value="johndeere_gs3">John Deere (GS3 2630 / RCD)</option>
+              <option value="agres">Agres (PixelPro)</option>
             </select>
           </div>
           <div class="rcol">
@@ -4160,6 +4161,15 @@ body.layout-lateral #status{grid-area:status;}
 // sequência de Y embaralhada tipo [20,0,40,10,30] (confirmado calculando à mão); com o fix, as 5
 // fileiras saem numa ordem estritamente monotônica (0,10,20,30,40 ou o inverso — qualquer sentido
 // vale, contíguo é contíguo) — nunca embaralhada.
+// v5.36: pedido do usuário — replicar a exportação pro monitor Agres (PixelPro), a partir de um
+// export REAL que ele forneceu ("Projeto sistematização_Talhão 1_Agres.zip"). Inspecionado byte a
+// byte (SHX/SHP/DBF crus, não só via lib) antes de gerar qualquer coisa — ver o comentário grande
+// em _exportarAgres pra todos os achados (estrutura de pastas bem mais simples que Trimble/John
+// Deere: 1 único POLYGON+POLYLINE pra todo o projeto; achado principal — o POLYLINE.shp real tem
+// só 1 registro .shp MULTI-PARTE com 176 partes, e 176 registros .dbf (um por parte), diferente de
+// "1 registro .shp por linha" como a Trimble faz — replicado com a nova _gerarShpShxMultiParte).
+// Novidade nova também: um "perimetro" (união dos talhões + buffer de 4m) além dos "talhao"
+// individuais no POLYGON.shp, inferido da amostra real (sinalizado como inferência na UI).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -10547,6 +10557,61 @@ function _gerarShpShx(shapeType, registros) {
   return { shp, shx };
 }
 
+// Gera o par .shp/.shx pra UM ÚNICO registro (shapeType 3 = Polyline) contendo VÁRIAS partes —
+// usado pelo export Agres: confirmado byte a byte num export real (POLYLINE.shp de referência,
+// 126348 bytes de conteúdo = 44 + 4*176 partes + 16*7850 pontos, bate exato com a fórmula abaixo)
+// que TODAS as linhas do projeto (plantio + curva de nível + terraço) ficam numa feature .shp SÓ,
+// multi-parte, com um registro .dbf SEPARADO por parte na mesma ordem — diferente do LineFeature
+// da Trimble (_gerarShpShx), que usa um registro .shp por linha.
+function _gerarShpShxMultiParte(shapeType, partes) {
+  let xmin = Infinity, ymin = Infinity, xmax = -Infinity, ymax = -Infinity;
+  partes.forEach(p => p.pontos.forEach(([x, y]) => { if(x < xmin) xmin = x; if(x > xmax) xmax = x; if(y < ymin) ymin = y; if(y > ymax) ymax = y; }));
+  if(!isFinite(xmin)) { xmin = ymin = xmax = ymax = 0; }
+
+  const totalPontos = partes.reduce((s, p) => s + p.pontos.length, 0);
+  // shapeType+bbox+numParts+numPoints+parts[]+pontos, em words de 16 bits
+  const contentWords = (44 + 4 * partes.length + 16 * totalPontos) / 2;
+
+  const corpo = _BinWriter();
+  corpo.i32be(1);
+  corpo.i32be(contentWords);
+  corpo.i32le(shapeType);
+  corpo.f64le(xmin); corpo.f64le(ymin); corpo.f64le(xmax); corpo.f64le(ymax);
+  corpo.i32le(partes.length);
+  corpo.i32le(totalPontos);
+  let acumulado = 0;
+  partes.forEach(p => { corpo.i32le(acumulado); acumulado += p.pontos.length; });
+  partes.forEach(p => p.pontos.forEach(([x, y]) => { corpo.f64le(x); corpo.f64le(y); }));
+
+  function cabecalho(totalBytes) {
+    const h = _BinWriter();
+    h.i32be(9994);
+    for(let i = 0; i < 5; i++) h.i32be(0);
+    h.i32be(totalBytes / 2);
+    h.i32le(1000);
+    h.i32le(shapeType);
+    h.f64le(xmin); h.f64le(ymin); h.f64le(xmax); h.f64le(ymax);
+    h.f64le(0); h.f64le(0); h.f64le(0); h.f64le(0);
+    return h.build();
+  }
+
+  const shpTotal = 100 + 8 + contentWords * 2;
+  const shp = new Uint8Array(shpTotal);
+  shp.set(cabecalho(shpTotal), 0);
+  shp.set(corpo.build(), 100);
+
+  const shxTotal = 108;
+  const shx = new Uint8Array(shxTotal);
+  shx.set(cabecalho(shxTotal), 0);
+  const rec = new Uint8Array(8);
+  const dv = new DataView(rec.buffer);
+  dv.setInt32(0, 50, false); // offset em words = 100 bytes / 2 (único registro, logo após o cabeçalho)
+  dv.setInt32(4, contentWords, false);
+  shx.set(rec, 100);
+
+  return { shp, shx };
+}
+
 // Gera um .dbf (dBase III, sem memo) — campos: [{nome, tipo:'C'|'N', tamanho, decimais}],
 // registros: [{<nomeCampo>: valor, ...}].
 function _gerarDbf(campos, registros) {
@@ -10586,6 +10651,12 @@ function _gerarDbf(campos, registros) {
 }
 
 const _AGGPS_PRJ = 'GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137,298.2572235629972]],PRIMEM["Greenwich",0],UNIT["Degree",0.017453292519943295]]\r\n';
+
+// .prj do export Agres real — mesmo GEOGCS WGS84, mas formatação levemente diferente da Trimble
+// (decimais "6378137.0"/"298.257223563" em vez de "6378137"/"298.2572235629972", sem \r\n no final
+// — arquivo de referência tem exatamente 145 bytes, batendo com esta string crua). Texto exato
+// conferido byte a byte com POLYGON.prj/POLYLINE.prj do export real (idênticos entre si).
+const _AGRES_PRJ = 'GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]]';
 
 // Nome de arquivo/pasta seguro pro Windows (é dali que o pendrive/monitor vai ler) — só tira os
 // caracteres proibidos, mantém acento/espaço (a pasta em si aceita UTF-8 numa unidade FAT32/exFAT
@@ -10671,6 +10742,8 @@ function _atualizarAvisoMonitorGPS() {
     el.textContent = 'Pasta Gen4 (MasterData.xml + SpatialFiles) — testada contra um export real do AgroCAD (mesmo talhão da Trimble). Pra display GS3 2630 use a opção RCD abaixo — o Gen4 é pra CommandCenter.';
   } else if(marca === 'johndeere_gs3') {
     el.textContent = 'Pasta GS3_2630/AgroCAD/RCD/EIC (setup.fds + Boundary/CurveTrack por talhão) — formato nativo do display GS3 2630, decifrado byte a byte a partir de um export real do AgroCAD (diferente do Gen4 Setup File, que esse display não lê).';
+  } else if(marca === 'agres') {
+    el.textContent = 'Pasta Agres_<data>/GEO1_GEO1 (POLYGON.shp = talhões + perímetro, POLYLINE.shp = linhas de plantio) — testada byte a byte contra um export real do PixelPro/Agres (mesmo esquema de campos .dbf). O nome da subpasta "GEO1_GEO1" e o perímetro (buffer de 4m ao redor da união dos talhões) foram inferidos de uma única amostra real — se o seu monitor rejeitar por causa disso, avise que a gente ajusta.';
   } else {
     el.textContent = '';
   }
@@ -10696,6 +10769,7 @@ async function exportarMonitorGPS() {
     if(marca === 'trimble') await _exportarTrimbleAgGPS(produtor, fazenda, fontes);
     else if(marca === 'johndeere') await _exportarJohnDeereSetupFile(produtor, fazenda, fontes);
     else if(marca === 'johndeere_gs3') await _exportarJohnDeereGS3RCD(produtor, fazenda, fontes);
+    else if(marca === 'agres') await _exportarAgres(produtor, fazenda, fontes);
     else setStatus('Marca de monitor ainda não suportada.', 'err');
   } catch(e) {
     alert('Erro ao gerar exportação pro monitor: ' + e.message);
@@ -10758,6 +10832,147 @@ async function _exportarTrimbleAgGPS(produtor, fazenda, fontes) {
   const blob = await zip.generateAsync({ type: 'blob' });
   baixarArquivo(blob, `AgGPS_${produtor}_${fazenda}.zip`, 'application/zip');
   setStatus(`✓ Exportado pra Trimble — ${algumTalhao} talhão(ões), pastas "AgGPS" (completa e funcional) + "AgData" (estrutura só, veja o LEIA-ME.txt dentro — o formato .agf é criptografado pela Trimble, não temos como gerar). Extraia o .zip e copie as pastas pra raiz do pendrive.`, 'ok');
+}
+
+// ── Exportar para Monitor GPS (Trator) — Agres (PixelPro) ───────────────────────────────────
+// v5.36: pedido do usuário, a partir de um export REAL do PixelPro/Agres que ele forneceu
+// ("Projeto sistematização_Talhão 1_Agres.zip") — inspecionado byte a byte (cabeçalhos .shp/.shx/
+// .dbf crus, sem confiar só no pyshp, porque o POLYLINE.shp real tem uma estrutura fora do padrão
+// — ver abaixo) pra entender o formato antes de gerar qualquer coisa. Achados principais:
+//   - Estrutura de pastas BEM mais simples que a Trimble/John Deere: um ÚNICO par POLYGON+POLYLINE
+//     pra TODOS os talhões do projeto juntos (não uma pasta por talhão) — Agres_<data>_<hora>/
+//     GEO1_GEO1/{POLYGON,POLYLINE}.{shp,shx,dbf,prj,cpg}. O nome "GEO1_GEO1" é fixo no ÚNICO
+//     exemplo real que temos — não dá pra saber se muda entre exports (ex.: incrementa a cada
+//     exportação); mantido fixo por ser a única amostra disponível, sinalizado no aviso da UI.
+//   - POLYGON.shp: um registro por feature, padrão (1 shape = 1 registro .dbf), shapeType=5
+//     (Polygon). No exemplo real: 1 "perimetro" (layer='perimetro', buffer_m=4.0, um polígono
+//     maior que envolve os talhões, sentido horário como o Boundary da Trimble) + 1 "talhao" por
+//     talhão (layer='talhao', nome='T1'/'T2'/...). O "perimetro" não é documentado em lugar
+//     nenhum público que achei — pela forma (mais largo que a união dos talhões, com um campo
+//     numérico "buffer_m" batendo com a distância aparente) parece ser a união dos talhões
+//     expandida (turf.buffer) pra fora em 4 metros — replicado assim aqui, mas é uma INFERÊNCIA
+//     de uma amostra só, sinalizada no aviso da UI.
+//   - POLYLINE.shp: shapeType=3 (Polyline), mas ao contrário do padrão — e ao contrário do
+//     LineFeature da Trimble — o arquivo real tem só 1 (UM) registro .shp no total, só que esse
+//     registro é MULTI-PARTE (176 partes) — e o .dbf tem 176 registros, um por PARTE, na mesma
+//     ordem (confirmado byte a byte: tamanho do conteúdo do único registro = 126348 bytes =
+//     exatamente 44 + 4×176 + 16×7850, a fórmula de um Polyline multi-parte com 176 partes/7850
+//     pontos no total — ver _gerarShpShxMultiParte). Cada linha de plantio real virou uma parte de
+//     só 2 pontos (reta, igual às nossas linhas); linhas de curva de nível/terraço (que esse
+//     projeto de referência também tinha, e a gente ainda não exporta aqui) viraram partes com
+//     muito mais pontos — replicado abaixo só a parte de plantio (layer='plantio'), que é o que
+//     este app já tem pra exportar.
+//   - Campos do POLYLINE.dbf batendo com o real: layer/id/compriment/bloco/bloco_cor/pixelpro_i/
+//     elev_m — no exemplo real "bloco"/"bloco_cor"/"elev_m" vêm todos em branco (mesmo o projeto
+//     tendo blocos/cores aparentes no software de origem) — deixados em branco aqui também por
+//     enquanto (dá pra popular com a divisão em Setores deste app numa v futura, se fizer sentido).
+//   - .prj diferente do da Trimble (mesma projeção WGS84 geográfica, formatação de casas decimais
+//     diferente — GDAL/OGR, ver _AGRES_PRJ) e .cpg = "UTF-8" (5 bytes, sem quebra de linha) — ambos
+//     batendo byte a byte com os arquivos de referência (POLYGON.prj/POLYLINE.prj e
+//     POLYGON.cpg/POLYLINE.cpg do export real, idênticos entre si).
+function _gerarPacoteAgres(fontes) {
+  const talhoesValidos = fontes.filter(f => f.polyPts && f.polyPts.length >= 3);
+  if(!talhoesValidos.length) return null;
+
+  // ── POLYGON.shp/shx/dbf — "perimetro" (união + buffer de 4m) + um "talhao" por talhão ──
+  const camposPoligono = [
+    { nome: 'layer', tipo: 'C', tamanho: 254 }, { nome: 'buffer_m', tipo: 'N', tamanho: 18, decimais: 3 },
+    { nome: 'name', tipo: 'C', tamanho: 254 }, { nome: 'styleUrl', tipo: 'C', tamanho: 254 },
+    { nome: 'fill-opaci', tipo: 'N', tamanho: 18, decimais: 3 }, { nome: 'fill', tipo: 'C', tamanho: 254 },
+    { nome: 'stroke-opa', tipo: 'N', tamanho: 18, decimais: 3 }, { nome: 'stroke', tipo: 'C', tamanho: 254 },
+    { nome: 'icon-scale', tipo: 'N', tamanho: 18, decimais: 3 }, { nome: 'icon', tipo: 'C', tamanho: 254 },
+    { nome: '__impGroup', tipo: 'C', tamanho: 254 }, { nome: 'nome', tipo: 'C', tamanho: 254 }
+  ];
+  const registrosPoligono = [];
+  const dbfPoligono = [];
+  const camposEstiloVazios = { name: '', styleUrl: '', 'fill-opaci': 0, fill: '', 'stroke-opa': 0, stroke: '', 'icon-scale': 0, icon: '', __impGroup: '' };
+
+  // Perímetro — união robusta dos talhões + buffer de 4m pra fora (ver comentário grande acima).
+  try {
+    const polysTurf = talhoesValidos.map(f => {
+      const anel = [...f.polyPts.map(p => [p.lng, p.lat])];
+      anel.push(anel[0]);
+      return turf.polygon([anel]);
+    });
+    const uniao = polysTurf.length > 1 ? _unirPoligonosRobusto(polysTurf) : polysTurf[0];
+    const bufferizado = uniao ? turf.buffer(uniao, 4, { units: 'meters' }) : null;
+    if(bufferizado && bufferizado.geometry.type === 'Polygon') {
+      const anelAberto = bufferizado.geometry.coordinates[0].slice(0, -1); // tira o fechamento duplicado (turf sempre fecha o anel)
+      const anelXY = _garantirSentidoHorario(anelAberto);
+      registrosPoligono.push({ pontos: [...anelXY, anelXY[0]] });
+      dbfPoligono.push({ layer: 'perimetro', buffer_m: 4, nome: '', ...camposEstiloVazios });
+    }
+  } catch(e) { console.error('Agres: falha ao gerar perímetro (união/buffer) — seguindo só com os talhões.', e); }
+
+  talhoesValidos.forEach((f, i) => {
+    const anelXY = _garantirSentidoHorario(f.polyPts.map(p => [p.lng, p.lat]));
+    registrosPoligono.push({ pontos: [...anelXY, anelXY[0]] });
+    dbfPoligono.push({ layer: 'talhao', buffer_m: 0, nome: `T${i + 1}`, ...camposEstiloVazios });
+  });
+
+  const { shp: polygonShp, shx: polygonShx } = _gerarShpShx(5, registrosPoligono);
+  const polygonDbf = _gerarDbf(camposPoligono, dbfPoligono);
+
+  // ── POLYLINE.shp/shx/dbf — 1 registro multi-parte (todas as linhas de plantio do projeto) ──
+  const camposLinha = [
+    { nome: 'layer', tipo: 'C', tamanho: 254 }, { nome: 'id', tipo: 'N', tamanho: 18, decimais: 3 },
+    { nome: 'compriment', tipo: 'N', tamanho: 18, decimais: 3 }, { nome: 'bloco', tipo: 'C', tamanho: 254 },
+    { nome: 'bloco_cor', tipo: 'C', tamanho: 254 }, { nome: 'pixelpro_i', tipo: 'C', tamanho: 254 },
+    { nome: 'elev_m', tipo: 'N', tamanho: 18, decimais: 3 }
+  ];
+  const partesLinha = [];
+  const dbfLinha = [];
+  talhoesValidos.forEach(f => {
+    (f.linhas || []).forEach(pl => {
+      let pts; try { pts = pl.getLatLngs().flat().map(ll => [ll.lng, ll.lat]); } catch(e) { return; }
+      if(pts.length < 2) return;
+      let comprimento = 0;
+      for(let i = 0; i < pts.length - 1; i++) {
+        comprimento += haversineM({ lat: pts[i][1], lng: pts[i][0] }, { lat: pts[i + 1][1], lng: pts[i + 1][0] });
+      }
+      partesLinha.push({ pontos: pts });
+      dbfLinha.push({ layer: 'plantio', id: dbfLinha.length + 1, compriment: comprimento, bloco: '', bloco_cor: '', pixelpro_i: '', elev_m: 0 });
+    });
+  });
+
+  let polylineShp = null, polylineShx = null, polylineDbf = null;
+  if(partesLinha.length) {
+    const par = _gerarShpShxMultiParte(3, partesLinha);
+    polylineShp = par.shp; polylineShx = par.shx;
+    polylineDbf = _gerarDbf(camposLinha, dbfLinha);
+  }
+
+  return {
+    arquivos: {
+      'POLYGON.shp': polygonShp, 'POLYGON.shx': polygonShx, 'POLYGON.dbf': polygonDbf,
+      'POLYGON.prj': _AGRES_PRJ, 'POLYGON.cpg': 'UTF-8',
+      ...(polylineShp ? {
+        'POLYLINE.shp': polylineShp, 'POLYLINE.shx': polylineShx, 'POLYLINE.dbf': polylineDbf,
+        'POLYLINE.prj': _AGRES_PRJ, 'POLYLINE.cpg': 'UTF-8'
+      } : {})
+    },
+    nTalhoes: talhoesValidos.length, nLinhas: partesLinha.length
+  };
+}
+
+async function _exportarAgres(produtor, fazenda, fontes) {
+  if(typeof JSZip === 'undefined') { setStatus('Biblioteca de compactação (JSZip) não carregou — verifique sua conexão com a internet.', 'err'); return; }
+  const pacote = _gerarPacoteAgres(fontes);
+  if(!pacote) { setStatus('Nenhum talhão com contorno pra exportar.', 'err'); return; }
+
+  const agora = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const pastaData = `Agres_${agora.getFullYear()}-${pad(agora.getMonth() + 1)}-${pad(agora.getDate())}_${pad(agora.getHours())}-${pad(agora.getMinutes())}`;
+
+  const zip = new JSZip();
+  const base = zip.folder(pastaData).folder('GEO1_GEO1');
+  Object.entries(pacote.arquivos).forEach(([nome, conteudo]) => base.file(nome, conteudo));
+
+  setStatus('Gerando pacote Agres para o monitor…', 'info');
+  const blob = await zip.generateAsync({ type: 'blob' });
+  baixarArquivo(blob, `Agres_${produtor}_${fazenda}.zip`, 'application/zip');
+  const avisoLinhas = pacote.nLinhas ? `${pacote.nLinhas} linha(s) de plantio` : 'sem linhas de plantio (só os talhões)';
+  setStatus(`✓ Exportado pra Agres — ${pacote.nTalhoes} talhão(ões), ${avisoLinhas}. Extraia o .zip e copie a pasta "${pastaData}" pra raiz do pendrive.`, 'ok');
 }
 
 // ── Exportar para Monitor GPS (Trator) — John Deere (Gen4 Setup File) ───────────────────────
