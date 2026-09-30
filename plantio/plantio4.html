@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.44 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.45 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -4217,6 +4217,17 @@ body.layout-lateral #status{grid-area:status;}
 // mesmo empacotamento genérico, fechando a lista original de monitores pedida pelo usuário
 // (Fendt Vario, FendtONE, Hexagon, Jacto, Precision Planting, Raven, Stara, Topcon — todas
 // idênticas byte a byte, todas via _exportarShapefileGenerico).
+// v5.45: BUG relatado pelo usuário (com print) — "Não reconheci o formato do .zip" ao tentar
+// IMPORTAR qualquer um dos 8 exports novos (v5.36-v5.44). A importação (botão "Importar do
+// Monitor GPS") nunca tinha sido atualizada pra reconhecer o "shapefile genérico"
+// (POLYGON.shp+POLYLINE.shp) — só sabia ler Trimble (AgGPS) e John Deere (Gen4/MasterData.xml).
+// Corrigido com 3 peças novas: _lerDbf (leitor de .dbf, inverso de _gerarDbf, faltava — só
+// existia _lerShp), _importarShapefileGenericoZip (lê POLYGON.shp+POLYLINE.shp e reconstrói
+// talhões+linhas) e uma nova checagem ehShapefileGenerico em importarMonitorGPS. Ponto mais
+// delicado: diferente da Trimble (1 LineFeature.shp por pasta de talhão), aqui TODAS as linhas do
+// projeto ficam num ÚNICO POLYLINE.shp multi-parte, sem nenhuma referência de qual talhão cada
+// uma pertence — a importação precisa REDESCOBRIR isso testando se o ponto médio de cada linha
+// cai dentro de qual polígono (turf.booleanPointInPolygon), igual um humano faria visualmente.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -11426,6 +11437,38 @@ async function _lerShpDoZipEntry(entry) {
   try { return _lerShp(await entry.async('arraybuffer')); } catch(e) { return null; }
 }
 
+// Lê um .dbf (dBase III, sem memo) — inverso de _gerarDbf: devolve um array de registros
+// {<nomeCampo>: valor (string já sem o padding de espaços à direita)}.
+function _lerDbf(buf) {
+  const dv = new DataView(buf);
+  const numRegistros = dv.getUint32(4, true);
+  const headerSize = dv.getUint16(8, true);
+  const recordSize = dv.getUint16(10, true);
+  const campos = [];
+  for(let pos = 32; pos < headerSize - 1; pos += 32) {
+    const nomeBytes = new Uint8Array(buf, pos, 11);
+    let nome = '';
+    for(let i = 0; i < 11 && nomeBytes[i] !== 0; i++) nome += String.fromCharCode(nomeBytes[i]);
+    campos.push({ nome, tamanho: new Uint8Array(buf, pos + 16, 1)[0] });
+  }
+  const decoder = new TextDecoder('latin1');
+  const registros = [];
+  for(let i = 0; i < numRegistros; i++) {
+    let off = headerSize + i * recordSize + 1; // pula o byte de flag de exclusão
+    const rec = {};
+    campos.forEach(c => {
+      rec[c.nome] = decoder.decode(new Uint8Array(buf, off, c.tamanho)).trim();
+      off += c.tamanho;
+    });
+    registros.push(rec);
+  }
+  return registros;
+}
+async function _lerDbfDoZipEntry(entry) {
+  if(!entry) return [];
+  try { return _lerDbf(await entry.async('arraybuffer')); } catch(e) { return []; }
+}
+
 // Remove o ponto de fechamento (1º = último) que tanto Shapefile quanto o GeoJSON de contorno
 // sempre trazem — polyPts do app não guarda esse fechamento (é reconstruído na hora de usar).
 function _semPontoDeFechamento(pts) {
@@ -11512,6 +11555,63 @@ async function _importarJohnDeereGen4Zip(zip) {
   return fontes;
 }
 
+// Acha, dentro do .zip, um par POLYGON.shp+POLYLINE.shp (o "shapefile genérico" usado por
+// Agres/Fendt Vario/FendtONE/Hexagon/Jacto/Precision Planting/Raven/Stara/Topcon — todos batem
+// byte a byte entre si, ver _gerarPacoteAgres) e reconstrói os talhões + linhas de plantio.
+// Diferente da Trimble (1 LineFeature.shp por pasta de talhão), aqui TODAS as linhas do projeto
+// ficam num ÚNICO POLYLINE.shp multi-parte (ver _gerarShpShxMultiParte) e o .dbf não guarda a
+// qual talhão cada linha pertence — associa cada linha ao talhão testando se o PONTO MÉDIO dela
+// cai dentro do polígono (turf.booleanPointInPolygon), igual um humano faria visualmente.
+async function _importarShapefileGenericoZip(zip) {
+  const caminhos = Object.keys(zip.files).filter(p => !zip.files[p].dir);
+  const caminhoPolygon = caminhos.find(p => /POLYGON\.shp$/i.test(p));
+  if(!caminhoPolygon) return [];
+  const pasta = caminhoPolygon.slice(0, caminhoPolygon.length - 'POLYGON.shp'.length);
+  const caminhoCase = (nome) => caminhos.find(p => p.toLowerCase() === (pasta + nome).toLowerCase());
+
+  const polygonShp = await _lerShpDoZipEntry(zip.files[caminhoPolygon]);
+  const polygonDbf = await _lerDbfDoZipEntry(zip.files[caminhoCase('POLYGON.dbf')]);
+  if(!polygonShp || !polygonShp.registros.length) return [];
+
+  const talhoes = [];
+  polygonShp.registros.forEach((reg, i) => {
+    const attrs = polygonDbf[i] || {};
+    if((attrs.layer || '').toLowerCase() !== 'talhao') return; // ignora o "perimetro" (união+buffer)
+    const partes = reg.partes;
+    if(!partes.length) return;
+    const anel = partes.reduce((a, b) => (b.length > a.length ? b : a), partes[0]);
+    if(anel.length < 3) return;
+    const polyPts = _semPontoDeFechamento(anel.map(([x, y]) => ({ lat: y, lng: x })));
+    if(polyPts.length < 3) return;
+    let turfPoly = null;
+    try { turfPoly = turf.polygon([[...polyPts.map(p => [p.lng, p.lat]), [polyPts[0].lng, polyPts[0].lat]]]); } catch(e) {}
+    talhoes.push({ nome: attrs.nome || `Talhão ${talhoes.length + 1}`, polyPts, turfPoly, linhasCoords: [] });
+  });
+  if(!talhoes.length) return [];
+
+  const caminhoPolyline = caminhoCase('POLYLINE.shp');
+  if(caminhoPolyline) {
+    const polylineShp = await _lerShpDoZipEntry(zip.files[caminhoPolyline]);
+    const polylineDbf = await _lerDbfDoZipEntry(zip.files[caminhoCase('POLYLINE.dbf')]);
+    if(polylineShp && polylineShp.registros.length) {
+      // todas as linhas do projeto ficam num ÚNICO registro multi-parte — 1 parte = 1 linha, e o
+      // .dbf tem 1 registro por parte, na mesma ordem (ver _gerarShpShxMultiParte).
+      polylineShp.registros[0].partes.forEach((parte, i) => {
+        const attrs = polylineDbf[i] || {};
+        if((attrs.layer || '').toLowerCase() !== 'plantio') return; // ignora curva de nível/terraço
+        if(parte.length < 2) return;
+        const coordsLL = parte.map(([x, y]) => ({ lat: y, lng: x }));
+        const meio = coordsLL[Math.floor(coordsLL.length / 2)];
+        let talhaoDono = null;
+        try { talhaoDono = talhoes.find(t => t.turfPoly && turf.booleanPointInPolygon(turf.point([meio.lng, meio.lat]), t.turfPoly)); } catch(e) {}
+        (talhaoDono || talhoes[0]).linhasCoords.push(coordsLL);
+      });
+    }
+  }
+
+  return talhoes.map(t => ({ nome: t.nome, polyPts: t.polyPts, linhasCoords: t.linhasCoords }));
+}
+
 // Cria um talhão já travado, com contorno E linhas de plantio (diferente de
 // _criarTalhaoArquivadoSimples, que só faz o contorno) — usado pela importação do monitor GPS.
 function _criarTalhaoArquivadoComLinhas(nome, polyPts, linhasCoords) {
@@ -11563,12 +11663,17 @@ async function importarMonitorGPS(file) {
   const caminhos = Object.keys(zip.files);
   const ehTrimble = caminhos.some(p => /AgGPS\/Data\//i.test(p) && /Boundary\.shp$/i.test(p));
   const ehJohnDeere = !ehTrimble && caminhos.some(p => /MasterData\.xml$/i.test(p));
+  // "shapefile genérico" — Agres/Fendt Vario/FendtONE/Hexagon/Jacto/Precision Planting/Raven/
+  // Stara/Topcon, todos batem byte a byte entre si (ver _gerarPacoteAgres) e todos têm um
+  // POLYGON.shp em algum nível de pasta (com ou sem a subpasta "GEO1_GEO1" do Agres).
+  const ehShapefileGenerico = !ehTrimble && !ehJohnDeere && caminhos.some(p => /POLYGON\.shp$/i.test(p));
 
   try {
     let fontes = [];
     if(ehTrimble) fontes = await _importarTrimbleAgGpsZip(zip);
     else if(ehJohnDeere) fontes = await _importarJohnDeereGen4Zip(zip);
-    else { setStatus('Não reconheci o formato do .zip — esperado uma pasta "AgGPS" (Trimble) ou "Gen4" (John Deere, com MasterData.xml).', 'err'); return; }
+    else if(ehShapefileGenerico) fontes = await _importarShapefileGenericoZip(zip);
+    else { setStatus('Não reconheci o formato do .zip — esperado uma pasta "AgGPS" (Trimble), "Gen4" (John Deere, com MasterData.xml) ou um POLYGON.shp (Agres/Fendt/Hexagon/Jacto/Precision Planting/Raven/Stara/Topcon).', 'err'); return; }
 
     if(!fontes.length) { setStatus('Nenhum talhão com contorno válido encontrado no arquivo.', 'err'); return; }
 
