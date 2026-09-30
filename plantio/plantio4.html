@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.45 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.46 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -4228,6 +4228,18 @@ body.layout-lateral #status{grid-area:status;}
 // projeto ficam num ÚNICO POLYLINE.shp multi-parte, sem nenhuma referência de qual talhão cada
 // uma pertence — a importação precisa REDESCOBRIR isso testando se o ponto médio de cada linha
 // cai dentro de qual polígono (turf.booleanPointInPolygon), igual um humano faria visualmente.
+// v5.46: BUG relatado pelo usuário — "quando estou exportando o arquivo para dxf as cores dos
+// setores não vem, sempre que exportar para kml ou dxf isso deve ser mantido". Causa: tanto o KML
+// (kmlTalhao) quanto o DXF (exportarTalhaoDxf) pintavam TODAS as linhas de plantio de um talhão
+// com uma cor ÚNICA (corLinha, o padrão de antes de setorizar) — ignoravam a cor PRÓPRIA de cada
+// linha (pl.options.color), que é onde a divisão em Setores (aba "Setores", v5.33+) realmente
+// grava a cor de cada uma. A Classificação de Declividade já fazia isso certo (agrupa pelas cores
+// próprias das linhas) — o bug era só nas linhas de plantio "normais". Fix: KML usa
+// pl.options.color (com corLinha só de fallback, quando não setorizado) no LineStyle de cada
+// Placemark; DXF ganhou um parâmetro novo em addPolyline (corEntidade) que sobrepõe a cor da
+// layer SÓ naquela entidade (grupo DXF 62) — mantém todas as linhas na mesma layer
+// "_LINHAS_PLANTIO" (não fragmenta em várias layers por cor), mas cada POLYLINE sai com a cor de
+// tela correta.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -10113,14 +10125,16 @@ function _exportarKMLInterno() {
       f += kmlPolygonCoords(pts);
       f += `</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>\n`;
     }
-    // Linhas de plantio
+    // Linhas de plantio — cada linha usa a PRÓPRIA cor atual (pl.options.color), não uma cor
+    // única do talhão: preserva as cores da divisão em Setores (aba "Setores") em vez de pintar
+    // tudo com corLinha, que é só o padrão de quando não há setorização.
     if(lnhs.length) {
       const corL = corLinha || '#FFD600';
       f += `<Folder><name>Linhas de Plantio</name>\n`;
       lnhs.forEach(pl => {
         const p = pl.getLatLngs().flat();
         if(p.length < 2) return;
-        f += `<Placemark>${kmlLine(corL, 1.5)}<LineString><coordinates>${kmlCoords([p])}</coordinates></LineString></Placemark>\n`;
+        f += `<Placemark>${kmlLine(pl.options.color || corL, 1.5)}<LineString><coordinates>${kmlCoords([p])}</coordinates></LineString></Placemark>\n`;
       });
       f += `</Folder>\n`;
     }
@@ -10327,14 +10341,17 @@ function _exportarDXFInterno() {
     if(!layers.has(ln)) layers.set(ln, hexToClosestACI(color));
     return ln;
   }
-  function addPolyline(pts, layerName, closed, elevation) {
+  // corEntidade: sobrepõe a cor da LAYER só nessa entidade (grupo 62) — usado pelas linhas de
+  // plantio, que ficam todas na mesma layer "_LINHAS_PLANTIO" mas precisam preservar a cor
+  // PRÓPRIA de cada linha (divisão em Setores), em vez de todas saírem na cor da layer inteira.
+  function addPolyline(pts, layerName, closed, elevation, corEntidade) {
     if(pts.length < 2) return;
     const uv = pts.map(proj);
     uv.forEach(p => {
       if(p.x < extentsUTM.minX) extentsUTM.minX = p.x; if(p.x > extentsUTM.maxX) extentsUTM.maxX = p.x;
       if(p.y < extentsUTM.minY) extentsUTM.minY = p.y; if(p.y > extentsUTM.maxY) extentsUTM.maxY = p.y;
     });
-    const aci = layers.get(layerName);
+    const aci = corEntidade ? hexToClosestACI(corEntidade) : layers.get(layerName);
     const is3d = elevation != null;
     // POLYLINE clássico (R12): flag 66=1 obrigatória, vértices como entidades VERTEX separadas,
     // fechado com SEQEND. Cor gravada também na própria entidade (grupo 62), redundante com a
@@ -10361,7 +10378,9 @@ function _exportarDXFInterno() {
     }
     if(lnhs.length) {
       const ln = addLayer(`${base}_LINHAS_PLANTIO`, corLinha || '#FFD600');
-      lnhs.forEach(pl => addPolyline(pl.getLatLngs().flat(), ln, false, null));
+      // Cor PRÓPRIA de cada linha (pl.options.color) em vez da cor única da layer — preserva a
+      // divisão em Setores (aba "Setores"); sem setorização, toda linha tem a mesma cor mesmo.
+      lnhs.forEach(pl => addPolyline(pl.getLatLngs().flat(), ln, false, null, pl.options.color));
     }
     if(lnhsDecl.length) {
       const grupos = {};
