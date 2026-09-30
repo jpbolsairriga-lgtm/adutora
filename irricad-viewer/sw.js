@@ -1,17 +1,14 @@
-/* Service worker - app e projetos abertos funcionam offline em campo */
-var CACHE = "irricad-viewer-v3";
+/* Service worker - app, mapa e projetos abertos funcionam offline em campo */
+var CACHE = "irricad-viewer-v4";
 var TILES = "tiles-esri-v1"; /* imagens de satelite ja vistas; nao apaga nas atualizacoes */
 var ARQS = ["./", "./irricad-viewer.html", "./manifest.json", "./icon-192.png", "./icon-512.png", "./icon-maskable.png",
   "./tophofarm-simbolo.png", "./tophofarm-logo-completo.png", "./irricad-logo.png",
-  "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css",
-  "https://unpkg.com/leaflet@1.9.4/dist/leaflet-src.js",
-  "https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js",
-  "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"];
+  "./lib/leaflet.css", "./lib/leaflet-src.js", "./lib/leaflet-rotate-src.js", "./lib/jszip.min.js"];
 
 self.addEventListener("install", function(e){
   self.skipWaiting();
   e.waitUntil(caches.open(CACHE).then(function(c){
-    return Promise.all(ARQS.map(function(u){ return c.add(new Request(u,{mode:"cors"})).catch(function(){}); }));
+    return Promise.all(ARQS.map(function(u){ return c.add(new Request(u,{cache:"reload"})).catch(function(){}); }));
   }));
 });
 
@@ -36,8 +33,12 @@ self.addEventListener("fetch", function(e){
     }));
     return;
   }
+  /* demais dominios externos (ex.: mapa de ruas OSM): deixa passar direto,
+     sem tentar o app funcionar offline por causa deles */
+  if(url.origin!==self.location.origin) return;
 
-  /* mapa de ruas (OSM) e bibliotecas CDN: cache-first, atualiza em segundo plano */
+  /* arquivos do app (HTML, bibliotecas locais, icones): usa o guardado
+     (rapido, funciona sem sinal) e atualiza em segundo plano */
   e.respondWith(caches.open(CACHE).then(function(c){
     return c.match(req).then(function(m){
       var rede=fetch(req).then(function(r){
@@ -45,7 +46,7 @@ self.addEventListener("fetch", function(e){
         return r;
       }).catch(function(){ return null; });
       if(m){ e.waitUntil(rede); return m; }
-      return rede.then(function(r){ return r||(url.origin===self.location.origin ? c.match("./irricad-viewer.html") : undefined); });
+      return rede.then(function(r){ return r||c.match("./irricad-viewer.html"); });
     });
   }));
 });
