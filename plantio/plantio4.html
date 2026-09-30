@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.34 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.35 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -4135,6 +4135,31 @@ body.layout-lateral #status{grid-area:status;}
 // aleatoriamente); limparSetores devolve cada talhão pra SUA PRÓPRIA cor original mesmo no caso
 // combinado; 1 talhão selecionado sozinho continua com o comportamento de sempre (regressão
 // coberta); recusa dividir quando o total combinado não tem linhas suficientes.
+// v5.35: BUG relatado com print — "quando muda de talhão pra pegar o restante das linhas pra fechar
+// a metragem, pega aleatoriamente, deveria sempre pegar nas extremidades, pra não ficar nada
+// deslocado". No print dava pra ver um pedacinho de uma cor cercado pela outra, em vez de um corte
+// limpo na borda entre dois talhões vizinhos de setores diferentes.
+// Causa: a v5.34 projetava CADA LINHA (de qualquer talhão do combinado) direto no ÚNICO eixo macro
+// (o espalhamento entre centroides dos talhões) — isso ordena bem os TALHÕES entre si, mas dentro
+// de um talhão específico cujas fileiras não estão alinhadas com esse eixo macro (o normal — cada
+// talhão tem sua própria guia, numa direção sem relação com a direção dos outros), a projeção no
+// eixo ERRADO podia embaralhar a ordem real das fileiras daquele talhão.
+// Fix: ordenação em DOIS NÍVEIS em vez de uma projeção só. (1) Ordena os TALHÕES entre si pelo eixo
+// macro (como antes). (2) Dentro de CADA talhão, ordena as linhas dele pelo eixo LOCAL de fileiras
+// — a mesma lógica de _calcularSetores (bearing da linha mais comprida + 90°) — preservando a
+// geometria real daquele talhão específico em vez de forçar tudo no eixo macro. (3) Alinha o
+// sentido da ordenação local de cada talhão com o eixo macro (compara o bearing do primeiro→último
+// item local contra o eixo macro; inverte se apontar mais de 90° "contra") — sem isso, um talhão
+// podia entrar de trás pra frente em relação ao vizinho anterior na sequência, criando
+// descontinuidade bem na fronteira entre dois talhões de setores diferentes (o mesmo tipo de
+// "salto" do print, só que entre talhões em vez de dentro de um só).
+// Testado com harness Node.js: cenário adversarial construído de propósito — talhão B com 5
+// fileiras empilhadas norte-sul (a ordem real que uma divisão contígua tem que respeitar), mas em
+// formato de cunha (X de cada fileira sem relação nenhuma com sua posição Y, de propósito pra
+// confundir uma projeção só no eixo leste-oeste entre os talhões) — a v5.34 produziria uma
+// sequência de Y embaralhada tipo [20,0,40,10,30] (confirmado calculando à mão); com o fix, as 5
+// fileiras saem numa ordem estritamente monotônica (0,10,20,30,40 ou o inverso — qualquer sentido
+// vale, contíguo é contíguo) — nunca embaralhada.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -8835,52 +8860,97 @@ function _calcularSetores(linhasArr, n, modo) {
 // divide UM talhão só. Cada item guarda o `pl`/`t`/`corBase` de origem, pra quem chama saber qual
 // cor original restaurar em cada linha depois (limparSetores) e qual talhão cada linha pertence.
 //
-// Eixo de referência: como os talhões selecionados podem ter guias/orientações de fileira
-// DIFERENTES entre si (não existe um "sentido das fileiras" único pro grupo todo, ao contrário de
-// dentro de 1 talhão), usa o bearing entre o PAR de talhões mais DISTANTE entre si (a direção em
-// que os campos selecionados estão espalhados no mapa) — não é perpendicular a nada, é a própria
-// direção do espalhamento, já que aqui o objetivo é ordenar os TALHÕES uns em relação aos outros
-// (e as linhas dentro de cada um acabam se agrupando juntas na projeção, por estarem todas dentro
-// da mesma área pequena do próprio talhão).
+// v5.35: BUG relatado com print — quando um setor precisava "pegar o restante" de um talhão vizinho
+// pra fechar a metragem, a linha escolhida dentro DAQUELE talhão vinha meio aleatória/deslocada (um
+// pedacinho de uma cor ficava cercado pela outra, em vez de um corte limpo na borda). Causa: a v5.34
+// projetava CADA LINHA (de qualquer talhão) direto no ÚNICO eixo macro (o espalhamento entre
+// centroides dos talhões) — isso ordena bem os TALHÕES entre si, mas dentro de um talhão específico
+// cujas fileiras não estão alinhadas com esse eixo macro (comum: cada talhão tem sua própria guia,
+// em direção nenhuma relacionada à direção dos outros), a projeção no eixo ERRADO pode intercalar
+// linhas de um jeito que não segue a ordem real das fileiras daquele talhão — gerando esse
+// "deslocado" que apareceu no print.
+// Fix: ordenação em DOIS NÍVEIS, não um projeção só. (1) Ordena os TALHÕES entre si pelo eixo macro
+// (como antes). (2) Dentro de CADA talhão, ordena as linhas dele pelo eixo LOCAL de fileiras —
+// exatamente a mesma lógica de _calcularSetores (bearing da linha mais comprida + 90°), preservando
+// a geometria real daquele talhão específico em vez de forçar tudo no eixo macro. (3) Antes de
+// concatenar, confere se o sentido da ordenação LOCAL de cada talhão "aponta" a favor ou contra o
+// eixo macro (comparando o bearing do primeiro→último item local com o eixo macro) e inverte se
+// for contra — sem isso, um talhão podia entrar "de trás pra frente" em relação ao vizinho anterior
+// na sequência, criando descontinuidade bem na fronteira entre dois talhões de setores diferentes
+// (o mesmo tipo de "salto" visto no print, só que entre talhões em vez de dentro de um só).
+// Resultado: cada talhão mantém contiguidade garantida internamente (igual sempre foi em
+// _calcularSetores), e a sequência entre talhões diferentes também fica geograficamente coerente.
 function _calcularSetoresCombinado(alvos, n, modo) {
-  const itens = [];
-  alvos.forEach(({ t, linhasArr, corBase }) => {
-    linhasArr.forEach(pl => {
-      const pts = pl.getLatLngs().flat();
-      if(pts.length < 2) return;
-      let len = 0;
-      for(let i = 0; i < pts.length - 1; i++) len += haversineM(pts[i], pts[i+1]);
-      itens.push({ pl, t, corBase, len, mid: pts[Math.floor(pts.length / 2)] });
-    });
+  // (1) Ordena os TALHÕES pelo eixo macro (espalhamento entre centroides).
+  const comCentroide = alvos.map(a => {
+    const pts = a.t.polyPts;
+    const lat = pts.reduce((s,p) => s+p.lat, 0) / pts.length, lng = pts.reduce((s,p) => s+p.lng, 0) / pts.length;
+    return { ...a, centroide: { lat, lng } };
   });
-  if(itens.length < n) return null;
 
-  const centroides = alvos.map(({ t }) => {
-    const pts = t.polyPts;
-    return { lat: pts.reduce((s,p) => s+p.lat, 0) / pts.length, lng: pts.reduce((s,p) => s+p.lng, 0) / pts.length };
-  });
   let refBrg = 0, maiorDist = -1;
-  for(let i = 0; i < centroides.length; i++) {
-    for(let j = i + 1; j < centroides.length; j++) {
-      const d = haversineM(centroides[i], centroides[j]);
+  for(let i = 0; i < comCentroide.length; i++) {
+    for(let j = i + 1; j < comCentroide.length; j++) {
+      const d = haversineM(comCentroide[i].centroide, comCentroide[j].centroide);
       if(d > maiorDist) {
         maiorDist = d;
-        refBrg = turf.bearing(turf.point([centroides[i].lng, centroides[i].lat]), turf.point([centroides[j].lng, centroides[j].lat]));
+        refBrg = turf.bearing(
+          turf.point([comCentroide[i].centroide.lng, comCentroide[i].centroide.lat]),
+          turf.point([comCentroide[j].centroide.lng, comCentroide[j].centroide.lat])
+        );
       }
     }
   }
-  // Só 1 talhão de verdade no combinado (ex.: os outros selecionados não tinham linha nenhuma) —
-  // sem par de centroides pra tirar bearing; direção arbitrária não importa (só tem 1 grupo de
-  // pontos próximos entre si mesmo).
-  if(centroides.length < 2) refBrg = 0;
+  if(comCentroide.length < 2) refBrg = 0; // só 1 talhão de verdade — direção arbitrária não importa
 
-  const anchor = itens[0].mid;
-  itens.forEach(o => {
-    const dist = haversineM(anchor, o.mid);
-    const brg = dist < 1e-6 ? refBrg : turf.bearing(turf.point([anchor.lng, anchor.lat]), turf.point([o.mid.lng, o.mid.lat]));
-    o.proj = dist * Math.cos((brg - refBrg) * Math.PI / 180);
+  const anchorMacro = comCentroide[0].centroide;
+  comCentroide.forEach(a => {
+    const dist = haversineM(anchorMacro, a.centroide);
+    const brg = dist < 1e-6 ? refBrg : turf.bearing(turf.point([anchorMacro.lng, anchorMacro.lat]), turf.point([a.centroide.lng, a.centroide.lat]));
+    a.proj = dist * Math.cos((brg - refBrg) * Math.PI / 180);
   });
-  itens.sort((a, b) => a.proj - b.proj);
+  comCentroide.sort((a, b) => a.proj - b.proj);
+
+  // (2) Dentro de CADA talhão, ordena as linhas dele pelo eixo LOCAL de fileiras (mesma lógica de
+  // _calcularSetores) e (3) alinha o sentido dessa ordenação local com o eixo macro.
+  const itens = [];
+  comCentroide.forEach(({ t, linhasArr, corBase }) => {
+    const local = linhasArr.map(pl => {
+      const pts = pl.getLatLngs().flat();
+      if(pts.length < 2) return null;
+      let len = 0;
+      for(let i = 0; i < pts.length - 1; i++) len += haversineM(pts[i], pts[i+1]);
+      return { pl, pts, len, mid: pts[Math.floor(pts.length / 2)] };
+    }).filter(Boolean);
+    if(!local.length) return;
+
+    if(local.length >= 2) {
+      const ref = local.reduce((a, b) => (b.len > a.len ? b : a));
+      const rowBrg = turf.bearing(
+        turf.point([ref.pts[0].lng, ref.pts[0].lat]),
+        turf.point([ref.pts[ref.pts.length - 1].lng, ref.pts[ref.pts.length - 1].lat])
+      );
+      const perpBrg = rowBrg + 90;
+      const anchorLocal = local[0].mid;
+      local.forEach(o => {
+        const dist = haversineM(anchorLocal, o.mid);
+        const brg = dist < 1e-6 ? perpBrg : turf.bearing(turf.point([anchorLocal.lng, anchorLocal.lat]), turf.point([o.mid.lng, o.mid.lat]));
+        o.projLocal = dist * Math.cos((brg - perpBrg) * Math.PI / 180);
+      });
+      local.sort((a, b) => a.projLocal - b.projLocal);
+
+      // Alinha o sentido: compara o bearing do primeiro→último item local com o eixo macro — se
+      // apontar mais de 90° "contra", inverte a ordem local (senão esse talhão entraria de trás
+      // pra frente em relação ao vizinho anterior na sequência combinada).
+      const p0 = local[0].mid, p1 = local[local.length - 1].mid;
+      const brgLocal = turf.bearing(turf.point([p0.lng, p0.lat]), turf.point([p1.lng, p1.lat]));
+      const diffAngular = ((brgLocal - refBrg + 540) % 360) - 180; // normaliza pra [-180,180]
+      if(Math.abs(diffAngular) > 90) local.reverse();
+    }
+
+    local.forEach(o => itens.push({ pl: o.pl, t, corBase, len: o.len }));
+  });
+  if(itens.length < n) return null;
 
   const pesos = itens.map(o => (modo === 'quantidade' ? 1 : o.len));
   const cortes = _cortarPorPeso(pesos, n);
