@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.37 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.38 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1078,6 +1078,7 @@ body.layout-lateral #status{grid-area:status;}
               <option value="johndeere_gs3">John Deere (GS3 2630 / RCD)</option>
               <option value="agres">Agres (PixelPro)</option>
               <option value="fendt">Fendt Vario</option>
+              <option value="fendtone">FendtONE</option>
             </select>
           </div>
           <div class="rcol">
@@ -4176,6 +4177,13 @@ body.layout-lateral #status{grid-area:status;}
 // IDÊNTICO (mesmo POLYGON/POLYLINE .shp/.shx/.dbf/.prj/.cpg) — só muda a pasta: aqui é
 // "shapefile_<data>_<hora>/POLYGON.*+POLYLINE.*" direto, sem a subpasta "GEO1_GEO1" nem o prefixo
 // "Agres_". _exportarFendtVario reaproveita _gerarPacoteAgres sem duplicar o gerador.
+// v5.38: pedido do usuário — export "FendtONE", a partir de outro export real fornecido
+// ("shapefile_2026-09-30_14-47.zip"). Comparado byte a byte contra a amostra "Fendt Vario" (v5.37):
+// TODOS os 10 arquivos são idênticos, byte a byte, inclusive o nome da pasta raiz
+// ("shapefile_<data>_<hora>", igual). Ou seja, "Fendt Vario" e "FendtONE" usam o MESMO
+// empacotamento genérico no PixelPro — renomeada _exportarFendtVario -> _exportarShapefileGenerico
+// (recebe o nome do monitor como parâmetro, só pra status/nome do .zip) em vez de duplicar a
+// função pra cada marca nova que usar esse mesmo formato.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -10750,8 +10758,8 @@ function _atualizarAvisoMonitorGPS() {
     el.textContent = 'Pasta GS3_2630/AgroCAD/RCD/EIC (setup.fds + Boundary/CurveTrack por talhão) — formato nativo do display GS3 2630, decifrado byte a byte a partir de um export real do AgroCAD (diferente do Gen4 Setup File, que esse display não lê).';
   } else if(marca === 'agres') {
     el.textContent = 'Pasta Agres_<data>/GEO1_GEO1 (POLYGON.shp = talhões + perímetro, POLYLINE.shp = linhas de plantio) — testada byte a byte contra um export real do PixelPro/Agres (mesmo esquema de campos .dbf). O nome da subpasta "GEO1_GEO1" e o perímetro (buffer de 4m ao redor da união dos talhões) foram inferidos de uma única amostra real — se o seu monitor rejeitar por causa disso, avise que a gente ajusta.';
-  } else if(marca === 'fendt') {
-    el.textContent = 'Pasta shapefile_<data>/POLYGON.shp+POLYLINE.shp — testada byte a byte contra um export real (idêntico ao conteúdo do Agres, só muda a estrutura de pastas: sem a subpasta "GEO1_GEO1" e sem o prefixo "Agres_").';
+  } else if(marca === 'fendt' || marca === 'fendtone') {
+    el.textContent = 'Pasta shapefile_<data>/POLYGON.shp+POLYLINE.shp — testada byte a byte contra um export real (idêntico ao conteúdo do Agres, só muda a estrutura de pastas: sem a subpasta "GEO1_GEO1" e sem o prefixo "Agres_"). Fendt Vario e FendtONE usam esse mesmo empacotamento, confirmado byte a byte entre as duas amostras.';
   } else {
     el.textContent = '';
   }
@@ -10778,7 +10786,8 @@ async function exportarMonitorGPS() {
     else if(marca === 'johndeere') await _exportarJohnDeereSetupFile(produtor, fazenda, fontes);
     else if(marca === 'johndeere_gs3') await _exportarJohnDeereGS3RCD(produtor, fazenda, fontes);
     else if(marca === 'agres') await _exportarAgres(produtor, fazenda, fontes);
-    else if(marca === 'fendt') await _exportarFendtVario(produtor, fazenda, fontes);
+    else if(marca === 'fendt') await _exportarShapefileGenerico(produtor, fazenda, fontes, 'Fendt Vario');
+    else if(marca === 'fendtone') await _exportarShapefileGenerico(produtor, fazenda, fontes, 'FendtONE');
     else setStatus('Marca de monitor ainda não suportada.', 'err');
   } catch(e) {
     alert('Erro ao gerar exportação pro monitor: ' + e.message);
@@ -10984,15 +10993,22 @@ async function _exportarAgres(produtor, fazenda, fontes) {
   setStatus(`✓ Exportado pra Agres — ${pacote.nTalhoes} talhão(ões), ${avisoLinhas}. Extraia o .zip e copie a pasta "${pastaData}" pra raiz do pendrive.`, 'ok');
 }
 
-// ── Exportar para Monitor GPS (Trator) — Fendt Vario ─────────────────────────────────────────
-// v5.37: pedido do usuário, a partir de um export REAL fornecido ("shapefile_2026-09-30_14-36.zip").
-// Comparado byte a byte contra o export Agres (v5.36): POLYGON.shp/shx/prj/cpg e POLYLINE.shp/shx/
-// prj/cpg/dbf são TODOS IDÊNTICOS, byte a byte — mesmo conteúdo, mesmo esquema de campos. A única
-// diferença é a estrutura de pastas: aqui é "shapefile_<data>_<hora>/POLYGON.*+POLYLINE.*" direto
-// na raiz (sem a subpasta "GEO1_GEO1" nem o prefixo "Agres_"). Ou seja, pro Fendt Vario o PixelPro
-// usa o MESMO gerador de shapefile do Agres, só empacota diferente — por isso reaproveita
-// _gerarPacoteAgres() sem duplicar nada, só troca o empacotamento final.
-async function _exportarFendtVario(produtor, fazenda, fontes) {
+// ── Exportar para Monitor GPS (Trator) — "shapefile genérico" (Fendt Vario, FendtONE, ...) ───
+// v5.37: pedido do usuário — export "Fendt Vario", a partir de um export real fornecido
+// ("shapefile_2026-09-30_14-36.zip"). Comparado byte a byte contra o export Agres (v5.36):
+// POLYGON.shp/shx/prj/cpg e POLYLINE.shp/shx/prj/cpg/dbf são TODOS IDÊNTICOS, byte a byte — mesmo
+// conteúdo, mesmo esquema de campos. A única diferença é a estrutura de pastas: aqui é
+// "shapefile_<data>_<hora>/POLYGON.*+POLYLINE.*" direto na raiz (sem a subpasta "GEO1_GEO1" nem o
+// prefixo "Agres_"). Ou seja, o PixelPro usa o MESMO gerador de shapefile do Agres pra esse
+// formato, só empacota diferente — por isso reaproveita _gerarPacoteAgres() sem duplicar nada.
+// v5.38: pedido do usuário — export "FendtONE", a partir de outro export real fornecido
+// ("shapefile_2026-09-30_14-47.zip"). Comparado byte a byte contra o export "Fendt Vario" (v5.37):
+// TODOS os 10 arquivos são idênticos, byte a byte, inclusive o nome da pasta raiz
+// ("shapefile_<data>_<hora>", igual — não vira "FendtONE_<data>" nem nada parecido). Ou seja,
+// "Fendt Vario" e "FendtONE" são o MESMO empacotamento genérico no PixelPro — renomeada a função
+// de _exportarFendtVario pra _exportarShapefileGenerico (recebe o nome do monitor só pra status/
+// nome do .zip) em vez de duplicar a função pra cada marca nova que usar esse mesmo formato.
+async function _exportarShapefileGenerico(produtor, fazenda, fontes, nomeMonitor) {
   if(typeof JSZip === 'undefined') { setStatus('Biblioteca de compactação (JSZip) não carregou — verifique sua conexão com a internet.', 'err'); return; }
   const pacote = _gerarPacoteAgres(fontes);
   if(!pacote) { setStatus('Nenhum talhão com contorno pra exportar.', 'err'); return; }
@@ -11005,11 +11021,11 @@ async function _exportarFendtVario(produtor, fazenda, fontes) {
   const base = zip.folder(pastaData);
   Object.entries(pacote.arquivos).forEach(([nome, conteudo]) => base.file(nome, conteudo));
 
-  setStatus('Gerando pacote shapefile para o monitor Fendt Vario…', 'info');
+  setStatus(`Gerando pacote shapefile para o monitor ${nomeMonitor}…`, 'info');
   const blob = await zip.generateAsync({ type: 'blob' });
-  baixarArquivo(blob, `Fendt_${produtor}_${fazenda}.zip`, 'application/zip');
+  baixarArquivo(blob, `${_nomePastaSeguro(nomeMonitor, 'Shapefile')}_${produtor}_${fazenda}.zip`, 'application/zip');
   const avisoLinhas = pacote.nLinhas ? `${pacote.nLinhas} linha(s) de plantio` : 'sem linhas de plantio (só os talhões)';
-  setStatus(`✓ Exportado pra Fendt Vario — ${pacote.nTalhoes} talhão(ões), ${avisoLinhas}. Extraia o .zip e copie a pasta "${pastaData}" pra raiz do pendrive.`, 'ok');
+  setStatus(`✓ Exportado pra ${nomeMonitor} — ${pacote.nTalhoes} talhão(ões), ${avisoLinhas}. Extraia o .zip e copie a pasta "${pastaData}" pra raiz do pendrive.`, 'ok');
 }
 
 // ── Exportar para Monitor GPS (Trator) — John Deere (Gen4 Setup File) ───────────────────────
