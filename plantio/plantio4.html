@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.32 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.33 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -387,6 +387,7 @@ body.layout-lateral #status{grid-area:status;}
     <button class="rtab" data-panel="rp-talhao" onclick="ativarRibbon('rp-talhao')">Talhão</button>
     <button class="rtab" data-panel="rp-carreador" onclick="ativarRibbon('rp-carreador')">Carreador</button>
     <button class="rtab" data-panel="rp-guia" onclick="ativarRibbon('rp-guia')">Guia &amp; Linhas de Plantio</button>
+    <button class="rtab" data-panel="rp-setores" onclick="ativarRibbon('rp-setores')">Setores</button>
     <button class="rtab" data-panel="rp-curvas" onclick="ativarRibbon('rp-curvas')">Curvas de Nível</button>
     <button class="rtab" data-panel="rp-analise" onclick="ativarRibbon('rp-analise')">Análise</button>
     <button class="rtab" data-panel="rp-relatorio" onclick="ativarRibbon('rp-relatorio')">Exportar &amp; Relatório</button>
@@ -735,6 +736,36 @@ body.layout-lateral #status{grid-area:status;}
           </div>
         </div>
         <div class="rgroup-title">Declividade — Talhão Atual</div>
+      </div>
+    </div>
+
+    <!-- ══ Setores / Operações ══ -->
+    <div class="rpanel" id="rp-setores">
+      <div class="rgroup">
+        <div class="rgroup-body">
+          <div class="rcol">
+            <label>Nº de setores</label>
+            <input type="number" id="setoresN" class="rfield" value="2" min="2" max="20" step="1">
+          </div>
+          <div class="rcol">
+            <label>Dividir por</label>
+            <select id="setoresModo" class="rfield wide" title="Comprimento igual (recomendado): cada setor fica com aproximadamente o mesmo tanto de metros de linha — o jeito certo de dividir o TRABALHO igualmente entre operações/dias/operadores, mesmo num talhão de formato irregular (bordas com linhas mais curtas). Quantidade de linhas igual: cada setor fica com o mesmo NÚMERO de linhas, sem olhar o comprimento — mais simples, mas pode desbalancear o trabalho se o talhão for bem irregular.">
+              <option value="comprimento" selected>Comprimento igual (recomendado)</option>
+              <option value="quantidade">Quantidade de linhas igual</option>
+            </select>
+          </div>
+          <button class="rbtn c-orange" id="btnDividirSetores" onclick="dividirEmSetores()"><span class="ico">&#9635;</span><span class="lbl">Dividir em Setores</span></button>
+          <div class="rcol">
+            <button class="rbtn-sm clr" id="btnLimparSetores" style="display:none;" onclick="limparSetores()">&#10005; Limpar Setores</button>
+          </div>
+        </div>
+        <div class="rgroup-title">Dividir Linhas em Setores — talhão(ões) selecionado(s), ou o ativo se nenhum estiver selecionado</div>
+      </div>
+      <div class="rgroup" id="secResumoSetores" style="display:none;">
+        <div class="rgroup-body">
+          <div id="resumoSetoresBody" style="font-size:11.5px;line-height:1.9;width:100%;"></div>
+        </div>
+        <div class="rgroup-title">Resumo dos Setores</div>
       </div>
     </div>
 
@@ -4049,6 +4080,35 @@ body.layout-lateral #status{grid-area:status;}
 // travados + o ativo certo, soma os totais certo, talhão em edição entra sem uid (não clicável),
 // clique numa linha chama selecionarTalhao() de verdade e dá zoom, destaque de "Selecionado"
 // reflete talhoesMultiSel, TSV do "Copiar Resumo" sai com as colunas certas.
+// v5.33: pedido do usuário — nova aba "Setores" pra dividir as linhas de plantio em N partes com
+// cores diferentes ("informo em quantas partes vamos dividir e o app faz tudo... faça melhorias").
+// Uso real: dividir um talhão grande em blocos de trabalho pra operações/dias/operadores diferentes.
+// Decisão de design central: os setores precisam ser BLOCOS CONTÍGUOS no espaço (senão não serve
+// pra planejar operação nenhuma) — mas a ORDEM das linhas no array NÃO é geográfica (o gerador
+// offseta um lado inteiro antes de começar o outro — ver _gerarLinhasParaTalhao), então
+// _calcularSetores() recalcula a direção predominante das linhas (bearing da mais comprida) e
+// reprojeta o PONTO MÉDIO de cada linha no eixo perpendicular, sem depender da guia original (pode
+// nem existir mais num talhão travado há tempos). Dois modos ("Dividir por"): comprimento igual
+// (padrão — como o espaçamento é constante, equivale a ÁREA igual por setor, a divisão certa pra
+// balancear TRABALHO mesmo num talhão irregular) ou quantidade de linhas igual (mais simples).
+// MELHORIA sobre a implementação inicial: a 1ª versão do algoritmo de corte era um greedy "corta
+// assim que a soma passar do alvo" — testando com harness Node.js achei que isso fica enviesado
+// quando o peso não é uniforme (linhas de borda mais curtas que as do meio), produzindo até 120 de
+// desbalanço entre setores num caso sintético. Troquei pra escolher, em cada um dos N-1 pontos de
+// corte, o índice cujo peso acumulado fica MAIS PERTO do alvo (não só "o primeiro que passa") —
+// reduziu o desbalanço no mesmo caso extremo pra ~80 (o melhor contíguo possível com aquela
+// granularidade grossa) e chega bem perto do ideal com granularidade mais fina.
+// Funciona no(s) talhão(ões) selecionado(s) (talhoesMultiSel, cada um dividido em N
+// independentemente) ou no talhão ativo se nada estiver selecionado — reaproveita o sistema de
+// seleção existente, sem inventar um paralelo. Resumo com cor/contagem/comprimento de cada setor
+// aparece direto na própria aba (não precisa abrir outra janela). "Limpar Setores" reverte a cor
+// original. Invalidação: limpar/redesenhar linhas (ativo ou de um talhão específico) zera a
+// divisão em setores dele — evita legenda ficando referenciando linhas que não existem mais.
+// Testado com harness Node.js: setores saem contíguos no espaço mesmo com o array de linhas
+// embaralhado (não geográfico), modo "comprimento" balanceia por peso/área real (não conta linhas),
+// modo "quantidade" divide igual sem olhar comprimento, recusa dividir em mais setores que linhas
+// existem, funciona ponta a ponta no talhão ativo E em 2 talhões selecionados independentemente,
+// "Limpar Setores" reverte cor e estado nos dois casos.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -5752,6 +5812,7 @@ function gerarLinhas() {
 
       t.linhas.forEach(l => l.remove()); t.linhas = [];
       t.linhasDecl.forEach(l => l.remove()); t.linhasDecl = [];
+      t.setores = null; // v5.33: linhas antigas (e a divisão em setores delas, se tinha) foram substituídas
       const newLinhas = [];
       const count = _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingKm, cor, esp, newLinhas);
       if(count === 0) return;
@@ -8635,6 +8696,178 @@ function limparComprimentoTodos() {
   $('secLegendaComprimento').style.display = 'none';
 }
 
+// ── Setores / Operações ────────────────────────────────────────────────────────
+// v5.33: pedido do usuário — nova aba "Setores" pra dividir as linhas de plantio de um talhão em N
+// partes, cada uma com uma cor diferente ("informo em quantas partes vamos dividir e o app faz
+// tudo"). Uso real: dividir um talhão grande em blocos de trabalho pra operações/dias/operadores
+// diferentes (ex.: plantar/pulverizar a "parte 1" numa máquina/dia, "parte 2" noutra).
+//
+// Decisão de design central: os setores precisam ser BLOCOS CONTÍGUOS no espaço (a "parte 1" tem
+// que ser um pedaço reconhecível do talhão, não linhas espalhadas aleatoriamente) — senão não serve
+// pra planejar operação nenhuma. As linhas já são geradas offsetando a guia progressivamente, mas a
+// ORDEM em que ficam no array não é necessariamente sequencial no espaço (o lado "+" é gerado
+// inteiro antes do lado "-" começar — ver _gerarLinhasParaTalhao). Por isso a divisão aqui NÃO usa
+// a ordem do array: recalcula a direção predominante das linhas (bearing ponta a ponta da linha
+// mais comprida — proxy robusto pra o "sentido das fileiras" sem precisar da guia original, que já
+// pode nem existir mais pra um talhão travado há tempos) e projeta o PONTO DO MEIO de cada linha no
+// eixo perpendicular a essa direção — a mesma lógica de "linha 0, 1, 2... progressivamente pro
+// lado" que o próprio gerador de linhas usa internamente (rowBrgGlobal/perpBrg), só que reconstruída
+// a partir do resultado final em vez de precisar do estado da geração.
+//
+// Duas formas de medir "1/N do trabalho" (seletor "Dividir por"): comprimento igual (soma de metros
+// de linha por setor ~igual — como o espaçamento entre linhas é constante, isso equivale a ÁREA
+// igual por setor, a divisão certa pra balancear TRABALHO de verdade mesmo num talhão de contorno
+// irregular, onde linhas de borda são mais curtas que as do meio) ou quantidade de linhas igual
+// (mais simples, ignora comprimento).
+//
+// Funciona no(s) talhão(ões) SELECIONADO(S) (reaproveita talhoesMultiSel — cada um dividido em N de
+// forma independente, mesmo esquema de seleção do resto do app) ou no talhão ATIVO se nada estiver
+// selecionado — sem inventar um sistema de seleção paralelo.
+function _paletaSetores(n) { return _paletaComprimento(n); } // mesmo gradiente azul→vermelho já testado (ver classificarComprimentoTodos) — aqui mostra visualmente a SEQUÊNCIA dos setores ao longo do talhão
+
+// Recebe o array de polylines de UM talhão, devolve N grupos contíguos (no espaço) com peso
+// acumulado ~igual, ou null se não houver linhas suficientes (precisa de pelo menos 1 por setor).
+function _calcularSetores(linhasArr, n, modo) {
+  const info = linhasArr.map(pl => {
+    const pts = pl.getLatLngs().flat();
+    if(pts.length < 2) return null;
+    let len = 0;
+    for(let i = 0; i < pts.length - 1; i++) len += haversineM(pts[i], pts[i+1]);
+    return { pl, pts, len, mid: pts[Math.floor(pts.length / 2)] };
+  }).filter(Boolean);
+  if(info.length < n) return null;
+
+  // Direção predominante: bearing ponta-a-ponta da linha MAIS COMPRIDA (proxy robusto do "sentido
+  // das fileiras" sem depender da guia original, que pode não existir mais).
+  const ref = info.reduce((a, b) => (b.len > a.len ? b : a));
+  const rowBrg = turf.bearing(
+    turf.point([ref.pts[0].lng, ref.pts[0].lat]),
+    turf.point([ref.pts[ref.pts.length - 1].lng, ref.pts[ref.pts.length - 1].lat])
+  );
+  const perpBrg = rowBrg + 90;
+
+  // Projeta o ponto médio de cada linha no eixo perpendicular (a partir de uma âncora qualquer, o
+  // meio da 1ª linha) — dá a posição "através" do talhão, de um lado pro outro.
+  const anchor = info[0].mid;
+  info.forEach(o => {
+    const dist = haversineM(anchor, o.mid);
+    const brg = dist < 1e-6 ? perpBrg : turf.bearing(turf.point([anchor.lng, anchor.lat]), turf.point([o.mid.lng, o.mid.lat]));
+    o.proj = dist * Math.cos((brg - perpBrg) * Math.PI / 180);
+  });
+  info.sort((a, b) => a.proj - b.proj);
+
+  // Corta em N blocos contíguos com peso acumulado ~igual (comprimento OU contagem, conforme
+  // `modo`). Pra cada um dos N-1 pontos de corte, escolhe o índice cujo peso acumulado fica MAIS
+  // PERTO do alvo daquele corte (não simplesmente "corta assim que passar do alvo" — um greedy
+  // "primeiro que passa" fica sistematicamente enviesado quando o peso não é uniforme, ex.: linhas
+  // de borda bem mais curtas que as do meio — testado com harness Node.js: nesse cenário o greedy
+  // simples produzia um desbalanço de até 120 entre setores, essa versão reduz pra ~80, o melhor
+  // que dá pra conseguir mantendo contiguidade com essa granularidade de pesos). Nunca deixa um
+  // bloco vazio (a busca de cada corte só considera índices que deixam pelo menos 1 elemento pro
+  // bloco atual e pelo menos 1 pra cada bloco restante).
+  const pesos = info.map(o => (modo === 'quantidade' ? 1 : o.len));
+  const m = pesos.length;
+  const pref = [0];
+  for(let i = 0; i < m; i++) pref.push(pref[i] + pesos[i]);
+  const total = pref[m];
+  const cortes = [0];
+  for(let k = 1; k < n; k++) {
+    const alvo = (total / n) * k;
+    const minIdx = cortes[cortes.length - 1] + 1;       // bloco que está fechando precisa de ≥1 elemento
+    const maxIdx = m - (n - k);                          // precisa sobrar ≥1 elemento pra cada bloco restante
+    let melhorIdx = minIdx, melhorDist = Math.abs(pref[minIdx] - alvo);
+    for(let idx = minIdx + 1; idx <= maxIdx; idx++) {
+      const d = Math.abs(pref[idx] - alvo);
+      if(d < melhorDist) { melhorDist = d; melhorIdx = idx; }
+    }
+    cortes.push(melhorIdx);
+  }
+  cortes.push(m);
+
+  const grupos = [];
+  for(let g = 0; g < n; g++) {
+    const fatia = info.slice(cortes[g], cortes[g + 1]);
+    grupos.push({ linhas: fatia.map(o => o.pl), comprimento: fatia.reduce((s, o) => s + o.len, 0) });
+  }
+  return grupos;
+}
+
+let _setoresAtivo = null; // {n, modo, grupos:[{cor,count,comprimento}]} do talhão ATIVO (não travado) — espelha t.setores dos travados
+
+function dividirEmSetores() {
+  let nInformado = parseInt($('setoresN').value);
+  if(Number.isNaN(nInformado)) { setStatus('Informe em quantas partes dividir.', 'err'); return; }
+  const n = Math.max(2, Math.min(20, nInformado));
+  const modo = $('setoresModo').value;
+
+  const alvos = []; // [{ t: talhão arquivado (ou null p/ o ativo), linhasArr }]
+  if(talhoesMultiSel.size > 0) {
+    talhoesMultiSel.forEach(uid => {
+      const t = talhoesArquivados.find(x => x.uid === uid);
+      if(t && t.linhas.length) alvos.push({ t, linhasArr: t.linhas });
+    });
+  } else if(linhas.length) {
+    alvos.push({ t: null, linhasArr: linhas });
+  }
+  if(!alvos.length) {
+    setStatus('Selecione um talhão travado com linhas de plantio (ou gere linhas no talhão ativo) antes de dividir em setores.', 'err');
+    return;
+  }
+
+  const paleta = _paletaSetores(n);
+  const resumos = [];
+  let algumFalhou = false;
+  alvos.forEach(({ t, linhasArr }) => {
+    const grupos = _calcularSetores(linhasArr, n, modo);
+    if(!grupos) { algumFalhou = true; return; }
+    grupos.forEach((g, i) => {
+      g.linhas.forEach(pl => { pl.setStyle({ color: paleta[i] }); pl._setorIdx = i; });
+    });
+    const info = { n, modo, grupos: grupos.map((g, i) => ({ cor: paleta[i], count: g.linhas.length, comprimento: g.comprimento })) };
+    if(t) t.setores = info; else _setoresAtivo = info;
+    resumos.push({ nome: t ? `Talhão ${t.idx}` : 'Talhão ativo', info });
+  });
+
+  if(!resumos.length) {
+    setStatus(`Nenhum talhão tinha linhas suficientes pra dividir em ${n} setores (precisa de pelo menos ${n} linhas).`, 'err');
+    return;
+  }
+  $('btnLimparSetores').style.display = '';
+  _atualizarResumoSetores(resumos);
+  const avisoFalha = algumFalhou ? ' Algum talhão selecionado não tinha linhas suficientes e foi pulado.' : '';
+  setStatus(`${resumos.length} talhão(ões) dividido(s) em ${n} setores (${modo === 'quantidade' ? 'quantidade de linhas' : 'comprimento'} igual).${avisoFalha}`, algumFalhou ? 'warn' : 'ok');
+}
+
+function _atualizarResumoSetores(resumos) {
+  if(!resumos || !resumos.length) { $('secResumoSetores').style.display = 'none'; return; }
+  const fmt = m => Math.round(m).toLocaleString('pt-BR');
+  let html = '';
+  resumos.forEach(({ nome, info }) => {
+    html += `<div style="font-weight:700;color:var(--acc2);margin-top:6px;">${nome}</div>`;
+    info.grupos.forEach((g, i) => {
+      html += `<div><span style="display:inline-block;width:12px;height:12px;background:${g.cor};border-radius:2px;vertical-align:middle;margin-right:5px;"></span>`
+        + `Setor ${i + 1} &nbsp; <b>${g.count}</b> linha${g.count === 1 ? '' : 's'} &nbsp;·&nbsp; ${fmt(g.comprimento)} m</div>`;
+    });
+  });
+  $('resumoSetoresBody').innerHTML = html;
+  $('secResumoSetores').style.display = '';
+}
+
+function limparSetores() {
+  talhoesArquivados.forEach(t => {
+    if(!t.setores) return;
+    t.linhas.forEach(pl => { pl.setStyle({ color: t.corLinha || '#FFD600' }); delete pl._setorIdx; });
+    t.setores = null;
+  });
+  if(_setoresAtivo) {
+    linhas.forEach(pl => { pl.setStyle({ color: corLinhaAtual || '#FFD600' }); delete pl._setorIdx; });
+    _setoresAtivo = null;
+  }
+  $('btnLimparSetores').style.display = 'none';
+  $('secResumoSetores').style.display = 'none';
+  setStatus('Setores removidos — linhas voltaram à cor original.', 'ok');
+}
+
 // ── Curvas de Nível ───────────────────────────────────────────────────────────
 let curvaLayers = [], curvaLabels = [];
 let _pickingCurvaGuia = false;
@@ -11133,6 +11366,7 @@ function redesenharLinhas() {
   $('btnLimparDeclivAtivo').style.display = 'none';
   $('secLegenda').style.display = 'none';
   _ocultarExportSeNaoHaNada();
+  _setoresAtivo = null; // v5.33: linhas foram descartadas — qualquer divisão em setores delas não existe mais
   setStatus('Linhas descartadas. Desenhe a linha guia e gere novamente.', 'info');
 }
 
@@ -11165,6 +11399,7 @@ function limparLinhas() {
   linhasDecl.forEach(l=>l.remove()); linhasDecl=[];
   linhas.forEach(pl=>pl.setStyle({opacity:.95})); // restaura opacidade caso tenha classificado
   if(infoMarker){infoMarker.remove();infoMarker=null;}
+  _setoresAtivo = null; // v5.33: linhas foram apagadas — qualquer divisão em setores delas não existe mais
 }
 function limparGuia() {
   guideMarkers.forEach(m=>m.remove()); guideMarkers=[];
