@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.33 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.34 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -4109,6 +4109,32 @@ body.layout-lateral #status{grid-area:status;}
 // modo "quantidade" divide igual sem olhar comprimento, recusa dividir em mais setores que linhas
 // existem, funciona ponta a ponta no talhão ativo E em 2 talhões selecionados independentemente,
 // "Limpar Setores" reverte cor e estado nos dois casos.
+// v5.34: BUG relatado pelo usuário — "ele divide individual por talhão, o certo, qdo tiver mais de
+// um talhão selecionado, é dividir a SOMATÓRIO de vários talhões pelo número de setores, e não
+// dividir cada talhão pelo número de setores". Confirmado: com 3 talhões selecionados e N=2, a
+// v5.33 dava 2 setores POR TALHÃO (6 grupos no total) em vez de 2 setores NO TOTAL (podendo
+// atravessar mais de um talhão). Fix: nova _calcularSetoresCombinado() — quando há MAIS DE 1 talhão
+// selecionado, junta as linhas de TODOS num pool só ANTES de cortar (em vez de chamar
+// _calcularSetores uma vez por talhão). Com 1 talhão só selecionado (ou nenhum, usa o ativo) o
+// comportamento continua exatamente igual a antes — sem regressão ali.
+// Eixo de referência do combinado: como talhões diferentes podem ter guias/orientações de fileira
+// diferentes (não existe um "sentido das fileiras" único pro grupo todo), usa o bearing entre o PAR
+// de talhões mais DISTANTE entre si (a direção do espalhamento geográfico dos campos selecionados)
+// em vez da direção das fileiras de 1 talhão só — projeta o ponto médio de CADA LINHA de TODOS os
+// talhões nesse eixo, então linhas do mesmo talhão naturalmente ficam agrupadas na projeção (por
+// estarem todas dentro da mesma área pequena), e o corte final ainda usa a mesma busca "índice mais
+// perto do alvo" (_cortarPorPeso, extraída da _calcularSetores original pra ficar compartilhada
+// entre os dois casos).
+// Estado simplificado junto: trocado o par "t.setores (por talhão) / _setoresAtivo (talhão ativo)"
+// por um `_ultimaDivisaoSetores` único (lista de {pl, corOriginal} de TODAS as linhas recoloridas
+// na última divisão, seja ela de 1 talhão ou combinada) — mais simples e cobre os dois casos sem
+// duplicar lógica de revert em limparSetores().
+// Testado com harness Node.js: o cenário exato do bug relatado (3 talhões selecionados, N=2) agora
+// dá exatamente 2 cores no total (não 6); contiguidade macro confirmada (o talhão na ponta oeste do
+// espalhamento e o da ponta leste sempre ficam em setores DIFERENTES, nunca miscigenados
+// aleatoriamente); limparSetores devolve cada talhão pra SUA PRÓPRIA cor original mesmo no caso
+// combinado; 1 talhão selecionado sozinho continua com o comportamento de sempre (regressão
+// coberta); recusa dividir quando o total combinado não tem linhas suficientes.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -5812,7 +5838,10 @@ function gerarLinhas() {
 
       t.linhas.forEach(l => l.remove()); t.linhas = [];
       t.linhasDecl.forEach(l => l.remove()); t.linhasDecl = [];
-      t.setores = null; // v5.33: linhas antigas (e a divisão em setores delas, se tinha) foram substituídas
+      // v5.33/v5.34: linhas antigas foram substituídas — qualquer divisão em setores anterior pode
+      // referenciar polylines que não existem mais (mesmo que fosse de outro talhão combinado com
+      // este numa divisão conjunta — ver _calcularSetoresCombinado), então invalida tudo.
+      if(_ultimaDivisaoSetores) { _ultimaDivisaoSetores = null; $('btnLimparSetores').style.display = 'none'; $('secResumoSetores').style.display = 'none'; }
       const newLinhas = [];
       const count = _gerarLinhasParaTalhao(tPolyT, tBoundT, rowBrgGlobal, perpBrg, spacingKm, cor, esp, newLinhas);
       if(count === 0) return;
@@ -8720,10 +8749,45 @@ function limparComprimentoTodos() {
 // irregular, onde linhas de borda são mais curtas que as do meio) ou quantidade de linhas igual
 // (mais simples, ignora comprimento).
 //
-// Funciona no(s) talhão(ões) SELECIONADO(S) (reaproveita talhoesMultiSel — cada um dividido em N de
-// forma independente, mesmo esquema de seleção do resto do app) ou no talhão ATIVO se nada estiver
-// selecionado — sem inventar um sistema de seleção paralelo.
+// v5.34: pedido do usuário — "ele divide individual por talhão, o certo, qdo tiver mais de um
+// talhão selecionado, é dividir a SOMATÓRIO de vários talhões pelo número de setores, e não dividir
+// cada talhão pelo número de setores". Correto: selecionar 3 talhões e pedir 2 setores tinha que dar
+// 2 setores NO TOTAL (podendo atravessar mais de um talhão), não 2 por talhão (6 no total). Ver
+// _calcularSetoresCombinado — junta as linhas de TODOS os talhões selecionados num pool só antes de
+// cortar, em vez de cortar cada talhão separado (comportamento antigo, mantido só pra quando é 1
+// talhão único — reaproveita a mesma _calcularSetores de sempre nesse caso).
 function _paletaSetores(n) { return _paletaComprimento(n); } // mesmo gradiente azul→vermelho já testado (ver classificarComprimentoTodos) — aqui mostra visualmente a SEQUÊNCIA dos setores ao longo do talhão
+
+// Corta um array de pesos em N blocos CONTÍGUOS com soma acumulada ~igual. Pra cada um dos N-1
+// pontos de corte, escolhe o índice cujo peso acumulado fica MAIS PERTO do alvo daquele corte (não
+// simplesmente "corta assim que passar do alvo" — um greedy "primeiro que passa" fica
+// sistematicamente enviesado quando o peso não é uniforme, ex.: linhas de borda bem mais curtas que
+// as do meio — testado com harness Node.js: nesse cenário o greedy simples produzia um desbalanço
+// de até 120 entre setores, essa versão reduz pro melhor que dá pra conseguir mantendo
+// contiguidade com aquela granularidade de pesos). Nunca deixa um bloco vazio (a busca de cada
+// corte só considera índices que deixam pelo menos 1 elemento pro bloco atual e pelo menos 1 pra
+// cada bloco restante). Devolve os ÍNDICES de corte (length n+1: 0, ..., m) — quem chama fatia o
+// array de origem com eles.
+function _cortarPorPeso(pesos, n) {
+  const m = pesos.length;
+  const pref = [0];
+  for(let i = 0; i < m; i++) pref.push(pref[i] + pesos[i]);
+  const total = pref[m];
+  const cortes = [0];
+  for(let k = 1; k < n; k++) {
+    const alvo = (total / n) * k;
+    const minIdx = cortes[cortes.length - 1] + 1;       // bloco que está fechando precisa de ≥1 elemento
+    const maxIdx = m - (n - k);                          // precisa sobrar ≥1 elemento pra cada bloco restante
+    let melhorIdx = minIdx, melhorDist = Math.abs(pref[minIdx] - alvo);
+    for(let idx = minIdx + 1; idx <= maxIdx; idx++) {
+      const d = Math.abs(pref[idx] - alvo);
+      if(d < melhorDist) { melhorDist = d; melhorIdx = idx; }
+    }
+    cortes.push(melhorIdx);
+  }
+  cortes.push(m);
+  return cortes;
+}
 
 // Recebe o array de polylines de UM talhão, devolve N grupos contíguos (no espaço) com peso
 // acumulado ~igual, ou null se não houver linhas suficientes (precisa de pelo menos 1 por setor).
@@ -8756,34 +8820,8 @@ function _calcularSetores(linhasArr, n, modo) {
   });
   info.sort((a, b) => a.proj - b.proj);
 
-  // Corta em N blocos contíguos com peso acumulado ~igual (comprimento OU contagem, conforme
-  // `modo`). Pra cada um dos N-1 pontos de corte, escolhe o índice cujo peso acumulado fica MAIS
-  // PERTO do alvo daquele corte (não simplesmente "corta assim que passar do alvo" — um greedy
-  // "primeiro que passa" fica sistematicamente enviesado quando o peso não é uniforme, ex.: linhas
-  // de borda bem mais curtas que as do meio — testado com harness Node.js: nesse cenário o greedy
-  // simples produzia um desbalanço de até 120 entre setores, essa versão reduz pra ~80, o melhor
-  // que dá pra conseguir mantendo contiguidade com essa granularidade de pesos). Nunca deixa um
-  // bloco vazio (a busca de cada corte só considera índices que deixam pelo menos 1 elemento pro
-  // bloco atual e pelo menos 1 pra cada bloco restante).
   const pesos = info.map(o => (modo === 'quantidade' ? 1 : o.len));
-  const m = pesos.length;
-  const pref = [0];
-  for(let i = 0; i < m; i++) pref.push(pref[i] + pesos[i]);
-  const total = pref[m];
-  const cortes = [0];
-  for(let k = 1; k < n; k++) {
-    const alvo = (total / n) * k;
-    const minIdx = cortes[cortes.length - 1] + 1;       // bloco que está fechando precisa de ≥1 elemento
-    const maxIdx = m - (n - k);                          // precisa sobrar ≥1 elemento pra cada bloco restante
-    let melhorIdx = minIdx, melhorDist = Math.abs(pref[minIdx] - alvo);
-    for(let idx = minIdx + 1; idx <= maxIdx; idx++) {
-      const d = Math.abs(pref[idx] - alvo);
-      if(d < melhorDist) { melhorDist = d; melhorIdx = idx; }
-    }
-    cortes.push(melhorIdx);
-  }
-  cortes.push(m);
-
+  const cortes = _cortarPorPeso(pesos, n);
   const grupos = [];
   for(let g = 0; g < n; g++) {
     const fatia = info.slice(cortes[g], cortes[g + 1]);
@@ -8792,7 +8830,72 @@ function _calcularSetores(linhasArr, n, modo) {
   return grupos;
 }
 
-let _setoresAtivo = null; // {n, modo, grupos:[{cor,count,comprimento}]} do talhão ATIVO (não travado) — espelha t.setores dos travados
+// v5.34: junta as linhas de TODOS os talhões de `alvos` (vários talhões selecionados) num pool só
+// e divide o TOTAL combinado em N setores contíguos — em vez da _calcularSetores de cima, que
+// divide UM talhão só. Cada item guarda o `pl`/`t`/`corBase` de origem, pra quem chama saber qual
+// cor original restaurar em cada linha depois (limparSetores) e qual talhão cada linha pertence.
+//
+// Eixo de referência: como os talhões selecionados podem ter guias/orientações de fileira
+// DIFERENTES entre si (não existe um "sentido das fileiras" único pro grupo todo, ao contrário de
+// dentro de 1 talhão), usa o bearing entre o PAR de talhões mais DISTANTE entre si (a direção em
+// que os campos selecionados estão espalhados no mapa) — não é perpendicular a nada, é a própria
+// direção do espalhamento, já que aqui o objetivo é ordenar os TALHÕES uns em relação aos outros
+// (e as linhas dentro de cada um acabam se agrupando juntas na projeção, por estarem todas dentro
+// da mesma área pequena do próprio talhão).
+function _calcularSetoresCombinado(alvos, n, modo) {
+  const itens = [];
+  alvos.forEach(({ t, linhasArr, corBase }) => {
+    linhasArr.forEach(pl => {
+      const pts = pl.getLatLngs().flat();
+      if(pts.length < 2) return;
+      let len = 0;
+      for(let i = 0; i < pts.length - 1; i++) len += haversineM(pts[i], pts[i+1]);
+      itens.push({ pl, t, corBase, len, mid: pts[Math.floor(pts.length / 2)] });
+    });
+  });
+  if(itens.length < n) return null;
+
+  const centroides = alvos.map(({ t }) => {
+    const pts = t.polyPts;
+    return { lat: pts.reduce((s,p) => s+p.lat, 0) / pts.length, lng: pts.reduce((s,p) => s+p.lng, 0) / pts.length };
+  });
+  let refBrg = 0, maiorDist = -1;
+  for(let i = 0; i < centroides.length; i++) {
+    for(let j = i + 1; j < centroides.length; j++) {
+      const d = haversineM(centroides[i], centroides[j]);
+      if(d > maiorDist) {
+        maiorDist = d;
+        refBrg = turf.bearing(turf.point([centroides[i].lng, centroides[i].lat]), turf.point([centroides[j].lng, centroides[j].lat]));
+      }
+    }
+  }
+  // Só 1 talhão de verdade no combinado (ex.: os outros selecionados não tinham linha nenhuma) —
+  // sem par de centroides pra tirar bearing; direção arbitrária não importa (só tem 1 grupo de
+  // pontos próximos entre si mesmo).
+  if(centroides.length < 2) refBrg = 0;
+
+  const anchor = itens[0].mid;
+  itens.forEach(o => {
+    const dist = haversineM(anchor, o.mid);
+    const brg = dist < 1e-6 ? refBrg : turf.bearing(turf.point([anchor.lng, anchor.lat]), turf.point([o.mid.lng, o.mid.lat]));
+    o.proj = dist * Math.cos((brg - refBrg) * Math.PI / 180);
+  });
+  itens.sort((a, b) => a.proj - b.proj);
+
+  const pesos = itens.map(o => (modo === 'quantidade' ? 1 : o.len));
+  const cortes = _cortarPorPeso(pesos, n);
+  const grupos = [];
+  for(let g = 0; g < n; g++) {
+    const fatia = itens.slice(cortes[g], cortes[g + 1]);
+    grupos.push({ itens: fatia, comprimento: fatia.reduce((s, o) => s + o.len, 0) });
+  }
+  return grupos;
+}
+
+// Última divisão em setores aplicada (única estrutura de estado — cobre tanto o caso de 1 talhão
+// quanto o combinado de vários) — usada só por limparSetores() pra saber exatamente quais linhas
+// recolorir e pra qual cor original cada uma volta.
+let _ultimaDivisaoSetores = null; // { linhasCorrigidas:[{pl,corOriginal}] }
 
 function dividirEmSetores() {
   let nInformado = parseInt($('setoresN').value);
@@ -8800,14 +8903,14 @@ function dividirEmSetores() {
   const n = Math.max(2, Math.min(20, nInformado));
   const modo = $('setoresModo').value;
 
-  const alvos = []; // [{ t: talhão arquivado (ou null p/ o ativo), linhasArr }]
+  const alvos = []; // [{ t: talhão arquivado (ou null p/ o ativo), linhasArr, corBase }]
   if(talhoesMultiSel.size > 0) {
     talhoesMultiSel.forEach(uid => {
       const t = talhoesArquivados.find(x => x.uid === uid);
-      if(t && t.linhas.length) alvos.push({ t, linhasArr: t.linhas });
+      if(t && t.linhas.length) alvos.push({ t, linhasArr: t.linhas, corBase: t.corLinha || '#FFD600' });
     });
   } else if(linhas.length) {
-    alvos.push({ t: null, linhasArr: linhas });
+    alvos.push({ t: null, linhasArr: linhas, corBase: corLinhaAtual || '#FFD600' });
   }
   if(!alvos.length) {
     setStatus('Selecione um talhão travado com linhas de plantio (ou gere linhas no talhão ativo) antes de dividir em setores.', 'err');
@@ -8815,36 +8918,56 @@ function dividirEmSetores() {
   }
 
   const paleta = _paletaSetores(n);
+  const linhasCorrigidas = [];
   const resumos = [];
-  let algumFalhou = false;
-  alvos.forEach(({ t, linhasArr }) => {
-    const grupos = _calcularSetores(linhasArr, n, modo);
-    if(!grupos) { algumFalhou = true; return; }
-    grupos.forEach((g, i) => {
-      g.linhas.forEach(pl => { pl.setStyle({ color: paleta[i] }); pl._setorIdx = i; });
-    });
-    const info = { n, modo, grupos: grupos.map((g, i) => ({ cor: paleta[i], count: g.linhas.length, comprimento: g.comprimento })) };
-    if(t) t.setores = info; else _setoresAtivo = info;
-    resumos.push({ nome: t ? `Talhão ${t.idx}` : 'Talhão ativo', info });
-  });
 
-  if(!resumos.length) {
-    setStatus(`Nenhum talhão tinha linhas suficientes pra dividir em ${n} setores (precisa de pelo menos ${n} linhas).`, 'err');
-    return;
+  if(alvos.length === 1) {
+    // Caso de sempre: 1 talhão só (selecionado sozinho, ou o ativo) — divide ELE em N.
+    const { t, linhasArr, corBase } = alvos[0];
+    const grupos = _calcularSetores(linhasArr, n, modo);
+    if(!grupos) {
+      setStatus(`Esse talhão não tem linhas suficientes pra dividir em ${n} setores (precisa de pelo menos ${n}).`, 'err');
+      return;
+    }
+    grupos.forEach((g, i) => g.linhas.forEach(pl => {
+      linhasCorrigidas.push({ pl, corOriginal: corBase });
+      pl.setStyle({ color: paleta[i] }); pl._setorIdx = i;
+    }));
+    resumos.push({
+      nome: t ? `Talhão ${t.idx}` : 'Talhão ativo',
+      grupos: grupos.map((g, i) => ({ cor: paleta[i], count: g.linhas.length, comprimento: g.comprimento })),
+    });
+  } else {
+    // v5.34: VÁRIOS talhões selecionados — divide o TOTAL combinado em N (não cada um em N).
+    const grupos = _calcularSetoresCombinado(alvos, n, modo);
+    if(!grupos) {
+      setStatus(`Os talhões selecionados juntos não têm linhas suficientes pra dividir em ${n} setores (precisa de pelo menos ${n} linhas no total).`, 'err');
+      return;
+    }
+    grupos.forEach((g, i) => g.itens.forEach(({ pl, corBase }) => {
+      linhasCorrigidas.push({ pl, corOriginal: corBase });
+      pl.setStyle({ color: paleta[i] }); pl._setorIdx = i;
+    }));
+    resumos.push({
+      nome: `Combinado (${alvos.length} talhões selecionados)`,
+      grupos: grupos.map((g, i) => ({ cor: paleta[i], count: g.itens.length, comprimento: g.comprimento })),
+    });
   }
+
+  _ultimaDivisaoSetores = { linhasCorrigidas };
   $('btnLimparSetores').style.display = '';
   _atualizarResumoSetores(resumos);
-  const avisoFalha = algumFalhou ? ' Algum talhão selecionado não tinha linhas suficientes e foi pulado.' : '';
-  setStatus(`${resumos.length} talhão(ões) dividido(s) em ${n} setores (${modo === 'quantidade' ? 'quantidade de linhas' : 'comprimento'} igual).${avisoFalha}`, algumFalhou ? 'warn' : 'ok');
+  const txtCombinado = alvos.length > 1 ? `, combinando ${alvos.length} talhões selecionados` : '';
+  setStatus(`Dividido em ${n} setores (${modo === 'quantidade' ? 'quantidade de linhas' : 'comprimento'} igual)${txtCombinado}.`, 'ok');
 }
 
 function _atualizarResumoSetores(resumos) {
   if(!resumos || !resumos.length) { $('secResumoSetores').style.display = 'none'; return; }
   const fmt = m => Math.round(m).toLocaleString('pt-BR');
   let html = '';
-  resumos.forEach(({ nome, info }) => {
+  resumos.forEach(({ nome, grupos }) => {
     html += `<div style="font-weight:700;color:var(--acc2);margin-top:6px;">${nome}</div>`;
-    info.grupos.forEach((g, i) => {
+    grupos.forEach((g, i) => {
       html += `<div><span style="display:inline-block;width:12px;height:12px;background:${g.cor};border-radius:2px;vertical-align:middle;margin-right:5px;"></span>`
         + `Setor ${i + 1} &nbsp; <b>${g.count}</b> linha${g.count === 1 ? '' : 's'} &nbsp;·&nbsp; ${fmt(g.comprimento)} m</div>`;
     });
@@ -8854,15 +8977,12 @@ function _atualizarResumoSetores(resumos) {
 }
 
 function limparSetores() {
-  talhoesArquivados.forEach(t => {
-    if(!t.setores) return;
-    t.linhas.forEach(pl => { pl.setStyle({ color: t.corLinha || '#FFD600' }); delete pl._setorIdx; });
-    t.setores = null;
+  if(!_ultimaDivisaoSetores) return;
+  _ultimaDivisaoSetores.linhasCorrigidas.forEach(({ pl, corOriginal }) => {
+    pl.setStyle({ color: corOriginal });
+    delete pl._setorIdx;
   });
-  if(_setoresAtivo) {
-    linhas.forEach(pl => { pl.setStyle({ color: corLinhaAtual || '#FFD600' }); delete pl._setorIdx; });
-    _setoresAtivo = null;
-  }
+  _ultimaDivisaoSetores = null;
   $('btnLimparSetores').style.display = 'none';
   $('secResumoSetores').style.display = 'none';
   setStatus('Setores removidos — linhas voltaram à cor original.', 'ok');
@@ -11366,7 +11486,8 @@ function redesenharLinhas() {
   $('btnLimparDeclivAtivo').style.display = 'none';
   $('secLegenda').style.display = 'none';
   _ocultarExportSeNaoHaNada();
-  _setoresAtivo = null; // v5.33: linhas foram descartadas — qualquer divisão em setores delas não existe mais
+  // v5.33/v5.34: linhas foram descartadas — qualquer divisão em setores delas não existe mais.
+  if(_ultimaDivisaoSetores) { _ultimaDivisaoSetores = null; $('btnLimparSetores').style.display = 'none'; $('secResumoSetores').style.display = 'none'; }
   setStatus('Linhas descartadas. Desenhe a linha guia e gere novamente.', 'info');
 }
 
@@ -11399,7 +11520,8 @@ function limparLinhas() {
   linhasDecl.forEach(l=>l.remove()); linhasDecl=[];
   linhas.forEach(pl=>pl.setStyle({opacity:.95})); // restaura opacidade caso tenha classificado
   if(infoMarker){infoMarker.remove();infoMarker=null;}
-  _setoresAtivo = null; // v5.33: linhas foram apagadas — qualquer divisão em setores delas não existe mais
+  // v5.33/v5.34: linhas foram apagadas — qualquer divisão em setores delas não existe mais.
+  if(_ultimaDivisaoSetores) { _ultimaDivisaoSetores = null; $('btnLimparSetores').style.display = 'none'; $('secResumoSetores').style.display = 'none'; }
 }
 function limparGuia() {
   guideMarkers.forEach(m=>m.remove()); guideMarkers=[];
