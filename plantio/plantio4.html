@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.46 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.47 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -4240,6 +4240,16 @@ body.layout-lateral #status{grid-area:status;}
 // layer SÓ naquela entidade (grupo DXF 62) — mantém todas as linhas na mesma layer
 // "_LINHAS_PLANTIO" (não fragmenta em várias layers por cor), mas cada POLYLINE sai com a cor de
 // tela correta.
+// v5.47: pedido do usuário — "quero que a divisão de setores priorize a ordem que eu clico nos
+// talhões". _calcularSetoresCombinado não calcula mais uma ordem "geométrica" (eixo macro entre
+// centroides) pros talhões — usa a ordem de `alvos` direto, que já é a ordem de clique
+// (talhoesMultiSel é um Set, preserva ordem de inserção). Melhoria junto: a ordem LOCAL de cada
+// talhão (dentro dele mesmo) não "alinha" mais o sentido comparando com um eixo macro global — um
+// eixo global só fazia sentido quando a ordem dos talhões também vinha dele; agora que a ordem é
+// escolha livre do usuário (zigue-zague, formato em L etc.), troca por "encostar no talhão
+// anterior": decide o sentido de cada talhão pela distância real até o fim do talhão anterior na
+// sequência, conectando sempre pelo lado mais curto. Melhoria visível: o resumo da divisão
+// combinada agora mostra a sequência de clique no nome (ex.: "Talhão 3 → Talhão 1 → Talhão 2").
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -8961,40 +8971,22 @@ function _calcularSetores(linhasArr, n, modo) {
 // Resultado: cada talhão mantém contiguidade garantida internamente (igual sempre foi em
 // _calcularSetores), e a sequência entre talhões diferentes também fica geograficamente coerente.
 function _calcularSetoresCombinado(alvos, n, modo) {
-  // (1) Ordena os TALHÕES pelo eixo macro (espalhamento entre centroides).
-  const comCentroide = alvos.map(a => {
-    const pts = a.t.polyPts;
-    const lat = pts.reduce((s,p) => s+p.lat, 0) / pts.length, lng = pts.reduce((s,p) => s+p.lng, 0) / pts.length;
-    return { ...a, centroide: { lat, lng } };
-  });
-
-  let refBrg = 0, maiorDist = -1;
-  for(let i = 0; i < comCentroide.length; i++) {
-    for(let j = i + 1; j < comCentroide.length; j++) {
-      const d = haversineM(comCentroide[i].centroide, comCentroide[j].centroide);
-      if(d > maiorDist) {
-        maiorDist = d;
-        refBrg = turf.bearing(
-          turf.point([comCentroide[i].centroide.lng, comCentroide[i].centroide.lat]),
-          turf.point([comCentroide[j].centroide.lng, comCentroide[j].centroide.lat])
-        );
-      }
-    }
-  }
-  if(comCentroide.length < 2) refBrg = 0; // só 1 talhão de verdade — direção arbitrária não importa
-
-  const anchorMacro = comCentroide[0].centroide;
-  comCentroide.forEach(a => {
-    const dist = haversineM(anchorMacro, a.centroide);
-    const brg = dist < 1e-6 ? refBrg : turf.bearing(turf.point([anchorMacro.lng, anchorMacro.lat]), turf.point([a.centroide.lng, a.centroide.lat]));
-    a.proj = dist * Math.cos((brg - refBrg) * Math.PI / 180);
-  });
-  comCentroide.sort((a, b) => a.proj - b.proj);
-
-  // (2) Dentro de CADA talhão, ordena as linhas dele pelo eixo LOCAL de fileiras (mesma lógica de
-  // _calcularSetores) e (3) alinha o sentido dessa ordenação local com o eixo macro.
+  // v5.47: pedido do usuário — "quero que a divisão de setores priorize a ordem que eu clico nos
+  // talhões". Antes (v5.34/v5.35), a ordem dos TALHÕES na sequência combinada era calculada
+  // geometricamente (eixo macro = espalhamento entre centroides), ignorando a ordem real de
+  // seleção. `alvos` já chega aqui na ordem de clique (vem de talhoesMultiSel, um Set — preserva
+  // ordem de inserção, ver dividirEmSetores) — é só usar essa ordem direto, sem recalcular nada.
+  //
+  // Melhoria junto: a ordem LOCAL de cada talhão (dentro dele mesmo) antes "alinhava" o sentido
+  // comparando com um único eixo macro GLOBAL — fazia sentido quando a ordem dos talhões também
+  // vinha desse mesmo eixo, mas agora que a ordem é escolha livre do usuário (pode clicar em
+  // zigue-zague, formato em L etc.), um eixo global não serve mais de referência. Troca por
+  // "encostar no talhão anterior": decide o sentido de cada talhão comparando a distância real até
+  // o fim do talhão ANTERIOR na sequência — conecta sempre pelo lado mais curto, qualquer que seja
+  // o arranjo espacial da seleção.
   const itens = [];
-  comCentroide.forEach(({ t, linhasArr, corBase }) => {
+  let fimAnterior = null; // {lat,lng} do último ponto do talhão anterior já colocado na sequência
+  alvos.forEach(({ t, linhasArr, corBase }) => {
     const local = linhasArr.map(pl => {
       const pts = pl.getLatLngs().flat();
       if(pts.length < 2) return null;
@@ -9019,16 +9011,18 @@ function _calcularSetoresCombinado(alvos, n, modo) {
       });
       local.sort((a, b) => a.projLocal - b.projLocal);
 
-      // Alinha o sentido: compara o bearing do primeiro→último item local com o eixo macro — se
-      // apontar mais de 90° "contra", inverte a ordem local (senão esse talhão entraria de trás
-      // pra frente em relação ao vizinho anterior na sequência combinada).
-      const p0 = local[0].mid, p1 = local[local.length - 1].mid;
-      const brgLocal = turf.bearing(turf.point([p0.lng, p0.lat]), turf.point([p1.lng, p1.lat]));
-      const diffAngular = ((brgLocal - refBrg + 540) % 360) - 180; // normaliza pra [-180,180]
-      if(Math.abs(diffAngular) > 90) local.reverse();
+      // Encosta no fim do talhão ANTERIOR (se houver): inverte a ordem local se o ÚLTIMO item
+      // ficar mais perto do fim anterior do que o PRIMEIRO fica — conecta pelo lado mais curto,
+      // em vez de comparar com um eixo global fixo.
+      if(fimAnterior) {
+        const dPrimeiro = haversineM(fimAnterior, local[0].mid);
+        const dUltimo = haversineM(fimAnterior, local[local.length - 1].mid);
+        if(dUltimo < dPrimeiro) local.reverse();
+      }
     }
 
     local.forEach(o => itens.push({ pl: o.pl, t, corBase, len: o.len }));
+    fimAnterior = local[local.length - 1].mid;
   });
   if(itens.length < n) return null;
 
@@ -9053,7 +9047,10 @@ function dividirEmSetores() {
   const n = Math.max(2, Math.min(20, nInformado));
   const modo = $('setoresModo').value;
 
-  const alvos = []; // [{ t: talhão arquivado (ou null p/ o ativo), linhasArr, corBase }]
+  // [{ t: talhão arquivado (ou null p/ o ativo), linhasArr, corBase }] — ordem = ordem de CLIQUE
+  // (talhoesMultiSel é um Set, preserva ordem de inserção), usada direto por
+  // _calcularSetoresCombinado como a ordem dos talhões na sequência combinada (v5.47).
+  const alvos = [];
   if(talhoesMultiSel.size > 0) {
     talhoesMultiSel.forEach(uid => {
       const t = talhoesArquivados.find(x => x.uid === uid);
@@ -9098,8 +9095,12 @@ function dividirEmSetores() {
       linhasCorrigidas.push({ pl, corOriginal: corBase });
       pl.setStyle({ color: paleta[i] }); pl._setorIdx = i;
     }));
+    // Mostra a SEQUÊNCIA de clique no nome do resumo (ex.: "Talhão 3 → Talhão 1 → Talhão 2") —
+    // deixa visível pro usuário que a ordem usada foi a ordem em que ele selecionou os talhões,
+    // não uma ordem geográfica calculada (v5.47).
+    const sequencia = alvos.map(a => a.t ? `Talhão ${a.t.idx}` : 'Talhão ativo').join(' → ');
     resumos.push({
-      nome: `Combinado (${alvos.length} talhões selecionados)`,
+      nome: `Combinado (${sequencia})`,
       grupos: grupos.map((g, i) => ({ cor: paleta[i], count: g.itens.length, comprimento: g.comprimento })),
     });
   }
