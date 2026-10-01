@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.48 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.49 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -4261,6 +4261,18 @@ body.layout-lateral #status{grid-area:status;}
 // _encadearPorProximidade, um "vizinho mais próximo" guloso por distância real (fileiras em
 // leque/sem direção única). Pedido do usuário: "a divisão poderia ser feita pegando lado a lado,
 // sempre tentar deixar próximo as linhas, mas seguindo minha ordem de clique e seleção".
+// v5.49: BUG relatado pelo usuário — "sempre que tiro o zoom para melhorar a visualização, sempre
+// clico apenas um e qdo vou clicar no segundo ele desmarca tudo (...) antes funcionava bem". Causa:
+// a seleção dependia do clique "bater" na layer do próprio polígono (que chamava selecionarTalhao()
+// e, por bubbling, o clique também chegava no map.on('click',...)) — com preferCanvas:true, o
+// Leaflet detecta "bateu na layer" por um hit-test de PIXEL no Canvas, que perde precisão em zooms
+// mais afastados. O clique caía geograficamente DENTRO do talhão (turf confirma), mas o Canvas não
+// detectava — o onClick do próprio polígono nunca disparava, só o clique do MAPA chegava, achava
+// "não caiu dentro de nenhum dos JÁ selecionados" e limpava tudo. Fix: nova _tratarCliqueEmTalhao
+// (extraída de map.on('click',...)) passa a ser a ÚNICA fonte de verdade — testa TODOS os talhões
+// arquivados por geometria (turf, imune a pixel/zoom), não só os selecionados, e chama
+// selecionarTalhao() direto. Removido o onClick de seleção das 8 layers de polígono (duplicava a
+// mesma lógica de um jeito que falhava nesse cenário).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -4906,37 +4918,51 @@ function resampleCurveByStep(pts, stepM, min = 100, max = 1200) {
   return resampleCurve(pts, M);
 }
 
+// v4.66: pedido do usuário — clicar FORA do talhão desseleciona um já travado que estivesse
+// selecionado, e trava automaticamente um talhão ainda ativo/desenhado (mesmo padrão já usado em
+// cancelarGuia(), que também trava de volta ao cancelar a guia).
+//
+// v5.49: BUG relatado pelo usuário — depois de dar zoom OUT, clicar num 2º talhão (ainda não
+// selecionado) às vezes desmarcava TUDO em vez de selecionar o 2º também (antes funcionava).
+// Causa: a seleção dependia do clique "bater" na layer do próprio polígono (que chamava
+// selecionarTalhao() e, por bubbling, o clique também chegava aqui) — com preferCanvas:true, o
+// Leaflet detecta "bateu na layer" por um hit-test de PIXEL no Canvas, que perde precisão em
+// zooms mais afastados (o polígono fica pequeno na tela). O clique caía geograficamente DENTRO do
+// talhão (turf confirma), mas o Canvas não detectava como "bateu na layer" — o onClick do próprio
+// polígono nunca disparava, só o clique do MAPA chegava (esse sempre dispara, não depende do
+// Canvas acertar nada), e como não achava "dentro de um dos JÁ selecionados", caía no
+// limparSelecaoTalhoes().
+// Fix: extraída numa função própria (testável) — o mapa passa a ser a ÚNICA fonte de verdade pra
+// "em qual talhão caiu o clique": testa TODOS os talhões arquivados (não só os já selecionados)
+// por geometria (turf, geográfico, imune a pixel/zoom) e chama selecionarTalhao() direto. Removido
+// o onClick de seleção das 8 layers de polígono (só chamavam selecionarTalhao mesmo — duplicava a
+// mesma lógica de um jeito que falhava exatamente nesse cenário); chamar os dois juntos causaria
+// um "toggle duplo" (seleciona e desseleciona no mesmo clique) nos casos em que o Canvas SIM
+// acertava o hit-test. Devolve true se tratou o clique (selecionou/desselecionou/arquivou — quem
+// chama não deve seguir pros modos de desenho), false se não tinha nada a fazer aqui.
+function _tratarCliqueEmTalhao(latlng) {
+  const pt = turf.point([latlng.lng, latlng.lat]);
+  const dentroDoPoly = poly => { try { return !!poly && turf.booleanPointInPolygon(pt, poly); } catch(err) { return false; } };
+  // t.turfPoly pode ainda não existir (alguns caminhos de criação de talhão — ex. importação de
+  // KML — deixam null até a primeira seleção, ver _recalcularTurfPolyDoTalhao) — recalcula na hora
+  // se for o caso, senão um talhão NUNCA selecionado antes nem seria encontrado aqui.
+  const talhaoClicado = talhoesArquivados.find(t => dentroDoPoly(t.turfPoly || _recalcularTurfPolyDoTalhao(t)));
+  if(talhaoClicado) { selecionarTalhao(talhaoClicado.uid); return true; }
+
+  if(talhoesMultiSel.size > 0) {
+    limparSelecaoTalhoes(); return true;
+  } else if(polyPts.length >= 3) {
+    if(!dentroDoPoly(turfPoly)) { arquivarTalhaoAtual(); setStatus('Talhão travado automaticamente ✓ — clique nele para selecionar.', 'ok'); return true; }
+  }
+  return false;
+}
+
 // ── Eventos do mapa ───────────────────────────────────────────────────────────
 map.on('click', e => {
   if(modo === 'idle' && _mapaTematicoAtivo) { _inspecionarMapaTematico(e.latlng); return; }
-  // v4.66: pedido do usuário — clicar FORA do talhão desseleciona um já travado que estivesse
-  // selecionado, e trava automaticamente um talhão ainda ativo/desenhado (mesmo padrão já usado
-  // em cancelarGuia(), que também trava de volta ao cancelar a guia). IMPORTANTE: layers
-  // interativas do Leaflet (o próprio polígono do talhão) fazem esse clique BORBULHAR pro evento
-  // 'click' do mapa também (bubblingMouseEvents é true por padrão) — ou seja, um clique DENTRO do
-  // polígono também chega aqui, não só um clique numa área vazia. Por isso confere a geometria de
-  // verdade (turf.booleanPointInPolygon) em vez de assumir "chegou no mapa = é fora" (isso travava/
-  // desselecionava errado até num clique bem no meio do próprio talhão). Ignorado durante picking
-  // de linha (_modoPickLinha, ex.: Perfil de Elevação/Carreador a partir de Linha) pra não
-  // interferir num clique que errou o traço fino da linha.
-  if(modo === 'idle' && !_modoPickLinha) {
-    const pt = turf.point([e.latlng.lng, e.latlng.lat]);
-    const dentroDoPoly = poly => { try { return !!poly && turf.booleanPointInPolygon(pt, poly); } catch(err) { return false; } };
-    if(talhoesMultiSel.size > 0) {
-      // v4.95: pedido do usuário — com 2+ selecionados (ver v4.93), esse "clique fora desseleciona"
-      // só checava talhaoSelecionadoUid (null com 2+), então nunca disparava — tinha que clicar em
-      // CADA talhão selecionado, um por um, pra tirar todos. Agora confere se o clique caiu dentro
-      // de QUALQUER um dos selecionados (nesse caso o próprio polígono já tratou via seu onClick,
-      // que borbulhou pra aqui — não faz nada) — só limpa a seleção inteira se caiu fora de todos.
-      const algumaDentro = [...talhoesMultiSel].some(uid => {
-        const t = talhoesArquivados.find(x => x.uid === uid);
-        return dentroDoPoly(t && t.turfPoly);
-      });
-      if(!algumaDentro) { limparSelecaoTalhoes(); return; }
-    } else if(polyPts.length >= 3) {
-      if(!dentroDoPoly(turfPoly)) { arquivarTalhaoAtual(); setStatus('Talhão travado automaticamente ✓ — clique nele para selecionar.', 'ok'); return; }
-    }
-  }
+  // Ignorado durante picking de linha (_modoPickLinha, ex.: Perfil de Elevação/Carreador a partir
+  // de Linha) pra não interferir num clique que errou o traço fino da linha.
+  if(modo === 'idle' && !_modoPickLinha && _tratarCliqueEmTalhao(e.latlng)) return;
   if(modo === 'poly') addPolyPt(e.latlng);
   else if(modo === 'guide') {
     // Modo Reta: máximo 2 pontos
@@ -5291,7 +5317,7 @@ function arquivarTalhaoAtual() {
   // Click handler para seleção de talhão
   if(capturedLayer) {
     capturedLayer.off('click');
-    capturedLayer.on('click', () => { if(modo === 'idle') selecionarTalhao(uid); });
+    // v5.49: seleção agora é centralizada em map.on('click',...) — ver comentário grande lá.
   }
 
   // Reseta estado ativo sem remover as layers do mapa
@@ -5826,7 +5852,7 @@ function _dividirTalhaoPorDistorcao(sg, tan, resultado, rowBrgGlobal, perpBrg, s
     const newIdx = talhoesArquivados.length;
     const newCor = CORES_TALHAO[newIdx % CORES_TALHAO.length];
     const newLayer = L.polygon(restPolyPts.map(p=>[p.lat,p.lng]), {color:newCor, fillColor:newCor, fillOpacity:.06, weight:2, dashArray:'4,3'}).addTo(map);
-    newLayer.on('click', () => { if(modo === 'idle') selecionarTalhao(newUid); });
+    // v5.49: seleção agora é centralizada em map.on('click',...) — ver comentário grande lá.
     const novoTalhao = {
       uid: newUid, idx: newIdx+1, cor: newCor, corLinha: cor, baseLabelZoom: map.getZoom(),
       areaHa: turf.area(restoPiece)/10000, spacing, count:0, metrosLin:0,
@@ -5868,7 +5894,7 @@ function _dividirTalhaoArquivadoPorDistorcao(t, sg, tan, resultado, rowBrgGlobal
 
     t.polyPts = boaPiece.geometry.coordinates[0].slice(0,-1).map(([lng,lat]) => ({lat,lng}));
     t.polyLayer = L.polygon(t.polyPts, {color:t.cor, fillColor:t.cor, fillOpacity:.06, weight:2}).addTo(map);
-    t.polyLayer.on('click', () => { if(modo === 'idle') selecionarTalhao(t.uid); });
+    // v5.49: seleção agora é centralizada em map.on('click',...) — ver comentário grande lá.
 
     let tBoundT;
     try { tBoundT = turf.polygonToLine(boaPiece); } catch(e) { return null; }
@@ -5891,7 +5917,7 @@ function _dividirTalhaoArquivadoPorDistorcao(t, sg, tan, resultado, rowBrgGlobal
     const newIdx = talhoesArquivados.length;
     const newCor = CORES_TALHAO[newIdx % CORES_TALHAO.length];
     const newLayer = L.polygon(restPolyPts.map(p=>[p.lat,p.lng]), {color:newCor, fillColor:newCor, fillOpacity:.06, weight:2, dashArray:'4,3'}).addTo(map);
-    newLayer.on('click', () => { if(modo === 'idle') selecionarTalhao(newUid); });
+    // v5.49: seleção agora é centralizada em map.on('click',...) — ver comentário grande lá.
     const novoTalhao = {
       uid: newUid, idx: newIdx+1, cor: newCor, corLinha: cor, baseLabelZoom: map.getZoom(),
       areaHa: turf.area(restoPiece)/10000, spacing, count:0, metrosLin:0,
@@ -9969,7 +9995,9 @@ function _criarTalhaoArquivadoSimples(pts) {
     infoMarker: infoMk, baseLabelZoom: map.getZoom(),
     turfPoly: null
   });
-  polyLyr.on('click', () => { if(modo === 'idle') selecionarTalhao(uid); });
+  // v5.49: seleção não depende mais do clique BATER na layer (Canvas, preferCanvas:true — hit-test
+  // por pixel, perde precisão em zooms afastados) — map.on('click',...) agora acha o talhão certo
+  // por geometria (turf), sem depender de pixel/zoom. Ver comentário grande lá.
   return true;
 }
 
@@ -10107,7 +10135,9 @@ function _processarKMLImportado(text) {
         infoMarker: infoMk, baseLabelZoom: map.getZoom(),
         turfPoly: null
       });
-      polyLyr.on('click', () => { if(modo === 'idle') selecionarTalhao(uid); });
+      // v5.49: seleção não depende mais do clique BATER na layer (Canvas, preferCanvas:true — hit-test
+  // por pixel, perde precisão em zooms afastados) — map.on('click',...) agora acha o talhão certo
+  // por geometria (turf), sem depender de pixel/zoom. Ver comentário grande lá.
       importados++;
     });
 
@@ -11710,7 +11740,9 @@ function _criarTalhaoArquivadoComLinhas(nome, polyPts, linhasCoords) {
     polyLayer: polyLyr, polyPts, linhas: novasLinhas, linhasDecl: [],
     infoMarker: infoMk, baseLabelZoom: map.getZoom(), turfPoly: null
   });
-  polyLyr.on('click', () => { if(modo === 'idle') selecionarTalhao(uid); });
+  // v5.49: seleção não depende mais do clique BATER na layer (Canvas, preferCanvas:true — hit-test
+  // por pixel, perde precisão em zooms afastados) — map.on('click',...) agora acha o talhão certo
+  // por geometria (turf), sem depender de pixel/zoom. Ver comentário grande lá.
   return true;
 }
 
@@ -12438,7 +12470,7 @@ function unificarTalhoesSelecionados() {
     const newUid = nextTalhaoUid++;
     const capturedNewUid = newUid;
     const newLayer = L.polygon(newPolyPts.map(p => [p.lat, p.lng]), { color: newCor, fillColor: newCor, fillOpacity: .06, weight: 2 }).addTo(map);
-    newLayer.on('click', () => { if(modo === 'idle') selecionarTalhao(capturedNewUid); });
+    // v5.49: seleção agora é centralizada em map.on('click',...) — ver comentário grande lá.
     let areaHa = 0;
     try { areaHa = turf.area(turf.polygon(polyCoords)) / 10000; } catch(e) {}
     const novoTalhao = {
@@ -12943,7 +12975,7 @@ function _executarDivisaoTalhao(uid, lineCoordsLngLat, largura, opts) {
     const newLayer = L.polygon(newPolyPts.map(p=>[p.lat,p.lng]),
       {color:newCor, fillColor:newCor, fillOpacity:.06, weight:2}).addTo(map);
 
-    newLayer.on('click', () => { if(modo==='idle') selecionarTalhao(capturedNewUid); });
+    // v5.49: seleção agora é centralizada em map.on('click',...) — ver comentário grande lá.
 
     const newLinhas = linhasPorParte[pIdx].map(l => {
       const pl = L.polyline(l.coords.map(([lng,lat]) => [lat,lng]), {color:l.color, weight:l.weight, opacity:.95}).addTo(map);
