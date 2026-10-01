@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.47 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.48 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -4250,6 +4250,17 @@ body.layout-lateral #status{grid-area:status;}
 // anterior": decide o sentido de cada talhão pela distância real até o fim do talhão anterior na
 // sequência, conectando sempre pelo lado mais curto. Melhoria visível: o resumo da divisão
 // combinada agora mostra a sequência de clique no nome (ex.: "Talhão 3 → Talhão 1 → Talhão 2").
+// v5.48: BUG relatado com print (continuação do v5.47) — mesmo com a ordem de clique certa, um
+// setor ainda podia sair em 2 PEDAÇOS BEM DISTANTES um do outro dentro do mesmo talhão (ex.:
+// vermelho de um lado E do outro, com outras cores no meio). Causa: a ordenação LOCAL de cada
+// talhão projetava SEMPRE num único eixo perpendicular (bearing da linha mais comprida + 90°) —
+// funciona bem em campo com fileiras ~paralelas (mesmo com comprimentos bem diferentes — trapézio/
+// triângulo), mas falha em campo irregular/em leque (fileiras com rumos bem diferentes entre si,
+// como no print). Fix: _ordenarLinhasDoTalhao decide automaticamente, por talhão, entre projeção
+// no eixo (fileiras ~paralelas — _direcaoConsistente confere o desvio de bearing entre elas) ou
+// _encadearPorProximidade, um "vizinho mais próximo" guloso por distância real (fileiras em
+// leque/sem direção única). Pedido do usuário: "a divisão poderia ser feita pegando lado a lado,
+// sempre tentar deixar próximo as linhas, mas seguindo minha ordem de clique e seleção".
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -8904,6 +8915,96 @@ function _cortarPorPeso(pesos, n) {
   return cortes;
 }
 
+// v5.48: encadeia um array de itens com `.mid` (ponto médio) por PROXIMIDADE geográfica real —
+// algoritmo guloso do "vizinho mais próximo": começa de um ponto de partida (ou, se não houver, do
+// item mais distante do centroide do grupo — tende a ser uma "ponta" do campo) e, a cada passo,
+// escolhe entre os itens restantes o que está FISICAMENTE mais perto do último escolhido. Usado
+// só quando as fileiras NÃO têm uma direção predominante (campo em leque/irregular — ver
+// _ordenarLinhasDoTalhao) — pra fileiras ~paralelas, a projeção num eixo é mais robusta (ver abaixo
+// o porquê).
+function _encadearPorProximidade(itens, pontoPartida) {
+  if(itens.length <= 1) return itens.slice();
+  const restantes = itens.slice();
+  let atual;
+  if(pontoPartida) {
+    let melhorIdx = 0, melhorDist = Infinity;
+    restantes.forEach((o, i) => { const d = haversineM(pontoPartida, o.mid); if(d < melhorDist) { melhorDist = d; melhorIdx = i; } });
+    atual = restantes.splice(melhorIdx, 1)[0];
+  } else {
+    const centroide = { lat: restantes.reduce((s, o) => s + o.mid.lat, 0) / restantes.length, lng: restantes.reduce((s, o) => s + o.mid.lng, 0) / restantes.length };
+    let melhorIdx = 0, melhorDist = -1;
+    restantes.forEach((o, i) => { const d = haversineM(centroide, o.mid); if(d > melhorDist) { melhorDist = d; melhorIdx = i; } });
+    atual = restantes.splice(melhorIdx, 1)[0];
+  }
+  const ordenado = [atual];
+  while(restantes.length) {
+    let melhorIdx = 0, melhorDist = Infinity;
+    restantes.forEach((o, i) => { const d = haversineM(atual.mid, o.mid); if(d < melhorDist) { melhorDist = d; melhorIdx = i; } });
+    atual = restantes.splice(melhorIdx, 1)[0];
+    ordenado.push(atual);
+  }
+  return ordenado;
+}
+
+// Bearing ponta-a-ponta de UM item (pl já resolvida em {pts,...}).
+function _bearingDoItem(o) {
+  return turf.bearing(turf.point([o.pts[0].lng, o.pts[0].lat]), turf.point([o.pts[o.pts.length - 1].lng, o.pts[o.pts.length - 1].lat]));
+}
+// As fileiras têm uma direção predominante CONSISTENTE? Compara o bearing de cada linha com o da
+// linha mais COMPRIDA (referência) — tolera até 30° de desvio, nos dois sentidos (uma fileira "de
+// costas" pra referência, 180° invertida, ainda conta como mesma direção). Usada por
+// _ordenarLinhasDoTalhao pra decidir ENTRE projeção num eixo (campo com fileiras ~paralelas, por
+// mais que o comprimento varie — trapézio/triângulo) e encadeamento por proximidade real (campo em
+// leque, sem direção única).
+function _direcaoConsistente(info) {
+  if(info.length < 2) return true;
+  const ref = info.reduce((a, b) => (b.len > a.len ? b : a));
+  const rowBrg = _bearingDoItem(ref);
+  return info.every(o => {
+    if(o === ref) return true;
+    let diff = Math.abs(((_bearingDoItem(o) - rowBrg + 540) % 360) - 180); // normaliza pra [0,180]
+    if(diff > 90) diff = 180 - diff; // "de costas" (invertida) ainda é a mesma direção
+    return diff <= 30;
+  });
+}
+// Ordena as linhas de UM talhão, pronta pro corte em setores — ponto central da v5.48 (BUG
+// relatado com print: um setor saía em 2 pedaços bem distantes um do outro dentro do mesmo
+// talhão). Dois modos, escolhidos automaticamente:
+//  - Fileiras ~PARALELAS (direção consistente, mesmo com comprimentos bem diferentes — campo
+//    trapezoidal/triangular, fileiras das bordas mais curtas): projeta no eixo PERPENDICULAR à
+//    direção das fileiras. Robusto à variação de COMPRIMENTO — uma fileira bem mais curta que as
+//    vizinhas pode "parecer" mais perto de uma fileira errada só pela distância 2D crua (o ponto
+//    médio dela fica deslocado por ter menos comprimento), o que bagunçaria um encadeamento por
+//    proximidade pura; a projeção ignora essa diferença de comprimento.
+//  - Fileiras em LEQUE/irregulares (sem direção única — ver print do usuário): encadeia por
+//    PROXIMIDADE REAL (_encadearPorProximidade) — a projeção num eixo só embaralha pontas opostas
+//    do leque, já que não existe UM eixo que represente direções tão diferentes entre si.
+// `pontoPartida`, se houver, é o fim do talhão anterior na sequência combinada — usado pra entrar
+// pelo lado mais perto, nos dois modos.
+function _ordenarLinhasDoTalhao(info, pontoPartida) {
+  if(info.length < 2) return info.slice();
+  if(!_direcaoConsistente(info)) return _encadearPorProximidade(info, pontoPartida);
+
+  const rowBrg = _bearingDoItem(info.reduce((a, b) => (b.len > a.len ? b : a)));
+  const perpBrg = rowBrg + 90;
+  const anchor = info[0].mid;
+  const ordenado = info.map(o => {
+    const dist = haversineM(anchor, o.mid);
+    const brg = dist < 1e-6 ? perpBrg : turf.bearing(turf.point([anchor.lng, anchor.lat]), turf.point([o.mid.lng, o.mid.lat]));
+    return { ...o, proj: dist * Math.cos((brg - perpBrg) * Math.PI / 180) };
+  });
+  ordenado.sort((a, b) => a.proj - b.proj);
+
+  // Encosta no ponto de partida (se houver): inverte a ordem se o ÚLTIMO item ficar mais perto do
+  // que o PRIMEIRO fica — entra pelo lado mais curto, em vez de uma direção fixa arbitrária.
+  if(pontoPartida) {
+    const dPrimeiro = haversineM(pontoPartida, ordenado[0].mid);
+    const dUltimo = haversineM(pontoPartida, ordenado[ordenado.length - 1].mid);
+    if(dUltimo < dPrimeiro) ordenado.reverse();
+  }
+  return ordenado;
+}
+
 // Recebe o array de polylines de UM talhão, devolve N grupos contíguos (no espaço) com peso
 // acumulado ~igual, ou null se não houver linhas suficientes (precisa de pelo menos 1 por setor).
 function _calcularSetores(linhasArr, n, modo) {
@@ -8916,30 +9017,13 @@ function _calcularSetores(linhasArr, n, modo) {
   }).filter(Boolean);
   if(info.length < n) return null;
 
-  // Direção predominante: bearing ponta-a-ponta da linha MAIS COMPRIDA (proxy robusto do "sentido
-  // das fileiras" sem depender da guia original, que pode não existir mais).
-  const ref = info.reduce((a, b) => (b.len > a.len ? b : a));
-  const rowBrg = turf.bearing(
-    turf.point([ref.pts[0].lng, ref.pts[0].lat]),
-    turf.point([ref.pts[ref.pts.length - 1].lng, ref.pts[ref.pts.length - 1].lat])
-  );
-  const perpBrg = rowBrg + 90;
+  const ordenado = _ordenarLinhasDoTalhao(info, null);
 
-  // Projeta o ponto médio de cada linha no eixo perpendicular (a partir de uma âncora qualquer, o
-  // meio da 1ª linha) — dá a posição "através" do talhão, de um lado pro outro.
-  const anchor = info[0].mid;
-  info.forEach(o => {
-    const dist = haversineM(anchor, o.mid);
-    const brg = dist < 1e-6 ? perpBrg : turf.bearing(turf.point([anchor.lng, anchor.lat]), turf.point([o.mid.lng, o.mid.lat]));
-    o.proj = dist * Math.cos((brg - perpBrg) * Math.PI / 180);
-  });
-  info.sort((a, b) => a.proj - b.proj);
-
-  const pesos = info.map(o => (modo === 'quantidade' ? 1 : o.len));
+  const pesos = ordenado.map(o => (modo === 'quantidade' ? 1 : o.len));
   const cortes = _cortarPorPeso(pesos, n);
   const grupos = [];
   for(let g = 0; g < n; g++) {
-    const fatia = info.slice(cortes[g], cortes[g + 1]);
+    const fatia = ordenado.slice(cortes[g], cortes[g + 1]);
     grupos.push({ linhas: fatia.map(o => o.pl), comprimento: fatia.reduce((s, o) => s + o.len, 0) });
   }
   return grupos;
@@ -8950,40 +9034,23 @@ function _calcularSetores(linhasArr, n, modo) {
 // divide UM talhão só. Cada item guarda o `pl`/`t`/`corBase` de origem, pra quem chama saber qual
 // cor original restaurar em cada linha depois (limparSetores) e qual talhão cada linha pertence.
 //
-// v5.35: BUG relatado com print — quando um setor precisava "pegar o restante" de um talhão vizinho
-// pra fechar a metragem, a linha escolhida dentro DAQUELE talhão vinha meio aleatória/deslocada (um
-// pedacinho de uma cor ficava cercado pela outra, em vez de um corte limpo na borda). Causa: a v5.34
-// projetava CADA LINHA (de qualquer talhão) direto no ÚNICO eixo macro (o espalhamento entre
-// centroides dos talhões) — isso ordena bem os TALHÕES entre si, mas dentro de um talhão específico
-// cujas fileiras não estão alinhadas com esse eixo macro (comum: cada talhão tem sua própria guia,
-// em direção nenhuma relacionada à direção dos outros), a projeção no eixo ERRADO pode intercalar
-// linhas de um jeito que não segue a ordem real das fileiras daquele talhão — gerando esse
-// "deslocado" que apareceu no print.
-// Fix: ordenação em DOIS NÍVEIS, não um projeção só. (1) Ordena os TALHÕES entre si pelo eixo macro
-// (como antes). (2) Dentro de CADA talhão, ordena as linhas dele pelo eixo LOCAL de fileiras —
-// exatamente a mesma lógica de _calcularSetores (bearing da linha mais comprida + 90°), preservando
-// a geometria real daquele talhão específico em vez de forçar tudo no eixo macro. (3) Antes de
-// concatenar, confere se o sentido da ordenação LOCAL de cada talhão "aponta" a favor ou contra o
-// eixo macro (comparando o bearing do primeiro→último item local com o eixo macro) e inverte se
-// for contra — sem isso, um talhão podia entrar "de trás pra frente" em relação ao vizinho anterior
-// na sequência, criando descontinuidade bem na fronteira entre dois talhões de setores diferentes
-// (o mesmo tipo de "salto" visto no print, só que entre talhões em vez de dentro de um só).
-// Resultado: cada talhão mantém contiguidade garantida internamente (igual sempre foi em
-// _calcularSetores), e a sequência entre talhões diferentes também fica geograficamente coerente.
+// v5.47: a ORDEM dos talhões segue a ordem de CLIQUE/seleção (talhoesMultiSel é um Set, preserva
+// ordem de inserção) — `alvos` já chega nessa ordem, é só usar direto.
+//
+// v5.48: BUG relatado com print — mesmo seguindo a ordem de clique, um setor ainda podia sair em 2
+// PEDAÇOS BEM DISTANTES um do outro dentro do mesmo talhão (ex.: vermelho de um lado E do outro,
+// com outras cores no meio). Causa: a ordenação LOCAL de cada talhão (v5.35) projetava as linhas
+// SEMPRE num único eixo perpendicular — funciona bem num campo com fileiras ~paralelas (mesmo com
+// comprimentos bem diferentes), mas falha num campo IRREGULAR/em leque (fileiras com rumos bem
+// diferentes entre si, como no print do usuário): duas linhas podem projetar PERTO uma da outra
+// nesse eixo mesmo estando fisicamente longe, embaralhando a ordem.
+// Fix: _ordenarLinhasDoTalhao (novo) decide ENTRE os dois jeitos automaticamente, por talhão —
+// projeção no eixo quando as fileiras têm direção consistente (continua funcionando igual a antes
+// pro caso comum), ou _encadearPorProximidade (vizinho mais próximo de verdade, por distância
+// real) quando não têm. Entrar pelo fim do talhão ANTERIOR na sequência de clique (pontoPartida)
+// funciona nos dois modos. Pedido do usuário: "a divisão poderia ser feita pegando lado a lado,
+// sempre tentar deixar próximo as linhas, mas seguindo minha ordem de clique e seleção".
 function _calcularSetoresCombinado(alvos, n, modo) {
-  // v5.47: pedido do usuário — "quero que a divisão de setores priorize a ordem que eu clico nos
-  // talhões". Antes (v5.34/v5.35), a ordem dos TALHÕES na sequência combinada era calculada
-  // geometricamente (eixo macro = espalhamento entre centroides), ignorando a ordem real de
-  // seleção. `alvos` já chega aqui na ordem de clique (vem de talhoesMultiSel, um Set — preserva
-  // ordem de inserção, ver dividirEmSetores) — é só usar essa ordem direto, sem recalcular nada.
-  //
-  // Melhoria junto: a ordem LOCAL de cada talhão (dentro dele mesmo) antes "alinhava" o sentido
-  // comparando com um único eixo macro GLOBAL — fazia sentido quando a ordem dos talhões também
-  // vinha desse mesmo eixo, mas agora que a ordem é escolha livre do usuário (pode clicar em
-  // zigue-zague, formato em L etc.), um eixo global não serve mais de referência. Troca por
-  // "encostar no talhão anterior": decide o sentido de cada talhão comparando a distância real até
-  // o fim do talhão ANTERIOR na sequência — conecta sempre pelo lado mais curto, qualquer que seja
-  // o arranjo espacial da seleção.
   const itens = [];
   let fimAnterior = null; // {lat,lng} do último ponto do talhão anterior já colocado na sequência
   alvos.forEach(({ t, linhasArr, corBase }) => {
@@ -8996,33 +9063,9 @@ function _calcularSetoresCombinado(alvos, n, modo) {
     }).filter(Boolean);
     if(!local.length) return;
 
-    if(local.length >= 2) {
-      const ref = local.reduce((a, b) => (b.len > a.len ? b : a));
-      const rowBrg = turf.bearing(
-        turf.point([ref.pts[0].lng, ref.pts[0].lat]),
-        turf.point([ref.pts[ref.pts.length - 1].lng, ref.pts[ref.pts.length - 1].lat])
-      );
-      const perpBrg = rowBrg + 90;
-      const anchorLocal = local[0].mid;
-      local.forEach(o => {
-        const dist = haversineM(anchorLocal, o.mid);
-        const brg = dist < 1e-6 ? perpBrg : turf.bearing(turf.point([anchorLocal.lng, anchorLocal.lat]), turf.point([o.mid.lng, o.mid.lat]));
-        o.projLocal = dist * Math.cos((brg - perpBrg) * Math.PI / 180);
-      });
-      local.sort((a, b) => a.projLocal - b.projLocal);
-
-      // Encosta no fim do talhão ANTERIOR (se houver): inverte a ordem local se o ÚLTIMO item
-      // ficar mais perto do fim anterior do que o PRIMEIRO fica — conecta pelo lado mais curto,
-      // em vez de comparar com um eixo global fixo.
-      if(fimAnterior) {
-        const dPrimeiro = haversineM(fimAnterior, local[0].mid);
-        const dUltimo = haversineM(fimAnterior, local[local.length - 1].mid);
-        if(dUltimo < dPrimeiro) local.reverse();
-      }
-    }
-
-    local.forEach(o => itens.push({ pl: o.pl, t, corBase, len: o.len }));
-    fimAnterior = local[local.length - 1].mid;
+    const ordenado = _ordenarLinhasDoTalhao(local, fimAnterior);
+    ordenado.forEach(o => itens.push({ pl: o.pl, t, corBase, len: o.len }));
+    fimAnterior = ordenado[ordenado.length - 1].mid;
   });
   if(itens.length < n) return null;
 
