@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.54 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.55 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -709,7 +709,7 @@ body.layout-lateral #status{grid-area:status;}
               <option value="6">Forte</option>
             </select>
           </div>
-          <button class="rbtn c-teal" id="btnSuavizarLinhas" onclick="suavizarLinhasDePlantio()" title="Suaviza o traçado das linhas de plantio do talhão ativo (ou selecionado/vários selecionados) com o mesmo acabamento 'curva suave' do AutoCAD Civil3D. Muda a geometria de verdade (não só o desenho): comprimento e exportação (KML/DXF/shapefile) refletem o traçado suavizado. Não desfaz — gere/importe de novo se quiser voltar ao traçado original."><span class="ico">&#12316;</span><span class="lbl">Suavizar Linhas de Plantio</span></button>
+          <button class="rbtn c-teal" id="btnSuavizarLinhas" onclick="suavizarLinhasDePlantio()" title="Suaviza o traçado das linhas de plantio do talhão ativo (ou selecionado/vários selecionados) com o mesmo acabamento 'curva suave' do AutoCAD Civil3D. Muda a geometria de verdade (não só o desenho): comprimento e exportação (KML/DXF/shapefile) refletem o traçado suavizado. Não desfaz — gere/importe de novo se quiser voltar ao traçado original. Pensado pra linhas IMPORTADAS (KML/DXF digitalizado) — pra linhas GERADAS aqui no app em modo Polilinha (cantos vivos), prefira trocar pro modo 'Suave' e clicar 'Redesenhar Linhas': mantém o espaçamento exato em qualquer curva, enquanto suavizar depois pode apertar/abrir levemente o espaçamento bem numa quina fechada."><span class="ico">&#12316;</span><span class="lbl">Suavizar Linhas de Plantio</span></button>
         </div>
         <div class="rgroup-title">Suavizar Linhas de Plantio (acabamento estilo AutoCAD)</div>
       </div>
@@ -4348,6 +4348,19 @@ body.layout-lateral #status{grid-area:status;}
 // do AutoCAD Civil3D), mas substitui os pontos de verdade da linha (pl.setLatLngs) em vez de só
 // redesenhar por cima. Mesmo alvo que "Setores": talhão(ões) selecionado(s) ou, sem seleção, o
 // talhão ativo.
+// v5.55: usuário perguntou em seguida — "isso não vai mudar meu espaçamento de linhas? não seria
+// mais correto já desenhar suave?". CONFIRMADO com teste dedicado (harness, test_suavizar_
+// espacamento.js): ele está certo — suavizar cada fileira já gerada de forma INDEPENDENTE só
+// preserva o espaçamento à risca em curva suave/contínua; numa quina bem fechada da guia o corte
+// de canto do Chaikin é proporcional ao comprimento do segmento de CADA fileira ali, e fileiras
+// vizinhas (offsets a distâncias diferentes do MESMO ponto) têm segmentos ligeiramente diferentes
+// bem na quina — medido: 12m nominal caiu pra 11,13m (~7%) numa quina de 90° artificial (caso-
+// limite, bem mais agressivo que curvatura real de campo — nessa, medido <1cm de desvio). A forma
+// SEM distorção nenhuma (testada: exatamente 12,000m em qualquer ponto) é suavizar a GUIA uma vez
+// só, ANTES do offset — exatamente o que o modo "Suave" (setModoGuia('spline')) já faz. Sem mudar
+// o código de suavizarLinhasDePlantio (ela continua certa pra linhas IMPORTADAS, sem guia no app
+// pra regenerar): só documentado o achado no comentário da função + tooltip do botão, recomendando
+// modo "Suave" + "Redesenhar Linhas" pra quem gerou em "Polilinha" e quer suave sem distorcer.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -13105,6 +13118,23 @@ function limparLinhasSelecionado() {
 // Mesmo alvo que "Setores"/"Otimizar Cenário de Plantio": talhão(ões) selecionado(s)
 // (talhoesMultiSel, nessa ordem de prioridade) ou, sem seleção nenhuma, o talhão ATIVO (array
 // global `linhas`) — ver dividirEmSetores() acima pro mesmo padrão de resolução de alvo.
+//
+// Usuário perguntou em seguida: "isso não vai mudar meu espaçamento de linhas? não seria mais
+// correto já desenhar suave?" — CORRETO, confirmado com um teste à parte (harness Node.js,
+// _investigar_espacamento_suavizacao.js): suavizar cada fileira já gerada de forma INDEPENDENTE
+// (o que esta função faz) só preserva o espaçamento à risca em curva suave/contínua; numa quina
+// bem fechada (ex.: guia com um ângulo vivo de 90°) o corte de canto do Chaikin é proporcional ao
+// comprimento do segmento de CADA fileira ali, e fileiras vizinhas (offsets a distâncias
+// diferentes do mesmo ponto) têm comprimentos de segmento ligeiramente diferentes bem na quina —
+// no teste, espaçamento nominal de 12m caiu pra 11,13m exatamente na quina (~7%). A forma SEM essa
+// distorção (testada: fica em 12,000m em qualquer ponto, mesmo na quina) é suavizar a GUIA uma vez
+// SÓ, antes de gerar as fileiras por offset — exatamente o que o modo "Suave" (setModoGuia('spline'),
+// ver addSplineRow) já faz. Ou seja: pra linhas GERADAS aqui no app em modo "Polilinha" (cantos
+// vivos de propósito), o jeito certo de ficar suave sem distorcer é trocar pro modo "Suave" e
+// clicar "Redesenhar Linhas" — não rodar esta função. suavizarLinhasDePlantio continua sendo a
+// ferramenta certa pra linhas IMPORTADAS (KML/DXF digitalizado), que não têm uma guia no app pra
+// regenerar; e pra curvatura real de campo (suave/contínua, não uma quina viva artificial), o
+// mesmo teste mostrou distorção imperceptível (<1mm num arco de raio 300m).
 function suavizarLinhasDePlantio() {
   const alvos = [];
   if(talhoesMultiSel.size > 0) {
