@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.52 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.53 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -4313,6 +4313,17 @@ body.layout-lateral #status{grid-area:status;}
 // esteja bem longe da posição das suas vizinhas GEOGRÁFICAS reais. Testado contra os dados reais:
 // nunca piora, melhora os casos confirmados como problemáticos (ver
 // test_setores_importados_reais.js).
+// v5.53: BUG relatado com 2 prints, continuação do v5.52 — "continua misturando, estão ficando
+// distante (...) não tem sentido o setor ficar com linhas distantes ou pedaços de linhas de um
+// setor entre outro setor". Era um bug DIFERENTE do v5.52 (que era DENTRO de um talhão): este é
+// ENTRE talhões — a ordem de CLIQUE (v5.47) pra sequenciar os talhões selecionados nem sempre
+// corresponde à geografia real. Confirmado contra os 10 talhões reais do "Garves - Civil.kml":
+// clicar na ordem de importação do KML gera 6 pares de talhões NÃO VIZINHOS (400m+ de distância)
+// compartilhando o MESMO setor; clicar numa ordem geograficamente sensata (norte→sul) dá ZERO
+// pares assim. Fix em _calcularSetoresCombinado: a ORDEM DOS TALHÕES volta a ser geográfica (eixo
+// macro = par de centroides mais distante, como antes da v5.47) — testado contra os dados reais:
+// ZERO pares não-vizinhos compartilhando setor. A ordem de CLIQUE não é descartada: decide só o
+// SENTIDO da varredura (por qual ponta começar).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -9253,26 +9264,66 @@ function _calcularSetores(linhasArr, n, modo) {
 // divide UM talhão só. Cada item guarda o `pl`/`t`/`corBase` de origem, pra quem chama saber qual
 // cor original restaurar em cada linha depois (limparSetores) e qual talhão cada linha pertence.
 //
-// v5.47: a ORDEM dos talhões segue a ordem de CLIQUE/seleção (talhoesMultiSel é um Set, preserva
-// ordem de inserção) — `alvos` já chega nessa ordem, é só usar direto.
+// v5.47: a ORDEM dos talhões passou a seguir a ordem de CLIQUE/seleção.
 //
-// v5.48: BUG relatado com print — mesmo seguindo a ordem de clique, um setor ainda podia sair em 2
-// PEDAÇOS BEM DISTANTES um do outro dentro do mesmo talhão (ex.: vermelho de um lado E do outro,
-// com outras cores no meio). Causa: a ordenação LOCAL de cada talhão (v5.35) projetava as linhas
-// SEMPRE num único eixo perpendicular — funciona bem num campo com fileiras ~paralelas (mesmo com
-// comprimentos bem diferentes), mas falha num campo IRREGULAR/em leque (fileiras com rumos bem
-// diferentes entre si, como no print do usuário): duas linhas podem projetar PERTO uma da outra
-// nesse eixo mesmo estando fisicamente longe, embaralhando a ordem.
-// Fix: _ordenarLinhasDoTalhao (novo) decide ENTRE os dois jeitos automaticamente, por talhão —
-// projeção no eixo quando as fileiras têm direção consistente (continua funcionando igual a antes
-// pro caso comum), ou _encadearPorProximidade (vizinho mais próximo de verdade, por distância
-// real) quando não têm. Entrar pelo fim do talhão ANTERIOR na sequência de clique (pontoPartida)
-// funciona nos dois modos. Pedido do usuário: "a divisão poderia ser feita pegando lado a lado,
-// sempre tentar deixar próximo as linhas, mas seguindo minha ordem de clique e seleção".
+// v5.48: ordenação LOCAL de cada talhão (_ordenarLinhasDoTalhao) ganhou um modo de proximidade
+// real pra campo em leque, além da projeção num eixo pra campo com fileiras ~paralelas.
+//
+// v5.53: BUG relatado com 2 prints — "continua misturando, estão ficando distante (...) não tem
+// sentido o setor ficar com linhas distantes ou pedaços de linhas de um setor entre outro setor".
+// Causa raiz, confirmada contra os 10 talhões reais do "Garves - Civil.kml": a ordem de CLIQUE
+// (v5.47) nem sempre corresponde à disposição geográfica real dos talhões — testei a ordem de
+// importação do KML como "ordem de clique" e achei 6 pares de talhões NÃO VIZINHOS (400m+ de
+// distância) compartilhando o MESMO setor; com uma ordem geograficamente sensata (norte→sul), ZERO
+// pares assim. Ou seja, seguir a ordem de clique "crua" pode fazer um setor pular de um talhão pra
+// outro bem distante, deixando um talhão "de fora" no meio do caminho com outra cor — exatamente o
+// "pedaço de cor errada entre outro setor" relatado.
+// Fix: a ORDEM DOS TALHÕES volta a ser geográfica (eixo macro = par de centroides mais distante,
+// mesmo princípio de antes da v5.47 — testado contra os dados reais: ZERO pares não-vizinhos
+// compartilhando setor, em N=8/10/15) — mas a ordem de CLIQUE não é descartada: decide só o SENTIDO
+// da varredura (por qual ponta começar), comparando se o talhão clicado PRIMEIRO fica mais perto do
+// início ou do fim da ordenação geográfica. Continua garantindo contiguidade de verdade (o que
+// "não faz sentido" não acontece mais), e o clique ainda tem uma palavra a dizer em por onde
+// começar. _ordenarLinhasDoTalhao (ordenação local de cada talhão) e o "encostar no talhão
+// anterior" (pontoPartida) continuam exatamente iguais.
 function _calcularSetoresCombinado(alvos, n, modo) {
+  const comCentroide = alvos.map(a => {
+    const pts = a.t ? a.t.polyPts : polyPts;
+    const lat = pts.reduce((s, p) => s + p.lat, 0) / pts.length, lng = pts.reduce((s, p) => s + p.lng, 0) / pts.length;
+    return { ...a, centroide: { lat, lng } };
+  });
+
+  if(comCentroide.length >= 2) {
+    let refBrg = 0, maiorDist = -1;
+    for(let i = 0; i < comCentroide.length; i++) {
+      for(let j = i + 1; j < comCentroide.length; j++) {
+        const d = haversineM(comCentroide[i].centroide, comCentroide[j].centroide);
+        if(d > maiorDist) {
+          maiorDist = d;
+          refBrg = turf.bearing(
+            turf.point([comCentroide[i].centroide.lng, comCentroide[i].centroide.lat]),
+            turf.point([comCentroide[j].centroide.lng, comCentroide[j].centroide.lat])
+          );
+        }
+      }
+    }
+    const anchorMacro = comCentroide[0].centroide;
+    comCentroide.forEach(a => {
+      const dist = haversineM(anchorMacro, a.centroide);
+      const brg = dist < 1e-6 ? refBrg : turf.bearing(turf.point([anchorMacro.lng, anchorMacro.lat]), turf.point([a.centroide.lng, a.centroide.lat]));
+      a.proj = dist * Math.cos((brg - refBrg) * Math.PI / 180);
+    });
+    comCentroide.sort((a, b) => a.proj - b.proj);
+
+    // Ordem de clique decide só o SENTIDO: se o talhão clicado PRIMEIRO (alvos[0]) ficou mais perto
+    // do FIM da ordenação geográfica do que do INÍCIO, inverte — começa pela ponta que ele clicou.
+    const idxPrimeiroClicado = comCentroide.findIndex(a => a.t === alvos[0].t);
+    if(idxPrimeiroClicado > comCentroide.length - 1 - idxPrimeiroClicado) comCentroide.reverse();
+  }
+
   const itens = [];
   let fimAnterior = null; // {lat,lng} do último ponto do talhão anterior já colocado na sequência
-  alvos.forEach(({ t, linhasArr, corBase }) => {
+  comCentroide.forEach(({ t, linhasArr, corBase }) => {
     const local = linhasArr.map(pl => {
       const pts = pl.getLatLngs().flat();
       if(pts.length < 2) return null;
