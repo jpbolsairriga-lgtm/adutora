@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.51 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.52 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -4301,6 +4301,18 @@ body.layout-lateral #status{grid-area:status;}
 // ela cai (ponto médio + turf.booleanPointInPolygon, mesmo princípio do import do "shapefile
 // genérico" v5.45) — testado contra o arquivo real: 761 de 766 linhas (99,3%) associadas certo.
 // "Importar Projeto" (KML) e "Importar Talhão + Linhas" (DXF) agora trazem talhão E linha juntos.
+// v5.52: BUG relatado com print — "qdo faço a setorização por meio de projetos criados dentro do
+// app, funciona relativamente bem, mas nos importados não funciona bem (...) fica mto dividido e
+// aleatorio, misturado". Investigado contra dados REAIS (talhão 1 do "Garves - Civil.kml", 113
+// linhas importadas): campo real tem curvatura sutil (comum em terreno real, ausente num talhão
+// desenhado reto no app) que faz até o eixo "robusto" de _ordenarLinhasDoTalhao às vezes DOBRAR —
+// projetar 2 linhas fisicamente a 80-90m de distância pro MESMO valor, ficando vizinhas na
+// sequência sem ser vizinhas de verdade (achado concreto: uma linha de 7,7m caindo entre duas
+// linhas ~250-300m de distância real dela). Fix: _corrigirOutliersDeOrdem (novo) — passo de
+// limpeza no final de _ordenarLinhasDoTalhao, realoca qualquer linha cuja posição na sequência
+// esteja bem longe da posição das suas vizinhas GEOGRÁFICAS reais. Testado contra os dados reais:
+// nunca piora, melhora os casos confirmados como problemáticos (ver
+// test_setores_importados_reais.js).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -9142,26 +9154,74 @@ function _direcaoConsistente(info) {
 // pelo lado mais perto, nos dois modos.
 function _ordenarLinhasDoTalhao(info, pontoPartida) {
   if(info.length < 2) return info.slice();
-  if(!_direcaoConsistente(info)) return _encadearPorProximidade(info, pontoPartida);
+  let ordenado;
+  if(!_direcaoConsistente(info)) {
+    ordenado = _encadearPorProximidade(info, pontoPartida);
+  } else {
+    const rowBrg = _bearingDoItem(info.reduce((a, b) => (b.len > a.len ? b : a)));
+    const perpBrg = rowBrg + 90;
+    const anchor = info[0].mid;
+    ordenado = info.map(o => {
+      const dist = haversineM(anchor, o.mid);
+      const brg = dist < 1e-6 ? perpBrg : turf.bearing(turf.point([anchor.lng, anchor.lat]), turf.point([o.mid.lng, o.mid.lat]));
+      return { ...o, proj: dist * Math.cos((brg - perpBrg) * Math.PI / 180) };
+    });
+    ordenado.sort((a, b) => a.proj - b.proj);
 
-  const rowBrg = _bearingDoItem(info.reduce((a, b) => (b.len > a.len ? b : a)));
-  const perpBrg = rowBrg + 90;
-  const anchor = info[0].mid;
-  const ordenado = info.map(o => {
-    const dist = haversineM(anchor, o.mid);
-    const brg = dist < 1e-6 ? perpBrg : turf.bearing(turf.point([anchor.lng, anchor.lat]), turf.point([o.mid.lng, o.mid.lat]));
-    return { ...o, proj: dist * Math.cos((brg - perpBrg) * Math.PI / 180) };
-  });
-  ordenado.sort((a, b) => a.proj - b.proj);
-
-  // Encosta no ponto de partida (se houver): inverte a ordem se o ÚLTIMO item ficar mais perto do
-  // que o PRIMEIRO fica — entra pelo lado mais curto, em vez de uma direção fixa arbitrária.
-  if(pontoPartida) {
-    const dPrimeiro = haversineM(pontoPartida, ordenado[0].mid);
-    const dUltimo = haversineM(pontoPartida, ordenado[ordenado.length - 1].mid);
-    if(dUltimo < dPrimeiro) ordenado.reverse();
+    // Encosta no ponto de partida (se houver): inverte a ordem se o ÚLTIMO item ficar mais perto
+    // do que o PRIMEIRO fica — entra pelo lado mais curto, em vez de uma direção fixa arbitrária.
+    if(pontoPartida) {
+      const dPrimeiro = haversineM(pontoPartida, ordenado[0].mid);
+      const dUltimo = haversineM(pontoPartida, ordenado[ordenado.length - 1].mid);
+      if(dUltimo < dPrimeiro) ordenado.reverse();
+    }
   }
-  return ordenado;
+  return _corrigirOutliersDeOrdem(ordenado);
+}
+
+// v5.52: BUG relatado pelo usuário com print — "qdo faço a setorização por meio de projetos
+// criados dentro do app, funciona relativamente bem, mas nos importados não funciona bem (...)
+// fica mto dividido e aleatorio, misturado". Investigado byte a byte (bem, linha a linha) contra
+// as 113 linhas reais do talhão 1 do "Garves - Civil.kml": o campo real tem uma curvatura sutil no
+// formato (comum em terreno real, raro em talhão desenhado reto no app) que faz a projeção num
+// único eixo (mesmo o eixo "robusto" de _ordenarLinhasDoTalhao) "DOBRAR" — projetar duas linhas
+// fisicamente a 80-90m de distância uma da outra pro MESMO valor de projeção, ficando vizinhas na
+// sequência mesmo sem ser vizinhas de verdade (confirmado: achei uma linha de 7,7m caindo entre
+// duas linhas ~250-300m de distância dela na sequência ordenada). Isso é raro (afeta só algumas
+// linhas por talhão), mas aparece como um "pedaço de cor errada" bem visível no mapa.
+// Fix: passo de limpeza no FINAL de _ordenarLinhasDoTalhao, depois de qualquer um dos dois métodos
+// — pra cada linha, confere se as K vizinhas GEOGRÁFICAS mais próximas de verdade (não as vizinhas
+// NA SEQUÊNCIA) estão numa posição da sequência bem distante da posição atual dela; se estiverem,
+// realoca ela pra perto da posição mediana delas. Testado contra as 113 linhas reais: nunca piora
+// (é uma correção cirúrgica, só mexe no que está claramente fora do lugar) e melhora os casos
+// confirmados como problemáticos.
+function _corrigirOutliersDeOrdem(ordenado, K = 4) {
+  if(ordenado.length < K + 2) return ordenado;
+  const limiarPosicoes = Math.max(5, Math.floor(ordenado.length * 0.1));
+  const arr = ordenado.slice();
+  let mudou = true, passadas = 0;
+  while(mudou && passadas < 5) {
+    mudou = false; passadas++;
+    for(let i = 0; i < arr.length; i++) {
+      const o = arr[i];
+      const viz = arr
+        .map((x, j) => ({ j, d: haversineM(o.mid, x.mid) }))
+        .filter(v => v.j !== i)
+        .sort((a, b) => a.d - b.d)
+        .slice(0, K);
+      if(!viz.length) continue;
+      const posicoes = viz.map(v => v.j).sort((a, b) => a - b);
+      const mediana = posicoes[Math.floor(posicoes.length / 2)];
+      if(Math.abs(mediana - i) > limiarPosicoes) {
+        arr.splice(i, 1);
+        const novoPos = Math.max(0, Math.min(arr.length, mediana > i ? mediana : mediana + 1));
+        arr.splice(novoPos, 0, o);
+        mudou = true;
+        break; // índices mudaram — reinicia a varredura
+      }
+    }
+  }
+  return arr;
 }
 
 // Recebe o array de polylines de UM talhão, devolve N grupos contíguos (no espaço) com peso
