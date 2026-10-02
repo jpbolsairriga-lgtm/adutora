@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.49 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.50 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -471,6 +471,8 @@ body.layout-lateral #status{grid-area:status;}
           <input type="file" id="inputKml" accept=".kml" style="display:none" onchange="if(this.files[0]){const r=new FileReader();r.onload=e=>_processarKMLImportado(e.target.result);r.readAsText(this.files[0]);this.value='';}">
           <button class="rbtn c-green" onclick="$('inputKmlPoly').click()" title="Importa 1 polígono do Google Earth como referência ativa (pronta pra travar/desenhar guia), ou VÁRIOS de uma vez (pasta/Folder com múltiplos polígonos) já como talhões travados."><span class="ico">&#9671;</span><span class="lbl">Importar Polígono</span></button>
           <input type="file" id="inputKmlPoly" accept=".kml" style="display:none" onchange="if(this.files[0]){const r=new FileReader();r.onload=e=>_importarPoligonoGoogleEarth(e.target.result);r.readAsText(this.files[0]);this.value='';}">
+          <button class="rbtn c-green" onclick="$('inputTalhaoDxf').click()" title="Importa talhão(ões) de um DXF (AutoCAD/Civil3D/AgroCAD) — qualquer contorno fechado (LWPOLYLINE/POLYLINE) vira talhão. Precisa do DXF, não DWG direto (exporte 'Salvar como DXF' no AutoCAD). Usa a zona/hemisfério UTM do grupo 'Dados Locais'."><span class="ico">&#9671;</span><span class="lbl">Importar Talhão (DXF)</span></button>
+          <input type="file" id="inputTalhaoDxf" accept=".dxf" style="display:none" onchange="if(this.files[0]){importarTalhaoDxf(this.files[0]);this.value='';}">
         </div>
         <div class="rgroup-title">Projeto</div>
       </div>
@@ -4273,6 +4275,19 @@ body.layout-lateral #status{grid-area:status;}
 // arquivados por geometria (turf, imune a pixel/zoom), não só os selecionados, e chama
 // selecionarTalhao() direto. Removido o onClick de seleção das 8 layers de polígono (duplicava a
 // mesma lógica de um jeito que falhava nesse cenário).
+// v5.50: pedido do usuário — "quero importa arquivos kml e dwg ou dxf (...) quero importar para
+// poder editar, dividir setores". KML já funcionava (confirmado contra um arquivo real do usuário,
+// exportado do AgroCAD: _extrairPoligonosDoKML já extrai qualquer <Polygon>, usado pelos botões
+// "Importar Projeto"/"Importar Polígono" que já existiam — nenhum código novo precisou pra isso).
+// DWG é binário proprietário da Autodesk — não documentado o bastante pra ler aqui (nem a Open
+// Design Alliance, que mantém a especificação de engenharia reversa mais completa que existe,
+// cobre tudo); caminho é exportar DXF (texto, documentado) do AutoCAD/BricsCAD. Novo botão
+// "Importar Talhão (DXF)" + _parseDXFPoligonos (extrai qualquer LWPOLYLINE/POLYLINE FECHADA,
+// reaproveitando a leitura de entidades de _parseDXFCurvas) + importarTalhaoDxf (converte pra lat/
+// lng com a MESMA zona/hemisfério UTM já usado pra Curvas de Nível, mesma checagem de sanidade
+// geográfica, e termina nos mesmos _importarPoligonoUnicoAtivo/_importarPoligonosComoTalhoes do
+// fluxo de KML — importar de DXF ou de KML dá no mesmo resultado dali pra frente: editar, travar,
+// dividir em Setores).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -7061,6 +7076,88 @@ function _parseDXFCurvas(texto) {
     }
   }
   return { contornos, puladas };
+}
+
+// v5.50: pedido do usuário — importar talhão de DXF (AutoCAD/Civil3D/AgroCAD), além do KML que já
+// existia ("Importar Projeto"/"Importar Polígono"). Reaproveita a mesma leitura de entidades de
+// _parseDXFCurvas (par código-de-grupo/valor, mesmo jeito) — mas aqui NÃO exige cota (Z): qualquer
+// LWPOLYLINE/POLYLINE FECHADA vira candidata a talhão, sem filtrar por layer (mesmo princípio já
+// usado pro KML — _extrairPoligonosDoKML: "qualquer contorno fechado é um talhão", confia no
+// usuário trazer um DXF só com os contornos que importam). "Fechada" = flag 70 bit 1 (closed) OU
+// 1º ponto igual ao último (fallback — alguns exports não marcam o flag mas fecham o anel mesmo
+// assim, igual o KML já trata há tempos).
+function _parseDXFPoligonos(texto) {
+  const linhas = _recortarSecaoEntities(texto.split(/\r\n|\r|\n/));
+  const poligonos = [];
+  let i = 0;
+  const lerPar = () => {
+    if(i+1 >= linhas.length) return null;
+    const code = parseInt(linhas[i].trim(), 10);
+    const val = linhas[i+1] !== undefined ? linhas[i+1].trim() : '';
+    i += 2;
+    return { code, val };
+  };
+  const fechado = (pontos, flag70) => {
+    if((flag70 & 1) === 1) return true;
+    if(pontos.length < 3) return false;
+    const a = pontos[0], b = pontos[pontos.length - 1];
+    return Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6;
+  };
+  const semFechamento = pontos => {
+    if(pontos.length > 1) {
+      const a = pontos[0], b = pontos[pontos.length - 1];
+      if(Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6) return pontos.slice(0, -1);
+    }
+    return pontos;
+  };
+
+  while(i < linhas.length) {
+    const par = lerPar();
+    if(!par) break;
+
+    if(par.code === 0 && par.val === 'LWPOLYLINE') {
+      let pontos = [], curX = null, flag70 = 0;
+      while(i < linhas.length) {
+        const save = i;
+        const p = lerPar();
+        if(!p) break;
+        if(p.code === 0) { i = save; break; }
+        if(p.code === 70) flag70 = parseInt(p.val, 10) || 0;
+        else if(p.code === 10) curX = parseFloat(p.val);
+        else if(p.code === 20 && curX != null) { pontos.push({ x: curX, y: parseFloat(p.val) }); curX = null; }
+      }
+      if(pontos.length >= 3 && fechado(pontos, flag70)) poligonos.push(semFechamento(pontos));
+
+    } else if(par.code === 0 && par.val === 'POLYLINE') {
+      let pontos = [], flag70 = 0;
+      while(i < linhas.length) {
+        const save = i;
+        const p = lerPar();
+        if(!p) break;
+        if(p.code === 0) { i = save; break; }
+        if(p.code === 70) flag70 = parseInt(p.val, 10) || 0;
+      }
+      while(i < linhas.length) {
+        const p0 = lerPar();
+        if(!p0) break;
+        if(p0.code === 0 && p0.val === 'SEQEND') break;
+        if(p0.code === 0 && p0.val === 'VERTEX') {
+          let vx = null, vy = null;
+          while(i < linhas.length) {
+            const save = i;
+            const p = lerPar();
+            if(!p) break;
+            if(p.code === 0) { i = save; break; }
+            if(p.code === 10) vx = parseFloat(p.val);
+            else if(p.code === 20) vy = parseFloat(p.val);
+          }
+          if(vx != null && vy != null) pontos.push({ x: vx, y: vy });
+        } else if(p0.code === 0) { i -= 2; break; } // entidade inesperada — protege contra DXF malformado
+      }
+      if(pontos.length >= 3 && fechado(pontos, flag70)) poligonos.push(semFechamento(pontos));
+    }
+  }
+  return poligonos;
 }
 
 // v4.49: KML do Google Earth pode vir absurdamente denso (arquivo real relatado: 3315 curvas,
@@ -9912,6 +10009,53 @@ function _importarPoligonoGoogleEarth(text) {
     alert('Erro ao importar polígono: ' + e.message);
     console.error(e);
   }
+}
+
+// v5.50: pedido do usuário — "quero importa arquivos kml e dwg ou dxf, (...) quero importar para
+// poder editar, dividir setores". DWG é formato binário proprietário da Autodesk — não documentado
+// o bastante pra ler aqui (nem a Open Design Alliance, que mantém a especificação de engenharia
+// reversa mais completa que existe, cobre tudo); o caminho é exportar DXF (texto, documentado) do
+// AutoCAD/BricsCAD. Importa qualquer contorno fechado do DXF como talhão, reaproveitando
+// _parseDXFPoligonos (novo) + o MESMO par zona/hemisfério UTM já usado pra Curvas de Nível (grupo
+// "Dados Locais") + os mesmos _importarPoligonoUnicoAtivo/_importarPoligonosComoTalhoes do fluxo de
+// KML — importar de DXF ou de KML dá exatamente no mesmo resultado dali pra frente (editar, travar,
+// dividir em Setores). Mesma checagem de sanidade geográfica (span/dentro do Brasil) já usada nas
+// curvas importadas — pega zona/hemisfério UTM errados antes de desenhar qualquer coisa.
+async function importarTalhaoDxf(file) {
+  if(!file) return;
+  const zona = parseInt($('dxfUtmZona').value, 10);
+  const sul = $('dxfUtmHemisferio').value === 'S';
+  setStatus('Lendo talhão(ões) do DXF…', 'info');
+
+  let texto;
+  try { texto = await file.text(); }
+  catch(e) { setStatus('Não consegui ler o arquivo DXF.', 'err'); return; }
+
+  const poligonosUTM = _parseDXFPoligonos(texto);
+  if(!poligonosUTM.length) {
+    setStatus('Nenhum contorno fechado encontrado no DXF (confira se é LWPOLYLINE/POLYLINE fechada — opção "Fechar"/"Close" no AutoCAD).', 'err');
+    return;
+  }
+  const poligonos = poligonosUTM.map(pts => pts.map(p => { const ll = _utmParaLatLng(p.x, p.y, zona, sul); return L.latLng(ll.lat, ll.lng); }));
+
+  let boundsTodos = null;
+  try { boundsTodos = L.latLngBounds(poligonos.flat()); } catch(e) {}
+  if(boundsTodos) {
+    if(_spanBoundsGraus(boundsTodos) > _LIMITE_SPAN_GRAUS) {
+      setStatus(`O(s) contorno(s) do DXF cobririam uma área maior que qualquer fazenda (mais de ${_LIMITE_SPAN_GRAUS}° de extensão) — a zona/hemisfério UTM selecionados (grupo "Dados Locais") provavelmente não são os do seu DXF. Confira e importe de novo.`, 'err');
+      return;
+    }
+    if(!_dentroDoBrasilAprox(boundsTodos)) {
+      setStatus('O(s) contorno(s) do DXF cairiam fora do território brasileiro — a zona/hemisfério UTM selecionados (grupo "Dados Locais") provavelmente não são os do seu DXF. Confira e importe de novo.', 'err');
+      return;
+    }
+  }
+
+  if(poligonos.length === 1) { _importarPoligonoUnicoAtivo(poligonos[0]); return; }
+
+  const importados = _importarPoligonosComoTalhoes(poligonos);
+  if(!importados) { setStatus('Nenhum contorno válido encontrado no DXF.', 'err'); return; }
+  setStatus(`${importados} talhão(ões) importado(s) do DXF — selecione cada um pra desenhar a guia/linhas.`, 'ok');
 }
 
 // Fluxo de sempre pra um único polígono importado: vira o polígono ATIVO (ainda não travado), pronto
