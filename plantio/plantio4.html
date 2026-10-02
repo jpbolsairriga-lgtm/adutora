@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.53 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.54 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -698,6 +698,20 @@ body.layout-lateral #status{grid-area:status;}
           </div>
         </div>
         <div class="rgroup-title">Gerar</div>
+      </div>
+      <div class="rgroup">
+        <div class="rgroup-body">
+          <div class="rcol">
+            <label>Intensidade</label>
+            <select id="suavizarLinhasIntensidade" class="rfield wide" title="Quantas passadas de corte de canto (Chaikin — o mesmo acabamento 'curva suave' do AutoCAD Civil3D) aplicar. Mais passadas = linha mais arredondada/lisa. Diferente do acabamento das curvas de nível: aqui o resultado passa a ser a geometria DE VERDADE da linha — comprimento e exportação (KML/DXF/shapefile) já saem suavizados.">
+              <option value="1">Leve</option>
+              <option value="3" selected>Média (padrão)</option>
+              <option value="6">Forte</option>
+            </select>
+          </div>
+          <button class="rbtn c-teal" id="btnSuavizarLinhas" onclick="suavizarLinhasDePlantio()" title="Suaviza o traçado das linhas de plantio do talhão ativo (ou selecionado/vários selecionados) com o mesmo acabamento 'curva suave' do AutoCAD Civil3D. Muda a geometria de verdade (não só o desenho): comprimento e exportação (KML/DXF/shapefile) refletem o traçado suavizado. Não desfaz — gere/importe de novo se quiser voltar ao traçado original."><span class="ico">&#12316;</span><span class="lbl">Suavizar Linhas de Plantio</span></button>
+        </div>
+        <div class="rgroup-title">Suavizar Linhas de Plantio (acabamento estilo AutoCAD)</div>
       </div>
       <div class="rgroup">
         <div class="rgroup-body">
@@ -4324,6 +4338,16 @@ body.layout-lateral #status{grid-area:status;}
 // macro = par de centroides mais distante, como antes da v5.47) — testado contra os dados reais:
 // ZERO pares não-vizinhos compartilhando setor. A ordem de CLIQUE não é descartada: decide só o
 // SENTIDO da varredura (por qual ponta começar).
+// v5.54: pedido do usuário — "tem como deixar meus contornos, linhas de plantio tão suaves como do
+// autocad?". Perguntado pra esclarecer o escopo: só as LINHAS DE PLANTIO (não o contorno do
+// talhão), e suavização de VERDADE, não só visual — a curva suavizada passa a SER a geometria real
+// da linha, então comprimento e exportação (KML/DXF/shapefile) já saem com o traçado suave (ao
+// contrário do acabamento das curvas de nível, que é só desenho, não muda o dado). Novo botão
+// "Suavizar Linhas de Plantio" (aba Guia & Linhas de Plantio) chama suavizarLinhasDePlantio(), que
+// reaproveita o mesmo Chaikin (_suavizarTracoCurva) já usado nas curvas de nível (o "curva suave"
+// do AutoCAD Civil3D), mas substitui os pontos de verdade da linha (pl.setLatLngs) em vez de só
+// redesenhar por cima. Mesmo alvo que "Setores": talhão(ões) selecionado(s) ou, sem seleção, o
+// talhão ativo.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -13069,6 +13093,58 @@ function limparLinhasSelecionado() {
   limparLinhas();              // limpa linhas existentes
   $('btnTravarTalhao').style.display = 'flex'; // mantém opção de re-arquivar
   setStatus('Linhas apagadas. Desenhe a linha guia e gere as novas linhas de plantio, ou trave o talhão de volta sem linhas.', 'info');
+}
+
+// v5.54: pedido do usuário — "tem como deixar meus contornos, linhas de plantio tão suaves como do
+// autocad?". Esclarecido com ele: só as LINHAS DE PLANTIO (não o contorno do talhão), e suavização
+// de verdade — não só visual (como já existe pras curvas de nível), a curva suavizada passa a SER
+// a geometria real da linha, então comprimento e exportação (KML/DXF/shapefile) já saem suavizados.
+// Reaproveita o mesmo acabamento Chaikin (_suavizarTracoCurva) já usado nas curvas de nível (o
+// mesmo "curva suave" do AutoCAD Civil3D) — só que aqui o resultado substitui os pontos de verdade
+// da linha (pl.setLatLngs), em vez de só redesenhar por cima.
+// Mesmo alvo que "Setores"/"Otimizar Cenário de Plantio": talhão(ões) selecionado(s)
+// (talhoesMultiSel, nessa ordem de prioridade) ou, sem seleção nenhuma, o talhão ATIVO (array
+// global `linhas`) — ver dividirEmSetores() acima pro mesmo padrão de resolução de alvo.
+function suavizarLinhasDePlantio() {
+  const alvos = [];
+  if(talhoesMultiSel.size > 0) {
+    talhoesMultiSel.forEach(uid => {
+      const t = talhoesArquivados.find(x => x.uid === uid);
+      if(t && t.linhas.length) alvos.push({ t, linhasArr: t.linhas });
+    });
+  } else if(linhas.length) {
+    alvos.push({ t: null, linhasArr: linhas });
+  }
+  if(!alvos.length) {
+    setStatus('Selecione um talhão travado com linhas de plantio (ou gere linhas no talhão ativo) antes de suavizar.', 'err');
+    return;
+  }
+
+  const passadas = parseInt($('suavizarLinhasIntensidade').value) || 3;
+  let totalLinhas = 0, ignoradas = 0;
+
+  alvos.forEach(({ t, linhasArr }) => {
+    let metrosLin = 0;
+    linhasArr.forEach(pl => {
+      const pts = pl.getLatLngs().flat();
+      if(pts.length < 3) {
+        ignoradas++; // reta de 2 pontos não tem canto pra cortar — Chaikin não faria nada
+      } else {
+        const suave = _suavizarTracoCurva(pts, false, passadas);
+        pl.setLatLngs(suave);
+        totalLinhas++;
+      }
+      const ll = pl.getLatLngs().flat();
+      for(let i = 0; i < ll.length - 1; i++) metrosLin += haversineM(ll[i], ll[i + 1]);
+    });
+    if(t) { // talhão arquivado: recalcula/reexibe o metrosLin do rótulo (Chaikin encurta um pouco ao cortar canto)
+      t.metrosLin = metrosLin;
+      if(t.infoMarker) t.infoMarker.remove();
+      t.infoMarker = _criarInfoMarkerParaTalhao(t);
+    }
+  });
+
+  setStatus(`${totalLinhas} linha(s) de plantio suavizada(s)${ignoradas ? ` (${ignoradas} já eram retas de 2 pontos, sem canto pra cortar)` : ''} — comprimento e exportação (KML/DXF/shapefile) já refletem o traçado novo. Não tem desfazer: gere/importe de novo as linhas se quiser voltar ao traçado original.`, 'ok');
 }
 
 // ── Editar Linhas de um Talhão Arquivado ─────────────────────────────────────
