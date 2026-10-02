@@ -278,6 +278,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.9rem 1rem calc(.
   </div>
   <div class="navbar">
     <button id="btnNavSair" style="flex:1">Sair</button>
+    <button id="btnCentroNav" style="flex:1">Centro</button>
     <button id="btnNavProx" style="flex:1">Próximo</button>
     <button id="btnNavMarca" class="btn-main" style="flex:2;width:auto">Marcar ponto</button>
   </div>
@@ -384,7 +385,8 @@ function pintaLive(){
   document.getElementById("vUtm").textContent=fmtUtm(toUTM(c.latitude,c.longitude));
   var a=c.accuracy==null?999:c.accuracy;
   chip(a<=0.5?"ok":(a<=3?"mid":"bad"), "± "+a.toFixed(2)+" m");
-  atualizaMapa();
+  if(map) atualizaLive(); else renderCroqui();
+  pintaHud(); pintaNav(); pintaAlvosDist(); aplicaRotMapa();
 }
 function startGPS(){
   if(!navigator.geolocation){
@@ -503,11 +505,13 @@ function iniciaAuto(){
   checaAuto();
 }
 function entraFullscreenColeta(){
+  seguindo=true;
   document.body.classList.add("coleta");
   window.scrollTo(0,0);
   iniciaBussola(); aplicaGestos();
   atualizaFab();
   setTimeout(function(){ if(map){ map.invalidateSize(); centralizar(); } atualizaMapa(); },80);
+  setTimeout(function(){ if(map) centralizar(); },500);
 }
 function minimizaColeta(){
   document.body.classList.remove("coleta");
@@ -589,7 +593,7 @@ function render(){
 }
 
 /* ---------- mapa (satélite) ---------- */
-var map=null,camSat=null,gMarc=null,mMe=null,mDir=null,errTile=0,tileOk=false,nAjuste=-1,rotAtivo=true;
+var map=null,camSat=null,gMarc=null,gLive=null,mMe=null,mDir=null,errTile=0,tileOk=false,nAjuste=-1,rotAtivo=true,seguindo=true,redrawPendente=false,desenhando=false;
 function semMapa(msg){
   try{ if(map) map.remove(); }catch(e){}
   map=null;
@@ -614,6 +618,14 @@ function initMapa(){
     });
     camSat.addTo(map);
     gMarc=L.layerGroup().addTo(map);
+    gLive=L.layerGroup().addTo(map);
+    map.on("dragstart",function(){ seguindo=false; });
+    /* depois que o mapa termina de se mover/dar zoom (de forma programática, via centralizar()),
+       redesenha os dados: o renderizador SVG do Leaflet só "sabe" quais marcadores estão dentro
+       da área visível depois desse evento, e desenhar antes dele faz alguns sumirem até a
+       próxima mudança de dado. Não dispara a cada posição do GPS — só quando redrawPendente
+       foi ligado de propósito (ver centralizar()). */
+    map.on("moveend",function(){ if(redrawPendente){ redrawPendente=false; desenhaDados(); } });
     /* controles (zoom, atribuição) saem do elemento que gira e ficam fixos na janela */
     var cc=document.querySelector("#mapaInner > .leaflet-control-container");
     if(cc) document.getElementById("mapaLeaflet").appendChild(cc);
@@ -637,7 +649,9 @@ function limites(){
 }
 function centralizar(){
   if(!map) return;
+  seguindo=true;
   var b=limites(); if(!b) return;
+  redrawPendente=true;
   /* sem animação: um pan animado ao mesmo tempo que o mapa gira faz o pivô da rotação
      ser capturado no meio da transição e o giro fica "puxando" pro lado errado. */
   if(b.getNorth()===b.getSouth()&&b.getEast()===b.getWest()) map.setView(b.getCenter(),18,{animate:false});
@@ -677,14 +691,36 @@ function pintaMedicoes(){
   var ls=linhasDe();
   el.innerHTML=ls.length?ls.map(function(l){return '<div class="med">'+resumoMed(l)+'</div>';}).join(""):"";
 }
-function marcadores(){
-  if(!map||!gMarc) return;
+var desenhoAgendado=false;
+function desenhaDados(){
+  /* várias chamadas seguidas (ex.: centralizar() mudando a vista + o chamador redesenhando
+     na sequência) viram uma só, adiada pro próximo quadro — evita o Leaflet "perder" o
+     redesenho de algum marcador quando duas passagens de clearLayers()+recriação acontecem
+     coladas uma na outra, antes do SVG terminar de aplicar a primeira. */
+  if(desenhoAgendado) return;
+  desenhoAgendado=true;
+  requestAnimationFrame(function(){ desenhoAgendado=false; desenhaDadosAgora(); });
+}
+function desenhaDadosAgora(){
+  /* parte "pesada": só roda quando pontos/alvos/linhas realmente mudam — nunca a cada posição do GPS */
+  if(!map||!gMarc||desenhando) return;
+  desenhando=true;
+  try{
+  /* enquadra ANTES de desenhar: se a vista mudar depois de desenhar, o Leaflet pode marcar
+     marcadores recém-criados como "fora da área visível" e não redesenhá-los — eles ficam
+     invisíveis até a próxima mudança de dado. O listener de "moveend" (em initMapa) cobre
+     isso de qualquer forma, mas evita o redesenho duplicado no caso comum. */
+  var ant=nAjuste; nAjuste=pontos.length;
+  if(ant<=0 && pontos.length>0) centralizar();
+  else if(pontos.length>ant && pontos.length){
+    var u=pontos[pontos.length-1], ll=L.latLng(u.lat,u.lon);
+    if(!map.getBounds().pad(-0.1).contains(ll)){ redrawPendente=true; map.panTo(ll,{animate:false}); }
+  }
   gMarc.clearLayers();
-  var ativa=autoTimer?linhaAtual:null, act=null;
+  var ativa=autoTimer?linhaAtual:null;
   linhasDe().forEach(function(l){
     var ll=l.pts.map(function(p){return [p.lat,p.lon];});
     if(l.id===ativa){
-      act=l;
       if(ll.length>1) L.polyline(ll,{color:"#ffd400",weight:3,opacity:.95}).addTo(gMarc);
       return;
     }
@@ -708,40 +744,43 @@ function marcadores(){
       .bindTooltip('<span class="ttxt">'+esc(a.nome)+'</span>',{permanent:true,direction:"bottom",className:"rot",offset:[0,8]}).addTo(gMarc);
     mk.on("click",function(){ if(!autoTimer&&confirm("Navegar até "+a.nome+"?")) iniciaNav(a.id); });
   });
-  if(live){
-    var c=[live.coords.latitude,live.coords.longitude];
-    if(mMe){ mMe.setLatLng(c); }
-    else{ mMe=L.circleMarker(c,{radius:7,color:"#ffffff",weight:2,
-      fillColor:"#e08a3c",fillOpacity:1}).addTo(map); }
-    mMe.bringToFront();
-    atualizaChevron();
-    var alN=navAlvo?alvoPorId(navAlvo):null;
-    if(alN) L.polyline([c,[alN.lat,alN.lon]],{color:"#0288d1",weight:3,dashArray:"4 8"}).addTo(gMarc);
-    /* prévia: a posição atual entra como vértice provisório (tracejado) */
-    if(act&&act.pts.length){
-      var u=toUTM(c[0],c[1]), first=act.pts[0], last=act.pts[act.pts.length-1];
-      var vis=act.pts.concat([{e:u.e,n:u.n}]);
-      if(act.tipo==="area"){
-        if(act.pts.length>=2)
-          L.polygon(act.pts.map(function(p){return [p.lat,p.lon];}).concat([c]),
-            {stroke:false,fillColor:"#ffd400",fillOpacity:.25}).addTo(gMarc);
-        L.polyline([[last.lat,last.lon],c,[first.lat,first.lon]],
-          {color:"#ffffff",weight:3,dashArray:"6 6"}).addTo(gMarc);
-        prevMed=medida({tipo:"area",pts:vis});
-      }else{
-        L.polyline([[last.lat,last.lon],c],{color:"#ffffff",weight:3,dashArray:"6 6"}).addTo(gMarc);
-        prevMed=medida({tipo:"linha",pts:vis});
-      }
-      mMe.bringToFront();
+  }finally{ desenhando=false; }
+}
+function atualizaLive(){
+  /* parte "leve": roda a cada posição do GPS (sem recriar a camada inteira), pra bolinha e a
+     linha/área em formação seguirem em tempo real, sem sumir e só reaparecer depois */
+  if(!map||!gLive){ prevMed=null; return; }
+  gLive.clearLayers();
+  if(!live){ prevMed=null; return; }
+  var c=[live.coords.latitude,live.coords.longitude];
+  if(mMe){ mMe.setLatLng(c); }
+  else{ mMe=L.circleMarker(c,{radius:7,color:"#ffffff",weight:2,
+    fillColor:"#e08a3c",fillOpacity:1}).addTo(map); }
+  mMe.bringToFront();
+  atualizaChevron();
+  var alN=navAlvo?alvoPorId(navAlvo):null;
+  if(alN) L.polyline([c,[alN.lat,alN.lon]],{color:"#0288d1",weight:3,dashArray:"4 8"}).addTo(gLive);
+  var ativa=autoTimer?linhaAtual:null;
+  var act=ativa?linhasDe().filter(function(l){return l.id===ativa;})[0]:null;
+  /* prévia: a posição atual entra como vértice provisório (tracejado) */
+  if(act&&act.pts.length){
+    var u=toUTM(c[0],c[1]), first=act.pts[0], last=act.pts[act.pts.length-1];
+    var vis=act.pts.concat([{e:u.e,n:u.n}]);
+    if(act.tipo==="area"){
+      if(act.pts.length>=2)
+        L.polygon(act.pts.map(function(p){return [p.lat,p.lon];}).concat([c]),
+          {stroke:false,fillColor:"#ffd400",fillOpacity:.25}).addTo(gLive);
+      L.polyline([[last.lat,last.lon],c,[first.lat,first.lon]],
+        {color:"#ffffff",weight:3,dashArray:"6 6"}).addTo(gLive);
+      prevMed=medida({tipo:"area",pts:vis});
+    }else{
+      L.polyline([[last.lat,last.lon],c],{color:"#ffffff",weight:3,dashArray:"6 6"}).addTo(gLive);
+      prevMed=medida({tipo:"linha",pts:vis});
     }
-  }
-  /* só enquadra na 1ª vez; depois respeita o zoom do usuário e apenas desloca se o ponto sair da tela */
-  var ant=nAjuste; nAjuste=pontos.length;
-  if(ant<=0 && pontos.length>0) centralizar();
-  else if(pontos.length>ant && pontos.length){
-    var u=pontos[pontos.length-1], ll=L.latLng(u.lat,u.lon);
-    if(!map.getBounds().pad(-0.1).contains(ll)) map.panTo(ll,{animate:false});
-  }
+    mMe.bringToFront();
+  }else{ prevMed=null; }
+  /* segue a posição em tempo real, na tela cheia, enquanto o usuário não arrastar o mapa */
+  if(emFullscreen()&&seguindo) map.setView(c,map.getZoom(),{animate:false});
 }
 var prevMed=null;
 function iconeDirecao(){
@@ -797,7 +836,7 @@ function pintaHud(){
     document.getElementById("hudV2").textContent=(live&&live.coords.accuracy!=null)?"± "+live.coords.accuracy.toFixed(1)+" m":"—";
   }
 }
-function atualizaMapa(){ prevMed=null; if(map) marcadores(); else renderCroqui(); pintaHud(); pintaNav(); pintaAlvosDist(); aplicaRotMapa(); }
+function atualizaMapa(){ if(map){ desenhaDados(); atualizaLive(); } else renderCroqui(); pintaHud(); pintaNav(); pintaAlvosDist(); aplicaRotMapa(); }
 
 /* ---------- croqui (reserva, sem internet) ---------- */
 function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
@@ -926,6 +965,7 @@ function importaArquivos(files){
     });
     saveAlvos(); renderAlvos(); atualizaMapa();
     setTimeout(centralizar,50);
+    setTimeout(centralizar,500);
     info(add+" ponto(s) importado(s)"+(upd?", "+upd+" atualizado(s)":"")+".");
   }).catch(function(e){ erro("Não foi possível ler o arquivo: "+esc(e.message||e)); });
 }
@@ -995,20 +1035,24 @@ function iniciaNav(id){
   if(autoTimer){ erro("Pare a captura automática antes de navegar."); return; }
   var a=alvoPorId(id); if(!a) return;
   navAlvo=id; chegouAvisado=false;
-  iniciaBussola();
+  iniciaBussola(); seguindo=true;
   document.body.classList.add("nav"); document.body.classList.remove("chegou");
   window.scrollTo(0,0);
   document.getElementById("navSub").textContent="";
   aplicaGestos();
-  setTimeout(function(){ if(map){ map.invalidateSize(); centralizar(); } atualizaMapa(); },80);
-  atualizaMapa();
+  if(map) map.invalidateSize();
+  setTimeout(function(){ if(map) centralizar(); atualizaMapa(); },80);
+  /* reforço: de vez em quando o Leaflet deixa algum marcador "preso" sem desenhar depois de um
+     enquadramento logo após o mapa aparecer/mudar de tamanho; um segundo enquadramento, um
+     pouco depois, sempre resolve. */
+  setTimeout(function(){ if(map) centralizar(); },500);
 }
 function sairNav(){
   navAlvo=null;
   document.body.classList.remove("nav","chegou");
   aplicaGestos();
-  setTimeout(function(){ if(map){ map.invalidateSize(); centralizar(); } },80);
-  atualizaMapa();
+  if(map) map.invalidateSize();
+  setTimeout(function(){ if(map) centralizar(); atualizaMapa(); },80);
 }
 function pintaNav(){
   if(!navAlvo) return;
@@ -1254,6 +1298,7 @@ document.getElementById("btnLimpaAlvos").onclick=function(){
   if(confirm("Remover todos os "+alvos.length+" alvos importados? Os pontos coletados não são afetados.")){ alvos=[]; saveAlvos(); renderAlvos(); atualizaMapa(); }
 };
 document.getElementById("btnNavSair").onclick=sairNav;
+document.getElementById("btnCentroNav").onclick=centralizar;
 document.getElementById("btnNavMarca").onclick=marcaNav;
 document.getElementById("btnNavProx").onclick=function(){
   var p=maisProximo(navAlvo); if(!p){ document.getElementById("navSub").textContent="Não há outro alvo pendente."; return; }
