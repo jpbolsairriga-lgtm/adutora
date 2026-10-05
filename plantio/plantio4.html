@@ -232,9 +232,26 @@ body.layout-lateral #status{grid-area:status;}
 #statusBarCad .sbSep{flex:1;}
 /* v4.63: fundo neutro pro mapa quando "Ocultar Imagem Online" está ativo — sem isso, fora da área
    da ortofoto (ou se nem houver ortofoto) o mapa ficava branco/quebrado em vez de só "vazio" de
-   propósito. */
-#map.map-sem-online{background:var(--cor-fundo-mapa,#000000);}
-#infoFloat{position:absolute;top:10px;right:10px;width:220px;background:var(--panel-bg-float);border:1px solid var(--panel-border);border-radius:10px;box-shadow:0 6px 22px rgba(0,0,0,.5);z-index:900;color:var(--panel-text);}
+   propósito. v5.64: background-color em vez do shorthand "background" — o shorthand reseta
+   background-image pra "none" quando não especificado na MESMA regra, o que apagaria a grade de
+   baixo (.map-grade-cad) se essa regra viesse depois no cascade. */
+#map.map-sem-online{background-color:var(--cor-fundo-mapa,#000000);}
+/* v5.64 — pedido do usuário: "quando eu ocultar a imagem de satelite, gostaria de um visual cad,
+   aquela folha preta quadriculada". Grade quadriculada estilo AutoCAD, só junto com o fundo "sem
+   imagem online" (.map-sem-online — nunca aparece por cima de satélite de verdade, não faria
+   sentido). --grade-tam/--grade-offset-x/-y são atualizados por JS (_atualizarGradeCadGeo) a cada
+   pan/zoom do mapa, convertendo um espaçamento FIXO em metros reais (50m) pra pixels de tela no
+   zoom atual, e ancorando a fase do padrão num ponto geográfico fixo (lat/lng 0,0) — assim a
+   grade acompanha o mapa de verdade (gira/anda junto ao arrastar e re-escala ao dar zoom), em vez
+   de ficar "colada na tela" como um papel de parede fixo. */
+#map.map-sem-online.map-grade-cad{
+  background-image:
+    linear-gradient(to right, rgba(140,140,140,.35) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(140,140,140,.35) 1px, transparent 1px);
+  background-size: var(--grade-tam,50px) var(--grade-tam,50px);
+  background-position: var(--grade-offset-x,0) var(--grade-offset-y,0);
+}
+#infoFloat{width:220px;background:var(--panel-bg-float);border:1px solid var(--panel-border);border-radius:10px;box-shadow:0 6px 22px rgba(0,0,0,.5);color:var(--panel-text);flex-shrink:0;min-height:0;}
 #infoFloat .ifhead{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;cursor:pointer;}
 #infoFloat .ifhead span{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--panel-text-dim);}
 #infoFloat .ifchev{color:var(--panel-text-dim);font-size:11px;transition:transform .15s;}
@@ -244,10 +261,15 @@ body.layout-lateral #status{grid-area:status;}
 #infoFloat.collapsed .ifchev{transform:rotate(-90deg);}
 /* ── Painel de Camadas (v4.31) — mesmo padrão visual do infoFloat, canto oposto (topo-esquerda) ── */
 #layerFloat{position:absolute;top:10px;left:10px;width:200px;background:var(--panel-bg-float);border:1px solid var(--panel-border);border-radius:10px;box-shadow:0 6px 22px rgba(0,0,0,.5);z-index:900;color:var(--panel-text);}
+/* v5.63 — BUG: #propsFloat nasceu com a MESMA posição (top:10px;right:10px) do #infoFloat
+   ("Informações") já existente, ficando um escondido atrás do outro. Fix: os dois (+ o
+   #propsFloat) agora moram dentro de #rightFloatStack (flex-column, 1 só position:absolute),
+   empilhados com espaço entre eles em vez de sobrepostos — ver a div no HTML. */
+#rightFloatStack{position:absolute;top:10px;right:10px;z-index:900;display:flex;flex-direction:column;gap:10px;max-height:calc(100% - 20px);}
 /* v5.62 — Paleta de Propriedades (estilo AutoCAD, Ctrl+1): mesmo idioma visual/collapsible do
-   #layerFloat (reaproveita .ifhead/.ifbody/.ifchev/.collapsed), só do outro lado (direita) pra não
-   sobrepor. Atualiza sozinha com a seleção de talhão — ver _atualizarPainelPropriedades(). */
-#propsFloat{position:absolute;top:10px;right:10px;width:210px;background:var(--panel-bg-float);border:1px solid var(--panel-border);border-radius:10px;box-shadow:0 6px 22px rgba(0,0,0,.5);z-index:900;color:var(--panel-text);}
+   #layerFloat (reaproveita .ifhead/.ifbody/.ifchev/.collapsed). Atualiza sozinha com a seleção de
+   talhão — ver _atualizarPainelPropriedades(). */
+#propsFloat{width:210px;background:var(--panel-bg-float);border:1px solid var(--panel-border);border-radius:10px;box-shadow:0 6px 22px rgba(0,0,0,.5);color:var(--panel-text);flex-shrink:0;}
 .props-row{display:flex;justify-content:space-between;gap:8px;padding:4px 2px;font-size:11.5px;color:var(--panel-text);border-bottom:1px solid var(--panel-border);}
 .props-row:last-child{border-bottom:none;}
 .props-row .props-lbl{color:var(--panel-text-dim);}
@@ -410,7 +432,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.63 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.64 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -463,6 +485,9 @@ body.layout-lateral #status{grid-area:status;}
                 <button class="rbtn-sm" style="padding:2px 8px;min-width:0;" onclick="definirCorFundoMapa('#ffffff')" title="Branco"><span style="display:inline-block;width:12px;height:12px;background:#fff;border:1px solid #888;vertical-align:middle;"></span></button>
                 <input type="color" id="inputCorFundoMapa" value="#000000" oninput="definirCorFundoMapa(this.value)" title="Escolher outra cor" style="width:30px;height:24px;padding:0;border:1px solid var(--panel-border);background:none;cursor:pointer;">
               </div>
+              <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--panel-text);cursor:pointer;margin-top:6px;">
+                <input type="checkbox" id="chkGradeCad" onchange="alternarGradeCad(this.checked)" title="Grade quadriculada estilo AutoCAD por cima da cor de fundo — acompanha o mapa de verdade (anda e re-escala ao arrastar/dar zoom), igual o grid do model space do AutoCAD."> Grade estilo CAD (quadriculado)
+              </label>
             </div>
           </div>
         </div>
@@ -1624,6 +1649,9 @@ body.layout-lateral #status{grid-area:status;}
     <div class="ifbody" id="layerFloatBody"></div>
   </div>
 
+  <div id="ctxMenuTalhao"></div>
+
+  <div id="rightFloatStack">
   <div id="propsFloat">
     <div class="ifhead" onclick="this.parentElement.classList.toggle('collapsed')">
       <span>Propriedades</span>
@@ -1633,9 +1661,6 @@ body.layout-lateral #status{grid-area:status;}
       <div class="props-row"><span class="props-lbl">Nenhum objeto selecionado</span></div>
     </div>
   </div>
-
-  <div id="ctxMenuTalhao"></div>
-
   <div id="infoFloat">
     <div class="ifhead" onclick="this.parentElement.classList.toggle('collapsed')">
       <span>Informações</span>
@@ -1694,6 +1719,7 @@ body.layout-lateral #status{grid-area:status;}
         <div id="legendaCenarioBody" style="font-size:11px;line-height:1.7;color:var(--panel-text-dim);"></div>
       </div>
     </div>
+  </div>
   </div>
 </div>
 
@@ -4581,6 +4607,17 @@ body.layout-lateral #status{grid-area:status;}
 // página de verdade (stubs pesados de DOM/Leaflet/browser) a cada mudança, pra pegar essa classe
 // de regressão antes de publicar. Validado reproduzindo o erro exato do usuário ao reintroduzir a
 // chamada eager de propósito, depois confirmando que o fix faz o teste passar.
+// v5.64: dois pedidos. (1) "quando eu ocultar a imagem de satelite, gostaria de um visual cad,
+// aquela folha preta quadriculada" — nova grade quadriculada (checkbox "Grade estilo CAD", dentro
+// de "Cor de fundo do mapa") por cima do fundo sólido já existente (.map-sem-online). Em vez de um
+// papel de parede FIXO na tela (que pareceria flutuar sobre os talhões ao arrastar o mapa),
+// _atualizarGradeCadGeo recalcula --grade-tam/--grade-offset a cada pan/zoom: converte um
+// espaçamento fixo de 50m REAIS pra pixels de tela no zoom atual, e ancora a fase do padrão num
+// ponto geográfico fixo (lat/lng 0,0) — a grade acompanha o chão de verdade, igual o grid do
+// model space do AutoCAD. (2) BUG encontrado nesse processo: #propsFloat (Paleta de Propriedades,
+// v5.62) nasceu com a MESMA posição (top:10px;right:10px) do #infoFloat ("Informações") já
+// existente — um ficava escondido atrás do outro (nem aparecia nos prints do usuário). Fix: os
+// dois agora moram dentro de #rightFloatStack (flex-column), empilhados com espaço entre eles.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -4930,6 +4967,41 @@ function _aplicarVisibilidadeImagemOnline() {
   if(btn) btn.innerHTML = _mostrarImagemOnline ? '&#128225; Ocultar Imagem Online' : '&#128225; Mostrar Imagem Online';
 }
 _aplicarVisibilidadeImagemOnline(); // respeita a preferência salva já na carga da página
+
+// v5.64 — pedido do usuário: "quando eu ocultar a imagem de satelite, gostaria de um visual cad,
+// aquela folha preta quadriculada". Grade quadriculada por cima da "Cor de fundo do mapa"
+// (.map-sem-online já existente) — ver CSS .map-grade-cad. Em vez de um papel de parede FIXO na
+// tela (que pareceria "flutuar" sobre os talhões ao arrastar o mapa), --grade-tam/--grade-offset
+// são recalculados a cada pan/zoom (_atualizarGradeCadGeo), convertendo um espaçamento fixo em
+// METROS reais (50m, "nice" de sobra pra qualquer zoom de trabalho típico) pra pixels de tela no
+// zoom atual, e ancorando a fase do padrão num ponto geográfico fixo (lat/lng 0,0, arbitrário mas
+// estável) — assim a grade acompanha o chão de verdade, igual o grid do model space do AutoCAD.
+let _gradeCadAtiva = localStorage.getItem('gradeCadAtiva') === 'true';
+function alternarGradeCad(ativa) {
+  _gradeCadAtiva = ativa;
+  try { localStorage.setItem('gradeCadAtiva', String(ativa)); } catch(e) {}
+  _aplicarGradeCad();
+}
+function _aplicarGradeCad() {
+  const mapEl = $('map');
+  if(mapEl) mapEl.classList.toggle('map-grade-cad', _gradeCadAtiva);
+  const chk = $('chkGradeCad'); if(chk && chk.checked !== _gradeCadAtiva) chk.checked = _gradeCadAtiva;
+  if(_gradeCadAtiva) _atualizarGradeCadGeo();
+}
+function _atualizarGradeCadGeo() {
+  if(!_gradeCadAtiva) return;
+  const mapEl = $('map');
+  if(!mapEl || !map) return;
+  const METROS_POR_CELULA = 50;
+  const metrosPorPixel = 156543.03392 * Math.cos(map.getCenter().lat * Math.PI / 180) / Math.pow(2, map.getZoom());
+  const tamCelulaPx = Math.max(4, METROS_POR_CELULA / metrosPorPixel);
+  const origemPx = map.latLngToContainerPoint([0, 0]); // âncora fixa — faz a fase do padrão "grudar" no chão
+  mapEl.style.setProperty('--grade-tam', tamCelulaPx.toFixed(2) + 'px');
+  mapEl.style.setProperty('--grade-offset-x', (origemPx.x % tamCelulaPx).toFixed(2) + 'px');
+  mapEl.style.setProperty('--grade-offset-y', (origemPx.y % tamCelulaPx).toFixed(2) + 'px');
+}
+map.on('move zoom', _atualizarGradeCadGeo);
+_aplicarGradeCad(); // respeita a preferência salva já na carga da página
 
 function ativarGoogleMaps(key) {
   if(!key) return;
