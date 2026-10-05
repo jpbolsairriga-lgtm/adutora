@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.59 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.60 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -4453,6 +4453,21 @@ body.layout-lateral #status{grid-area:status;}
 // (talhão NUNCA clicado continua fora, como antes — não faz parte da divisão). Novo popup
 // (#modalMontagemFim, _mostrarModalMontagemFim) mostra a mensagem final + a lista completa de
 // setores (cor/quantidade/comprimento) sempre que a montagem termina, automática ou manualmente.
+// v5.60: BUG relatado com print — "veja o setor amarelo e azul, a fixa de amarelo ficou acima da
+// de azul, ela deveria ter ficado proximo do resntante do amarelo (...) tem q ser por
+// proximidade". Causa raiz: a ordem interna de um talhão (_ordenarLinhasDoTalhao) era calculada só
+// na PRIMEIRA vez que ele era tocado nesta montagem — ancorada em qual fimAnterior existia NAQUELE
+// momento — e cliques SEGUINTES no mesmo talhão (pra outro setor, depois de visitar OUTROS
+// talhões no meio) só avançavam um ponteiro numa ordem já CONGELADA, ignorando que o fimAnterior
+// de verdade (de onde o setor ATUAL está vindo agora) podia ser bem diferente de quando a ordem
+// foi calculada. Resultado: a 2ª visita a um talhão podia entregar o pedaço ERRADO (o "próximo da
+// fila" antiga, não o mais próximo de onde a sequência está de verdade agora). Fix:
+// _cliqueMontagemSetores reordena as linhas RESTANTES do talhão a CADA clique (não mais uma vez
+// só), ancorando sempre no fimAnterior ATUAL — t._ordemMontagem/_usadosMontagem (array fixo +
+// ponteiro) viraram t._linhasRestantesMontagem (pool que encolhe e é reordenada a cada visita).
+// _tomarLinhasPorComprimento passou a receber um array já ordenado (não mais um talhão com
+// ponteiro). Validado com um caso reproduzindo o mecanismo exato do print (talhão tocado 2x, pra
+// setores diferentes, com outros talhões clicados entre as visitas).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -9544,7 +9559,7 @@ function _corDaMontagem(i) { return _hslParaHex((i * 137.508) % 360, 72, 48); }
 function _totalLinhasRestantesMontagem() {
   return talhoesArquivados.reduce((s, t) => {
     if(!t.linhas || !t.linhas.length) return s;
-    const restante = t._ordemMontagem ? (t._ordemMontagem.length - t._usadosMontagem) : t.linhas.length;
+    const restante = t._linhasRestantesMontagem ? t._linhasRestantesMontagem.length : t.linhas.length;
     return s + restante;
   }, 0);
 }
@@ -9553,16 +9568,16 @@ function _comprimentoDeItens(itens) { return itens.reduce((s, o) => s + o.len, 0
 
 // Soma, em TODO o projeto, quantos metros lineares ainda não foram usados em nenhum setor desta
 // montagem — base pro cálculo automático "N setores -> quantos metros cada" e pro reajuste da
-// meta depois de cada setor fechado. Usa a ordem/ponteiro já calculados (t._ordemMontagem/
-// _usadosMontagem) pra quem já foi clicado — soma só a PARTE não usada ainda, não o talhão
-// inteiro; pra quem nunca foi clicado, soma o comprimento de TODAS as linhas (via haversineM,
-// mesmo cálculo de sempre). Chamada sob demanda (não é cara: é só uma soma), nunca em cache.
+// meta depois de cada setor fechado. Usa a pool de restantes (t._linhasRestantesMontagem) pra quem
+// já foi clicado — soma só a PARTE não usada ainda, não o talhão inteiro; pra quem nunca foi
+// clicado, soma o comprimento de TODAS as linhas (via haversineM, mesmo cálculo de sempre). Chamada
+// sob demanda (não é cara: é só uma soma), nunca em cache.
 function _totalMetrosDisponivelMontagem() {
   let total = 0;
   talhoesArquivados.forEach(t => {
     if(!t.linhas || !t.linhas.length) return;
-    if(t._ordemMontagem) {
-      for(let i = t._usadosMontagem; i < t._ordemMontagem.length; i++) total += t._ordemMontagem[i].len;
+    if(t._linhasRestantesMontagem) {
+      t._linhasRestantesMontagem.forEach(o => { total += o.len; });
     } else {
       t.linhas.forEach(pl => {
         const pts = pl.getLatLngs().flat();
@@ -9590,17 +9605,18 @@ function _atualizarCalculoMontagem() {
   }
 }
 
-// Consome linhas do talhão `t`, a partir de onde ele parou (_usadosMontagem), até a soma dos
-// comprimentos ficar o mais PERTO possível de `metaFaltante` — sem nunca dividir uma linha no
-// meio. Pra cada linha candidata que faria o total passar da meta, compara "parar aqui" (fica
-// faltando) com "incluir ela" (passa um pouco) e escolhe o lado mais próximo (mesma lógica de
-// _cortarPorPeso). Sempre inclui PELO MENOS 1 linha, mesmo que ela sozinha já ultrapasse a meta —
-// não dá pra um setor ficar com zero conteúdo só pra não passar.
-function _tomarLinhasPorComprimento(t, metaFaltante) {
+// Consome linhas de `linhasOrdenadas` (já na ordem certa — ver _cliqueMontagemSetores, que
+// reordena as restantes do talhão a CADA clique antes de chamar isso, não uma vez só), do início
+// pra frente, até a soma dos comprimentos ficar o mais PERTO possível de `metaFaltante` — sem
+// nunca dividir uma linha no meio. Pra cada linha candidata que faria o total passar da meta,
+// compara "parar aqui" (fica faltando) com "incluir ela" (passa um pouco) e escolhe o lado mais
+// próximo (mesma lógica de _cortarPorPeso). Sempre inclui PELO MENOS 1 linha, mesmo que ela
+// sozinha já ultrapasse a meta — não dá pra um setor ficar com zero conteúdo só pra não passar.
+function _tomarLinhasPorComprimento(linhasOrdenadas, metaFaltante) {
   const tomadas = [];
-  let total = 0, i = t._usadosMontagem, fechouPorDecisao = false;
-  while(i < t._ordemMontagem.length) {
-    const linha = t._ordemMontagem[i];
+  let total = 0, i = 0, fechouPorDecisao = false;
+  while(i < linhasOrdenadas.length) {
+    const linha = linhasOrdenadas[i];
     const totalSeIncluir = total + linha.len;
     if(total === 0 || totalSeIncluir <= metaFaltante) {
       tomadas.push(linha); total = totalSeIncluir; i++;
@@ -9660,31 +9676,45 @@ function _cliqueMontagemSetores(latlng) {
   if(!t) { setStatus('Clique dentro de um talhão travado pra continuar a montagem (ou use Finalizar/Cancelar).', 'err'); return; }
   if(!t.linhas || !t.linhas.length) { setStatus(`Talhão ${t.idx} não tem linhas de plantio — clique em outro.`, 'err'); return; }
 
-  // Ordem das linhas deste talhão: calculada só na PRIMEIRA vez que ele é clicado nesta montagem
-  // (encostando no fim de onde o setor anterior parou) e reaproveitada depois — um talhão com
-  // sobra precisa continuar exatamente de onde parou, não recalcular uma ordem nova a cada clique.
-  if(!t._ordemMontagem) {
-    const info = t.linhas.map(pl => {
+  // Pool de linhas AINDA NÃO usadas deste talhão nesta montagem — calculada só na PRIMEIRA vez
+  // que ele é clicado (todas as linhas do talhão); cada clique depois REMOVE dela o que for
+  // consumido. v5.60: BUG relatado com print — um talhão clicado em momentos DIFERENTES (pra
+  // setores diferentes, com outros talhões clicados no meio) podia dar pro setor errado o pedaço
+  // errado do talhão (ex.: "a fileira amarela ficou longe do resto do amarelo, perto do azul")
+  // porque a ORDEM interna do talhão era calculada só UMA VEZ, ancorada em qual fimAnterior
+  // existia na PRIMEIRA vez que ele foi tocado — cliques seguintes só avançavam um ponteiro nessa
+  // ordem congelada, ignorando que o fimAnterior de VERDADE (de onde o setor ATUAL está vindo
+  // agora) podia ser bem diferente. Fix: reordena as linhas RESTANTES a CADA clique, ancorado no
+  // fimAnterior ATUAL — sempre pega o pedaço do talhão mais PRÓXIMO de onde a sequência está
+  // agora, não o "próximo da fila" de uma ordem antiga e possivelmente já irrelevante.
+  if(!t._linhasRestantesMontagem) {
+    t._linhasRestantesMontagem = t.linhas.map(pl => {
       const pts = pl.getLatLngs().flat();
       if(pts.length < 2) return null;
       let len = 0;
       for(let i = 0; i < pts.length - 1; i++) len += haversineM(pts[i], pts[i + 1]);
       return { pl, pts, len, mid: pts[Math.floor(pts.length / 2)] };
     }).filter(Boolean);
-    t._ordemMontagem = _ordenarLinhasDoTalhao(info, _montagemSetores.fimAnterior);
-    t._usadosMontagem = 0;
   }
 
-  const restantes = t._ordemMontagem.length - t._usadosMontagem;
-  if(restantes <= 0) { setStatus(`Talhão ${t.idx} já foi usado por completo em setor(es) anteriores desta montagem — clique em outro.`, 'info'); return; }
+  if(!t._linhasRestantesMontagem.length) { setStatus(`Talhão ${t.idx} já foi usado por completo em setor(es) anteriores desta montagem — clique em outro.`, 'info'); return; }
 
   if(_montagemSetores.corAtual === null) _montagemSetores.corAtual = _corDaMontagem(_montagemSetores.setorIdx);
   const corBase = t.corLinha || '#FFD600';
-  // Nunca passa muito do que falta pro setor ATUAL (ver _tomarLinhasPorComprimento) — a sobra
-  // fica guardada (ponteiro _usadosMontagem) pro próximo clique, seja nesse talhão ou noutro.
   const faltamNoSetor = _montagemSetores.meta - _comprimentoDeItens(_montagemSetores.itensAtual);
-  const { tomadas: fatia, total: tomadoAgora, fechouPorDecisao } = _tomarLinhasPorComprimento(t, faltamNoSetor);
-  t._usadosMontagem += fatia.length;
+  const ordenadas = _ordenarLinhasDoTalhao(t._linhasRestantesMontagem, _montagemSetores.fimAnterior);
+  // Nunca passa muito do que falta pro setor ATUAL (ver _tomarLinhasPorComprimento) — a sobra
+  // fica guardada na pool (t._linhasRestantesMontagem) pro próximo clique, seja nesse talhão ou
+  // noutro, e é reordenada de novo (por proximidade de onde estiver o fimAnterior NAQUELE momento).
+  const { tomadas: fatia, total: tomadoAgora, fechouPorDecisao } = _tomarLinhasPorComprimento(ordenadas, faltamNoSetor);
+  // Filtra por `o.pl` (a polyline de verdade), não pelo objeto-wrapper em si — _ordenarLinhasDoTalhao
+  // pode devolver WRAPPERS NOVOS (ex.: o ramo de projeção no eixo faz `{...o, proj}`), então um
+  // Set com os wrappers de `fatia` nunca bateria com os objetos originais de
+  // t._linhasRestantesMontagem (identidades diferentes, mesmo conteúdo) — isso travava a pool pra
+  // sempre do mesmo tamanho (loop infinito quando chamado em sequência). `pl` é a única referência
+  // garantida ESTÁVEL através de qualquer cópia de wrapper.
+  const plsConsumidosAgora = new Set(fatia.map(o => o.pl));
+  t._linhasRestantesMontagem = t._linhasRestantesMontagem.filter(o => !plsConsumidosAgora.has(o.pl));
 
   fatia.forEach(o => {
     o.pl.setStyle({ color: _montagemSetores.corAtual });
@@ -9693,7 +9723,7 @@ function _cliqueMontagemSetores(latlng) {
   });
   _montagemSetores.fimAnterior = fatia[fatia.length - 1].mid;
 
-  const sobrouNesseTalhao = t._ordemMontagem.length - t._usadosMontagem;
+  const sobrouNesseTalhao = t._linhasRestantesMontagem.length;
   const comprimentoSetorAtual = _comprimentoDeItens(_montagemSetores.itensAtual);
   // Fecha o setor se bateu/passou a meta OU se uma decisão explícita de "melhor encaixe" foi
   // tomada (mesmo ficando um pouco por baixo) — ver _tomarLinhasPorComprimento.
@@ -9766,25 +9796,23 @@ function _finalizarMontagemSetores(automatico) {
 
   // v5.59: pedido do usuário — "o ultimo setor fica na cor que as linhas ja estavam, quero que
   // nenhum setor fique com a cor original". Isso só acontecia no fim MANUAL ("Finalizar Agora"):
-  // um talhão já TOCADO (clicado ao menos 1x, com _ordemMontagem calculada) podia ter sobra NUNCA
-  // usada se o usuário não clicasse nele de novo antes de desistir — essa sobra ficava pra sempre
-  // na cor original, dando a impressão de que a divisão não tinha terminado de verdade (no fim
-  // AUTOMÁTICO isso nunca acontece: _totalLinhasRestantesMontagem()===0 já garante zero sobra em
-  // todo talhão tocado — mas a varredura abaixo roda nos dois casos, por garantia/consistência).
+  // um talhão já TOCADO (clicado ao menos 1x, com _linhasRestantesMontagem calculada) podia ter
+  // sobra NUNCA usada se o usuário não clicasse nele de novo antes de desistir — essa sobra ficava
+  // pra sempre na cor original, dando a impressão de que a divisão não tinha terminado de verdade
+  // (no fim AUTOMÁTICO isso nunca acontece: _totalLinhasRestantesMontagem()===0 já garante zero
+  // sobra em todo talhão tocado — mas a varredura abaixo roda nos dois casos, por garantia).
   // Varre todo talhão tocado com sobra e absorve ela no ÚLTIMO setor (mesma cor, mesmo talhão de
   // origem pro desfazer) — nenhuma linha de um talhão em que o usuário trabalhou fica original.
   talhoesArquivados.forEach(t => {
-    if(!t._ordemMontagem) return;
-    if(t._usadosMontagem >= t._ordemMontagem.length) return;
+    if(!t._linhasRestantesMontagem || !t._linhasRestantesMontagem.length) return;
     if(_montagemSetores.corAtual === null) _montagemSetores.corAtual = _corDaMontagem(_montagemSetores.setorIdx);
     const corBase = t.corLinha || '#FFD600';
-    for(let i = t._usadosMontagem; i < t._ordemMontagem.length; i++) {
-      const o = t._ordemMontagem[i];
+    t._linhasRestantesMontagem.forEach(o => {
       o.pl.setStyle({ color: _montagemSetores.corAtual });
       _montagemSetores.itensAtual.push(o);
       _ultimaDivisaoSetores.linhasCorrigidas.push({ pl: o.pl, corOriginal: corBase });
-    }
-    t._usadosMontagem = t._ordemMontagem.length;
+    });
+    t._linhasRestantesMontagem = [];
   });
 
   let ultimoIncompleto = false, comprimentoUltimo = 0;
@@ -9809,7 +9837,7 @@ function _finalizarMontagemSetores(automatico) {
   $('rowMontagemProgresso').style.display = 'none';
   $('btnLimparSetores').style.display = (_ultimaDivisaoSetores && _ultimaDivisaoSetores.linhasCorrigidas.length) ? 'flex' : 'none';
   ['montagemModo', 'montagemMeta', 'montagemN'].forEach(id => { $(id).disabled = false; });
-  talhoesArquivados.forEach(t => { delete t._ordemMontagem; delete t._usadosMontagem; });
+  talhoesArquivados.forEach(t => { delete t._linhasRestantesMontagem; });
   _montagemSetores = null;
   _atualizarCalculoMontagem(); // total disponível volta a refletir o que sobrou (devia ser ~0 sempre, agora que a sobra é varrida acima)
 
@@ -9950,7 +9978,7 @@ function limparSetores() {
   if(_modoMontagemSetores) {
     _modoMontagemSetores = false;
     _montagemSetores = null;
-    talhoesArquivados.forEach(t => { delete t._ordemMontagem; delete t._usadosMontagem; });
+    talhoesArquivados.forEach(t => { delete t._linhasRestantesMontagem; });
     $('btnIniciarMontagemSetores').style.display = 'flex';
     $('btnFinalizarMontagemSetores').style.display = 'none';
     $('btnCancelarMontagemSetores').style.display = 'none';
