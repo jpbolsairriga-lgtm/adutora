@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.58 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.59 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1196,6 +1196,18 @@ body.layout-lateral #status{grid-area:status;}
       <div style="font-size:10.5px;color:var(--panel-text-dim);">&#128073; Clique numa linha pra selecionar/dar zoom no talhão (mesma seleção do resto do app — dá pra clicar em vários).</div>
       <div style="flex:1;"></div>
       <button class="rbtn-sm" id="btnCopiarResumoTalhoes" onclick="_copiarResumoTalhoes()">&#128203; Copiar Resumo</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal: Montagem de Setores por Clique concluída ── -->
+<div class="modal-bg" id="modalMontagemFim" onclick="if(event.target===this)fecharModalMontagemFim()">
+  <div class="modal" style="max-width:480px;width:95%">
+    <button class="modal-close" onclick="fecharModalMontagemFim()">&#10005;</button>
+    <h2>&#9989; Montagem de Setores Concluída</h2>
+    <div id="modalMontagemFimMsg" style="font-size:12.5px;color:var(--panel-text);margin-bottom:10px;"></div>
+    <div style="overflow:auto;max-height:50vh;">
+      <div id="modalMontagemFimBody" style="font-size:12px;line-height:2;"></div>
     </div>
   </div>
 </div>
@@ -4430,6 +4442,17 @@ body.layout-lateral #status{grid-area:status;}
 // fim; com reajuste, [500,270,270,270] — os 3 últimos saem idênticos e exatos). "Total disponível"
 // e o preview "cada setor fica com ~X m" atualizam ao digitar e também ao entrar na aba Setores
 // (ativarRibbon). Campos de configuração ficam travados enquanto a montagem está em andamento.
+// v5.59: pedido do usuário — "o ultimo setor fica na cor que as linhas ja estavam, quero que
+// nenhum setor fique com a cor original" + "um popup avisando como ficou a divisão e que ela
+// terminou ficaria mto bom". BUG real, só no fim MANUAL ("Finalizar Agora"): um talhão já TOCADO
+// podia ter sobra NUNCA usada se o usuário não clicasse nele de novo antes de desistir — essa
+// sobra ficava pra sempre na cor original (no fim automático isso nunca acontecia, já que
+// _totalLinhasRestantesMontagem()===0 só fecha quando zero sobra em todo talhão tocado). Fix:
+// _finalizarMontagemSetores agora varre todo talhão tocado com sobra e absorve ela no ÚLTIMO
+// setor antes de fechar — nenhuma linha de um talhão em que o usuário trabalhou fica original
+// (talhão NUNCA clicado continua fora, como antes — não faz parte da divisão). Novo popup
+// (#modalMontagemFim, _mostrarModalMontagemFim) mostra a mensagem final + a lista completa de
+// setores (cor/quantidade/comprimento) sempre que a montagem termina, automática ou manualmente.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -9740,6 +9763,30 @@ function _finalizarMontagemSetores(automatico) {
   if(!_modoMontagemSetores) return;
   const meta = _montagemSetores.meta;
   const modo = _montagemSetores.modo, nSetoresDesejado = _montagemSetores.nSetoresDesejado;
+
+  // v5.59: pedido do usuário — "o ultimo setor fica na cor que as linhas ja estavam, quero que
+  // nenhum setor fique com a cor original". Isso só acontecia no fim MANUAL ("Finalizar Agora"):
+  // um talhão já TOCADO (clicado ao menos 1x, com _ordemMontagem calculada) podia ter sobra NUNCA
+  // usada se o usuário não clicasse nele de novo antes de desistir — essa sobra ficava pra sempre
+  // na cor original, dando a impressão de que a divisão não tinha terminado de verdade (no fim
+  // AUTOMÁTICO isso nunca acontece: _totalLinhasRestantesMontagem()===0 já garante zero sobra em
+  // todo talhão tocado — mas a varredura abaixo roda nos dois casos, por garantia/consistência).
+  // Varre todo talhão tocado com sobra e absorve ela no ÚLTIMO setor (mesma cor, mesmo talhão de
+  // origem pro desfazer) — nenhuma linha de um talhão em que o usuário trabalhou fica original.
+  talhoesArquivados.forEach(t => {
+    if(!t._ordemMontagem) return;
+    if(t._usadosMontagem >= t._ordemMontagem.length) return;
+    if(_montagemSetores.corAtual === null) _montagemSetores.corAtual = _corDaMontagem(_montagemSetores.setorIdx);
+    const corBase = t.corLinha || '#FFD600';
+    for(let i = t._usadosMontagem; i < t._ordemMontagem.length; i++) {
+      const o = t._ordemMontagem[i];
+      o.pl.setStyle({ color: _montagemSetores.corAtual });
+      _montagemSetores.itensAtual.push(o);
+      _ultimaDivisaoSetores.linhasCorrigidas.push({ pl: o.pl, corOriginal: corBase });
+    }
+    t._usadosMontagem = t._ordemMontagem.length;
+  });
+
   let ultimoIncompleto = false, comprimentoUltimo = 0;
   if(_montagemSetores.itensAtual.length) {
     comprimentoUltimo = _comprimentoDeItens(_montagemSetores.itensAtual);
@@ -9752,7 +9799,8 @@ function _finalizarMontagemSetores(automatico) {
     _montagemSetores.setorIdx++;
   }
   const totalSetores = _montagemSetores.setorIdx;
-  _atualizarResumoSetores(totalSetores ? [{ nome: 'Montagem por Clique', grupos: _montagemSetores.gruposFechados }] : null);
+  const gruposFinal = _montagemSetores.gruposFechados;
+  _atualizarResumoSetores(totalSetores ? [{ nome: 'Montagem por Clique', grupos: gruposFinal }] : null);
 
   _modoMontagemSetores = false;
   $('btnIniciarMontagemSetores').style.display = 'flex';
@@ -9763,7 +9811,7 @@ function _finalizarMontagemSetores(automatico) {
   ['montagemModo', 'montagemMeta', 'montagemN'].forEach(id => { $(id).disabled = false; });
   talhoesArquivados.forEach(t => { delete t._ordemMontagem; delete t._usadosMontagem; });
   _montagemSetores = null;
-  _atualizarCalculoMontagem(); // total disponível volta a refletir o que sobrou (devia ser ~0 no caso automático)
+  _atualizarCalculoMontagem(); // total disponível volta a refletir o que sobrou (devia ser ~0 sempre, agora que a sobra é varrida acima)
 
   if(!totalSetores) { setStatus('Montagem finalizada sem nenhum setor completo (nenhuma linha foi usada).', 'info'); return; }
   const fmtM = m => Math.round(m).toLocaleString('pt-BR');
@@ -9771,10 +9819,28 @@ function _finalizarMontagemSetores(automatico) {
   // "melhoria" pedida ("todos os setores fiquem" certos ao fechar o total) é exatamente essa
   // confirmação, já que a meta foi reajustada a cada passo pra isso dar certo.
   const resumoN = modo === 'setores' ? ` (pedido: ${nSetoresDesejado})` : '';
-  setStatus(automatico
+  const msg = automatico
     ? `Montagem concluída: todos os talhões foram usados — ${totalSetores} setor(es)${resumoN} de ~${fmtM(meta)} m${ultimoIncompleto ? `, o último ficou incompleto (${fmtM(comprimentoUltimo)} m)` : ''}.`
-    : `Montagem finalizada: ${totalSetores} setor(es) fechado(s)${resumoN}${ultimoIncompleto ? `, o último com só ${fmtM(comprimentoUltimo)} m` : ''}.`, 'ok');
+    : `Montagem finalizada: ${totalSetores} setor(es) fechado(s)${resumoN}${ultimoIncompleto ? `, o último com só ${fmtM(comprimentoUltimo)} m` : ''}.`;
+  setStatus(msg, 'ok');
+  // v5.59: pedido do usuário — "um popup avisando como ficou a divisão e que ela terminou ficaria
+  // mto bom". Pop-up (não só o texto da barra de status) com a mensagem final + a lista completa
+  // de setores (cor/quantidade/comprimento) — mesmo dado já mostrado no painel, só que num aviso
+  // que não passa desapercebido e fica aberto até o usuário fechar.
+  _mostrarModalMontagemFim(msg, gruposFinal);
 }
+
+function _mostrarModalMontagemFim(msg, grupos) {
+  $('modalMontagemFimMsg').textContent = msg;
+  const fmtM = m => Math.round(m).toLocaleString('pt-BR');
+  let html = '';
+  grupos.forEach((g, i) => {
+    html += `<div><span style="display:inline-block;width:12px;height:12px;background:${g.cor};border-radius:2px;vertical-align:middle;margin-right:6px;"></span>Setor ${i + 1} &nbsp; <b>${g.count}</b> linha${g.count === 1 ? '' : 's'} &nbsp;·&nbsp; ${fmtM(g.comprimento)} m</div>`;
+  });
+  $('modalMontagemFimBody').innerHTML = html;
+  $('modalMontagemFim').classList.add('open');
+}
+function fecharModalMontagemFim() { $('modalMontagemFim').classList.remove('open'); }
 
 function _cancelarMontagemSetores() {
   if(!_modoMontagemSetores) return;
