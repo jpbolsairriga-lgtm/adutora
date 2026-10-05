@@ -410,7 +410,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.62 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.63 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -4566,6 +4566,21 @@ body.layout-lateral #status{grid-area:status;}
 // Apagar; "Cor..." ganhou um modo novo pro seletor de cor já existente (abrirSeletorCor(uid)
 // opcional + _cpTargetTalhaoUid) que recolore o talhão inteiro em vez de só preencher o campo
 // #corLinha de sempre.
+// v5.63: BUG GRAVE relatado — "Cannot access '_modoPickLinha' before initialization" ao importar
+// projeto, "isso já funcionava antes". Causa: a v5.62 chamava _atualizarStatusBarCad(null) NO
+// CARREGAMENTO da página (logo depois de registrar os listeners de mousemove/zoom), e essa função
+// lê _modoPickLinha/_modoMontagemSetores — declarados com `let` bem mais ABAIXO no mesmo <script>
+// (linhas ~9700/~14500), fora do escopo temporal (TDZ) ainda naquele ponto da execução sequencial.
+// A exceção lançada JÁ NO CARREGAMENTO interrompe a execução de TODO o resto daquele <script> dali
+// pra frente — nenhum `let`/inicialização depois daquele ponto roda mais, silenciosamente
+// quebrando um monte de coisa (a importação de projeto foi só o que o usuário notou primeiro).
+// Fix: removida a chamada eager — a barra nasce com os valores padrão do HTML (Escala "—", Modo
+// "Pronto") e atualiza sozinha no primeiro mousemove/zoom do usuário, quando o script inteiro já
+// carregou. Esse tipo de bug (ordem de execução/TDZ) nunca apareceria num `node --check` comum
+// (só valida sintaxe) — novo teste permanente test_carregamento_pagina.js EXECUTA os <script> da
+// página de verdade (stubs pesados de DOM/Leaflet/browser) a cada mudança, pra pegar essa classe
+// de regressão antes de publicar. Validado reproduzindo o erro exato do usuário ao reintroduzir a
+// chamada eager de propósito, depois confirmando que o fix faz o teste passar.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -5323,7 +5338,17 @@ function _atualizarStatusBarCad(latlng) {
 }
 map.on('mousemove', e => _atualizarStatusBarCad(e.latlng));
 map.on('zoomend moveend', () => _atualizarStatusBarCad(null));
-_atualizarStatusBarCad(null);
+// v5.63: BUG GRAVE relatado — "Cannot access '_modoPickLinha' before initialization" ao importar
+// projeto (e, na prática, em qualquer coisa que rodasse DEPOIS deste ponto no mesmo <script>).
+// Causa: aqui embaixo chamava _atualizarStatusBarCad(null) NO CARREGAMENTO da página, que chama
+// _descricaoModoAtual(), que lê _modoPickLinha/_modoMontagemSetores — só que esses dois são
+// declarados com `let` bem mais ABAIXO no arquivo (linhas ~9741/~14555), fora do escopo temporal
+// ainda neste ponto da execução sequencial do script. Isso lançava a exceção JÁ NO CARREGAMENTO,
+// o que interrompe a execução do <script> inteiro dali pra frente — nenhum `let`/inicialização
+// depois deste ponto rodava mais, por isso "Importar Projeto" (bem mais abaixo) e várias outras
+// coisas quebravam. Fix: não chama mais aqui — a barra nasce com os valores padrão do HTML
+// (Escala "—", Modo "Pronto") e atualiza sozinha no primeiro mousemove/zoom do usuário, quando o
+// script inteiro já carregou e todo `let` já foi inicializado.
 
 // ── Menu de botão direito num talhão (v5.62, estilo AutoCAD) ────────────────────────────────────
 // position:fixed no CSS — usa e.originalEvent.clientX/Y direto, sem precisar descontar o offset
