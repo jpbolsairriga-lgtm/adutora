@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.57 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.58 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -779,10 +779,23 @@ body.layout-lateral #status{grid-area:status;}
       </div>
       <div class="rgroup">
         <div class="rgroup-body">
+          <div id="rowMontagemTotal" class="rreadout"><span class="l">Total disponível:</span><span class="v" id="iMontagemTotal">—</span></div>
           <div class="rcol">
-            <label>Metros por setor</label>
-            <input type="number" id="montagemMeta" class="rfield" value="" min="1" step="1" placeholder="ex: 3000">
+            <label>Dividir por</label>
+            <select id="montagemModo" class="rfield wide" onchange="_atualizarCalculoMontagem()" title="Metros fixos por setor: você já sabe a capacidade exata (ex.: equipamento) e digita ela direto — o último setor pode ficar incompleto se o total não for múltiplo exato. Número de setores: você diz em quantos setores quer dividir TUDO e o app calcula sozinho quantos metros cabem em cada um (lendo o total disponível agora), reajustando a meta depois de cada setor fechado pra não acumular toda a sobra/folta no último.">
+              <option value="metros" selected>Metros fixos por setor</option>
+              <option value="setores">Número de setores (calcula os metros)</option>
+            </select>
           </div>
+          <div class="rcol" id="colMontagemMetros">
+            <label>Metros por setor</label>
+            <input type="number" id="montagemMeta" class="rfield" value="" min="1" step="1" placeholder="ex: 3000" oninput="_atualizarCalculoMontagem()">
+          </div>
+          <div class="rcol" id="colMontagemN" style="display:none;">
+            <label>Número de setores</label>
+            <input type="number" id="montagemN" class="rfield" value="" min="1" step="1" placeholder="ex: 5" oninput="_atualizarCalculoMontagem()">
+          </div>
+          <div id="rowMontagemCalc" class="rreadout" style="display:none;"><span class="l">Cada setor fica com:</span><span class="v" id="iMontagemCalc">—</span></div>
           <button class="rbtn c-purple" id="btnIniciarMontagemSetores" onclick="iniciarMontagemSetoresPorClique()" title="Clique num talhão por vez no mapa (nesta aba): cada clique usa, do talhão clicado, os metros lineares que ainda faltam pra completar o setor atual — começando do lado mais perto de onde o setor anterior terminou. Uma linha nunca é dividida no meio: perto do limite, o app decide se vale mais a pena incluir a próxima linha (passando um pouco da meta) ou parar antes dela (ficando um pouco por baixo) — o que ficar mais perto da meta. Se o talhão clicado não tiver metros suficientes, avisa quanto falta e espera você clicar em outro. Se tiver de mais, guarda o resto — clique nele de novo mais tarde pra continuar usando a sobra. Continua até todos os talhões ficarem sem linha sobrando, aí avisa que terminou."><span class="ico">&#9679;</span><span class="lbl">Montar Setores por Clique</span></button>
           <div class="rcol">
             <button class="rbtn-sm warn" id="btnFinalizarMontagemSetores" style="display:none;" onclick="_finalizarMontagemSetores(false)">&#10003; Finalizar Agora</button>
@@ -790,7 +803,7 @@ body.layout-lateral #status{grid-area:status;}
           </div>
           <div id="rowMontagemProgresso" style="display:none;" class="rreadout"><span class="l">Progresso:</span><span class="v" id="iMontagemProgresso">—</span></div>
         </div>
-        <div class="rgroup-title">Montar Setores por Clique — metros lineares fixos por setor, talhão por talhão, nesta aba</div>
+        <div class="rgroup-title">Montar Setores por Clique — metros lineares por setor (fixo ou calculado), talhão por talhão, nesta aba</div>
       </div>
       <div class="rgroup" id="secResumoSetores" style="display:none;">
         <div class="rgroup-body">
@@ -4405,6 +4418,18 @@ body.layout-lateral #status{grid-area:status;}
 // incluir a próxima linha (passando um pouco da meta) ou parar antes dela (ficando um pouco por
 // baixo) — o lado que deixar o total MAIS PERTO da meta vence, mesma filosofia de "melhor encaixe"
 // que _cortarPorPeso já usa no "Dividir em Setores". Campo "Linhas por setor" → "Metros por setor".
+// v5.58: pedido do usuário — "ele ja deveria ler qto metros lineares tem no total e qdo eu colocar
+// o numero a ser dividido ele ja calcula automaticamente qtos metros fica cada divisão, e ao
+// terminar e fechar o total todos os setores fiquem [certos]". Novo seletor "Dividir por" na
+// Montagem por Clique: "Metros fixos por setor" (de sempre) ou "Número de setores" (novo) — nesse
+// modo o app lê o total disponível (_totalMetrosDisponivelMontagem) e calcula a meta sozinho
+// (total/N), mostrando o cálculo antes mesmo de clicar no mapa. Melhoria aplicada: a meta é
+// RECALCULADA depois de cada setor fechado — (o que resta)/(quantos setores restam) — em vez de
+// reusar sempre a meta inicial fixa, que empilharia toda a sobra/falta de arredondamento só no
+// ÚLTIMO setor (testado: sem reajustar, um caso real deu [500,360,360,90] — desvio de 237m só no
+// fim; com reajuste, [500,270,270,270] — os 3 últimos saem idênticos e exatos). "Total disponível"
+// e o preview "cada setor fica com ~X m" atualizam ao digitar e também ao entrar na aba Setores
+// (ativarRibbon). Campos de configuração ficam travados enquanto a montagem está em andamento.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -9466,8 +9491,20 @@ let _ultimaDivisaoSetores = null; // { linhasCorrigidas:[{pl,corOriginal}] }
 //
 // Igual ao "Dividir em Setores", reaproveita _ultimaDivisaoSetores/_atualizarResumoSetores/
 // limparSetores — "Limpar Setores" funciona como desfazer único pras duas ferramentas.
+//
+// v5.58: pedido do usuário — "ele ja deveria ler qto metros lineares tem no total e qdo eu
+// colocar o numero a ser dividido ele ja calcula automaticamente qtos metros fica cada divisão".
+// Novo seletor "Dividir por": "Metros fixos por setor" (comportamento de sempre, meta constante)
+// ou "Número de setores" (novo) — o usuário diz em quantos setores quer dividir TUDO, o app lê o
+// total disponível (_totalMetrosDisponivelMontagem) e calcula a meta sozinho (total/N). Melhoria
+// aplicada nesse modo: a meta é RECALCULADA depois de cada setor fechado, como (o que ainda resta
+// no projeto) / (quantos setores ainda faltam) — em vez de reusar a mesma meta fixa o tempo todo
+// (que acumularia toda sobra/falta de arredondamento só no ÚLTIMO setor, exatamente o problema que
+// _cortarPorPeso já evita no "Dividir em Setores" de cima, só que ali com visão global de uma vez;
+// aqui, sem saber de antemão qual vai ser o próximo talhão clicado, reajustar passo a passo é o
+// jeito de espalhar esse ajuste pelos setores restantes em vez de empilhar tudo no fim).
 let _modoMontagemSetores = false; // true enquanto a montagem por clique está "armada" (clique em talhão alimenta ela, só na aba Setores)
-let _montagemSetores = null; // { meta (metros), setorIdx, corAtual, itensAtual:[{pl,len,mid}], gruposFechados:[{cor,count,comprimento}], fimAnterior }
+let _montagemSetores = null; // { modo:'metros'|'setores', nSetoresDesejado, meta (metros, meta ATUAL do setor em andamento), setorIdx, corAtual, itensAtual:[{pl,len,mid}], gruposFechados:[{cor,count,comprimento}], fimAnterior }
 
 // Sequência de cores pra setores "sem fim" (a quantidade total não é conhecida de antemão, ao
 // contrário de _paletaSetores(n) que precisa do N final pra espalhar o gradiente) — ângulo
@@ -9490,6 +9527,45 @@ function _totalLinhasRestantesMontagem() {
 }
 
 function _comprimentoDeItens(itens) { return itens.reduce((s, o) => s + o.len, 0); }
+
+// Soma, em TODO o projeto, quantos metros lineares ainda não foram usados em nenhum setor desta
+// montagem — base pro cálculo automático "N setores -> quantos metros cada" e pro reajuste da
+// meta depois de cada setor fechado. Usa a ordem/ponteiro já calculados (t._ordemMontagem/
+// _usadosMontagem) pra quem já foi clicado — soma só a PARTE não usada ainda, não o talhão
+// inteiro; pra quem nunca foi clicado, soma o comprimento de TODAS as linhas (via haversineM,
+// mesmo cálculo de sempre). Chamada sob demanda (não é cara: é só uma soma), nunca em cache.
+function _totalMetrosDisponivelMontagem() {
+  let total = 0;
+  talhoesArquivados.forEach(t => {
+    if(!t.linhas || !t.linhas.length) return;
+    if(t._ordemMontagem) {
+      for(let i = t._usadosMontagem; i < t._ordemMontagem.length; i++) total += t._ordemMontagem[i].len;
+    } else {
+      t.linhas.forEach(pl => {
+        const pts = pl.getLatLngs().flat();
+        for(let i = 0; i < pts.length - 1; i++) total += haversineM(pts[i], pts[i + 1]);
+      });
+    }
+  });
+  return total;
+}
+
+// Atualiza o "Total disponível" (sempre) e, no modo "Número de setores", o preview "cada setor
+// fica com ~X m" — chamada no oninput dos campos, ao trocar de modo, ao entrar na aba Setores
+// (ativarRibbon) e ao iniciar a montagem. Puramente de leitura/exibição — nunca muda estado.
+function _atualizarCalculoMontagem() {
+  const modo = $('montagemModo').value;
+  $('colMontagemMetros').style.display = modo === 'metros' ? 'flex' : 'none';
+  $('colMontagemN').style.display = modo === 'setores' ? 'flex' : 'none';
+  $('rowMontagemCalc').style.display = modo === 'setores' ? 'flex' : 'none';
+  const fmtM = m => Math.round(m).toLocaleString('pt-BR');
+  const total = _totalMetrosDisponivelMontagem();
+  $('iMontagemTotal').textContent = `${fmtM(total)} m`;
+  if(modo === 'setores') {
+    const n = parseInt($('montagemN').value);
+    $('iMontagemCalc').textContent = (n && n > 0) ? `~ ${fmtM(total / n)} m` : '—';
+  }
+}
 
 // Consome linhas do talhão `t`, a partir de onde ele parou (_usadosMontagem), até a soma dos
 // comprimentos ficar o mais PERTO possível de `metaFaltante` — sem nunca dividir uma linha no
@@ -9518,20 +9594,37 @@ function _tomarLinhasPorComprimento(t, metaFaltante) {
 
 function iniciarMontagemSetoresPorClique() {
   if(_modoMontagemSetores) { setStatus('Já tem uma montagem por clique em andamento — finalize ou cancele antes de iniciar outra.', 'err'); return; }
-  const meta = parseFloat($('montagemMeta').value);
-  if(!meta || meta <= 0) { setStatus('Informe quantos metros lineares cada setor deve ter.', 'err'); return; }
   if(!talhoesArquivados.some(t => t.linhas && t.linhas.length)) { setStatus('Nenhum talhão travado com linhas de plantio — gere e trave pelo menos um talhão antes.', 'err'); return; }
+
+  const modo = $('montagemModo').value;
+  const fmtM = m => Math.round(m).toLocaleString('pt-BR');
+  let meta, nSetoresDesejado = null, avisoInicial;
+  if(modo === 'setores') {
+    nSetoresDesejado = parseInt($('montagemN').value);
+    if(!nSetoresDesejado || nSetoresDesejado < 1) { setStatus('Informe em quantos setores dividir.', 'err'); return; }
+    const total = _totalMetrosDisponivelMontagem();
+    if(total <= 0) { setStatus('Nenhum metro linear disponível pra dividir.', 'err'); return; }
+    meta = total / nSetoresDesejado;
+    avisoInicial = `Montagem por clique iniciada: ${nSetoresDesejado} setor(es) de ~${fmtM(meta)} m cada (total disponível: ${fmtM(total)} m). Clique nos talhões, um por vez (nesta aba). Setor 1 em andamento.`;
+  } else {
+    meta = parseFloat($('montagemMeta').value);
+    if(!meta || meta <= 0) { setStatus('Informe quantos metros lineares cada setor deve ter.', 'err'); return; }
+    avisoInicial = `Montagem por clique iniciada: clique nos talhões, um por vez (nesta aba), pra preencher cada setor com ${fmtM(meta)} m lineares. Setor 1 em andamento.`;
+  }
   if(_ultimaDivisaoSetores) limparSetores(); // começa limpo, sem misturar com uma divisão anterior (automática ou de outra montagem)
 
   _modoMontagemSetores = true;
-  _montagemSetores = { meta, setorIdx: 0, corAtual: null, itensAtual: [], gruposFechados: [], fimAnterior: null };
+  _montagemSetores = { modo, nSetoresDesejado, meta, setorIdx: 0, corAtual: null, itensAtual: [], gruposFechados: [], fimAnterior: null };
   _ultimaDivisaoSetores = { linhasCorrigidas: [] };
   $('btnIniciarMontagemSetores').style.display = 'none';
   $('btnFinalizarMontagemSetores').style.display = 'flex';
   $('btnCancelarMontagemSetores').style.display = 'flex';
   $('rowMontagemProgresso').style.display = 'flex';
+  // Trava os campos de configuração enquanto a montagem está em andamento — trocar de modo/meta no
+  // meio do caminho bagunçaria a meta já em uso (ver _cliqueMontagemSetores).
+  ['montagemModo', 'montagemMeta', 'montagemN'].forEach(id => { $(id).disabled = true; });
   _atualizarResumoMontagem();
-  setStatus(`Montagem por clique iniciada: clique nos talhões, um por vez (nesta aba), pra preencher cada setor com ${Math.round(meta).toLocaleString('pt-BR')} m lineares. Setor 1 em andamento.`, 'info');
+  setStatus(avisoInicial, 'info');
 }
 
 // Chamada pelo listener de clique do mapa — só enquanto _modoMontagemSetores está ativo E a aba
@@ -9592,6 +9685,15 @@ function _cliqueMontagemSetores(latlng) {
     _montagemSetores.setorIdx++;
     _montagemSetores.itensAtual = [];
     _montagemSetores.corAtual = null;
+
+    // v5.58: modo "Número de setores" — reajusta a meta do PRÓXIMO setor como (o que ainda resta
+    // no projeto) / (quantos setores ainda faltam), em vez de reusar a meta original constante.
+    // Espalha o ajuste de "melhor encaixe" (ver _tomarLinhasPorComprimento) pelos setores
+    // restantes, em vez de empilhar toda a sobra/falta acumulada só no ÚLTIMO.
+    if(_montagemSetores.modo === 'setores') {
+      const restam = _montagemSetores.nSetoresDesejado - _montagemSetores.setorIdx;
+      if(restam > 0) _montagemSetores.meta = _totalMetrosDisponivelMontagem() / restam;
+    }
   }
 
   _atualizarResumoMontagem();
@@ -9625,7 +9727,10 @@ function _atualizarResumoMontagem() {
   }
   _atualizarResumoSetores(grupos.length ? [{ nome: 'Montagem por Clique', grupos }] : null);
   const fmtM = m => Math.round(m).toLocaleString('pt-BR');
-  $('iMontagemProgresso').textContent = `Setor ${_montagemSetores.setorIdx + 1}: ${fmtM(_comprimentoDeItens(_montagemSetores.itensAtual))}/${fmtM(_montagemSetores.meta)} m · ${_montagemSetores.setorIdx} setor(es) completo(s)`;
+  // Modo "Número de setores" já sabe o TOTAL de setores de antemão — mostra "Setor X de N" em vez
+  // de um contador sem fim, mesmo "N setor(es) completo(s)" (não dá pra saber se falta muito).
+  const deN = _montagemSetores.modo === 'setores' ? ` de ${_montagemSetores.nSetoresDesejado}` : '';
+  $('iMontagemProgresso').textContent = `Setor ${_montagemSetores.setorIdx + 1}${deN}: ${fmtM(_comprimentoDeItens(_montagemSetores.itensAtual))}/${fmtM(_montagemSetores.meta)} m · ${_montagemSetores.setorIdx}${deN} completo(s)`;
 }
 
 // automatico=true: chamada sozinha quando _totalLinhasRestantesMontagem() zera (todos os talhões
@@ -9634,6 +9739,7 @@ function _atualizarResumoMontagem() {
 function _finalizarMontagemSetores(automatico) {
   if(!_modoMontagemSetores) return;
   const meta = _montagemSetores.meta;
+  const modo = _montagemSetores.modo, nSetoresDesejado = _montagemSetores.nSetoresDesejado;
   let ultimoIncompleto = false, comprimentoUltimo = 0;
   if(_montagemSetores.itensAtual.length) {
     comprimentoUltimo = _comprimentoDeItens(_montagemSetores.itensAtual);
@@ -9654,19 +9760,25 @@ function _finalizarMontagemSetores(automatico) {
   $('btnCancelarMontagemSetores').style.display = 'none';
   $('rowMontagemProgresso').style.display = 'none';
   $('btnLimparSetores').style.display = (_ultimaDivisaoSetores && _ultimaDivisaoSetores.linhasCorrigidas.length) ? 'flex' : 'none';
+  ['montagemModo', 'montagemMeta', 'montagemN'].forEach(id => { $(id).disabled = false; });
   talhoesArquivados.forEach(t => { delete t._ordemMontagem; delete t._usadosMontagem; });
   _montagemSetores = null;
+  _atualizarCalculoMontagem(); // total disponível volta a refletir o que sobrou (devia ser ~0 no caso automático)
 
   if(!totalSetores) { setStatus('Montagem finalizada sem nenhum setor completo (nenhuma linha foi usada).', 'info'); return; }
   const fmtM = m => Math.round(m).toLocaleString('pt-BR');
+  // Modo "Número de setores" confirma que o N pedido bateu com o N de verdade alcançado — a
+  // "melhoria" pedida ("todos os setores fiquem" certos ao fechar o total) é exatamente essa
+  // confirmação, já que a meta foi reajustada a cada passo pra isso dar certo.
+  const resumoN = modo === 'setores' ? ` (pedido: ${nSetoresDesejado})` : '';
   setStatus(automatico
-    ? `Montagem concluída: todos os talhões foram usados — ${totalSetores} setor(es) de ${fmtM(meta)} m${ultimoIncompleto ? `, o último ficou incompleto (${fmtM(comprimentoUltimo)} m)` : ''}.`
-    : `Montagem finalizada: ${totalSetores} setor(es) fechado(s)${ultimoIncompleto ? `, o último com só ${fmtM(comprimentoUltimo)} m` : ''}.`, 'ok');
+    ? `Montagem concluída: todos os talhões foram usados — ${totalSetores} setor(es)${resumoN} de ~${fmtM(meta)} m${ultimoIncompleto ? `, o último ficou incompleto (${fmtM(comprimentoUltimo)} m)` : ''}.`
+    : `Montagem finalizada: ${totalSetores} setor(es) fechado(s)${resumoN}${ultimoIncompleto ? `, o último com só ${fmtM(comprimentoUltimo)} m` : ''}.`, 'ok');
 }
 
 function _cancelarMontagemSetores() {
   if(!_modoMontagemSetores) return;
-  limparSetores(); // restaura a cor original de tudo (e já derruba os botões/estado da montagem — ver limparSetores)
+  limparSetores(); // restaura a cor original de tudo + destrava os campos (ver limparSetores)
   setStatus('Montagem por clique cancelada — linhas voltaram à cor original.', 'info');
 }
 
@@ -9777,6 +9889,11 @@ function limparSetores() {
     $('btnFinalizarMontagemSetores').style.display = 'none';
     $('btnCancelarMontagemSetores').style.display = 'none';
     $('rowMontagemProgresso').style.display = 'none';
+    // v5.58: os campos de configuração (modo/meta/N) ficam travados enquanto a montagem está
+    // ativa (ver iniciarMontagemSetoresPorClique) — destravam de volta aqui também, não só em
+    // _cancelarMontagemSetores, porque "Limpar Setores" pode ser clicado direto (sem passar por
+    // "Cancelar Montagem") e deixaria os campos travados pra sempre se não fosse por isso.
+    ['montagemModo', 'montagemMeta', 'montagemN'].forEach(id => { $(id).disabled = false; });
   }
   setStatus('Setores removidos — linhas voltaram à cor original.', 'ok');
 }
@@ -15348,6 +15465,10 @@ function ativarRibbon(panelId) {
   document.querySelectorAll('.rtab').forEach(t => t.classList.toggle('active', t.dataset.panel === panelId));
   document.querySelectorAll('.rpanel').forEach(p => p.classList.toggle('active', p.id === panelId));
   _atualizarDicaRolagem();
+  // v5.58: entrar na aba Setores reaproveita o total disponível pra "Montar Setores por Clique" —
+  // sem isso ele só atualizava no oninput dos próprios campos, ficando com o número de antes de
+  // travar um talhão novo noutra aba e voltar aqui.
+  if(panelId === 'rp-setores' && typeof _atualizarCalculoMontagem === 'function') _atualizarCalculoMontagem();
 }
 
 // Cancela qualquer ferramenta interativa que ainda esteja "armada" (esperando clique/ação no mapa)
