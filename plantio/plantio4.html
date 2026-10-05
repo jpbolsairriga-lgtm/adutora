@@ -371,7 +371,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.60 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.61 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -810,6 +810,13 @@ body.layout-lateral #status{grid-area:status;}
           <div id="resumoSetoresBody" style="font-size:11.5px;line-height:1.9;width:100%;"></div>
         </div>
         <div class="rgroup-title">Resumo dos Setores</div>
+      </div>
+      <div class="rgroup">
+        <div class="rgroup-body">
+          <button class="rbtn c-teal" id="btnCorrigirSetorLinha" onclick="ativarCorrecaoSetorLinha()" title="Clique numa linha que caiu no setor errado, depois clique numa linha que já está no setor certo (o destino) — a errada vira a cor da certa. Funciona em cima do resultado de 'Dividir em Setores' OU 'Montar Setores por Clique'. Depois de corrigir uma, volta sozinho pra esperar a próxima errada — corrija várias seguidas sem precisar clicar aqui de novo."><span class="ico">&#128397;</span><span class="lbl">Corrigir Setor de uma Linha</span></button>
+          <button class="rbtn-sm clr" id="btnCancelarCorrecaoSetor" style="display:none;" onclick="cancelarCorrecaoSetorLinha()">&#10005; Cancelar Correção</button>
+        </div>
+        <div class="rgroup-title">Correção Manual — clique na linha errada, depois na linha do setor certo</div>
       </div>
     </div>
 
@@ -4468,6 +4475,21 @@ body.layout-lateral #status{grid-area:status;}
 // _tomarLinhasPorComprimento passou a receber um array já ordenado (não mais um talhão com
 // ponteiro). Validado com um caso reproduzindo o mecanismo exato do print (talhão tocado 2x, pra
 // setores diferentes, com outros talhões clicados entre as visitas).
+// v5.61: usuário mandou um 3º print ("o azul ficou com um fundo misturado") e sugeriu a saída —
+// "pensei em um segundo comando para reordenar a divisão apenas daquele bloco ou um segundo botão
+// no final, não sei, evolui isso de forma pratica e funcional". Em vez de perseguir mais um
+// caso-limite geométrico no algoritmo automático (campo real sempre pode enganar a heurística de
+// um jeito novo), nova ferramenta de CORREÇÃO MANUAL (aba Setores): "Corrigir Setor de uma Linha"
+// — clique na linha que caiu no setor errado, depois numa linha que já está no setor certo (o
+// destino); a errada vira a cor da certa. Funciona em cima do resultado de QUALQUER uma das duas
+// ferramentas de Setores (Dividir em Setores OU Montar Setores por Clique), porque não depende de
+// nenhuma estrutura própria de cada uma — _recalcularGruposPorCor deriva os grupos atuais direto
+// das CORES de verdade já pintadas nas linhas, sempre em cima de _ultimaDivisaoSetores.
+// linhasCorrigidas (a mesma lista que "Limpar Setores" já usa). Reaproveita a infraestrutura de
+// "escolher uma linha no mapa" já existente (_modoPickLinha/_cliqueEmLinhaPlantio, a mesma do
+// Perfil de Linha/Carreador) — 2 valores novos pro _modoPickLinha ('corrigirSetorOrigem'/
+// 'corrigirSetorDestino'), nenhum clique novo pra cadastrar linha por linha. Depois de corrigir
+// uma, volta sozinho pro modo "escolher a errada" — corrigir várias seguidas sem reclicar o botão.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -14302,9 +14324,10 @@ async function mostrarPerfilGuia() {
 // ── Perfil de Elevação de uma Linha de Plantio já gerada (ativa ou travada) ──────────────────
 // Modo "picking": clique numa linha qualquer (ver handler de clique anexado em addSplineRow, nas
 // duas cópias — geração modo-simples e por-talhão) chama _cliqueEmLinhaPlantio, que despacha pro
-// perfil (aqui) ou pra criação de carreador (ver _cliqueParaCarreadorDeLinha), conforme o modo
-// ativo em _modoPickLinha — evita duplicar a infraestrutura de "escolher uma linha no mapa".
-let _modoPickLinha = null; // null | 'perfil' | 'carreador'
+// perfil (aqui), pra criação de carreador (ver _cliqueParaCarreadorDeLinha) ou pra correção manual
+// de setor (v5.61, ver ativarCorrecaoSetorLinha), conforme o modo ativo em _modoPickLinha — evita
+// duplicar a infraestrutura de "escolher uma linha no mapa".
+let _modoPickLinha = null; // null | 'perfil' | 'carreador' | 'corrigirSetorOrigem' | 'corrigirSetorDestino'
 let _linhasComPesoAumentado = []; // polylines com o weight temporariamente aumentado durante o picking
 
 // O preenchimento do contorno do talhão (mesmo quase transparente) cobre a área inteira e captura
@@ -14359,7 +14382,91 @@ function _cliqueEmLinhaPlantio(pl) {
     map.getContainer().style.cursor = '';
     $('btnCancelarCarreadorLinha').style.display = 'none';
     _criarCarreadorDeLinhaPlantio(pl);
+  } else if(_modoPickLinha === 'corrigirSetorOrigem' || _modoPickLinha === 'corrigirSetorDestino') {
+    _cliqueParaCorrecaoSetor(pl);
   }
+}
+
+// ── Corrigir Setor de uma Linha (v5.61) ─────────────────────────────────────────────────────────
+// Pedido do usuário — depois de 3 rodadas corrigindo o algoritmo automático de proximidade
+// (v5.52/v5.53/v5.60) e o problema ainda aparecendo num caso novo ("o azul ficou com um fundo
+// misturado"): "pensei em um segundo comando para reordenar a divisão apenas daquele bloco ou um
+// segundo botão no final, não sei, evolui isso de forma pratica e funcional". Em vez de perseguir
+// mais um caso-limite geométrico no algoritmo automático (RECONHECIDAMENTE sem fim — campo real
+// sempre pode ter outro formato que engana a heurística de novo), ferramenta de CORREÇÃO MANUAL:
+// clique na linha que caiu no setor errado, depois clique numa linha que já está no setor CERTO
+// (o destino) — a errada vira a cor da certa. Funciona em cima do resultado de QUALQUER uma das
+// duas ferramentas (Dividir em Setores OU Montagem por Clique), porque não depende de nenhuma
+// estrutura própria de cada uma — deriva os grupos atuais direto das CORES de verdade das linhas
+// já pintadas (_recalcularGruposPorCor), sempre em cima de _ultimaDivisaoSetores.linhasCorrigidas
+// (a mesma lista que "Limpar Setores" já usa, populada pelas duas ferramentas). Reaproveita a
+// infraestrutura de "escolher uma linha no mapa" já existente (_modoPickLinha/_cliqueEmLinhaPlantio,
+// a mesma do Perfil de Linha/Carreador) — sem clique novo nenhum pra cadastrar linha por linha.
+// Depois de corrigir uma, volta sozinho pro modo "escolher a errada" — corrigir várias seguidas sem
+// precisar clicar no botão nos de novo a cada uma (fluxo rápido, pedido como "prático").
+let _corrigirSetorOrigemPl = null; // linha escolhida como "errada", aguardando o clique no destino
+
+function ativarCorrecaoSetorLinha() {
+  if(!_ultimaDivisaoSetores || !_ultimaDivisaoSetores.linhasCorrigidas.length) { setStatus('Nenhuma divisão em setores ativa pra corrigir — use "Dividir em Setores" ou "Montar Setores por Clique" primeiro.', 'err'); return; }
+  _modoPickLinha = 'corrigirSetorOrigem';
+  _corrigirSetorOrigemPl = null;
+  _aumentarClicabilidadeLinhas();
+  map.getContainer().style.cursor = 'crosshair';
+  $('btnCancelarCorrecaoSetor').style.display = 'flex';
+  setStatus('Clique na linha que caiu no setor ERRADO.', 'info');
+}
+function cancelarCorrecaoSetorLinha() {
+  if(_modoPickLinha === 'corrigirSetorOrigem' || _modoPickLinha === 'corrigirSetorDestino') _modoPickLinha = null;
+  _corrigirSetorOrigemPl = null;
+  _restaurarClicabilidadeLinhas();
+  map.getContainer().style.cursor = '';
+  $('btnCancelarCorrecaoSetor').style.display = 'none';
+  setStatus('', '');
+}
+function _cliqueParaCorrecaoSetor(pl) {
+  if(_modoPickLinha === 'corrigirSetorOrigem') {
+    const estaNaDivisao = _ultimaDivisaoSetores.linhasCorrigidas.some(x => x.pl === pl);
+    if(!estaNaDivisao) { setStatus('Essa linha não faz parte da divisão em setores atual — clique numa linha colorida por setor.', 'err'); return; }
+    _corrigirSetorOrigemPl = pl;
+    _modoPickLinha = 'corrigirSetorDestino';
+    setStatus('Linha errada escolhida. Agora clique numa linha que já está no setor CERTO (destino).', 'info');
+    return;
+  }
+  // _modoPickLinha === 'corrigirSetorDestino'
+  const origem = _corrigirSetorOrigemPl;
+  if(pl === origem) { setStatus('Clique numa linha DIFERENTE da que você escolheu como errada.', 'err'); return; }
+  const estaNaDivisao = _ultimaDivisaoSetores.linhasCorrigidas.some(x => x.pl === pl);
+  if(!estaNaDivisao) { setStatus('A linha de destino também precisa fazer parte da divisão em setores atual.', 'err'); return; }
+  const corDestino = pl.options.color;
+  if(corDestino === origem.options.color) { setStatus('Essa linha já está no mesmo setor da escolhida — nada a corrigir. Clique noutra linha de destino, ou Cancelar.', 'info'); return; }
+  origem.setStyle({ color: corDestino });
+  _atualizarResumoAposCorrecao();
+  // Volta pro modo "escolher a errada" — corrigir a próxima sem precisar reclicar o botão.
+  _corrigirSetorOrigemPl = null;
+  _modoPickLinha = 'corrigirSetorOrigem';
+  setStatus('Linha movida pro setor certo. Clique na próxima linha errada (ou Cancelar pra terminar).', 'ok');
+}
+
+// Agrupa as linhas atualmente marcadas por setor (_ultimaDivisaoSetores.linhasCorrigidas, populada
+// tanto por "Dividir em Setores" quanto por "Montar Setores por Clique") pela COR DE VERDADE que
+// cada uma está pintada AGORA — não por nenhuma estrutura própria de cada ferramenta. É assim que
+// a correção manual funciona em cima de QUALQUER uma das duas sem precisar saber qual foi usada, e
+// reflete automaticamente qualquer correção manual já aplicada antes.
+function _recalcularGruposPorCor() {
+  const porCor = new Map();
+  _ultimaDivisaoSetores.linhasCorrigidas.forEach(({ pl }) => {
+    const cor = pl.options.color;
+    if(!porCor.has(cor)) porCor.set(cor, { cor, itens: [], count: 0, comprimento: 0 });
+    const g = porCor.get(cor);
+    g.itens.push(pl); g.count++;
+    const pts = pl.getLatLngs().flat();
+    for(let i = 0; i < pts.length - 1; i++) g.comprimento += haversineM(pts[i], pts[i + 1]);
+  });
+  return [...porCor.values()];
+}
+function _atualizarResumoAposCorrecao() {
+  const grupos = _recalcularGruposPorCor();
+  _atualizarResumoSetores(grupos.length ? [{ nome: 'Setores (com correção manual)', grupos }] : null);
 }
 
 async function mostrarPerfilLinhaPlantio(pl) {
@@ -15577,6 +15684,7 @@ function _abandonarFerramentaAtiva() {
   if(modoDivisao || modo === 'divisao') cancelarDivisaoUsuario();
   if(_modoPickLinha === 'perfil') cancelarPerfilLinhaPlantio();
   else if(_modoPickLinha === 'carreador') cancelarCarreadorDeLinha();
+  else if(_modoPickLinha === 'corrigirSetorOrigem' || _modoPickLinha === 'corrigirSetorDestino') cancelarCorrecaoSetorLinha();
   // v4.93: a seleção de talhões (talhoesMultiSel/talhaoSelecionadoUid) NÃO é mais cancelada aqui de
   // propósito — ela é dado de projeto (o que está selecionado), não uma ferramenta "armada" à espera
   // de clique no mapa, e o próprio fluxo de multi-seleção pede pra selecionar talhões numa aba e
