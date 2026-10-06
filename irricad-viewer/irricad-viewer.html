@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<!-- build 2026-10-01 v1.9.2 -->
+<!-- build 2026-10-06 v1.10.0 -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Visualizador IrriCAD v1.9.2 &middot; TophoFarm</title>
+<title>Visualizador IrriCAD v1.10.0 &middot; TophoFarm</title>
 <meta name="theme-color" content="#1f4e4c">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -252,8 +252,9 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 /* ==================================================================
    VERSAO / HISTORICO
    ================================================================== */
-const VERSAO_APP = '1.9.2';
+const VERSAO_APP = '1.10.0';
 const HISTORICO_VERSOES = [
+  {v:'1.10.0', d:'06/10/2026', t:'Tocar em linhas (tubulações — ZONE_PIPES, MAINLINE_PIPES etc.) pra ver a descrição ficou muito mais fácil: a área de toque agora é bem mais larga que o traço desenhado (antes era só 2-3px, quase impossível de acertar no dedo). O desenho no mapa continua do mesmo tamanho — só a área sensível ao toque cresceu.'},
   {v:'1.9.2', d:'01/10/2026', t:'Ícone de instalação trocado de novo: agora é o símbolo do IrriCAD (o ícone da TophoFarm já é usado por outro app, ficava difícil diferenciar os dois na tela inicial do celular).'},
   {v:'1.9.1', d:'30/09/2026', t:'Ícone de instalação trocado: era um pino genérico, agora é o símbolo da TophoFarm sobre fundo verde-azulado — o que aparece na tela inicial do celular ao instalar o app.'},
   {v:'1.9.0', d:'30/09/2026', t:'Offline de verdade: o mapa (Leaflet) e o leitor de KMZ (JSZip) agora ficam guardados no próprio aparelho em vez de serem buscados da internet toda vez — igual ao Coletor de Pontos. Depois de abrir o app uma vez com sinal, ele continua funcionando (inclusive reabrindo o último projeto salvo) sem internet nenhuma em campo.'},
@@ -676,7 +677,7 @@ function construirCamadas(arvore, projId, projNome, opcoes){
       const rotulo = rotuloPlacemark(pm, idxPm, pasta.nome);
       const informativo = placemarkInformativo(pm);
       pm.geoms.forEach(g=>{
-        let obj=null;
+        let obj=null, alvoToque=null; // alvoToque = camada que recebe o popup (pode ser maior/invisivel)
         if(g.tipo==='point'){
           if(informativo){
             const icone = L.divIcon({
@@ -689,7 +690,12 @@ function construirCamadas(arvore, projId, projNome, opcoes){
           }
           bounds.extend([g.coords[0],g.coords[1]]);
         } else if(g.tipo==='line'){
-          obj = L.polyline(g.coords, {color:corTraco, weight:2.5, opacity:.9});
+          // linha fina (so o desenho) + uma linha larga e invisivel por cima,
+          // so pra receber o toque -- uma tubulacao desenhada com 2-3px de
+          // espessura e quase impossivel de acertar no dedo; 2cm de traço
+          // "fantasma" em volta dela resolve sem mudar o visual do mapa.
+          obj = L.polyline(g.coords, {color:corTraco, weight:2.5, opacity:.9, interactive:false});
+          alvoToque = L.polyline(g.coords, {weight:16, opacity:0, interactive:true});
           g.coords.forEach(c=>bounds.extend(c));
         } else if(g.tipo==='polygon'){
           const anel = [g.anel, ...g.buracos];
@@ -699,8 +705,9 @@ function construirCamadas(arvore, projId, projNome, opcoes){
           g.anel.forEach(c=>bounds.extend(c));
         }
         if(obj){
-          obj.bindPopup(popupHTML(pm, pasta.nome, rotulo));
+          (alvoToque || obj).bindPopup(popupHTML(pm, pasta.nome, rotulo));
           layer.addLayer(obj);
+          if(alvoToque) layer.addLayer(alvoToque);
           count++;
         }
       });
