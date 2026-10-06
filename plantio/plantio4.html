@@ -239,17 +239,14 @@ body.layout-lateral #status{grid-area:status;}
 /* v5.64 — pedido do usuário: "quando eu ocultar a imagem de satelite, gostaria de um visual cad,
    aquela folha preta quadriculada". Grade quadriculada estilo AutoCAD, só junto com o fundo "sem
    imagem online" (.map-sem-online — nunca aparece por cima de satélite de verdade, não faria
-   sentido). --grade-tam/--grade-offset-x/-y são atualizados por JS (_atualizarGradeCadGeo) a cada
-   pan/zoom do mapa, convertendo um espaçamento FIXO em metros reais (50m) pra pixels de tela no
-   zoom atual, e ancorando a fase do padrão num ponto geográfico fixo (lat/lng 0,0) — assim a
-   grade acompanha o mapa de verdade (gira/anda junto ao arrastar e re-escala ao dar zoom), em vez
-   de ficar "colada na tela" como um papel de parede fixo. */
+   sentido). v5.66: usuário pediu "escala sempre fixa, por mais que eu dê zoom" — tamanho em
+   pixels de tela FIXO (não representa mais metros reais, não reage a pan/zoom; a v5.64 original
+   escalava com o zoom e ancorava num ponto geográfico via JS — removido, ver changelog). */
 #map.map-sem-online.map-grade-cad{
   background-image:
     linear-gradient(to right, rgba(140,140,140,.35) 1px, transparent 1px),
     linear-gradient(to bottom, rgba(140,140,140,.35) 1px, transparent 1px);
-  background-size: var(--grade-tam,50px) var(--grade-tam,50px);
-  background-position: var(--grade-offset-x,0) var(--grade-offset-y,0);
+  background-size: 50px 50px;
 }
 #infoFloat{width:220px;background:var(--panel-bg-float);border:1px solid var(--panel-border);border-radius:10px;box-shadow:0 6px 22px rgba(0,0,0,.5);color:var(--panel-text);flex-shrink:0;min-height:0;}
 #infoFloat .ifhead{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;cursor:pointer;}
@@ -432,7 +429,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Sistematização de Plantio <span id="verLabel">v5.65 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Sistematização de Plantio <span id="verLabel">v5.66 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -452,6 +449,7 @@ body.layout-lateral #status{grid-area:status;}
     <button class="rtab" data-panel="rp-curvas" onclick="ativarRibbon('rp-curvas')">Curvas de Nível</button>
     <button class="rtab" data-panel="rp-analise" onclick="ativarRibbon('rp-analise')">Análise</button>
     <button class="rtab" data-panel="rp-relatorio" onclick="ativarRibbon('rp-relatorio')">Exportar &amp; Relatório</button>
+    <button class="rtab" data-panel="rp-config" onclick="ativarRibbon('rp-config')">&#9881; Configurações</button>
   </div>
 
   <div id="ribbonPanels">
@@ -459,63 +457,6 @@ body.layout-lateral #status{grid-area:status;}
 
     <!-- ══ Início ══ -->
     <div class="rpanel active" id="rp-inicio">
-      <div class="rgroup">
-        <div class="rgroup-body">
-          <button class="rbtn c-blue" id="btnBuscarAtualizacoes" onclick="_cliqueBotaoAtualizacao()" title="Verifica se existe uma versão mais nova publicada e, se sim, deixa você atualizar com 1 clique — sem precisar de Ctrl+Shift+R."><span class="ico" id="icoAtualizacao">&#8635;</span><span class="lbl" id="lblAtualizacao">Buscar Atualizações</span></button>
-          <div id="statusAtualizacao" style="font-size:10.5px;color:var(--panel-text-dim);margin-top:4px;max-width:190px;white-space:normal;">Verificando automaticamente ao abrir…</div>
-        </div>
-        <div class="rgroup-title">Atualizações</div>
-      </div>
-      <div class="rgroup">
-        <div class="rgroup-body">
-          <div style="display:flex;flex-direction:column;gap:4px;">
-            <div style="display:flex;gap:5px;">
-              <input type="password" id="gmKey" class="rfield wide" placeholder="Cole sua chave AIzaSy…" onkeydown="if(event.key==='Enter') salvarKey()">
-              <button class="btn-go" onclick="salvarKey()">&#10003;</button>
-              <button class="btn-help" onclick="abrirTutorialChave()" title="Como obter a chave?">?</button>
-            </div>
-            <div id="keyStatus" style="font-size:10px;color:var(--panel-text-dim);">Usando ESRI (sem chave)</div>
-            <button class="rbtn-sm" id="btnImagemOnline" style="margin-top:2px;" onclick="alternarImagemOnline()" title="Liga/desliga a imagem de satélite online (ESRI ou Google) no mapa 2D E na Vista 3D — pra ver SÓ a ortofoto que você importou, sem a foto online por baixo/ao redor competindo visualmente com ela.">&#128225; Ocultar Imagem Online</button>
-            <div id="grpCorFundoMapa" style="display:none;margin-top:6px;">
-              <div style="font-size:10px;color:var(--panel-text-dim);margin-bottom:3px;">Cor de fundo do mapa</div>
-              <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;">
-                <button class="rbtn-sm" style="padding:2px 8px;min-width:0;" onclick="definirCorFundoMapa('#000000')" title="Preto (padrão do AutoCAD)"><span style="display:inline-block;width:12px;height:12px;background:#000;border:1px solid #888;vertical-align:middle;"></span></button>
-                <button class="rbtn-sm" style="padding:2px 8px;min-width:0;" onclick="definirCorFundoMapa('#212830')" title="Cinza-azulado escuro (AutoCAD moderno)"><span style="display:inline-block;width:12px;height:12px;background:#212830;border:1px solid #888;vertical-align:middle;"></span></button>
-                <button class="rbtn-sm" style="padding:2px 8px;min-width:0;" onclick="definirCorFundoMapa('#4a4a4a')" title="Cinza"><span style="display:inline-block;width:12px;height:12px;background:#4a4a4a;border:1px solid #888;vertical-align:middle;"></span></button>
-                <button class="rbtn-sm" style="padding:2px 8px;min-width:0;" onclick="definirCorFundoMapa('#ffffff')" title="Branco"><span style="display:inline-block;width:12px;height:12px;background:#fff;border:1px solid #888;vertical-align:middle;"></span></button>
-                <input type="color" id="inputCorFundoMapa" value="#000000" oninput="definirCorFundoMapa(this.value)" title="Escolher outra cor" style="width:30px;height:24px;padding:0;border:1px solid var(--panel-border);background:none;cursor:pointer;">
-              </div>
-              <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--panel-text);cursor:pointer;margin-top:6px;">
-                <input type="checkbox" id="chkGradeCad" onchange="alternarGradeCad(this.checked)" title="Grade quadriculada estilo AutoCAD por cima da cor de fundo — acompanha o mapa de verdade (anda e re-escala ao arrastar/dar zoom), igual o grid do model space do AutoCAD."> Grade estilo CAD (quadriculado)
-              </label>
-            </div>
-          </div>
-        </div>
-        <div class="rgroup-title">Chave Google Maps</div>
-      </div>
-      <div class="rgroup">
-        <div class="rgroup-body">
-          <select id="elevacaoModo" class="rfield wide" onchange="salvarModoElevacao()" title="Fusão multi-fonte: mais precisa (cruza várias fontes, rejeita outlier), mas mais lenta — cada busca de elevação vira várias rodadas de rede. Só Google: mais rápida (uma rodada só), precisão de uma fonte única.">
-            <option value="fusao" selected>Fusão multi-fonte (mais precisa, mais lenta)</option>
-            <option value="google">Só Google (mais rápida)</option>
-          </select>
-          <div id="avisoElevacaoLocal" style="display:none;font-size:10px;color:var(--acc2);font-weight:700;margin-top:4px;max-width:190px;white-space:normal;">&#9989; Curvas de nível locais ativas — esse seletor está sendo ignorado (elevação vem só das curvas importadas)</div>
-        </div>
-        <div class="rgroup-title">Fonte de Elevação</div>
-      </div>
-      <div class="rgroup">
-        <div class="rgroup-body">
-          <div style="display:flex;flex-direction:column;gap:4px;">
-            <div style="display:flex;gap:5px;">
-              <input type="text" id="demProxyUrl" class="rfield wide" placeholder="https://seu-worker.workers.dev" onkeydown="if(event.key==='Enter') salvarDemProxy()">
-              <button class="btn-go" onclick="salvarDemProxy()">&#10003;</button>
-              <button class="btn-help" onclick="abrirTutorialDemProxy()" title="O que é isso?">?</button>
-            </div>
-            <div id="demProxyStatus" style="font-size:10px;color:var(--panel-text-dim);">Fusão de elevação: Google + Open-Meteo (2 fontes)</div>
-          </div>
-        </div>
-        <div class="rgroup-title">Proxy SRTM/ASTER/Mapzen (opcional, só no modo Fusão)</div>
-      </div>
       <div class="rgroup">
         <div class="rgroup-body">
           <div id="searchWrap">
@@ -539,19 +480,6 @@ body.layout-lateral #status{grid-area:status;}
           <input type="file" id="inputTalhaoDxf" accept=".dxf" style="display:none" onchange="if(this.files[0]){importarTalhaoDxf(this.files[0]);this.value='';}">
         </div>
         <div class="rgroup-title">Projeto</div>
-      </div>
-      <div class="rgroup">
-        <div class="rgroup-body">
-          <div style="display:flex;gap:6px;flex-wrap:wrap;max-width:210px;">
-            <button class="tema-swatch" data-tema="branco" onclick="aplicarTema('branco')" title="Branco Agrolinhas (padrão) — fundo claro leve, botões e detalhes em verde na tonalidade do logo"><span class="tema-dot" style="background:#1e8a4f;box-shadow:0 0 0 1px #ccc inset;"></span>Branco</button>
-            <button class="tema-swatch" data-tema="ciano" onclick="aplicarTema('ciano')" title="Ciano Agrolinhas — tom escuro baseado no logo"><span class="tema-dot" style="background:#0f95b8"></span>Ciano</button>
-            <button class="tema-swatch" data-tema="verde" onclick="aplicarTema('verde')" title="Verde Agrolinhas — tom escuro baseado no logo"><span class="tema-dot" style="background:#1e8a4f"></span>Verde</button>
-            <button class="tema-swatch" data-tema="azul-claro" onclick="aplicarTema('azul-claro')" title="Azul claro — mais suave que o azul original"><span class="tema-dot" style="background:#2f8fd1"></span>Azul claro</button>
-            <button class="tema-swatch" data-tema="azul-escuro" onclick="aplicarTema('azul-escuro')" title="Azul escuro — a cor original do app"><span class="tema-dot" style="background:#1565c0"></span>Azul escuro</button>
-            <button class="tema-swatch" data-tema="autocad" onclick="aplicarTema('autocad')" title="AutoCAD Classic — cinza-chumbo escuro com destaque ciano/laranja, a cara clássica do AutoCAD"><span class="tema-dot" style="background:#1e1e1e;box-shadow:0 0 0 1px #00b0b9 inset;"></span>AutoCAD</button>
-          </div>
-        </div>
-        <div class="rgroup-title">Tema Visual</div>
       </div>
       <div class="rgroup">
         <div class="rgroup-body">
@@ -1240,6 +1168,86 @@ body.layout-lateral #status{grid-area:status;}
           <button class="rbtn c-red" onclick="gerarPDF()"><span class="ico">&#128196;</span><span class="lbl">Gerar Relatório PDF</span></button>
         </div>
         <div class="rgroup-title">Gerar</div>
+      </div>
+    </div>
+
+    <!-- ══ Configurações (v5.66) — pedido do usuário: "quero criar uma aba de configurações, onde
+    coloco toda essa parte de configurações do app (...) quero organizar". Reúne o que era
+    "preferência do app, configurada 1x e raramente mexida de novo" (atualizações, chave/fundo do
+    mapa, fonte de elevação, proxy, tema visual) — antes espalhado dentro da aba Início junto com
+    ações do dia a dia (Buscar Local, Importar Projeto, Dados Locais — essas ficaram lá, são coisa
+    de "cada projeto", não "preferência do app"). Nenhum id/função mudou — só a aba em que os
+    grupos moram, então nada do JS precisou mudar. ══ -->
+    <div class="rpanel" id="rp-config">
+      <div class="rgroup">
+        <div class="rgroup-body">
+          <button class="rbtn c-blue" id="btnBuscarAtualizacoes" onclick="_cliqueBotaoAtualizacao()" title="Verifica se existe uma versão mais nova publicada e, se sim, deixa você atualizar com 1 clique — sem precisar de Ctrl+Shift+R."><span class="ico" id="icoAtualizacao">&#8635;</span><span class="lbl" id="lblAtualizacao">Buscar Atualizações</span></button>
+          <div id="statusAtualizacao" style="font-size:10.5px;color:var(--panel-text-dim);margin-top:4px;max-width:190px;white-space:normal;">Verificando automaticamente ao abrir…</div>
+        </div>
+        <div class="rgroup-title">Atualizações</div>
+      </div>
+      <div class="rgroup">
+        <div class="rgroup-body">
+          <div style="display:flex;flex-direction:column;gap:4px;">
+            <div style="display:flex;gap:5px;">
+              <input type="password" id="gmKey" class="rfield wide" placeholder="Cole sua chave AIzaSy…" onkeydown="if(event.key==='Enter') salvarKey()">
+              <button class="btn-go" onclick="salvarKey()">&#10003;</button>
+              <button class="btn-help" onclick="abrirTutorialChave()" title="Como obter a chave?">?</button>
+            </div>
+            <div id="keyStatus" style="font-size:10px;color:var(--panel-text-dim);">Usando ESRI (sem chave)</div>
+            <button class="rbtn-sm" id="btnImagemOnline" style="margin-top:2px;" onclick="alternarImagemOnline()" title="Liga/desliga a imagem de satélite online (ESRI ou Google) no mapa 2D E na Vista 3D — pra ver SÓ a ortofoto que você importou, sem a foto online por baixo/ao redor competindo visualmente com ela.">&#128225; Ocultar Imagem Online</button>
+            <div id="grpCorFundoMapa" style="display:none;margin-top:6px;">
+              <div style="font-size:10px;color:var(--panel-text-dim);margin-bottom:3px;">Cor de fundo do mapa</div>
+              <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;">
+                <button class="rbtn-sm" style="padding:2px 8px;min-width:0;" onclick="definirCorFundoMapa('#000000')" title="Preto (padrão do AutoCAD)"><span style="display:inline-block;width:12px;height:12px;background:#000;border:1px solid #888;vertical-align:middle;"></span></button>
+                <button class="rbtn-sm" style="padding:2px 8px;min-width:0;" onclick="definirCorFundoMapa('#212830')" title="Cinza-azulado escuro (AutoCAD moderno)"><span style="display:inline-block;width:12px;height:12px;background:#212830;border:1px solid #888;vertical-align:middle;"></span></button>
+                <button class="rbtn-sm" style="padding:2px 8px;min-width:0;" onclick="definirCorFundoMapa('#4a4a4a')" title="Cinza"><span style="display:inline-block;width:12px;height:12px;background:#4a4a4a;border:1px solid #888;vertical-align:middle;"></span></button>
+                <button class="rbtn-sm" style="padding:2px 8px;min-width:0;" onclick="definirCorFundoMapa('#ffffff')" title="Branco"><span style="display:inline-block;width:12px;height:12px;background:#fff;border:1px solid #888;vertical-align:middle;"></span></button>
+                <input type="color" id="inputCorFundoMapa" value="#000000" oninput="definirCorFundoMapa(this.value)" title="Escolher outra cor" style="width:30px;height:24px;padding:0;border:1px solid var(--panel-border);background:none;cursor:pointer;">
+              </div>
+              <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--panel-text);cursor:pointer;margin-top:6px;">
+                <input type="checkbox" id="chkGradeCad" onchange="alternarGradeCad(this.checked)" title="Grade quadriculada estilo AutoCAD por cima da cor de fundo — tamanho de tela fixo (50px), não muda com o zoom."> Grade estilo CAD (quadriculado)
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="rgroup-title">Imagem e Fundo do Mapa</div>
+      </div>
+      <div class="rgroup">
+        <div class="rgroup-body">
+          <select id="elevacaoModo" class="rfield wide" onchange="salvarModoElevacao()" title="Fusão multi-fonte: mais precisa (cruza várias fontes, rejeita outlier), mas mais lenta — cada busca de elevação vira várias rodadas de rede. Só Google: mais rápida (uma rodada só), precisão de uma fonte única.">
+            <option value="fusao" selected>Fusão multi-fonte (mais precisa, mais lenta)</option>
+            <option value="google">Só Google (mais rápida)</option>
+          </select>
+          <div id="avisoElevacaoLocal" style="display:none;font-size:10px;color:var(--acc2);font-weight:700;margin-top:4px;max-width:190px;white-space:normal;">&#9989; Curvas de nível locais ativas — esse seletor está sendo ignorado (elevação vem só das curvas importadas)</div>
+        </div>
+        <div class="rgroup-title">Fonte de Elevação</div>
+      </div>
+      <div class="rgroup">
+        <div class="rgroup-body">
+          <div style="display:flex;flex-direction:column;gap:4px;">
+            <div style="display:flex;gap:5px;">
+              <input type="text" id="demProxyUrl" class="rfield wide" placeholder="https://seu-worker.workers.dev" onkeydown="if(event.key==='Enter') salvarDemProxy()">
+              <button class="btn-go" onclick="salvarDemProxy()">&#10003;</button>
+              <button class="btn-help" onclick="abrirTutorialDemProxy()" title="O que é isso?">?</button>
+            </div>
+            <div id="demProxyStatus" style="font-size:10px;color:var(--panel-text-dim);">Fusão de elevação: Google + Open-Meteo (2 fontes)</div>
+          </div>
+        </div>
+        <div class="rgroup-title">Proxy SRTM/ASTER/Mapzen (opcional, só no modo Fusão)</div>
+      </div>
+      <div class="rgroup">
+        <div class="rgroup-body">
+          <div style="display:flex;gap:6px;flex-wrap:wrap;max-width:210px;">
+            <button class="tema-swatch" data-tema="branco" onclick="aplicarTema('branco')" title="Branco Agrolinhas (padrão) — fundo claro leve, botões e detalhes em verde na tonalidade do logo"><span class="tema-dot" style="background:#1e8a4f;box-shadow:0 0 0 1px #ccc inset;"></span>Branco</button>
+            <button class="tema-swatch" data-tema="ciano" onclick="aplicarTema('ciano')" title="Ciano Agrolinhas — tom escuro baseado no logo"><span class="tema-dot" style="background:#0f95b8"></span>Ciano</button>
+            <button class="tema-swatch" data-tema="verde" onclick="aplicarTema('verde')" title="Verde Agrolinhas — tom escuro baseado no logo"><span class="tema-dot" style="background:#1e8a4f"></span>Verde</button>
+            <button class="tema-swatch" data-tema="azul-claro" onclick="aplicarTema('azul-claro')" title="Azul claro — mais suave que o azul original"><span class="tema-dot" style="background:#2f8fd1"></span>Azul claro</button>
+            <button class="tema-swatch" data-tema="azul-escuro" onclick="aplicarTema('azul-escuro')" title="Azul escuro — a cor original do app"><span class="tema-dot" style="background:#1565c0"></span>Azul escuro</button>
+            <button class="tema-swatch" data-tema="autocad" onclick="aplicarTema('autocad')" title="AutoCAD Classic — cinza-chumbo escuro com destaque ciano/laranja, a cara clássica do AutoCAD"><span class="tema-dot" style="background:#1e1e1e;box-shadow:0 0 0 1px #00b0b9 inset;"></span>AutoCAD</button>
+          </div>
+        </div>
+        <div class="rgroup-title">Tema Visual</div>
       </div>
     </div>
 
@@ -4625,6 +4633,19 @@ body.layout-lateral #status{grid-area:status;}
 // isso aparecia só "Sistematização de Plantio — Bolsa Irriga..."). Trocado nos dois pra "Agrolinhas
 // — Sistematização de Plantio" (o rodapé do PDF/relatório continua "Bolsa Irriga®" — é a razão
 // social/dado legal da empresa, correto manter separado do nome do produto).
+// v5.66: dois pedidos. (1) "quero a quadricula de fundo com escola [escala] sempre fixa, por mais
+// que eu dou zoom" — a grade CAD da v5.64 escalava o tamanho da célula com o zoom (representando
+// 50m reais) e ancorava a fase do padrão num ponto geográfico fixo via JS a cada pan/zoom.
+// Simplificado pra um tamanho de TELA fixo (50px, direto no CSS) que nunca muda — removido todo o
+// JS de recálculo (_atualizarGradeCadGeo e o listener map.on('move zoom',...)). (2) "quero criar
+// uma aba de 'configurações', onde coloco toda essa parte de configurações do app, com ou sem
+// imagem de satelite, atualização, quero organizar" — nova aba "⚙ Configurações" (rp-config,
+// última da ribbon) reúne o que é "preferência do app, configurada 1x e raramente mexida de novo":
+// Atualizações, Imagem e Fundo do Mapa (ex-"Chave Google Maps" — key + imagem online + cor de
+// fundo + grade CAD, renomeado porque cresceu além de só a chave), Fonte de Elevação, Proxy SRTM/
+// ASTER/Mapzen e Tema Visual — todos MOVIDOS (cortar/colar, nenhum id/função mudou) de dentro da
+// aba Início, que ficou só com "coisa de cada projeto": Buscar Local, Projeto (Novo/Importar) e
+// Dados Locais (Ortofoto/Curvas/DEM).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -4977,12 +4998,12 @@ _aplicarVisibilidadeImagemOnline(); // respeita a preferência salva já na carg
 
 // v5.64 — pedido do usuário: "quando eu ocultar a imagem de satelite, gostaria de um visual cad,
 // aquela folha preta quadriculada". Grade quadriculada por cima da "Cor de fundo do mapa"
-// (.map-sem-online já existente) — ver CSS .map-grade-cad. Em vez de um papel de parede FIXO na
-// tela (que pareceria "flutuar" sobre os talhões ao arrastar o mapa), --grade-tam/--grade-offset
-// são recalculados a cada pan/zoom (_atualizarGradeCadGeo), convertendo um espaçamento fixo em
-// METROS reais (50m, "nice" de sobra pra qualquer zoom de trabalho típico) pra pixels de tela no
-// zoom atual, e ancorando a fase do padrão num ponto geográfico fixo (lat/lng 0,0, arbitrário mas
-// estável) — assim a grade acompanha o chão de verdade, igual o grid do model space do AutoCAD.
+// (.map-sem-online já existente) — ver CSS .map-grade-cad.
+// v5.66: usuário pediu "quero a quadricula de fundo com escala sempre fixa, por mais que eu dou
+// zoom" — a v5.64 original escalava o tamanho da célula com o zoom (representando 50m reais) e
+// ancorava a fase do padrão num ponto geográfico fixo via JS a cada pan/zoom. Simplificado pra um
+// tamanho de tela FIXO (50px, direto no CSS — ver .map-grade-cad) que nunca muda, sem nenhum JS
+// recalculando nada: _atualizarGradeCadGeo/o listener map.on('move zoom',...) foram removidos.
 let _gradeCadAtiva = localStorage.getItem('gradeCadAtiva') === 'true';
 function alternarGradeCad(ativa) {
   _gradeCadAtiva = ativa;
@@ -4993,21 +5014,7 @@ function _aplicarGradeCad() {
   const mapEl = $('map');
   if(mapEl) mapEl.classList.toggle('map-grade-cad', _gradeCadAtiva);
   const chk = $('chkGradeCad'); if(chk && chk.checked !== _gradeCadAtiva) chk.checked = _gradeCadAtiva;
-  if(_gradeCadAtiva) _atualizarGradeCadGeo();
 }
-function _atualizarGradeCadGeo() {
-  if(!_gradeCadAtiva) return;
-  const mapEl = $('map');
-  if(!mapEl || !map) return;
-  const METROS_POR_CELULA = 50;
-  const metrosPorPixel = 156543.03392 * Math.cos(map.getCenter().lat * Math.PI / 180) / Math.pow(2, map.getZoom());
-  const tamCelulaPx = Math.max(4, METROS_POR_CELULA / metrosPorPixel);
-  const origemPx = map.latLngToContainerPoint([0, 0]); // âncora fixa — faz a fase do padrão "grudar" no chão
-  mapEl.style.setProperty('--grade-tam', tamCelulaPx.toFixed(2) + 'px');
-  mapEl.style.setProperty('--grade-offset-x', (origemPx.x % tamCelulaPx).toFixed(2) + 'px');
-  mapEl.style.setProperty('--grade-offset-y', (origemPx.y % tamCelulaPx).toFixed(2) + 'px');
-}
-map.on('move zoom', _atualizarGradeCadGeo);
 _aplicarGradeCad(); // respeita a preferência salva já na carga da página
 
 function ativarGoogleMaps(key) {
