@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<!-- build 2026-10-06 v1.15.0 -->
+<!-- build 2026-10-06 v1.16.0 -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Visualizador IrriCAD v1.15.0 &middot; TophoFarm</title>
+<title>Visualizador IrriCAD v1.16.0 &middot; TophoFarm</title>
 <meta name="theme-color" content="#1f4e4c">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -165,6 +165,29 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 .info-pt-rotulo{position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:1px;
   background:rgba(13,30,28,.9);color:#fff;font-size:.66rem;font-weight:700;padding:.14rem .4rem;border-radius:6px;
   white-space:nowrap;pointer-events:none;box-shadow:0 2px 6px rgba(0,0,0,.4)}
+
+/* ---------- visualizador DXF (CAD, separado do mapa) ---------- */
+#painel-dxf{position:fixed;inset:0;z-index:2200;background:#fff;display:none;flex-direction:column}
+#painel-dxf.aberto{display:flex}
+#dxf-head{flex-shrink:0;padding:calc(env(safe-area-inset-top) + .7rem) .8rem .6rem;background:var(--azul-esc);
+  color:#fff;display:flex;align-items:center;gap:.6rem}
+#dxf-head b{flex:1;font-size:.86rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#dxf-close{background:none;border:none;color:#fff;font-size:1.5rem;line-height:1;padding:.2rem .4rem;flex-shrink:0}
+#dxf-fit{background:rgba(255,255,255,.18);border:none;color:#fff;border-radius:8px;padding:.4rem .7rem;font-size:.76rem;flex-shrink:0}
+#dxf-wrap{flex:1;position:relative;overflow:hidden;background:#fff}
+#dxf-canvas{position:absolute;inset:0;touch-action:none}
+#dxf-dica{position:absolute;left:50%;bottom:.8rem;transform:translateX(-50%);background:rgba(13,30,28,.85);
+  color:#fff;padding:.45rem .9rem;border-radius:16px;font-size:.72rem;white-space:nowrap;pointer-events:none;
+  opacity:1;transition:opacity .4s;max-width:92vw;text-overflow:ellipsis;overflow:hidden}
+#dxf-dica.escondida{opacity:0}
+#dxf-info{position:absolute;left:.6rem;right:.6rem;bottom:.8rem;background:rgba(16,29,38,.96);color:#eaf2f6;
+  border-radius:10px;padding:.7rem .9rem;font-size:.82rem;max-height:42vh;overflow:auto;box-shadow:0 6px 20px rgba(0,0,0,.4);display:none}
+#dxf-info.aberto{display:block}
+#dxf-info b{display:block;margin-bottom:.25rem;padding-right:1.4rem;white-space:pre-line}
+#dxf-info .fechar{position:absolute;top:.35rem;right:.5rem;background:none;border:none;color:#eaf2f6;font-size:1.1rem;line-height:1}
+#dp-abrir-dxf{margin:.4rem 1rem .8rem;padding:.75rem;border-radius:10px;border:2px dashed #2b4757;background:#162732;
+  color:#eaf2f6;font-size:.85rem;text-align:center}
+#dp-lista-dxf .proj-item .abrir{background:none;border:none;color:var(--azul-cl);font-size:1.1rem;padding:.3rem .5rem}
 </style>
 </head>
 <body>
@@ -222,6 +245,8 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
   <div id="dp-head"><h2>Meus projetos</h2><button id="dp-close">&times;</button></div>
   <div id="dp-abrir">&#128194; Abrir arquivo .kmz / .kml</div>
   <div id="dp-lista"><div id="dp-empty">Nenhum projeto salvo neste aparelho ainda.</div></div>
+  <div id="dp-abrir-dxf">&#128208; Abrir arquivo .dxf (visualiza&#231;&#227;o CAD)</div>
+  <div id="dp-lista-dxf"></div>
   <div id="dp-sobre">
     <img src="tophofarm-logo-completo.png" alt="TophoFarm" id="dp-logo">
     <div id="dp-compat">Compat&#237;vel com projetos<div id="dp-irricad-card"><img src="irricad-logo.png" alt="IrriCAD"></div></div>
@@ -238,10 +263,25 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
   </div>
 </div>
 
-<div id="drop-overlay">Solte o arquivo .kmz ou .kml aqui</div>
+<div id="drop-overlay">Solte o arquivo .kmz, .kml ou .dxf aqui</div>
 <div id="carregando"><div class="spin"></div><div id="carregando-txt">Processando arquivo...</div></div>
 <div id="toast"></div>
 <input id="file-input" type="file" accept=".kml,.kmz">
+<input id="file-input-dxf" type="file" accept=".dxf">
+
+<!-- visualizador DXF (CAD, separado do mapa -- pan/zoom livres, sem satelite/GPS) -->
+<div id="painel-dxf">
+  <div id="dxf-head">
+    <b id="dxf-titulo">Projeto.dxf</b>
+    <button id="dxf-fit">&#9974; Ajustar</button>
+    <button id="dxf-close">&times;</button>
+  </div>
+  <div id="dxf-wrap">
+    <canvas id="dxf-canvas"></canvas>
+    <div id="dxf-dica">Arraste para mover &middot; belisque ou role para zoom &middot; toque num texto para ver detalhes</div>
+    <div id="dxf-info"><button class="fechar">&times;</button><div id="dxf-info-conteudo"></div></div>
+  </div>
+</div>
 
 <script src="lib/leaflet-src.js"></script>
 <script src="lib/leaflet-rotate-src.js"></script>
@@ -252,8 +292,9 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 /* ==================================================================
    VERSAO / HISTORICO
    ================================================================== */
-const VERSAO_APP = '1.15.0';
+const VERSAO_APP = '1.16.0';
 const HISTORICO_VERSOES = [
+  {v:'1.16.0', d:'06/10/2026', t:'Novo visualizador de DXF do projeto: abre o .dxf exportado do IrriCAD numa tela própria, estilo CAD (fundo branco, arraste/zoom livres), com as tubulações, válvulas e textos de vazão/pressão exatamente como no programa. Confirmado que o DXF exportado traz coordenada real (UTM), diferente do .dez interno. Fica separado do mapa de campo (.kmz), que continua sendo a navegação principal. Acessível em Meus Projetos → Abrir arquivo .dxf.'},
   {v:'1.15.0', d:'06/10/2026', t:'Removido o visualizador de PDF do projeto — voltou ao visualizador original, só com .kmz/.kml. Próximo passo: investigar abrir um .dxf exportado do IrriCAD.'},
   {v:'1.14.0', d:'06/10/2026', t:'Novo visualizador de PDF do projeto: abre o PDF exportado do IrriCAD (planta de situação, cálculo de cloração, ponto de regulagem da bomba etc.) dentro do app, com zoom e navegação de página — exatamente como aparece no programa. Dá pra abrir o .pdf e o .kmz juntos numa seleção só (Meus Projetos → Abrir PDF do Projeto). O último PDF aberto fica salvo no aparelho.'},
   {v:'1.13.0', d:'06/10/2026', t:'Removida a aba "Tabelas do Projeto" (lia o .dez) — a tabela de materiais que ela mostrava não era o que o usuário precisava ver; as tabelas de verdade (cloração, ponto de regulagem da bomba, pressão por setor) são calculadas pelo IrriCAD e não ficam nesse banco de dados interno. Voltou ao fluxo original (só .kmz/.kml). Próximo passo: visualizador de PDF do projeto.'},
@@ -847,7 +888,7 @@ function atualizaTituloGeral(){
 /* ==================================================================
    PERSISTENCIA (IndexedDB) -- "Meus projetos"
    ================================================================== */
-const DB_NOME = 'irricadViewerDB', DB_VERSAO = 2, STORE = 'projetos', STORE_PDF = 'pdfs';
+const DB_NOME = 'irricadViewerDB', DB_VERSAO = 3, STORE = 'projetos', STORE_PDF = 'pdfs', STORE_DXF = 'dxfs';
 function abrirDB(){
   return new Promise((resolve,reject)=>{
     const req = indexedDB.open(DB_NOME, DB_VERSAO);
@@ -855,9 +896,63 @@ function abrirDB(){
       const db = req.result;
       if(!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, {keyPath:'id'});
       if(!db.objectStoreNames.contains(STORE_PDF)) db.createObjectStore(STORE_PDF, {keyPath:'id'});
+      if(!db.objectStoreNames.contains(STORE_DXF)) db.createObjectStore(STORE_DXF, {keyPath:'id'});
     };
     req.onsuccess = ()=>resolve(req.result);
     req.onerror = ()=>reject(req.error);
+  });
+}
+async function salvarDxfIndexedDB(nome, buf){
+  try{
+    const db = await abrirDB();
+    const registro = {id:nome, nome, ts:Date.now(), buf};
+    await new Promise((resolve,reject)=>{
+      const tx = db.transaction(STORE_DXF,'readwrite');
+      tx.objectStore(STORE_DXF).put(registro);
+      tx.oncomplete = resolve; tx.onerror=()=>reject(tx.error);
+    });
+  }catch(e){ console.warn('Não foi possível salvar o DXF offline:', e); }
+}
+async function listarDxfsSalvos(){
+  const db = await abrirDB();
+  return new Promise((resolve,reject)=>{
+    const tx = db.transaction(STORE_DXF,'readonly');
+    const req = tx.objectStore(STORE_DXF).getAll();
+    req.onsuccess = ()=>resolve(req.result.sort((a,b)=>b.ts-a.ts));
+    req.onerror = ()=>reject(req.error);
+  });
+}
+async function excluirDxfSalvo(id){
+  const db = await abrirDB();
+  return new Promise((resolve,reject)=>{
+    const tx = db.transaction(STORE_DXF,'readwrite');
+    tx.objectStore(STORE_DXF).delete(id);
+    tx.oncomplete = resolve; tx.onerror=()=>reject(tx.error);
+  });
+}
+async function renderizaListaDXF(){
+  const cont = document.getElementById('dp-lista-dxf');
+  let lista;
+  try{ lista = await listarDxfsSalvos(); }catch(e){ lista=[]; }
+  if(!lista.length){ cont.innerHTML=''; return; }
+  cont.innerHTML = lista.map((reg,i)=>{
+    const data = new Date(reg.ts).toLocaleDateString('pt-BR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+    return `<div class="proj-item" data-i="${i}">
+      <button class="abrir" title="Abrir">&#128208;</button>
+      <div class="info"><b>${escHTML(reg.nome)}</b><small>${data} &middot; ${(reg.buf.byteLength/1024/1024).toFixed(1)} MB</small></div>
+      <button class="del" title="Excluir">&#128465;&#65039;</button>
+    </div>`;
+  }).join('');
+  [...cont.children].forEach((div,i)=>{
+    const reg = lista[i];
+    div.querySelector('.abrir').addEventListener('click', ()=>{ fecharDrawerProjetos(); abreDxfSalvo(reg); });
+    div.querySelector('.del').addEventListener('click', async e=>{
+      e.stopPropagation();
+      if(confirm('Excluir "'+reg.nome+'" deste aparelho?')){
+        await excluirDxfSalvo(reg.id);
+        renderizaListaDXF();
+      }
+    });
   });
 }
 async function salvarProjetoIndexedDB(nome, buf){
@@ -934,13 +1029,465 @@ async function renderizaListaProjetos(){
 }
 
 /* ==================================================================
+   VISUALIZADOR DXF (CAD) -- tela separada do mapa de campo
+   O .dxf exportado do IrriCAD foi conferido contra o .kmz do mesmo
+   projeto: as coordenadas das entidades (LINE/POLYLINE/TEXT) batem
+   com UTM de verdade (zona do projeto), bem diferente do .dez interno
+   (que usa um sistema de coordenadas proprio, sem referencia pro mundo
+   real -- por isso aquela tentativa foi removida). Mesmo assim, esse
+   visualizador fica numa tela própria (fundo branco, so pan/zoom, sem
+   satelite/GPS) em vez de virar camada do mapa: e um desenho tecnico
+   (CAD) pra olhar os detalhes/tabelas de cada valvula e bomba, igual
+   abrir o projeto no proprio IrriCAD -- nao uma camada de navegacao.
+   Parser escrito a mao (mesmo estilo do parser de KML acima), sem
+   biblioteca externa: o formato DXF ASCII e so pares "codigo/valor"
+   em sequencia, entao um parser proprio fica leve e offline-friendly.
+   ================================================================== */
+function corACI(n){
+  // paleta padrao do AutoCAD (Color Index) -- so os indices mais comuns
+  // em desenhos de projeto tem cor exata; os demais (uso raro aqui) caem
+  // numa variacao de tom gerada pelo indice, so pra nao ficar tudo preto.
+  const basicas = {1:'#e02020',2:'#c7a000',3:'#1e8f3e',4:'#0097a7',5:'#1a56db',6:'#c0329e',
+    7:'#1a1a1a',8:'#414141',9:'#808080',250:'#333333',251:'#505050',252:'#696969',253:'#828282',254:'#bebebe',255:'#dddddd'};
+  if(basicas[n]) return basicas[n];
+  return `hsl(${(n*37)%360},60%,38%)`;
+}
+function parseDXF(texto){
+  const L = texto.split(/\r\n|\r|\n/).map(s=>s.trim());
+  const total = L.length;
+  let p = 0;
+  function readPair(){
+    if(p+1>=total) return null;
+    const code = parseInt(L[p],10); const val = L[p+1]; p+=2;
+    return isNaN(code) ? null : {code, val};
+  }
+  function peekCode(){ return p<total ? parseInt(L[p],10) : null; }
+
+  const bounds = {minX:Infinity,minY:Infinity,maxX:-Infinity,maxY:-Infinity};
+  function marca(x,y){ if(isFinite(x)&&isFinite(y)){ if(x<bounds.minX)bounds.minX=x; if(x>bounds.maxX)bounds.maxX=x; if(y<bounds.minY)bounds.minY=y; if(y>bounds.maxY)bounds.maxY=y; } }
+  const camadasCor = {};
+  const entidades = [];
+  function corDoGrupo62(valor){
+    const n = parseInt(valor,10);
+    if(isNaN(n) || n===256 || n===0) return null; // BYLAYER/BYBLOCK -- usa a cor da camada
+    return corACI(Math.abs(n));
+  }
+
+  function parseTables(){
+    while(p<total){
+      const par = readPair();
+      if(!par) return;
+      if(par.code===0 && par.val==='ENDSEC') return;
+      if(par.code===0 && par.val==='TABLE'){
+        let nomeTabela=null;
+        while(p<total && peekCode()!==0){ const c=readPair(); if(!c) break; if(c.code===2) nomeTabela=c.val; }
+        if(nomeTabela==='LAYER'){
+          while(p<total){
+            const pr = readPair();
+            if(!pr || (pr.code===0 && pr.val==='ENDTAB')) break;
+            if(pr.code===0 && pr.val==='LAYER'){
+              let nome=null, cor=7;
+              while(p<total && peekCode()!==0){
+                const c=readPair(); if(!c) break;
+                if(c.code===2) nome=c.val;
+                else if(c.code===62) cor=parseInt(c.val,10);
+              }
+              if(nome) camadasCor[nome] = corACI(Math.abs(isNaN(cor)?7:cor));
+            }
+          }
+        } else {
+          while(p<total){ const pr=readPair(); if(!pr || (pr.code===0 && pr.val==='ENDTAB')) break; }
+        }
+      }
+    }
+  }
+
+  function lerCamposGenericos(e){
+    // le os campos comuns (camada/cor) e devolve os campos restantes que o
+    // chamador ainda precisa tratar -- usado dentro dos laços de cada entidade
+    while(p<total && peekCode()!==0){
+      const c = readPair(); if(!c) break;
+      if(c.code===8) e.layer = c.val;
+      else if(c.code===62){ const cc = corDoGrupo62(c.val); if(cc) e.cor = cc; }
+      else return c; // devolve o campo que nao e generico, pra quem chamou tratar
+    }
+    return null;
+  }
+
+  function parseEntities(){
+    while(p<total){
+      const par = readPair();
+      if(!par) return;
+      if(par.code===0 && par.val==='ENDSEC') return;
+      if(par.code!==0) continue;
+      const tipo = par.val;
+      if(tipo==='LINE'){
+        const e={tipo:'line', x1:0,y1:0,x2:0,y2:0, cor:null, layer:'0'};
+        while(p<total && peekCode()!==0){
+          const c=readPair(); if(!c) break;
+          if(c.code===8) e.layer=c.val;
+          else if(c.code===62){ const cc=corDoGrupo62(c.val); if(cc) e.cor=cc; }
+          else if(c.code===10) e.x1=parseFloat(c.val);
+          else if(c.code===20) e.y1=parseFloat(c.val);
+          else if(c.code===11) e.x2=parseFloat(c.val);
+          else if(c.code===21) e.y2=parseFloat(c.val);
+        }
+        marca(e.x1,e.y1); marca(e.x2,e.y2);
+        entidades.push(e);
+      } else if(tipo==='CIRCLE' || tipo==='ARC'){
+        const e={tipo: tipo==='CIRCLE'?'circle':'arc', x:0,y:0,r:0,a1:0,a2:360, cor:null, layer:'0'};
+        while(p<total && peekCode()!==0){
+          const c=readPair(); if(!c) break;
+          if(c.code===8) e.layer=c.val;
+          else if(c.code===62){ const cc=corDoGrupo62(c.val); if(cc) e.cor=cc; }
+          else if(c.code===10) e.x=parseFloat(c.val);
+          else if(c.code===20) e.y=parseFloat(c.val);
+          else if(c.code===40) e.r=parseFloat(c.val);
+          else if(c.code===50) e.a1=parseFloat(c.val);
+          else if(c.code===51) e.a2=parseFloat(c.val);
+        }
+        marca(e.x-e.r,e.y-e.r); marca(e.x+e.r,e.y+e.r);
+        if(e.r>0) entidades.push(e);
+      } else if(tipo==='LWPOLYLINE'){
+        const e={tipo:'poly', pts:[], fechado:false, cor:null, layer:'0'};
+        let curX=null;
+        while(p<total && peekCode()!==0){
+          const c=readPair(); if(!c) break;
+          if(c.code===8) e.layer=c.val;
+          else if(c.code===62){ const cc=corDoGrupo62(c.val); if(cc) e.cor=cc; }
+          else if(c.code===70) e.fechado = (parseInt(c.val,10) & 1)===1;
+          else if(c.code===10) curX=parseFloat(c.val);
+          else if(c.code===20){ const y=parseFloat(c.val); if(curX!=null){ e.pts.push([curX,y]); marca(curX,y); curX=null; } }
+        }
+        if(e.pts.length>1) entidades.push(e);
+      } else if(tipo==='POLYLINE'){
+        const e={tipo:'poly', pts:[], fechado:false, cor:null, layer:'0'};
+        while(p<total && peekCode()!==0){
+          const c=readPair(); if(!c) break;
+          if(c.code===8) e.layer=c.val;
+          else if(c.code===62){ const cc=corDoGrupo62(c.val); if(cc) e.cor=cc; }
+          else if(c.code===70) e.fechado = (parseInt(c.val,10) & 1)===1;
+        }
+        while(p<total){
+          const pr = readPair();
+          if(!pr) break;
+          if(pr.code===0 && pr.val==='SEQEND') break;
+          if(pr.code===0 && pr.val==='VERTEX'){
+            let vx=null, vy=null;
+            while(p<total && peekCode()!==0){
+              const c=readPair(); if(!c) break;
+              if(c.code===10) vx=parseFloat(c.val);
+              else if(c.code===20) vy=parseFloat(c.val);
+            }
+            if(vx!=null && vy!=null){ e.pts.push([vx,vy]); marca(vx,vy); }
+          } else if(pr.code===0){ p-=2; break; } // entidade inesperada -- aborta a sequencia com seguranca
+        }
+        if(e.pts.length>1) entidades.push(e);
+      } else if(tipo==='TEXT' || tipo==='MTEXT'){
+        const e={tipo:'text', x:0,y:0, h:1, texto:'', cor:null, layer:'0'};
+        while(p<total && peekCode()!==0){
+          const c=readPair(); if(!c) break;
+          if(c.code===8) e.layer=c.val;
+          else if(c.code===62){ const cc=corDoGrupo62(c.val); if(cc) e.cor=cc; }
+          else if(c.code===10) e.x=parseFloat(c.val);
+          else if(c.code===20) e.y=parseFloat(c.val);
+          else if(c.code===40) e.h=parseFloat(c.val);
+          else if(c.code===1 || c.code===3) e.texto += c.val;
+        }
+        e.texto = e.texto.replace(/\\P/g,'\n').replace(/\\[A-Za-z][0-9.]*;?/g,'').trim();
+        if(e.texto){ marca(e.x,e.y); entidades.push(e); }
+      } else if(tipo==='INSERT'){
+        const e={tipo:'insert', x:0,y:0, bloco:'', layer:'0'};
+        while(p<total && peekCode()!==0){
+          const c=readPair(); if(!c) break;
+          if(c.code===8) e.layer=c.val;
+          else if(c.code===2) e.bloco=c.val;
+          else if(c.code===10) e.x=parseFloat(c.val);
+          else if(c.code===20) e.y=parseFloat(c.val);
+        }
+        marca(e.x,e.y);
+        entidades.push(e);
+      } else {
+        while(p<total && peekCode()!==0){ if(!readPair()) break; } // outras entidades (HATCH/SOLID/POINT...): ignora sem travar
+      }
+    }
+  }
+
+  while(p<total){
+    const par = readPair();
+    if(!par) break;
+    if(par.code===0 && par.val==='SECTION'){
+      const pn = readPair();
+      const nome = (pn && pn.code===2) ? pn.val : null;
+      if(nome==='TABLES') parseTables();
+      else if(nome==='ENTITIES') parseEntities();
+      else { while(p<total){ const pr=readPair(); if(!pr || (pr.code===0 && pr.val==='ENDSEC')) break; } }
+    }
+  }
+  return {entidades, camadasCor, bounds};
+}
+
+let dxfDadosAtual = null;
+const dxfView = {scale:1, cx:0, cy:0};
+let dxfInfoSelecionado = null;
+const canvasDXF = document.getElementById('dxf-canvas');
+const ctxDXF = canvasDXF.getContext('2d');
+
+function corDaEntidadeDXF(e, dados){
+  return e.cor || dados.camadasCor[e.layer] || '#1a1a1a';
+}
+function ajustaCanvasDXF(){
+  const wrap = document.getElementById('dxf-wrap');
+  const dpr = window.devicePixelRatio || 1;
+  canvasDXF.width = Math.round(wrap.clientWidth*dpr);
+  canvasDXF.height = Math.round(wrap.clientHeight*dpr);
+  canvasDXF.style.width = wrap.clientWidth+'px';
+  canvasDXF.style.height = wrap.clientHeight+'px';
+  ctxDXF.setTransform(dpr,0,0,dpr,0,0);
+}
+function ajustaViewDXF(){
+  if(!dxfDadosAtual) return;
+  const b = dxfDadosAtual.bounds;
+  const wrap = document.getElementById('dxf-wrap');
+  const w = Math.max(1, b.maxX-b.minX), h = Math.max(1, b.maxY-b.minY);
+  dxfView.cx = (b.minX+b.maxX)/2; dxfView.cy = (b.minY+b.maxY)/2;
+  dxfView.scale = Math.min(wrap.clientWidth/w, wrap.clientHeight/h) * 0.9;
+  if(!isFinite(dxfView.scale) || dxfView.scale<=0) dxfView.scale = 1;
+}
+function mundoParaTelaDXF(x,y){
+  const w = canvasDXF.width/(window.devicePixelRatio||1), h = canvasDXF.height/(window.devicePixelRatio||1);
+  return [w/2 + (x-dxfView.cx)*dxfView.scale, h/2 - (y-dxfView.cy)*dxfView.scale];
+}
+function telaParaMundoDXF(sx,sy){
+  const w = canvasDXF.width/(window.devicePixelRatio||1), h = canvasDXF.height/(window.devicePixelRatio||1);
+  return [dxfView.cx + (sx-w/2)/dxfView.scale, dxfView.cy - (sy-h/2)/dxfView.scale];
+}
+function desenhaDXF(){
+  if(!dxfDadosAtual) return;
+  const dados = dxfDadosAtual;
+  const w = canvasDXF.width/(window.devicePixelRatio||1), h = canvasDXF.height/(window.devicePixelRatio||1);
+  ctxDXF.fillStyle = '#fff';
+  ctxDXF.fillRect(0,0,w,h);
+  ctxDXF.lineWidth = 1.3;
+  dados.entidades.forEach(e=>{
+    const cor = corDaEntidadeDXF(e, dados);
+    if(e.tipo==='line'){
+      const [sx1,sy1] = mundoParaTelaDXF(e.x1,e.y1), [sx2,sy2] = mundoParaTelaDXF(e.x2,e.y2);
+      ctxDXF.strokeStyle = cor; ctxDXF.beginPath(); ctxDXF.moveTo(sx1,sy1); ctxDXF.lineTo(sx2,sy2); ctxDXF.stroke();
+    } else if(e.tipo==='poly'){
+      ctxDXF.strokeStyle = cor; ctxDXF.beginPath();
+      e.pts.forEach((pt,i)=>{ const [sx,sy]=mundoParaTelaDXF(pt[0],pt[1]); i===0?ctxDXF.moveTo(sx,sy):ctxDXF.lineTo(sx,sy); });
+      if(e.fechado) ctxDXF.closePath();
+      ctxDXF.stroke();
+    } else if(e.tipo==='circle'){
+      ctxDXF.strokeStyle = cor; ctxDXF.beginPath();
+      for(let a=0;a<=360;a+=15){ const rad=a*Math.PI/180; const [sx,sy]=mundoParaTelaDXF(e.x+e.r*Math.cos(rad), e.y+e.r*Math.sin(rad)); a===0?ctxDXF.moveTo(sx,sy):ctxDXF.lineTo(sx,sy); }
+      ctxDXF.stroke();
+    } else if(e.tipo==='arc'){
+      let a1=e.a1, a2=e.a2; if(a2<a1) a2+=360;
+      ctxDXF.strokeStyle = cor; ctxDXF.beginPath();
+      for(let a=a1;a<=a2;a+=Math.max(2,(a2-a1)/24)){ const rad=a*Math.PI/180; const [sx,sy]=mundoParaTelaDXF(e.x+e.r*Math.cos(rad), e.y+e.r*Math.sin(rad)); a===a1?ctxDXF.moveTo(sx,sy):ctxDXF.lineTo(sx,sy); }
+      ctxDXF.stroke();
+    } else if(e.tipo==='insert'){
+      const [sx,sy] = mundoParaTelaDXF(e.x,e.y);
+      ctxDXF.fillStyle = cor; ctxDXF.beginPath(); ctxDXF.arc(sx,sy,3,0,2*Math.PI); ctxDXF.fill();
+    }
+  });
+  // texto desenhado numa 2a passada, por cima de tudo, pra ficar sempre legivel
+  dados.entidades.forEach(e=>{
+    if(e.tipo!=='text') return;
+    const tamTela = Math.max(1,e.h)*dxfView.scale;
+    if(tamTela<5) return; // some quando o zoom esta baixo demais pra ler (evita poluir a tela)
+    const [sx,sy] = mundoParaTelaDXF(e.x,e.y);
+    ctxDXF.fillStyle = corDaEntidadeDXF(e, dados);
+    ctxDXF.font = Math.min(22,Math.max(9,tamTela)).toFixed(0)+'px system-ui,sans-serif';
+    ctxDXF.textBaseline = 'bottom';
+    const tamFonte = Math.min(22,Math.max(9,tamTela));
+    e.texto.split('\n').forEach((linha,i)=> ctxDXF.fillText(linha, sx, sy + i*(tamFonte+2)));
+  });
+}
+function achaEntidadeNoToqueDXF(sx,sy){
+  const [wx,wy] = telaParaMundoDXF(sx,sy);
+  const raioMundo = 14/dxfView.scale; // ~14px de alvo de toque, convertido pra unidade do desenho
+  let melhor=null, melhorDist=Infinity;
+  dxfDadosAtual.entidades.forEach(e=>{
+    if(e.tipo==='text' || e.tipo==='insert'){
+      const d = Math.hypot(e.x-wx, e.y-wy);
+      if(d<raioMundo*1.8 && d<melhorDist){ melhorDist=d; melhor=e; }
+    }
+  });
+  if(melhor) return melhor;
+  function distSegmento(px,py,ax,ay,bx,by){
+    const dx=bx-ax, dy=by-ay; const len2=dx*dx+dy*dy;
+    let t = len2>0 ? ((px-ax)*dx+(py-ay)*dy)/len2 : 0;
+    t = Math.max(0,Math.min(1,t));
+    return Math.hypot(px-(ax+t*dx), py-(ay+t*dy));
+  }
+  dxfDadosAtual.entidades.forEach(e=>{
+    if(e.tipo==='line'){
+      const d = distSegmento(wx,wy,e.x1,e.y1,e.x2,e.y2);
+      if(d<raioMundo && d<melhorDist){ melhorDist=d; melhor=e; }
+    } else if(e.tipo==='poly'){
+      for(let i=1;i<e.pts.length;i++){
+        const d = distSegmento(wx,wy,e.pts[i-1][0],e.pts[i-1][1],e.pts[i][0],e.pts[i][1]);
+        if(d<raioMundo && d<melhorDist){ melhorDist=d; melhor=e; break; }
+      }
+    }
+  });
+  return melhor;
+}
+function mostraInfoDXF(e){
+  const cont = document.getElementById('dxf-info-conteudo');
+  const painel = document.getElementById('dxf-info');
+  if(!e){ painel.classList.remove('aberto'); return; }
+  let html='';
+  if(e.tipo==='text') html = `<b>${escMultilinha(e.texto)}</b><small style="color:#9fc0cb">Camada: ${escHTML(e.layer)}</small>`;
+  else if(e.tipo==='insert') html = `<b>N&oacute; / componente: ${escHTML(e.bloco||'?')}</b><small style="color:#9fc0cb">Camada: ${escHTML(e.layer)}</small>`;
+  else html = `<b>Linha de tubula&#231;&#227;o</b><small style="color:#9fc0cb">Camada: ${escHTML(e.layer)}</small>`;
+  cont.innerHTML = html;
+  painel.classList.add('aberto');
+}
+document.getElementById('dxf-info').querySelector('.fechar').addEventListener('click', ()=>mostraInfoDXF(null));
+
+(function iniciaInteracaoDXF(){
+  const wrap = document.getElementById('dxf-wrap');
+  const ponteiros = new Map();
+  let modoPinca=false, distPincaAnterior=0, meioAnterior=null;
+  let moveuBastante=false, inicioToque=null;
+
+  function pontosArray(){ return [...ponteiros.values()]; }
+
+  canvasDXF.addEventListener('pointerdown', e=>{
+    canvasDXF.setPointerCapture(e.pointerId);
+    ponteiros.set(e.pointerId, {x:e.clientX, y:e.clientY});
+    moveuBastante=false;
+    const r = wrap.getBoundingClientRect();
+    inicioToque = {x:e.clientX-r.left, y:e.clientY-r.top, t:Date.now()};
+    if(ponteiros.size===2){
+      modoPinca=true;
+      const [a,b] = pontosArray();
+      distPincaAnterior = Math.hypot(a.x-b.x, a.y-b.y);
+      meioAnterior = {x:(a.x+b.x)/2 - r.left, y:(a.y+b.y)/2 - r.top};
+    }
+  });
+  canvasDXF.addEventListener('pointermove', e=>{
+    if(!ponteiros.has(e.pointerId)) return;
+    const r = wrap.getBoundingClientRect();
+    const anterior = ponteiros.get(e.pointerId);
+    ponteiros.set(e.pointerId, {x:e.clientX, y:e.clientY});
+    if(ponteiros.size===2 && modoPinca){
+      const [a,b] = pontosArray();
+      const dist = Math.hypot(a.x-b.x, a.y-b.y);
+      const meio = {x:(a.x+b.x)/2 - r.left, y:(a.y+b.y)/2 - r.top};
+      if(distPincaAnterior>0){
+        const fator = dist/distPincaAnterior;
+        if(Math.abs(fator-1)>0.001){
+          const [wx,wy] = telaParaMundoDXF(meio.x, meio.y);
+          dxfView.scale *= fator;
+          const [wx2,wy2] = telaParaMundoDXF(meio.x, meio.y);
+          dxfView.cx += wx-wx2; dxfView.cy += wy-wy2;
+        }
+      }
+      dxfView.cx -= (meio.x-meioAnterior.x)/dxfView.scale;
+      dxfView.cy += (meio.y-meioAnterior.y)/dxfView.scale;
+      distPincaAnterior = dist; meioAnterior = meio;
+      moveuBastante = true;
+      desenhaDXF();
+    } else if(ponteiros.size===1 && !modoPinca){
+      const dx = e.clientX-anterior.x, dy = e.clientY-anterior.y;
+      if(Math.abs(dx)+Math.abs(dy) > 2) moveuBastante = true;
+      dxfView.cx -= dx/dxfView.scale;
+      dxfView.cy += dy/dxfView.scale;
+      desenhaDXF();
+    }
+  });
+  function soltar(e){
+    ponteiros.delete(e.pointerId);
+    if(ponteiros.size<2) modoPinca=false;
+    if(ponteiros.size===0 && inicioToque && !moveuBastante && (Date.now()-inicioToque.t)<500){
+      const alvo = achaEntidadeNoToqueDXF(inicioToque.x, inicioToque.y);
+      mostraInfoDXF(alvo);
+      document.getElementById('dxf-dica').classList.add('escondida');
+    }
+    inicioToque=null;
+  }
+  canvasDXF.addEventListener('pointerup', soltar);
+  canvasDXF.addEventListener('pointercancel', soltar);
+  canvasDXF.addEventListener('wheel', e=>{
+    e.preventDefault();
+    const r = wrap.getBoundingClientRect();
+    const sx = e.clientX-r.left, sy = e.clientY-r.top;
+    const [wx,wy] = telaParaMundoDXF(sx,sy);
+    const fator = e.deltaY<0 ? 1.15 : 1/1.15;
+    dxfView.scale *= fator;
+    const [wx2,wy2] = telaParaMundoDXF(sx,sy);
+    dxfView.cx += wx-wx2; dxfView.cy += wy-wy2;
+    document.getElementById('dxf-dica').classList.add('escondida');
+    desenhaDXF();
+  }, {passive:false});
+  window.addEventListener('resize', ()=>{
+    if(!document.getElementById('painel-dxf').classList.contains('aberto')) return;
+    ajustaCanvasDXF(); desenhaDXF();
+  });
+})();
+
+function abrePainelDXF(dados, nome){
+  dxfDadosAtual = dados;
+  mostraInfoDXF(null);
+  document.getElementById('dxf-titulo').textContent = nome;
+  document.getElementById('dxf-dica').classList.remove('escondida');
+  document.getElementById('painel-dxf').classList.add('aberto');
+  requestAnimationFrame(()=>{ ajustaCanvasDXF(); ajustaViewDXF(); desenhaDXF(); });
+}
+document.getElementById('dxf-close').addEventListener('click', ()=> document.getElementById('painel-dxf').classList.remove('aberto'));
+document.getElementById('dxf-fit').addEventListener('click', ()=>{ ajustaViewDXF(); desenhaDXF(); });
+
+async function abreDXF(file){
+  mostraCarregando('Lendo ' + file.name + '...');
+  try{
+    const buf = await file.arrayBuffer();
+    const texto = decodeTextoInteligente(buf);
+    const dados = parseDXF(texto);
+    if(!dados.entidades.length) throw new Error('Não encontrei nenhum desenho dentro deste .dxf.');
+    await salvarDxfIndexedDB(file.name, buf);
+    abrePainelDXF(dados, file.name);
+    renderizaListaDXF();
+    toast('DXF carregado: ' + file.name);
+  }catch(err){
+    console.error(err);
+    toast('Erro ao abrir DXF: ' + err.message, 4200);
+  }finally{
+    escondeCarregando();
+  }
+}
+async function abreDxfSalvo(registro){
+  mostraCarregando('Abrindo ' + registro.nome + '...');
+  try{
+    const texto = decodeTextoInteligente(registro.buf);
+    const dados = parseDXF(texto);
+    abrePainelDXF(dados, registro.nome);
+  }catch(err){
+    console.error(err);
+    toast('Erro ao abrir DXF salvo: ' + err.message, 4200);
+  }finally{
+    escondeCarregando();
+  }
+}
+document.getElementById('dp-abrir-dxf').addEventListener('click', ()=>document.getElementById('file-input-dxf').click());
+document.getElementById('file-input-dxf').addEventListener('change', e=>{
+  const f = e.target.files[0];
+  if(f) abreDXF(f);
+  e.target.value='';
+});
+
+/* ==================================================================
    UI: drawers, busca, drag&drop, file input
    ================================================================== */
 const drawer = document.getElementById('drawer');
 const drawerProj = document.getElementById('drawer-proj');
 document.getElementById('btn-camadas').addEventListener('click', ()=>drawer.classList.add('aberto'));
 document.getElementById('drawer-close').addEventListener('click', ()=>drawer.classList.remove('aberto'));
-document.getElementById('btn-projetos').addEventListener('click', ()=>{ drawerProj.classList.add('aberto'); renderizaListaProjetos(); });
+document.getElementById('btn-projetos').addEventListener('click', ()=>{ drawerProj.classList.add('aberto'); renderizaListaProjetos(); renderizaListaDXF(); });
 document.getElementById('dp-close').addEventListener('click', fecharDrawerProjetos);
 function fecharDrawerProjetos(){ drawerProj.classList.remove('aberto'); }
 document.getElementById('titulo-proj').addEventListener('click', ()=>document.getElementById('file-input').click());

@@ -1,5 +1,5 @@
 /* Service worker - app, mapa e projetos abertos funcionam offline em campo */
-var CACHE = "irricad-viewer-v8";
+var CACHE = "irricad-viewer-v9";
 var TILES = "tiles-esri-v1"; /* imagens de satelite ja vistas; nao apaga nas atualizacoes */
 var ARQS = ["./", "./irricad-viewer.html", "./manifest.json", "./icon-192.png", "./icon-512.png", "./icon-maskable.png",
   "./tophofarm-simbolo.png", "./tophofarm-logo-completo.png", "./irricad-logo.png",
