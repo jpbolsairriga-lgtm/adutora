@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<!-- build 2026-10-06 v1.18.0 -->
+<!-- build 2026-10-06 v1.19.0 -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Visualizador IrriCAD v1.18.0 &middot; TophoFarm</title>
+<title>Visualizador IrriCAD v1.19.0 &middot; TophoFarm</title>
 <meta name="theme-color" content="#1f4e4c">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -214,6 +214,7 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 
 <div id="toolbar">
   <button id="btn-abrir" class="btn-round" title="Abrir arquivo">&#128194;</button>
+  <button id="btn-satelite" class="btn-round ativo" title="Desligar foto de sat&#233;lite">&#128752;&#65039;</button>
   <button id="btn-medir" class="btn-round" title="Medir dist&#226;ncia">&#128207;</button>
   <button id="btn-gps" class="btn-round" title="Minha localiza&#231;&#227;o">&#128205;</button>
   <button id="btn-seguir" class="btn-round" title="Seguir minha posi&#231;&#227;o">&#128664;</button>
@@ -268,8 +269,9 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 /* ==================================================================
    VERSAO / HISTORICO
    ================================================================== */
-const VERSAO_APP = '1.18.0';
+const VERSAO_APP = '1.19.0';
 const HISTORICO_VERSOES = [
+  {v:'1.19.0', d:'06/10/2026', t:'Botão para desligar a foto de satélite (ícone 🛰️ na barra de baixo) — funciona tanto pro .kmz quanto pro .dxf, já que os dois desenham no mesmo mapa. Cores do DXF corrigidas pra bater com o IrriCAD de verdade: a paleta anterior (das v1.17/1.18) tinha sido "suavizada" por engano e saía diferente da cor real gravada no arquivo — agora usa a tabela oficial de 256 cores do AutoCAD (Color Index), igual o IrriCAD usa.'},
   {v:'1.18.0', d:'06/10/2026', t:'Textos do DXF (comprimento/diâmetro de cada trecho de tubo) agora aparecem rotacionados acompanhando a tubulação, igual no AutoCAD — antes só os textos "soltos" apareciam (vazão/pressão de válvula e bomba); descobri que os textos de cada trecho de tubo vêm dentro de blocos do DXF, com ângulo e escala próprios, e não eram lidos. O tamanho da letra agora também acompanha o zoom do mapa (proporcional ao tamanho real gravado no desenho, como um CAD de verdade), em vez de um tamanho fixo. Cores dos elementos ficaram mais claras/contrastadas (halo escuro no texto) pra continuar legível em qualquer parte da foto de satélite.'},
   {v:'1.17.0', d:'06/10/2026', t:'O .dxf agora entra direto no mapa principal (satélite + GPS), não numa tela separada: cada camada do desenho (tubulações, válvulas, textos de vazão/pressão) vira uma camada de verdade, ligando/desligando pela mesma gaveta "Camadas" do .kmz. As coordenadas do DXF (UTM) são convertidas pra latitude/longitude usando a zona UTM do próprio projeto — detectada automaticamente a partir do .kmz já aberto (abra o .kmz do projeto também, pra garantir a posição exata). Os textos de vazão/pressão agora ficam sempre visíveis, do mesmo jeito que os pontos de informação do .kmz.'},
   {v:'1.16.0', d:'06/10/2026', t:'Primeira versão do visualizador de DXF: abria numa tela própria estilo CAD, separada do mapa (sem satélite/GPS, textos só apareciam com muito zoom). Substituída pela v1.17.0 a pedido do usuário.'},
@@ -962,28 +964,47 @@ async function renderizaListaProjetos(){
 }
 
 /* ==================================================================
-   VISUALIZADOR DXF (CAD) -- tela separada do mapa de campo
+   PARSER DXF -> entidades (LINE/POLYLINE/ARC/CIRCLE/TEXT/INSERT)
    O .dxf exportado do IrriCAD foi conferido contra o .kmz do mesmo
-   projeto: as coordenadas das entidades (LINE/POLYLINE/TEXT) batem
-   com UTM de verdade (zona do projeto), bem diferente do .dez interno
-   (que usa um sistema de coordenadas proprio, sem referencia pro mundo
-   real -- por isso aquela tentativa foi removida). Mesmo assim, esse
-   visualizador fica numa tela própria (fundo branco, so pan/zoom, sem
-   satelite/GPS) em vez de virar camada do mapa: e um desenho tecnico
-   (CAD) pra olhar os detalhes/tabelas de cada valvula e bomba, igual
-   abrir o projeto no proprio IrriCAD -- nao uma camada de navegacao.
-   Parser escrito a mao (mesmo estilo do parser de KML acima), sem
-   biblioteca externa: o formato DXF ASCII e so pares "codigo/valor"
-   em sequencia, entao um parser proprio fica leve e offline-friendly.
+   projeto: as coordenadas das entidades batem com UTM de verdade (zona
+   do projeto), bem diferente do .dez interno (que usa um sistema de
+   coordenadas proprio, sem referencia pro mundo real). Por isso da pra
+   converter pra lat/lng e desenhar como camada de verdade no mapa (ver
+   construirCamadasDXF mais abaixo). Parser escrito a mao (mesmo estilo
+   do parser de KML acima), sem biblioteca externa: o formato DXF ASCII
+   e so pares "codigo/valor" em sequencia.
    ================================================================== */
+// paleta REAL do AutoCAD Color Index (256 cores, RGB exato) -- precisa ser
+// fiel, nao uma aproximacao: o usuario compara direto com a cor que o
+// IrriCAD mostra. Gerada a partir da tabela oficial (biblioteca ezdxf),
+// nao inventada -- indices como 52/56/171 (usados de verdade nas camadas
+// de tubulacao testadas) so ficam certos com a tabela completa.
+const PALETA_ACI = [
+  '#000000','#ff0000','#ffff00','#00ff00','#00ffff','#0000ff','#ff00ff','#ffffff','#808080','#c0c0c0','#ff0000','#ff7f7f',
+  '#a50000','#a55252','#7f0000','#7f3f3f','#4c0000','#4c2626','#260000','#261313','#ff3f00','#ff9f7f','#a52900','#a56752',
+  '#7f1f00','#7f4f3f','#4c1300','#4c2f26','#260900','#261713','#ff7f00','#ffbf7f','#a55200','#a57c52','#7f3f00','#7f5f3f',
+  '#4c2600','#4c3926','#261300','#261c13','#ffbf00','#ffdf7f','#a57c00','#a59152','#7f5f00','#7f6f3f','#4c3900','#4c4226',
+  '#261c00','#262113','#ffff00','#ffff7f','#a5a500','#a5a552','#7f7f00','#7f7f3f','#4c4c00','#4c4c26','#262600','#262613',
+  '#bfff00','#dfff7f','#7ca500','#91a552','#5f7f00','#6f7f3f','#394c00','#424c26','#1c2600','#212613','#7fff00','#bfff7f',
+  '#52a500','#7ca552','#3f7f00','#5f7f3f','#264c00','#394c26','#132600','#1c2613','#3fff00','#9fff7f','#29a500','#67a552',
+  '#1f7f00','#4f7f3f','#134c00','#2f4c26','#092600','#172613','#00ff00','#7fff7f','#00a500','#52a552','#007f00','#3f7f3f',
+  '#004c00','#264c26','#002600','#132613','#00ff3f','#7fff9f','#00a529','#52a567','#007f1f','#3f7f4f','#004c13','#264c2f',
+  '#002609','#135817','#00ff7f','#7fffbf','#00a552','#52a57c','#007f3f','#3f7f5f','#004c26','#264c39','#002613','#13581c',
+  '#00ffbf','#7fffdf','#00a57c','#52a591','#007f5f','#3f7f6f','#004c39','#264c42','#00261c','#135858','#00ffff','#7fffff',
+  '#00a5a5','#52a5a5','#007f7f','#3f7f7f','#004c4c','#264c4c','#002626','#135858','#00bfff','#7fdfff','#007ca5','#5291a5',
+  '#005f7f','#3f6f7f','#00394c','#26427e','#001c26','#135858','#007fff','#7fbfff','#0052a5','#527ca5','#003f7f','#3f5f7f',
+  '#00264c','#26397e','#001326','#131c58','#003fff','#7f9fff','#0029a5','#5267a5','#001f7f','#3f4f7f','#00134c','#262f7e',
+  '#000926','#131758','#0000ff','#7f7fff','#0000a5','#5252a5','#00007f','#3f3f7f','#00004c','#26267e','#000026','#131358',
+  '#3f00ff','#9f7fff','#2900a5','#6752a5','#1f007f','#4f3f7f','#13004c','#2f267e','#090026','#171358','#7f00ff','#bf7fff',
+  '#5200a5','#7c52a5','#3f007f','#5f3f7f','#26004c','#39267e','#130026','#1c1358','#bf00ff','#df7fff','#7c00a5','#9152a5',
+  '#5f007f','#6f3f7f','#39004c','#42264c','#1c0026','#581358','#ff00ff','#ff7fff','#a500a5','#a552a5','#7f007f','#7f3f7f',
+  '#4c004c','#4c264c','#260026','#581358','#ff00bf','#ff7fdf','#a5007c','#a55291','#7f005f','#7f3f6f','#4c0039','#4c2642',
+  '#26001c','#581358','#ff007f','#ff7fbf','#a50052','#a5527c','#7f003f','#7f3f5f','#4c0026','#4c2639','#260013','#58131c',
+  '#ff003f','#ff7f9f','#a50029','#a55267','#7f001f','#7f3f4f','#4c0013','#4c262f','#260009','#581317','#000000','#656565',
+  '#666666','#999999','#cccccc','#ffffff'
+];
 function corACI(n){
-  // paleta padrao do AutoCAD (Color Index) -- so os indices mais comuns
-  // em desenhos de projeto tem cor exata; os demais (uso raro aqui) caem
-  // numa variacao de tom gerada pelo indice, so pra nao ficar tudo preto.
-  const basicas = {1:'#ff4d4d',2:'#ffd93d',3:'#4ade80',4:'#22d3ee',5:'#5b9bff',6:'#e879f9',
-    7:'#ffffff',8:'#9ca3af',9:'#c4c8cc',250:'#6b7280',251:'#8c9099',252:'#a4a8b0',253:'#bcbfc6',254:'#d8dade',255:'#f0f1f3'};
-  if(basicas[n]) return basicas[n];
-  return `hsl(${(n*37)%360},60%,38%)`;
+  return PALETA_ACI[Math.min(255, Math.max(0, n|0))] || '#808080';
 }
 function parseDXF(texto){
   const L = texto.split(/\r\n|\r|\n/).map(s=>s.trim());
@@ -1663,8 +1684,12 @@ document.getElementById('btn-medir').addEventListener('click', ()=>{
   }
 });
 
-/* toque duplo no mapa alterna satélite/rua (botão dedicado tambem) */
-mapa.on('contextmenu', ()=>alternaBase());
+/* toque duplo/segurado no mapa tambem alterna satélite/rua, alem do botão dedicado */
+mapa.on('contextmenu', ()=>{ alternaBase(); atualizaBotaoSatelite(); });
+function atualizaBotaoSatelite(){
+  document.getElementById('btn-satelite').classList.toggle('ativo', !modoRua);
+}
+document.getElementById('btn-satelite').addEventListener('click', ()=>{ alternaBase(); atualizaBotaoSatelite(); });
 
 /* ==================================================================
    PWA: service worker
