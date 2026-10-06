@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<!-- build 2026-10-06 v1.17.0 -->
+<!-- build 2026-10-06 v1.18.0 -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Visualizador IrriCAD v1.17.0 &middot; TophoFarm</title>
+<title>Visualizador IrriCAD v1.18.0 &middot; TophoFarm</title>
 <meta name="theme-color" content="#1f4e4c">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -170,6 +170,15 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 #dp-abrir-dxf{margin:.4rem 1rem .8rem;padding:.75rem;border-radius:10px;border:2px dashed #2b4757;background:#162732;
   color:#eaf2f6;font-size:.85rem;text-align:center}
 .proj-item .tipo-badge{font-size:.6rem;font-weight:700;letter-spacing:.03em;color:#5a8296;text-transform:uppercase;display:block;margin-bottom:.1rem}
+
+/* ---------- textos do DXF (comprimento/diametro de tubo, vazao/pressao) --
+   rotacionados igual ao AutoCAD, tamanho em pixels recalculado por zoom
+   (ver tamanhoFontePx/atualizaTextosDXF). Contorno escuro (nao caixa solida)
+   pra ficar legivel em qualquer parte da foto de satelite. ---------- */
+.dxf-texto-wrap{background:transparent!important;border:none!important}
+.dxf-texto{position:absolute;left:0;top:0;transform-origin:0% 50%;white-space:pre;font-weight:600;
+  line-height:1.15;cursor:pointer;text-shadow:-1px -1px 2px rgba(0,0,0,.85),1px -1px 2px rgba(0,0,0,.85),
+  -1px 1px 2px rgba(0,0,0,.85),1px 1px 2px rgba(0,0,0,.85),0 0 4px rgba(0,0,0,.85)}
 </style>
 </head>
 <body>
@@ -259,8 +268,9 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 /* ==================================================================
    VERSAO / HISTORICO
    ================================================================== */
-const VERSAO_APP = '1.17.0';
+const VERSAO_APP = '1.18.0';
 const HISTORICO_VERSOES = [
+  {v:'1.18.0', d:'06/10/2026', t:'Textos do DXF (comprimento/diâmetro de cada trecho de tubo) agora aparecem rotacionados acompanhando a tubulação, igual no AutoCAD — antes só os textos "soltos" apareciam (vazão/pressão de válvula e bomba); descobri que os textos de cada trecho de tubo vêm dentro de blocos do DXF, com ângulo e escala próprios, e não eram lidos. O tamanho da letra agora também acompanha o zoom do mapa (proporcional ao tamanho real gravado no desenho, como um CAD de verdade), em vez de um tamanho fixo. Cores dos elementos ficaram mais claras/contrastadas (halo escuro no texto) pra continuar legível em qualquer parte da foto de satélite.'},
   {v:'1.17.0', d:'06/10/2026', t:'O .dxf agora entra direto no mapa principal (satélite + GPS), não numa tela separada: cada camada do desenho (tubulações, válvulas, textos de vazão/pressão) vira uma camada de verdade, ligando/desligando pela mesma gaveta "Camadas" do .kmz. As coordenadas do DXF (UTM) são convertidas pra latitude/longitude usando a zona UTM do próprio projeto — detectada automaticamente a partir do .kmz já aberto (abra o .kmz do projeto também, pra garantir a posição exata). Os textos de vazão/pressão agora ficam sempre visíveis, do mesmo jeito que os pontos de informação do .kmz.'},
   {v:'1.16.0', d:'06/10/2026', t:'Primeira versão do visualizador de DXF: abria numa tela própria estilo CAD, separada do mapa (sem satélite/GPS, textos só apareciam com muito zoom). Substituída pela v1.17.0 a pedido do usuário.'},
   {v:'1.15.0', d:'06/10/2026', t:'Removido o visualizador de PDF do projeto — voltou ao visualizador original, só com .kmz/.kml. Próximo passo: investigar abrir um .dxf exportado do IrriCAD.'},
@@ -626,6 +636,7 @@ function removeProjetoDoMapa(projId){
   });
   grupoCamadas = restantes;
   projetosCarregadosIds.delete(projId);
+  registroTextosDXF = registroTextosDXF.filter(r=>r.projId!==projId);
   renderizaListaCamadas();
   atualizaBadgeCamadas();
   atualizaTituloGeral();
@@ -969,8 +980,8 @@ function corACI(n){
   // paleta padrao do AutoCAD (Color Index) -- so os indices mais comuns
   // em desenhos de projeto tem cor exata; os demais (uso raro aqui) caem
   // numa variacao de tom gerada pelo indice, so pra nao ficar tudo preto.
-  const basicas = {1:'#e02020',2:'#c7a000',3:'#1e8f3e',4:'#0097a7',5:'#1a56db',6:'#c0329e',
-    7:'#1a1a1a',8:'#414141',9:'#808080',250:'#333333',251:'#505050',252:'#696969',253:'#828282',254:'#bebebe',255:'#dddddd'};
+  const basicas = {1:'#ff4d4d',2:'#ffd93d',3:'#4ade80',4:'#22d3ee',5:'#5b9bff',6:'#e879f9',
+    7:'#ffffff',8:'#9ca3af',9:'#c4c8cc',250:'#6b7280',251:'#8c9099',252:'#a4a8b0',253:'#bcbfc6',254:'#d8dade',255:'#f0f1f3'};
   if(basicas[n]) return basicas[n];
   return `hsl(${(n*37)%360},60%,38%)`;
 }
@@ -1020,6 +1031,52 @@ function parseDXF(texto){
         } else {
           while(p<total){ const pr=readPair(); if(!pr || (pr.code===0 && pr.val==='ENDTAB')) break; }
         }
+      }
+    }
+  }
+
+  // BLOCKS: os textos dos comprimentos de tubo ("22m 50/40" etc., rotacionados
+  // acompanhando cada trecho) nao sao TEXT soltos -- cada um e um BLOCK proprio
+  // (um por trecho) com um TEXT local dentro, inserido via INSERT com seu
+  // proprio angulo/escala. So guarda blocos que tem TEXT (os de geometria pura,
+  // tipo o simbolo da valvula "Junction", nao precisam ser expandidos aqui).
+  const blocos = {};
+  function parseBlocks(){
+    while(p<total){
+      const par = readPair();
+      if(!par) return;
+      if(par.code===0 && par.val==='ENDSEC') return;
+      if(par.code===0 && par.val==='BLOCK'){
+        let nome=null, baseX=0, baseY=0;
+        while(p<total && peekCode()!==0){
+          const c=readPair(); if(!c) break;
+          if(c.code===2) nome=c.val;
+          else if(c.code===10) baseX=parseFloat(c.val);
+          else if(c.code===20) baseY=parseFloat(c.val);
+        }
+        const textos=[];
+        while(p<total){
+          const pr = readPair();
+          if(!pr) break;
+          if(pr.code===0 && pr.val==='ENDBLK') break;
+          if(pr.code===0 && (pr.val==='TEXT' || pr.val==='MTEXT')){
+            const t={x:0,y:0,h:1,rot:0,texto:'',cor:null};
+            while(p<total && peekCode()!==0){
+              const c=readPair(); if(!c) break;
+              if(c.code===62){ const cc=corDoGrupo62(c.val); if(cc) t.cor=cc; }
+              else if(c.code===10) t.x=parseFloat(c.val);
+              else if(c.code===20) t.y=parseFloat(c.val);
+              else if(c.code===40) t.h=parseFloat(c.val);
+              else if(c.code===50) t.rot=parseFloat(c.val);
+              else if(c.code===1 || c.code===3) t.texto += c.val;
+            }
+            t.texto = t.texto.replace(/\\P/g,'\n').replace(/\\[A-Za-z][0-9.]*;?/g,'').trim();
+            if(t.texto) textos.push(t);
+          } else if(pr.code===0){
+            while(p<total && peekCode()!==0){ if(!readPair()) break; } // outra entidade dentro do bloco: ignora
+          }
+        }
+        if(nome && textos.length) blocos[nome] = {baseX, baseY, textos};
       }
     }
   }
@@ -1106,7 +1163,7 @@ function parseDXF(texto){
         }
         if(e.pts.length>1) entidades.push(e);
       } else if(tipo==='TEXT' || tipo==='MTEXT'){
-        const e={tipo:'text', x:0,y:0, h:1, texto:'', cor:null, layer:'0'};
+        const e={tipo:'text', x:0,y:0, h:1, rot:0, texto:'', cor:null, layer:'0'};
         while(p<total && peekCode()!==0){
           const c=readPair(); if(!c) break;
           if(c.code===8) e.layer=c.val;
@@ -1114,18 +1171,22 @@ function parseDXF(texto){
           else if(c.code===10) e.x=parseFloat(c.val);
           else if(c.code===20) e.y=parseFloat(c.val);
           else if(c.code===40) e.h=parseFloat(c.val);
+          else if(c.code===50) e.rot=parseFloat(c.val);
           else if(c.code===1 || c.code===3) e.texto += c.val;
         }
         e.texto = e.texto.replace(/\\P/g,'\n').replace(/\\[A-Za-z][0-9.]*;?/g,'').trim();
         if(e.texto){ marca(e.x,e.y); entidades.push(e); }
       } else if(tipo==='INSERT'){
-        const e={tipo:'insert', x:0,y:0, bloco:'', layer:'0'};
+        const e={tipo:'insert', x:0,y:0, bloco:'', layer:'0', rot:0, esx:1, esy:1};
         while(p<total && peekCode()!==0){
           const c=readPair(); if(!c) break;
           if(c.code===8) e.layer=c.val;
           else if(c.code===2) e.bloco=c.val;
           else if(c.code===10) e.x=parseFloat(c.val);
           else if(c.code===20) e.y=parseFloat(c.val);
+          else if(c.code===41) e.esx=parseFloat(c.val);
+          else if(c.code===42) e.esy=parseFloat(c.val);
+          else if(c.code===50) e.rot=parseFloat(c.val);
         }
         marca(e.x,e.y);
         entidades.push(e);
@@ -1142,10 +1203,32 @@ function parseDXF(texto){
       const pn = readPair();
       const nome = (pn && pn.code===2) ? pn.val : null;
       if(nome==='TABLES') parseTables();
+      else if(nome==='BLOCKS') parseBlocks();
       else if(nome==='ENTITIES') parseEntities();
       else { while(p<total){ const pr=readPair(); if(!pr || (pr.code===0 && pr.val==='ENDSEC')) break; } }
     }
   }
+
+  // expande os INSERT cujo bloco e so um texto rotacionado (comprimento/diametro
+  // de cada trecho de tubo) num TEXT de verdade, na posicao/angulo/tamanho reais
+  // -- combina o ponto de insercao + escala + rotacao do INSERT com a posicao
+  // local do texto dentro do bloco (transformacao 2D padrao: escala, depois
+  // rotaciona, depois translada pro ponto de insercao).
+  entidades.forEach(e=>{
+    if(e.tipo!=='insert') return;
+    const bloco = blocos[e.bloco];
+    if(!bloco) return;
+    e.somenteRotulo = true; // nao desenha mais o pontinho generico -- virou texto
+    const rad = (e.rot||0)*Math.PI/180, cosR=Math.cos(rad), sinR=Math.sin(rad);
+    bloco.textos.forEach(t=>{
+      const lx = (t.x-bloco.baseX)*e.esx, ly = (t.y-bloco.baseY)*e.esy;
+      const wx = e.x + lx*cosR - ly*sinR, wy = e.y + lx*sinR + ly*cosR;
+      marca(wx,wy);
+      entidades.push({tipo:'text', x:wx, y:wy, h:t.h*((e.esx+e.esy)/2), rot:(e.rot||0)+(t.rot||0),
+        texto:t.texto, cor:t.cor, layer:e.layer});
+    });
+  });
+
   return {entidades, camadasCor, bounds};
 }
 
@@ -1204,6 +1287,32 @@ function zonaUTMAtual(){
   return {zona:23, sul:true, origem:'padrao'};
 }
 
+// Textos do DXF (comprimento/diametro de tubo, vazao/pressao de valvula)
+// precisam de tamanho de fonte proporcional ao mundo real (como no AutoCAD,
+// onde a altura do texto e em metros) em vez de um tamanho fixo em pixels --
+// senao nao acompanha o zoom do mapa igual um desenho CAD de verdade.
+// registroTextosDXF guarda {marker, alturaMundo} de cada rotulo pra poder
+// recalcular o tamanho em pixels sempre que o zoom do mapa mudar.
+let registroTextosDXF = [];
+function metrosPorPixelAtual(){
+  const lat = mapa.getCenter().lat;
+  return 156543.03392 * Math.cos(lat*Math.PI/180) / Math.pow(2, mapa.getZoom());
+}
+function tamanhoFontePx(alturaMundo){
+  const mpp = metrosPorPixelAtual();
+  if(!isFinite(mpp) || mpp<=0) return 11;
+  return Math.max(8, Math.min(60, alturaMundo/mpp));
+}
+function atualizaTextosDXF(){
+  registroTextosDXF.forEach(r=>{
+    const el = r.marker.getElement();
+    if(!el) return;
+    const span = el.querySelector('.dxf-texto');
+    if(span) span.style.fontSize = tamanhoFontePx(r.alturaMundo).toFixed(1)+'px';
+  });
+}
+mapa.on('zoomend', atualizaTextosDXF);
+
 function construirCamadasDXF(dados, projId, projNome, zonaInfo, opcoes){
   opcoes = opcoes || {};
   if(projetosCarregadosIds.has(projId)) removeProjetoDoMapa(projId);
@@ -1251,21 +1360,27 @@ function construirCamadasDXF(dados, projId, projNome, zonaInfo, opcoes){
       g.layer.addLayer(L.polyline(pts, {color:cor, weight:2, opacity:.9}));
       g.count++;
     } else if(e.tipo==='insert'){
+      if(e.somenteRotulo) return; // bloco so tinha texto dentro -- virou entidade 'text' (ver parser), sem pontinho aqui
       const p = ll(e.x,e.y);
       const m = L.circleMarker(p, {radius:4, color:'#fff', weight:1, fillColor:cor, fillOpacity:.9});
       m.bindPopup(`<b>${escHTML(e.bloco||'N&oacute;')}</b><br><small style="color:#5a7a88">Camada: ${escHTML(e.layer)}</small>`);
       g.layer.addLayer(m);
       g.count++;
     } else if(e.tipo==='text'){
-      // mesmo estilo dos pontos de informacao (Cota/Vazao) do KML: alvo +
-      // rotulo SEMPRE visivel (sem esconder por zoom) -- e o texto da
-      // vazao/pressao de cada valvula/bomba, igual aparecia no PDF.
+      // igual ao AutoCAD: texto na rotacao gravada no DXF (acompanha a
+      // tubulacao) e tamanho proporcional ao mundo real -- acompanha o zoom
+      // do mapa (ver atualizaTextosDXF), nao um tamanho fixo em pixels.
       const p = ll(e.x,e.y);
+      const rotCss = -(e.rot||0); // DXF: graus anti-horario a partir do leste; CSS rotate() e horario
+      const fontePx = tamanhoFontePx(Math.max(0.3,e.h));
       const icone = L.divIcon({
-        className:'info-pt-wrap', iconSize:[48,48], iconAnchor:[24,24],
-        html:`<div class="info-pt"><div class="info-pt-alvo" style="background:${cor}"></div><div class="info-pt-rotulo">${escMultilinha(e.texto)}</div></div>`
+        className:'dxf-texto-wrap', iconSize:[1,1], iconAnchor:[0,0],
+        html:`<span class="dxf-texto" style="color:${cor};font-size:${fontePx}px;transform:rotate(${rotCss}deg)">${escMultilinha(e.texto)}</span>`
       });
-      g.layer.addLayer(L.marker(p, {icon:icone, pane:'pontosInfoPane'}));
+      const m = L.marker(p, {icon:icone, pane:'pontosInfoPane', interactive:true});
+      m.bindPopup(`<b>${escMultilinha(e.texto)}</b><br><small style="color:#5a7a88">Camada: ${escHTML(e.layer)}</small>`);
+      g.layer.addLayer(m);
+      registroTextosDXF.push({marker:m, alturaMundo:Math.max(0.3,e.h), projId});
       g.count++;
     }
   });
