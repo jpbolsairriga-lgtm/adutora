@@ -1,10 +1,9 @@
 /* Service worker - app, mapa e projetos abertos funcionam offline em campo */
-var CACHE = "irricad-viewer-v7";
+var CACHE = "irricad-viewer-v8";
 var TILES = "tiles-esri-v1"; /* imagens de satelite ja vistas; nao apaga nas atualizacoes */
 var ARQS = ["./", "./irricad-viewer.html", "./manifest.json", "./icon-192.png", "./icon-512.png", "./icon-maskable.png",
   "./tophofarm-simbolo.png", "./tophofarm-logo-completo.png", "./irricad-logo.png",
-  "./lib/leaflet.css", "./lib/leaflet-src.js", "./lib/leaflet-rotate-src.js", "./lib/jszip.min.js",
-  "./lib/pdf.min.mjs", "./lib/pdf.worker.min.mjs"];
+  "./lib/leaflet.css", "./lib/leaflet-src.js", "./lib/leaflet-rotate-src.js", "./lib/jszip.min.js"];
 
 self.addEventListener("install", function(e){
   self.skipWaiting();
