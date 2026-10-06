@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<!-- build 2026-10-06 v1.19.0 -->
+<!-- build 2026-10-06 v1.19.1 -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Visualizador IrriCAD v1.19.0 &middot; TophoFarm</title>
+<title>Visualizador IrriCAD v1.19.1 &middot; TophoFarm</title>
 <meta name="theme-color" content="#1f4e4c">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -269,8 +269,9 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 /* ==================================================================
    VERSAO / HISTORICO
    ================================================================== */
-const VERSAO_APP = '1.19.0';
+const VERSAO_APP = '1.19.1';
 const HISTORICO_VERSOES = [
+  {v:'1.19.1', d:'06/10/2026', t:'Corrige a moldura (quadro) de resumo de zona ("Zone no. 1 / Cota / Área...") ficando menor que o texto dentro dela em alguns zooms. Causa: o quadro é um desenho real do DXF, que escala em proporção verdadeira com o zoom do mapa; o texto tinha um tamanho mínimo/máximo artificial (8 a 60px) que não acompanhava essa mesma escala — em zooms mais afastados, o quadro encolhia mais rápido que o piso de 8px do texto permitia, e o texto vazava pra fora. Removido esse limite: agora o texto escala em proporção real (igual a moldura), sempre do tamanho certo um pro outro, em qualquer zoom.'},
   {v:'1.19.0', d:'06/10/2026', t:'Botão para desligar a foto de satélite (ícone 🛰️ na barra de baixo) — funciona tanto pro .kmz quanto pro .dxf, já que os dois desenham no mesmo mapa. Cores do DXF corrigidas pra bater com o IrriCAD de verdade: a paleta anterior (das v1.17/1.18) tinha sido "suavizada" por engano e saía diferente da cor real gravada no arquivo — agora usa a tabela oficial de 256 cores do AutoCAD (Color Index), igual o IrriCAD usa.'},
   {v:'1.18.0', d:'06/10/2026', t:'Textos do DXF (comprimento/diâmetro de cada trecho de tubo) agora aparecem rotacionados acompanhando a tubulação, igual no AutoCAD — antes só os textos "soltos" apareciam (vazão/pressão de válvula e bomba); descobri que os textos de cada trecho de tubo vêm dentro de blocos do DXF, com ângulo e escala próprios, e não eram lidos. O tamanho da letra agora também acompanha o zoom do mapa (proporcional ao tamanho real gravado no desenho, como um CAD de verdade), em vez de um tamanho fixo. Cores dos elementos ficaram mais claras/contrastadas (halo escuro no texto) pra continuar legível em qualquer parte da foto de satélite.'},
   {v:'1.17.0', d:'06/10/2026', t:'O .dxf agora entra direto no mapa principal (satélite + GPS), não numa tela separada: cada camada do desenho (tubulações, válvulas, textos de vazão/pressão) vira uma camada de verdade, ligando/desligando pela mesma gaveta "Camadas" do .kmz. As coordenadas do DXF (UTM) são convertidas pra latitude/longitude usando a zona UTM do próprio projeto — detectada automaticamente a partir do .kmz já aberto (abra o .kmz do projeto também, pra garantir a posição exata). Os textos de vazão/pressão agora ficam sempre visíveis, do mesmo jeito que os pontos de informação do .kmz.'},
@@ -1320,9 +1321,15 @@ function metrosPorPixelAtual(){
   return 156543.03392 * Math.cos(lat*Math.PI/180) / Math.pow(2, mapa.getZoom());
 }
 function tamanhoFontePx(alturaMundo){
+  // SEM teto/piso artificial de tamanho: molduras/caixas desenhadas no DXF
+  // (ex.: o quadro "Zone no. 1 / Cota / Área...") são geometria real,
+  // desenhada no mapa em escala verdadeira (sem limite nenhum). Um piso/teto
+  // no texto fazia ele descasar dessa escala em zooms baixos/altos -- o
+  // texto "vazava" pra fora da moldura porque ela encolhia mais rápido que
+  // o piso de 8px permitia. Sem clamp, texto e moldura sempre escalam juntos.
   const mpp = metrosPorPixelAtual();
   if(!isFinite(mpp) || mpp<=0) return 11;
-  return Math.max(8, Math.min(60, alturaMundo/mpp));
+  return Math.max(0.5, alturaMundo/mpp);
 }
 function atualizaTextosDXF(){
   registroTextosDXF.forEach(r=>{
