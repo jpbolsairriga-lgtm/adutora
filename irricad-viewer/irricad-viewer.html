@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<!-- build 2026-10-06 v1.19.1 -->
+<!-- build 2026-10-06 v1.20.0 -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Visualizador IrriCAD v1.19.1 &middot; TophoFarm</title>
+<title>Visualizador IrriCAD v1.20.0 &middot; TophoFarm</title>
 <meta name="theme-color" content="#1f4e4c">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -14,7 +14,7 @@
 :root{--azul-esc:#1f4e4c;--azul:#2f7a78;--azul-cl:#f2b134;--bg:#0d1917;--verde:#1e7b45;--vermelho:#c0392b}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:#eaf2f6}
-#mapa{position:fixed;inset:0;background:#0b141a}
+#mapa{position:fixed;inset:0;background:#000}
 .leaflet-popup-content-wrapper{border-radius:10px}
 .leaflet-popup-content{font-size:.85rem;max-width:260px}
 .leaflet-control-attribution{font-size:.6rem}
@@ -269,8 +269,9 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 /* ==================================================================
    VERSAO / HISTORICO
    ================================================================== */
-const VERSAO_APP = '1.19.1';
+const VERSAO_APP = '1.20.0';
 const HISTORICO_VERSOES = [
+  {v:'1.20.0', d:'06/10/2026', t:'Fundo preto (igual AutoCAD) sempre que não há foto de satélite: 1) o botão de satélite agora "apaga" pra preto, não pra mapa de ruas; 2) em áreas rurais onde a Esri não tem foto de verdade (comum fora de cidade), ela mandava um quadrado cinza-claro escrito "Map data not available" em vez de dar erro — ficava mais óbvio em zoom alto porque esse quadrado cinza cobria mais tela; agora isso é detectado (pela cor, sem variação, bem diferente de uma foto de verdade) e escondido, mostrando preto no lugar. Vale pro .kmz e pro .dxf, já que os dois usam o mesmo mapa de fundo.'},
   {v:'1.19.1', d:'06/10/2026', t:'Corrige a moldura (quadro) de resumo de zona ("Zone no. 1 / Cota / Área...") ficando menor que o texto dentro dela em alguns zooms. Causa: o quadro é um desenho real do DXF, que escala em proporção verdadeira com o zoom do mapa; o texto tinha um tamanho mínimo/máximo artificial (8 a 60px) que não acompanhava essa mesma escala — em zooms mais afastados, o quadro encolhia mais rápido que o piso de 8px do texto permitia, e o texto vazava pra fora. Removido esse limite: agora o texto escala em proporção real (igual a moldura), sempre do tamanho certo um pro outro, em qualquer zoom.'},
   {v:'1.19.0', d:'06/10/2026', t:'Botão para desligar a foto de satélite (ícone 🛰️ na barra de baixo) — funciona tanto pro .kmz quanto pro .dxf, já que os dois desenham no mesmo mapa. Cores do DXF corrigidas pra bater com o IrriCAD de verdade: a paleta anterior (das v1.17/1.18) tinha sido "suavizada" por engano e saía diferente da cor real gravada no arquivo — agora usa a tabela oficial de 256 cores do AutoCAD (Color Index), igual o IrriCAD usa.'},
   {v:'1.18.0', d:'06/10/2026', t:'Textos do DXF (comprimento/diâmetro de cada trecho de tubo) agora aparecem rotacionados acompanhando a tubulação, igual no AutoCAD — antes só os textos "soltos" apareciam (vazão/pressão de válvula e bomba); descobri que os textos de cada trecho de tubo vêm dentro de blocos do DXF, com ângulo e escala próprios, e não eram lidos. O tamanho da letra agora também acompanha o zoom do mapa (proporcional ao tamanho real gravado no desenho, como um CAD de verdade), em vez de um tamanho fixo. Cores dos elementos ficaram mais claras/contrastadas (halo escuro no texto) pra continuar legível em qualquer parte da foto de satélite.'},
@@ -403,25 +404,52 @@ const SERVIDORES_SAT = [
   {nome:'Esri (alt)', url:'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'},
   {nome:'Esri Clarity', url:'https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'}
 ];
+// a Esri nao tem foto de verdade em toda area rural -- quando falta,
+// ela responde com um tile cinza-claro ("Map data not available") em vez
+// de dar erro, entao tileerror nao pega esse caso. Detecta isso pela cor
+// (cinza uniforme, sem variacao -- foto de verdade nunca fica assim) e
+// esconde o tile, revelando o fundo preto do mapa por baixo em vez do
+// cinza -- em vez de simplesmente desaparecer "clareando" a tela.
+function pareceTileSemImagem(img){
+  try{
+    const cv = document.createElement('canvas');
+    cv.width = 8; cv.height = 8;
+    const ctx = cv.getContext('2d');
+    ctx.drawImage(img, 0, 0, 8, 8);
+    const d = ctx.getImageData(0, 0, 8, 8).data;
+    let minV=255, maxV=0, dessatMax=0;
+    for(let i=0;i<d.length;i+=4){
+      const r=d[i], g=d[i+1], b=d[i+2];
+      const v=(r+g+b)/3;
+      if(v<minV) minV=v; if(v>maxV) maxV=v;
+      dessatMax = Math.max(dessatMax, Math.max(r,g,b)-Math.min(r,g,b));
+    }
+    return (maxV-minV)<8 && dessatMax<8 && minV>185 && minV<235;
+  }catch(e){ return false; } // sem permissao (CORS) ou outro erro -- nao esconde nada, so ignora
+}
 let iServ=0, camadaSat=null, tileOk=false, erroCount=0;
 function montaSatelite(i){
   if(camadaSat) mapa.removeLayer(camadaSat);
   iServ=i; tileOk=false; erroCount=0;
-  camadaSat = L.tileLayer(SERVIDORES_SAT[i].url, {maxNativeZoom:19, maxZoom:22, attribution:'Esri, Maxar'});
-  camadaSat.on('tileload', ()=>{tileOk=true; erroCount=0;});
+  camadaSat = L.tileLayer(SERVIDORES_SAT[i].url, {maxNativeZoom:19, maxZoom:22, attribution:'Esri, Maxar', crossOrigin:true});
+  camadaSat.on('tileload', e=>{
+    tileOk=true; erroCount=0;
+    if(pareceTileSemImagem(e.tile)) e.tile.style.visibility='hidden';
+  });
   camadaSat.on('tileerror', ()=>{
     if(tileOk) return;
     if(++erroCount>4 && i+1<SERVIDORES_SAT.length){ montaSatelite(i+1); }
   });
   camadaSat.addTo(mapa);
 }
-const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxNativeZoom:19, maxZoom:22, attribution:'OpenStreetMap'});
 montaSatelite(0);
+// "apagar" o fundo mostra preto (igual AutoCAD) -- nao um mapa de ruas, que
+// tambem teria cor/poluicao visual competindo com as cores do DXF/KML.
 let modoRua=false;
 function alternaBase(){
   modoRua = !modoRua;
-  if(modoRua){ mapa.removeLayer(camadaSat); osm.addTo(mapa); }
-  else { mapa.removeLayer(osm); camadaSat.addTo(mapa); }
+  if(modoRua) mapa.removeLayer(camadaSat);
+  else camadaSat.addTo(mapa);
 }
 mapa.on('dblclick', ()=>{}); // reservado
 
