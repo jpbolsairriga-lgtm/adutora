@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<!-- build 2026-10-06 v1.11.0 -->
+<!-- build 2026-10-06 v1.12.0 -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Visualizador IrriCAD v1.11.0 &middot; TophoFarm</title>
+<title>Visualizador IrriCAD v1.12.0 &middot; TophoFarm</title>
 <meta name="theme-color" content="#1f4e4c">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -80,8 +80,10 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 #dp-head{padding:calc(env(safe-area-inset-top) + .9rem) 1rem .8rem;background:var(--azul-esc);display:flex;align-items:center;justify-content:space-between}
 #dp-head h2{font-size:1rem}
 #dp-close{background:none;border:none;color:#fff;font-size:1.4rem;line-height:1;padding:.2rem .4rem}
-#dp-abrir{margin:.8rem 1rem;padding:.75rem;border-radius:10px;border:2px dashed #2b4757;background:#162732;color:#eaf2f6;font-size:.85rem;text-align:center}
-#dp-tabelas{margin:0 1rem .8rem;padding:.75rem;border-radius:10px;border:1px solid #2b4757;background:#0c1920;color:#cfe3ea;font-size:.85rem;text-align:center}
+#dp-abrir-completo{margin:.8rem 1rem .5rem;padding:.8rem;border-radius:10px;border:2px dashed var(--azul-cl);background:#16302e;color:#eaf2f6;font-size:.88rem;font-weight:700;text-align:center;line-height:1.5}
+#dp-abrir-completo small{display:block;color:#9fc0cb;font-weight:400;font-size:.7rem;margin-top:.1rem}
+#dp-abrir-sep{display:flex;gap:.5rem;margin:0 1rem .8rem}
+#dp-abrir,#dp-tabelas{flex:1;padding:.6rem .5rem;border-radius:9px;border:1px solid #2b4757;background:#0c1920;color:#9fc0cb;font-size:.72rem;text-align:center}
 #dp-lista{flex:1;overflow:auto;padding:.2rem 0}
 .proj-item{padding:.7rem 1rem;border-bottom:1px solid rgba(255,255,255,.05);display:flex;justify-content:space-between;align-items:center;gap:.6rem}
 .proj-check{width:19px;height:19px;flex-shrink:0}
@@ -250,8 +252,11 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 <!-- drawer de projetos -->
 <div id="drawer-proj">
   <div id="dp-head"><h2>Meus projetos</h2><button id="dp-close">&times;</button></div>
-  <div id="dp-abrir">&#128194; Abrir arquivo .kmz / .kml</div>
-  <div id="dp-tabelas">&#128203; Tabelas do Projeto (.dez)</div>
+  <div id="dp-abrir-completo">&#128193; Abrir Projeto Completo<br><small>selecione o .dez e o .kmz juntos</small></div>
+  <div id="dp-abrir-sep">
+    <div id="dp-abrir">&#128506; S&oacute; o mapa (.kmz/.kml)</div>
+    <div id="dp-tabelas">&#128203; S&oacute; as tabelas (.dez)</div>
+  </div>
   <div id="dp-lista"><div id="dp-empty">Nenhum projeto salvo neste aparelho ainda.</div></div>
   <div id="dp-sobre">
     <img src="tophofarm-logo-completo.png" alt="TophoFarm" id="dp-logo">
@@ -291,6 +296,7 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 <div id="toast"></div>
 <input id="file-input" type="file" accept=".kml,.kmz">
 <input id="file-input-dez" type="file" accept=".dez">
+<input id="file-input-completo" type="file" accept=".dez,.kmz,.kml" multiple>
 
 <script src="lib/leaflet-src.js"></script>
 <script src="lib/leaflet-rotate-src.js"></script>
@@ -301,8 +307,9 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 /* ==================================================================
    VERSAO / HISTORICO
    ================================================================== */
-const VERSAO_APP = '1.11.0';
+const VERSAO_APP = '1.12.0';
 const HISTORICO_VERSOES = [
+  {v:'1.12.0', d:'06/10/2026', t:'"Abrir Projeto Completo": um só seletor de arquivo onde você escolhe o .dez e o .kmz do mesmo projeto juntos — o app carrega o mapa e as tabelas de uma vez, como um projeto só. (A geometria/tubulação não dá pra extrair com segurança direto do .dez — testado e confirmado: o IrriCAD usa um sistema de coordenadas interno próprio, sem a referência pro mundo real que só o .kmz carrega — por isso o mapa continua vindo do .kmz.)'},
   {v:'1.11.0', d:'06/10/2026', t:'Nova aba "Tabelas do Projeto": abre o arquivo .dez do IrriCAD (não o .kmz) e mostra a lista de materiais/componentes do projeto — descrição, código, fornecedor — com busca e exportação para CSV. Acessível em Meus Projetos → Tabelas do Projeto. Precisa de internet na primeira vez (carrega o leitor de banco de dados); o resto do app continua funcionando offline normalmente.'},
   {v:'1.10.0', d:'06/10/2026', t:'Tocar em linhas (tubulações — ZONE_PIPES, MAINLINE_PIPES etc.) pra ver a descrição ficou muito mais fácil: a área de toque agora é bem mais larga que o traço desenhado (antes era só 2-3px, quase impossível de acertar no dedo). O desenho no mapa continua do mesmo tamanho — só a área sensível ao toque cresceu.'},
   {v:'1.9.2', d:'01/10/2026', t:'Ícone de instalação trocado de novo: agora é o símbolo do IrriCAD (o ícone da TophoFarm já é usado por outro app, ficava difícil diferenciar os dois na tela inicial do celular).'},
@@ -933,6 +940,7 @@ async function abreArquivoDez(file){
 
     const reader = new MDBReader(BufferPoly.from(dbmBuf));
     renderizaTabelas(reader, file.name);
+    document.getElementById('painel-tabelas').classList.add('aberto');
     toast('Tabelas carregadas: ' + file.name);
   }catch(err){
     console.error(err);
@@ -1045,6 +1053,34 @@ document.getElementById('file-input-dez').addEventListener('change', e=>{
   const f = e.target.files[0];
   if(f) abreArquivoDez(f);
   e.target.value='';
+});
+
+// "Abrir Projeto Completo": um unico seletor de arquivo (multiplo) onde o
+// tecnico escolhe o .dez e o .kmz do mesmo projeto juntos (normalmente
+// estao na mesma pasta) -- carrega o mapa a partir do .kmz e as tabelas
+// a partir do .dez, como se fosse um projeto so. Nao da pra extrair
+// geometria direto do .dez (formato interno do IrriCAD, sem documentacao
+// publica e sem um jeito confiavel de achar a transformacao de
+// coordenadas pro mundo real -- testado e confirmado, ver changelog).
+document.getElementById('dp-abrir-completo').addEventListener('click', ()=>document.getElementById('file-input-completo').click());
+document.getElementById('file-input-completo').addEventListener('change', async e=>{
+  const arquivos = [...e.target.files];
+  e.target.value = '';
+  const dez = arquivos.find(f=>/\.dez$/i.test(f.name));
+  const kmz = arquivos.find(f=>/\.(kmz|kml)$/i.test(f.name));
+  fecharDrawerProjetos();
+  if(!dez && !kmz){
+    toast('Selecione o .dez e/ou o .kmz do projeto.', 3500);
+    return;
+  }
+  if(kmz) await abrirArquivo(kmz);
+  if(dez) await abreArquivoDez(dez);
+  if(dez && !kmz) toast('Só as tabelas foram abertas — não achei um .kmz/.kml na seleção.', 4000);
+  if(kmz && !dez) toast('Só o mapa foi aberto — não achei um .dez na seleção.', 4000);
+  if(dez && kmz){
+    document.getElementById('painel-tabelas').classList.remove('aberto');
+    toast('Projeto completo carregado: mapa e tabelas prontos.', 3500);
+  }
 });
 
 function atualizaTituloGeral(){
