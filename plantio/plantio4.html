@@ -429,7 +429,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.71 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.72 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -9807,14 +9807,27 @@ function _calcularSetores(linhasArr, n, modo, direcaoManualBrg) {
 // "não faz sentido" não acontece mais), e o clique ainda tem uma palavra a dizer em por onde
 // começar. _ordenarLinhasDoTalhao (ordenação local de cada talhão) e o "encostar no talhão
 // anterior" (pontoPartida) continuam exatamente iguais.
+// v5.72: pedido do usuário — "eu clico nos talhões na ordem que eu quero dividir e no sentido que
+// eu quero seguir, eu não precisaria clicar novamente no talhão (...) isso poderia pular etapas e
+// diminuir erros de divisão". Quando pelo menos 1 dos talhões selecionados tem Sentido Manual
+// definido (ver ativarDefinirSentidoTalhao, v5.68), o usuário já fez um planejamento DELIBERADO
+// (ordem de clique + sentido desenhado em cada talhão) — nesse caso, confia 100% na ordem de
+// clique, sem recalcular um eixo geográfico macro por cima dela (ver v5.53 logo abaixo: esse
+// recálculo existe só como rede de segurança pra quando a ordem de clique é "crua"/sem
+// planejamento nenhum, ex.: a ordem em que um KML foi importado) — com sentido manual em jogo, a
+// rede de segurança vira um estorvo (pode inverter uma ordem que o usuário escolheu de propósito).
+// Sem NENHUM sentido manual definido nos selecionados, nada muda — mantém a rede de segurança de
+// sempre, pro fluxo "de sempre" (seleciona e divide sem desenhar nada).
 function _calcularSetoresCombinado(alvos, n, modo) {
-  const comCentroide = alvos.map(a => {
-    const pts = a.t ? a.t.polyPts : polyPts;
-    const lat = pts.reduce((s, p) => s + p.lat, 0) / pts.length, lng = pts.reduce((s, p) => s + p.lng, 0) / pts.length;
-    return { ...a, centroide: { lat, lng } };
-  });
+  const algumSentidoManual = alvos.some(a => a.t && a.t.direcaoManualBrg != null);
+  let comCentroide = alvos.slice();
 
-  if(comCentroide.length >= 2) {
+  if(!algumSentidoManual && comCentroide.length >= 2) {
+    comCentroide = comCentroide.map(a => {
+      const pts = a.t ? a.t.polyPts : polyPts;
+      const lat = pts.reduce((s, p) => s + p.lat, 0) / pts.length, lng = pts.reduce((s, p) => s + p.lng, 0) / pts.length;
+      return { ...a, centroide: { lat, lng } };
+    });
     let refBrg = 0, maiorDist = -1;
     for(let i = 0; i < comCentroide.length; i++) {
       for(let j = i + 1; j < comCentroide.length; j++) {
@@ -10517,7 +10530,12 @@ function dividirEmSetores() {
   $('btnLimparSetores').style.display = '';
   _atualizarResumoSetores(resumos);
   const txtCombinado = alvos.length > 1 ? `, combinando ${alvos.length} talhões selecionados` : '';
-  setStatus(`Dividido em ${n} setores (${modo === 'quantidade' ? 'quantidade de linhas' : 'comprimento'} igual)${txtCombinado}.`, 'ok');
+  // v5.72: avisa quando a ordem de clique foi usada DIRETO (sem recalcular eixo geográfico) — ver
+  // _calcularSetoresCombinado. Transparência: o usuário precisa saber que esse caminho foi tomado,
+  // já que muda o resultado em relação ao de sempre.
+  const usaOrdemDeClique = alvos.length > 1 && alvos.some(a => a.t && a.t.direcaoManualBrg != null);
+  const txtOrdemClique = usaOrdemDeClique ? ' Como pelo menos 1 talhão tem Sentido Manual definido, a ordem de clique foi seguida direto (sem recalcular eixo geográfico).' : '';
+  setStatus(`Dividido em ${n} setores (${modo === 'quantidade' ? 'quantidade de linhas' : 'comprimento'} igual)${txtCombinado}.${txtOrdemClique}`, 'ok');
 }
 
 function _atualizarResumoSetores(resumos) {
