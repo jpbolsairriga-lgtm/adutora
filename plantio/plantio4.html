@@ -429,7 +429,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.67 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.68 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -750,6 +750,16 @@ body.layout-lateral #status{grid-area:status;}
 
     <!-- ══ Setores / Operações ══ -->
     <div class="rpanel" id="rp-setores">
+      <div class="rgroup">
+        <div class="rgroup-body">
+          <button class="rbtn c-purple" id="btnDefinirSentido" onclick="ativarDefinirSentidoTalhao()" title="Selecione um talhão primeiro (clique nele no mapa), depois clique aqui e marque 2 pontos no mapa: início → fim. A ordem das linhas desse talhão (em 'Dividir em Setores' e em 'Montar Setores por Clique') vai seguir exatamente essa direção, em vez de tentar adivinhar automaticamente."><span class="ico">&#10138;</span><span class="lbl">Definir Sentido do Talhão</span></button>
+          <div class="rcol">
+            <button class="rbtn-sm clr" id="btnCancelarSentido" style="display:none;" onclick="cancelarDefinirSentido()">&#10005; Cancelar</button>
+            <button class="rbtn-sm clr" onclick="limparSentidoTalhao()">&#8634; Limpar Sentido do Selecionado</button>
+          </div>
+        </div>
+        <div class="rgroup-title">Sentido Manual do Talhão — a seta &#9650; laranja no mapa mostra o sentido já salvo</div>
+      </div>
       <div class="rgroup">
         <div class="rgroup-body">
           <div class="rcol">
@@ -4655,6 +4665,18 @@ body.layout-lateral #status{grid-area:status;}
 // projeto — é o nome do atalho do PWA já instalado, que o Windows/navegador guarda no momento da
 // instalação e não recarrega sozinho só porque o manifest.json mudou; precisa desinstalar e
 // reinstalar o atalho do app pra pegar o nome novo.
+// v5.68: pedido do usuário, depois de 4 rodadas ajustando a heurística automática de ordenação de
+// setores (v5.48/v5.52/v5.53/v5.60) e ela continuar parecendo "aleatória" pra ele mesmo assim: "a
+// ordem dos setores, mesmo eu clicando nos blocos esta aleatorio, preciso de algo para fazer
+// seguir o sentido que eu quero (...) pensei em traçar um linha imaginaria mostrando o sentido que
+// deve ser seguido em cada talhão". Em vez de mais uma rodada tentando ADIVINHAR a direção certa
+// pela geometria, nova ferramenta "Definir Sentido do Talhão" (aba Setores): seleciona o talhão,
+// clica 2 pontos no mapa (início → fim) — o bearing entre eles fica salvo no talhão
+// (t.direcaoManualBrg, + t.direcaoManualPts/Layer/Seta só pro feedback visual: linha laranja
+// tracejada + seta ▲ rotacionada na ponta). _ordenarLinhasDoTalhao (usada tanto por "Dividir em
+// Setores" quanto por "Montar Setores por Clique") ganhou um 3º parâmetro — quando presente, PULA
+// qualquer detecção automática (_direcaoConsistente/_encadearPorProximidade/pontoPartida) e projeta
+// direto nessa direção. "Limpar Sentido do Selecionado" remove, voltando a calcular automático.
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -5383,6 +5405,7 @@ map.on('click', e => {
   else if(modo === 'curvapoly') addCurvaPolyPt(e.latlng);
   else if(modo === 'divisao') addDivisaoPt(e.latlng);
   else if(modo === 'regua') addReguaPt(e.latlng);
+  else if(modo === 'sentido') _addSentidoPt(e.latlng);
 });
 map.on('dblclick', e => {
   if(modo === 'poly' && polyPts.length >= 3) fecharPoligono();
@@ -9632,10 +9655,26 @@ function _direcaoConsistente(info) {
 //    do leque, já que não existe UM eixo que represente direções tão diferentes entre si.
 // `pontoPartida`, se houver, é o fim do talhão anterior na sequência combinada — usado pra entrar
 // pelo lado mais perto, nos dois modos.
-function _ordenarLinhasDoTalhao(info, pontoPartida) {
+// `direcaoManualBrg`, se houver (em graus, 0=Norte) — v5.68, ver ativarDefinirSentidoTalhao: o
+// usuário desenhou no mapa o sentido que QUER que a ordem siga nesse talhão específico, porque o
+// auto-detectado (os dois modos acima) continuava "aleatório" na opinião dele mesmo campo a
+// campo, depois de 4 rodadas tentando acertar a heurística automática (v5.48/v5.52/v5.53/v5.60).
+// Quando presente, PULA os dois modos automáticos inteiros — projeta direto no eixo que o usuário
+// desenhou (do ponto de início pro de fim), sem checar _direcaoConsistente nem reagir a
+// pontoPartida (a direção é uma decisão EXPLÍCITA do usuário, não deve ser revertida por
+// proximidade com o talhão anterior).
+function _ordenarLinhasDoTalhao(info, pontoPartida, direcaoManualBrg) {
   if(info.length < 2) return info.slice();
   let ordenado;
-  if(!_direcaoConsistente(info)) {
+  if(direcaoManualBrg != null) {
+    const anchor = info[0].mid;
+    ordenado = info.map(o => {
+      const dist = haversineM(anchor, o.mid);
+      const brg = dist < 1e-6 ? direcaoManualBrg : turf.bearing(turf.point([anchor.lng, anchor.lat]), turf.point([o.mid.lng, o.mid.lat]));
+      return { ...o, proj: dist * Math.cos((brg - direcaoManualBrg) * Math.PI / 180) };
+    });
+    ordenado.sort((a, b) => a.proj - b.proj);
+  } else if(!_direcaoConsistente(info)) {
     ordenado = _encadearPorProximidade(info, pontoPartida);
   } else {
     const rowBrg = _bearingDoItem(info.reduce((a, b) => (b.len > a.len ? b : a)));
@@ -9706,7 +9745,8 @@ function _corrigirOutliersDeOrdem(ordenado, K = 4) {
 
 // Recebe o array de polylines de UM talhão, devolve N grupos contíguos (no espaço) com peso
 // acumulado ~igual, ou null se não houver linhas suficientes (precisa de pelo menos 1 por setor).
-function _calcularSetores(linhasArr, n, modo) {
+// direcaoManualBrg: ver _ordenarLinhasDoTalhao/ativarDefinirSentidoTalhao (v5.68).
+function _calcularSetores(linhasArr, n, modo, direcaoManualBrg) {
   const info = linhasArr.map(pl => {
     const pts = pl.getLatLngs().flat();
     if(pts.length < 2) return null;
@@ -9716,7 +9756,7 @@ function _calcularSetores(linhasArr, n, modo) {
   }).filter(Boolean);
   if(info.length < n) return null;
 
-  const ordenado = _ordenarLinhasDoTalhao(info, null);
+  const ordenado = _ordenarLinhasDoTalhao(info, null, direcaoManualBrg);
 
   const pesos = ordenado.map(o => (modo === 'quantidade' ? 1 : o.len));
   const cortes = _cortarPorPeso(pesos, n);
@@ -9802,7 +9842,7 @@ function _calcularSetoresCombinado(alvos, n, modo) {
     }).filter(Boolean);
     if(!local.length) return;
 
-    const ordenado = _ordenarLinhasDoTalhao(local, fimAnterior);
+    const ordenado = _ordenarLinhasDoTalhao(local, fimAnterior, t && t.direcaoManualBrg);
     ordenado.forEach(o => itens.push({ pl: o.pl, t, corBase, len: o.len }));
     fimAnterior = ordenado[ordenado.length - 1].mid;
   });
@@ -10019,7 +10059,7 @@ function _cliqueMontagemSetores(latlng) {
   if(_montagemSetores.corAtual === null) _montagemSetores.corAtual = _corDaMontagem(_montagemSetores.setorIdx);
   const corBase = t.corLinha || '#FFD600';
   const faltamNoSetor = _montagemSetores.meta - _comprimentoDeItens(_montagemSetores.itensAtual);
-  const ordenadas = _ordenarLinhasDoTalhao(t._linhasRestantesMontagem, _montagemSetores.fimAnterior);
+  const ordenadas = _ordenarLinhasDoTalhao(t._linhasRestantesMontagem, _montagemSetores.fimAnterior, t.direcaoManualBrg);
   // Nunca passa muito do que falta pro setor ATUAL (ver _tomarLinhasPorComprimento) — a sobra
   // fica guardada na pool (t._linhasRestantesMontagem) pro próximo clique, seja nesse talhão ou
   // noutro, e é reordenada de novo (por proximidade de onde estiver o fimAnterior NAQUELE momento).
@@ -10193,6 +10233,99 @@ function _cancelarMontagemSetores() {
   setStatus('Montagem por clique cancelada — linhas voltaram à cor original.', 'info');
 }
 
+// ── Sentido Manual do Talhão (v5.68) ────────────────────────────────────────────────────────────
+// Pedido do usuário, depois de 4 rodadas ajustando a heurística automática de ordenação
+// (v5.48/v5.52/v5.53/v5.60) e ela continuar parecendo "aleatória" pra ele mesmo assim: "a ordem
+// dos setores, mesmo eu clicando nos blocos esta aleatorio, preciso de algo para fazer seguir o
+// sentido que eu quero (...) pensei em traçar um linha imaginaria mostrando o sentido que deve
+// ser seguido em cada talhão". Em vez de mais uma rodada tentando ADIVINHAR a direção certa pela
+// geometria (abordagem que já mostrou seu limite — um heurística genérica nunca vai acertar toda
+// forma de campo), deixa o usuário DIZER a direção explicitamente: seleciona o talhão, clica 2
+// pontos no mapa (início → fim), e essa direção (um bearing simples) fica salva no talhão
+// (t.direcaoManualBrg) — _ordenarLinhasDoTalhao (usada tanto por "Dividir em Setores" quanto por
+// "Montar Setores por Clique") passa a usar ela direto, pulando QUALQUER detecção automática
+// quando presente. Os 2 pontos não precisam estar dentro do talhão nem perto dele — só a direção
+// entre eles importa, o próprio desenho da seta (t.direcaoManualLayer) é só feedback visual.
+let _sentidoPts = [];
+let _sentidoMarkers = [];
+
+function ativarDefinirSentidoTalhao() {
+  if(talhaoSelecionadoUid === null) { setStatus('Selecione um talhão travado primeiro (clique nele no mapa), depois use esta ferramenta.', 'err'); return; }
+  if(modo !== 'idle') { setStatus('Finalize ou cancele a ferramenta atual antes de definir o sentido.', 'err'); return; }
+  modo = 'sentido';
+  _sentidoPts = [];
+  map.getContainer().style.cursor = 'crosshair';
+  $('btnCancelarSentido').style.display = 'flex';
+  setStatus('Clique no ponto de INÍCIO do sentido (onde o 1º setor deve começar), depois no ponto de FIM (pra onde a ordem deve seguir).', 'info');
+}
+
+function _addSentidoPt(ll) {
+  _sentidoPts.push(ll);
+  const mk = L.marker(ll, { icon: mkIcon('vertex-marker guide') }).addTo(map);
+  _sentidoMarkers.push(mk);
+  if(_sentidoPts.length === 1) {
+    setStatus('Agora clique no ponto de FIM do sentido.', 'info');
+    return;
+  }
+  _finalizarDefinirSentido();
+}
+
+// Ícone com uma seta (▲ rotacionada) apontando na direção definida — feedback visual direto no
+// mapa de qual sentido está salvo pro talhão, sem precisar abrir nada pra conferir.
+function _iconeSetaSentido(bearingDeg) {
+  return L.divIcon({
+    className: 'seta-sentido-icon',
+    html: `<div style="transform:rotate(${bearingDeg}deg);font-size:26px;line-height:1;color:#ff6f00;text-shadow:0 0 3px #000,0 0 3px #000;">&#9650;</div>`,
+    iconSize: [26, 26], iconAnchor: [13, 13],
+  });
+}
+
+function _desenharSetaSentido(t) {
+  if(t.direcaoManualLayer) { t.direcaoManualLayer.remove(); t.direcaoManualLayer = null; }
+  if(t.direcaoManualSeta) { t.direcaoManualSeta.remove(); t.direcaoManualSeta = null; }
+  if(!t.direcaoManualPts) return;
+  const [p1, p2] = t.direcaoManualPts;
+  t.direcaoManualLayer = L.polyline([p1, p2], { color: '#ff6f00', weight: 3, opacity: .9, dashArray: '10,6' }).addTo(map);
+  t.direcaoManualSeta = L.marker(p2, { icon: _iconeSetaSentido(t.direcaoManualBrg), interactive: false }).addTo(map);
+}
+
+function _finalizarDefinirSentido() {
+  const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
+  const [p1, p2] = _sentidoPts;
+  _limparFerramentaSentido();
+  if(!t || !p1 || !p2 || haversineM(p1, p2) < 1e-6) { setStatus('Os 2 pontos ficaram iguais/muito perto — tente de novo com pontos mais afastados.', 'err'); return; }
+  t.direcaoManualBrg = turf.bearing(turf.point([p1.lng, p1.lat]), turf.point([p2.lng, p2.lat]));
+  t.direcaoManualPts = [p1, p2];
+  _desenharSetaSentido(t);
+  // Qualquer divisão em setores já feita antes não reflete esse sentido novo — avisa.
+  setStatus(`Sentido do Talhão ${t.idx} definido ✓ — a próxima divisão em setores ("Dividir em Setores" ou "Montar Setores por Clique") vai seguir essa direção. Se já tinha uma divisão feita, refaça pra aplicar.`, 'ok');
+}
+
+function _limparFerramentaSentido() {
+  _sentidoMarkers.forEach(m => m.remove()); _sentidoMarkers = [];
+  _sentidoPts = [];
+  modo = 'idle';
+  map.getContainer().style.cursor = '';
+  $('btnCancelarSentido').style.display = 'none';
+}
+
+function cancelarDefinirSentido() {
+  if(modo !== 'sentido') return;
+  _limparFerramentaSentido();
+  setStatus('', '');
+}
+
+function limparSentidoTalhao() {
+  if(talhaoSelecionadoUid === null) { setStatus('Selecione o talhão primeiro.', 'err'); return; }
+  const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
+  if(!t) return;
+  if(!t.direcaoManualBrg && t.direcaoManualBrg !== 0) { setStatus(`Talhão ${t.idx} não tem sentido manual definido.`, 'info'); return; }
+  delete t.direcaoManualBrg; delete t.direcaoManualPts;
+  if(t.direcaoManualLayer) { t.direcaoManualLayer.remove(); t.direcaoManualLayer = null; }
+  if(t.direcaoManualSeta) { t.direcaoManualSeta.remove(); t.direcaoManualSeta = null; }
+  setStatus(`Sentido manual do Talhão ${t.idx} removido — volta a calcular automaticamente na próxima divisão.`, 'ok');
+}
+
 function dividirEmSetores() {
   if(_modoMontagemSetores) { setStatus('Finalize ou cancele a "Montagem por Clique" antes de usar "Dividir em Setores".', 'err'); return; }
   let nInformado = parseInt($('setoresN').value);
@@ -10224,7 +10357,7 @@ function dividirEmSetores() {
   if(alvos.length === 1) {
     // Caso de sempre: 1 talhão só (selecionado sozinho, ou o ativo) — divide ELE em N.
     const { t, linhasArr, corBase } = alvos[0];
-    const grupos = _calcularSetores(linhasArr, n, modo);
+    const grupos = _calcularSetores(linhasArr, n, modo, t && t.direcaoManualBrg);
     if(!grupos) {
       setStatus(`Esse talhão não tem linhas suficientes pra dividir em ${n} setores (precisa de pelo menos ${n}).`, 'err');
       return;
@@ -16026,6 +16159,7 @@ function _abandonarFerramentaAtiva() {
   else if(modo === 'guide') cancelarGuia();
   else if(modo === 'curvapoly') limparPoligonoCurva();
   else if(modo === 'regua') limparRegua();
+  else if(modo === 'sentido') cancelarDefinirSentido();
   if(modoDivisao || modo === 'divisao') cancelarDivisaoUsuario();
   if(_modoPickLinha === 'perfil') cancelarPerfilLinhaPlantio();
   else if(_modoPickLinha === 'carreador') cancelarCarreadorDeLinha();
