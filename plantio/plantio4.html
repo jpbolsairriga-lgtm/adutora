@@ -429,7 +429,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.68 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.69 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -752,10 +752,10 @@ body.layout-lateral #status{grid-area:status;}
     <div class="rpanel" id="rp-setores">
       <div class="rgroup">
         <div class="rgroup-body">
-          <button class="rbtn c-purple" id="btnDefinirSentido" onclick="ativarDefinirSentidoTalhao()" title="Selecione um talhão primeiro (clique nele no mapa), depois clique aqui e marque 2 pontos no mapa: início → fim. A ordem das linhas desse talhão (em 'Dividir em Setores' e em 'Montar Setores por Clique') vai seguir exatamente essa direção, em vez de tentar adivinhar automaticamente."><span class="ico">&#10138;</span><span class="lbl">Definir Sentido do Talhão</span></button>
+          <button class="rbtn c-purple" id="btnDefinirSentido" onclick="ativarDefinirSentidoTalhao()" title="Selecione 1 ou vários talhões primeiro (clique neles no mapa), depois clique aqui e marque 2 pontos no mapa (início → fim) PRA CADA talhão selecionado, na ordem em que foram clicados — a ferramenta pede o sentido de um de cada vez, sem precisar reabrir. A ordem das linhas (em 'Dividir em Setores' e em 'Montar Setores por Clique') vai seguir exatamente essas direções, em vez de tentar adivinhar automaticamente."><span class="ico">&#10138;</span><span class="lbl">Definir Sentido do(s) Talhão(ões)</span></button>
           <div class="rcol">
             <button class="rbtn-sm clr" id="btnCancelarSentido" style="display:none;" onclick="cancelarDefinirSentido()">&#10005; Cancelar</button>
-            <button class="rbtn-sm clr" onclick="limparSentidoTalhao()">&#8634; Limpar Sentido do Selecionado</button>
+            <button class="rbtn-sm clr" onclick="limparSentidoTalhao()">&#8634; Limpar Sentido do(s) Selecionado(s)</button>
           </div>
         </div>
         <div class="rgroup-title">Sentido Manual do Talhão — a seta &#9650; laranja no mapa mostra o sentido já salvo</div>
@@ -4677,6 +4677,18 @@ body.layout-lateral #status{grid-area:status;}
 // Setores" quanto por "Montar Setores por Clique") ganhou um 3º parâmetro — quando presente, PULA
 // qualquer detecção automática (_direcaoConsistente/_encadearPorProximidade/pontoPartida) e projeta
 // direto nessa direção. "Limpar Sentido do Selecionado" remove, voltando a calcular automático.
+// v5.69: BUG relatado logo em seguida — "não consigo definir sentido qdo tem varios talhões, fica
+// definido apenas 1 sentido para o primeiro talhão". Causa: a ferramenta exigia
+// talhaoSelecionadoUid, que só existe com EXATAMENTE 1 talhão selecionado (ver
+// _sincronizarSelecaoTalhoes) — ao selecionar um 2º talhão (virando multi-select, pra combinar
+// numa divisão só depois), talhaoSelecionadoUid voltava a null e a ferramenta recusava rodar pros
+// talhões seguintes. Fix: ativarDefinirSentidoTalhao()/limparSentidoTalhao() passaram a trabalhar
+// em cima de talhoesMultiSel (funciona com 1 OU vários) — com 2+ selecionados, monta uma FILA na
+// ordem de clique/seleção (_sentidoFila) e pede o sentido de CADA talhão em sequência (2 cliques
+// por talhão), sem sair do modo "sentido" nem precisar reabrir a ferramenta entre um e outro.
+// Cancelar no meio preserva o que já foi definido pros talhões já processados. Um erro (2 pontos
+// iguais) num talhão não trava a fila — pula pro próximo e MESCLA o aviso de erro com o próximo
+// prompt (senão a mensagem de erro sumia na hora, sobrescrita pelo "próximo talhão" instantâneo).
 // ── Utilitários básicos (precisam vir antes de tudo) ──────────────────────────
 const $ = id => document.getElementById(id);
 // Aplica a preferência de layout salva ANTES do L.map(...) mais abaixo, pra ele já nascer com o
@@ -10233,30 +10245,59 @@ function _cancelarMontagemSetores() {
   setStatus('Montagem por clique cancelada — linhas voltaram à cor original.', 'info');
 }
 
-// ── Sentido Manual do Talhão (v5.68) ────────────────────────────────────────────────────────────
+// ── Sentido Manual do Talhão (v5.68, multi-talhão desde a v5.69) ───────────────────────────────
 // Pedido do usuário, depois de 4 rodadas ajustando a heurística automática de ordenação
 // (v5.48/v5.52/v5.53/v5.60) e ela continuar parecendo "aleatória" pra ele mesmo assim: "a ordem
 // dos setores, mesmo eu clicando nos blocos esta aleatorio, preciso de algo para fazer seguir o
 // sentido que eu quero (...) pensei em traçar um linha imaginaria mostrando o sentido que deve
 // ser seguido em cada talhão". Em vez de mais uma rodada tentando ADIVINHAR a direção certa pela
 // geometria (abordagem que já mostrou seu limite — um heurística genérica nunca vai acertar toda
-// forma de campo), deixa o usuário DIZER a direção explicitamente: seleciona o talhão, clica 2
-// pontos no mapa (início → fim), e essa direção (um bearing simples) fica salva no talhão
-// (t.direcaoManualBrg) — _ordenarLinhasDoTalhao (usada tanto por "Dividir em Setores" quanto por
-// "Montar Setores por Clique") passa a usar ela direto, pulando QUALQUER detecção automática
-// quando presente. Os 2 pontos não precisam estar dentro do talhão nem perto dele — só a direção
-// entre eles importa, o próprio desenho da seta (t.direcaoManualLayer) é só feedback visual.
+// forma de campo), deixa o usuário DIZER a direção explicitamente: seleciona o(s) talhão(ões),
+// clica 2 pontos no mapa por talhão (início → fim), e essa direção (um bearing simples) fica
+// salva em cada um (t.direcaoManualBrg) — _ordenarLinhasDoTalhao (usada tanto por "Dividir em
+// Setores" quanto por "Montar Setores por Clique") passa a usar ela direto, pulando QUALQUER
+// detecção automática quando presente. Os 2 pontos não precisam estar dentro do talhão nem perto
+// dele — só a direção entre eles importa, o próprio desenho da seta (t.direcaoManualLayer) é só
+// feedback visual.
+//
+// v5.69: BUG relatado — "não consigo definir sentido qdo tem vários talhões, fica definido apenas
+// 1 sentido para o primeiro talhão". Causa: a ferramenta exigia talhaoSelecionadoUid (só existe
+// com EXATAMENTE 1 talhão selecionado — ver _sincronizarSelecaoTalhoes) — assim que o usuário
+// selecionava um 2º talhão (pra depois combinar numa divisão só), a seleção virava multi-select,
+// talhaoSelecionadoUid voltava a null, e a ferramenta recusava rodar pros talhões seguintes. Fix:
+// passou a trabalhar em cima de talhoesMultiSel (funciona com 1 OU vários) — com 2+ selecionados,
+// monta uma FILA na ordem de clique/seleção (_sentidoFila) e pede o sentido de CADA talhão em
+// sequência, sem precisar reabrir a ferramenta a cada um.
 let _sentidoPts = [];
 let _sentidoMarkers = [];
+let _sentidoFila = []; // uids dos talhões ainda faltando definir, na ordem de seleção
+let _sentidoFilaIdx = 0; // quantos já foram definidos nesta rodada (só pra mensagem "X de N")
+let _sentidoFilaTotal = 0;
 
 function ativarDefinirSentidoTalhao() {
-  if(talhaoSelecionadoUid === null) { setStatus('Selecione um talhão travado primeiro (clique nele no mapa), depois use esta ferramenta.', 'err'); return; }
+  if(talhoesMultiSel.size === 0) { setStatus('Selecione 1 ou mais talhões travados primeiro (clique neles no mapa), depois use esta ferramenta.', 'err'); return; }
   if(modo !== 'idle') { setStatus('Finalize ou cancele a ferramenta atual antes de definir o sentido.', 'err'); return; }
   modo = 'sentido';
+  _sentidoFila = [...talhoesMultiSel]; // Set preserva ordem de inserção = ordem de clique
+  _sentidoFilaTotal = _sentidoFila.length;
+  _sentidoFilaIdx = 0;
   _sentidoPts = [];
   map.getContainer().style.cursor = 'crosshair';
   $('btnCancelarSentido').style.display = 'flex';
-  setStatus('Clique no ponto de INÍCIO do sentido (onde o 1º setor deve começar), depois no ponto de FIM (pra onde a ordem deve seguir).', 'info');
+  _avisarProximoDaFilaSentido();
+}
+
+function _talhaoAtualDaFilaSentido() {
+  if(!_sentidoFila.length) return null;
+  return talhoesArquivados.find(x => x.uid === _sentidoFila[0]);
+}
+
+function _avisarProximoDaFilaSentido(avisoErroAnterior) {
+  const t = _talhaoAtualDaFilaSentido();
+  if(!t) { _finalizarFilaSentido(avisoErroAnterior); return; }
+  const posicao = _sentidoFilaIdx + 1;
+  const prefixo = avisoErroAnterior ? avisoErroAnterior + ' ' : '';
+  setStatus(`${prefixo}Talhão ${t.idx} (${posicao} de ${_sentidoFilaTotal}): clique no ponto de INÍCIO do sentido, depois no ponto de FIM.`, avisoErroAnterior ? 'err' : 'info');
 }
 
 function _addSentidoPt(ll) {
@@ -10264,10 +10305,11 @@ function _addSentidoPt(ll) {
   const mk = L.marker(ll, { icon: mkIcon('vertex-marker guide') }).addTo(map);
   _sentidoMarkers.push(mk);
   if(_sentidoPts.length === 1) {
-    setStatus('Agora clique no ponto de FIM do sentido.', 'info');
+    const t = _talhaoAtualDaFilaSentido();
+    setStatus(`Talhão ${t ? t.idx : '?'}: agora clique no ponto de FIM do sentido.`, 'info');
     return;
   }
-  _finalizarDefinirSentido();
+  _finalizarSentidoDoTalhaoAtual();
 }
 
 // Ícone com uma seta (▲ rotacionada) apontando na direção definida — feedback visual direto no
@@ -10289,21 +10331,48 @@ function _desenharSetaSentido(t) {
   t.direcaoManualSeta = L.marker(p2, { icon: _iconeSetaSentido(t.direcaoManualBrg), interactive: false }).addTo(map);
 }
 
-function _finalizarDefinirSentido() {
-  const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
+// Fecha o sentido do talhão NO TOPO da fila (2 pontos já escolhidos) e avança pro próximo — ou
+// termina, se era o último. Diferente da v5.68: NÃO sai do modo "sentido" entre um talhão e outro
+// da mesma rodada, só limpa os marcadores temporários dos 2 pontos pra receber o próximo par.
+function _finalizarSentidoDoTalhaoAtual() {
+  const t = _sentidoFila.shift();
+  const tObj = talhoesArquivados.find(x => x.uid === t);
   const [p1, p2] = _sentidoPts;
-  _limparFerramentaSentido();
-  if(!t || !p1 || !p2 || haversineM(p1, p2) < 1e-6) { setStatus('Os 2 pontos ficaram iguais/muito perto — tente de novo com pontos mais afastados.', 'err'); return; }
-  t.direcaoManualBrg = turf.bearing(turf.point([p1.lng, p1.lat]), turf.point([p2.lng, p2.lat]));
-  t.direcaoManualPts = [p1, p2];
-  _desenharSetaSentido(t);
-  // Qualquer divisão em setores já feita antes não reflete esse sentido novo — avisa.
-  setStatus(`Sentido do Talhão ${t.idx} definido ✓ — a próxima divisão em setores ("Dividir em Setores" ou "Montar Setores por Clique") vai seguir essa direção. Se já tinha uma divisão feita, refaça pra aplicar.`, 'ok');
+  _sentidoMarkers.forEach(m => m.remove()); _sentidoMarkers = [];
+  _sentidoPts = [];
+  let avisoErro = null;
+  if(!tObj || !p1 || !p2 || haversineM(p1, p2) < 1e-6) {
+    avisoErro = `Os 2 pontos do Talhão ${tObj ? tObj.idx : '?'} ficaram iguais/muito perto — pulado, tente de novo depois com "Limpar Sentido" + esta ferramenta.`;
+  } else {
+    tObj.direcaoManualBrg = turf.bearing(turf.point([p1.lng, p1.lat]), turf.point([p2.lng, p2.lat]));
+    tObj.direcaoManualPts = [p1, p2];
+    _desenharSetaSentido(tObj);
+  }
+  _sentidoFilaIdx++;
+  // v5.69: se faltam MAIS talhões na fila, _avisarProximoDaFilaSentido() ia SOBRESCREVER
+  // qualquer aviso de erro daqui antes do usuário conseguir ler — passa o erro pra ela juntar
+  // com o próximo prompt em vez de simplesmente perder a mensagem.
+  if(_sentidoFila.length) { _avisarProximoDaFilaSentido(avisoErro); return; }
+  _finalizarFilaSentido(avisoErro);
 }
 
+function _finalizarFilaSentido(avisoErroAnterior) {
+  modo = 'idle';
+  map.getContainer().style.cursor = '';
+  $('btnCancelarSentido').style.display = 'none';
+  const n = _sentidoFilaTotal;
+  _sentidoFila = []; _sentidoFilaIdx = 0; _sentidoFilaTotal = 0;
+  const prefixo = avisoErroAnterior ? avisoErroAnterior + ' ' : '';
+  setStatus(`${prefixo}Sentido definido para ${n} talhão(ões) ✓ — a próxima divisão em setores ("Dividir em Setores" ou "Montar Setores por Clique") vai seguir essas direções. Se já tinha uma divisão feita, refaça pra aplicar.`, avisoErroAnterior ? 'err' : 'ok');
+}
+
+// Cancela a rodada INTEIRA (desarma a ferramenta) — mas o que já foi definido pros talhões já
+// processados na fila continua salvo; só o talhão em andamento (e os que ainda nem chegaram a vez)
+// ficam sem sentido manual.
 function _limparFerramentaSentido() {
   _sentidoMarkers.forEach(m => m.remove()); _sentidoMarkers = [];
   _sentidoPts = [];
+  _sentidoFila = []; _sentidoFilaIdx = 0; _sentidoFilaTotal = 0;
   modo = 'idle';
   map.getContainer().style.cursor = '';
   $('btnCancelarSentido').style.display = 'none';
@@ -10315,15 +10384,21 @@ function cancelarDefinirSentido() {
   setStatus('', '');
 }
 
+// Limpa o sentido manual de TODOS os talhões atualmente selecionados (1 ou vários — ver v5.69).
 function limparSentidoTalhao() {
-  if(talhaoSelecionadoUid === null) { setStatus('Selecione o talhão primeiro.', 'err'); return; }
-  const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
-  if(!t) return;
-  if(!t.direcaoManualBrg && t.direcaoManualBrg !== 0) { setStatus(`Talhão ${t.idx} não tem sentido manual definido.`, 'info'); return; }
-  delete t.direcaoManualBrg; delete t.direcaoManualPts;
-  if(t.direcaoManualLayer) { t.direcaoManualLayer.remove(); t.direcaoManualLayer = null; }
-  if(t.direcaoManualSeta) { t.direcaoManualSeta.remove(); t.direcaoManualSeta = null; }
-  setStatus(`Sentido manual do Talhão ${t.idx} removido — volta a calcular automaticamente na próxima divisão.`, 'ok');
+  if(talhoesMultiSel.size === 0) { setStatus('Selecione 1 ou mais talhões primeiro.', 'err'); return; }
+  let limpos = 0;
+  talhoesMultiSel.forEach(uid => {
+    const t = talhoesArquivados.find(x => x.uid === uid);
+    if(!t || (!t.direcaoManualBrg && t.direcaoManualBrg !== 0)) return;
+    delete t.direcaoManualBrg; delete t.direcaoManualPts;
+    if(t.direcaoManualLayer) { t.direcaoManualLayer.remove(); t.direcaoManualLayer = null; }
+    if(t.direcaoManualSeta) { t.direcaoManualSeta.remove(); t.direcaoManualSeta = null; }
+    limpos++;
+  });
+  setStatus(limpos
+    ? `Sentido manual removido de ${limpos} talhão(ões) — volta(m) a calcular automaticamente na próxima divisão.`
+    : 'Nenhum dos talhões selecionados tinha sentido manual definido.', limpos ? 'ok' : 'info');
 }
 
 function dividirEmSetores() {
