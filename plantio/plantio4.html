@@ -429,7 +429,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.70 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.71 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -10111,13 +10111,41 @@ function _cliqueMontagemSetores(latlng) {
   });
   _montagemSetores.fimAnterior = fatia[fatia.length - 1].mid;
 
-  const sobrouNesseTalhao = t._linhasRestantesMontagem.length;
-  const comprimentoSetorAtual = _comprimentoDeItens(_montagemSetores.itensAtual);
+  let sobrouNesseTalhao = t._linhasRestantesMontagem.length;
+  let comprimentoSetorAtual = _comprimentoDeItens(_montagemSetores.itensAtual);
   // Fecha o setor se bateu/passou a meta OU se uma decisão explícita de "melhor encaixe" foi
   // tomada (mesmo ficando um pouco por baixo) — ver _tomarLinhasPorComprimento.
   const completouSetor = comprimentoSetorAtual >= _montagemSetores.meta || fechouPorDecisao;
 
   if(completouSetor) {
+    // v5.71: pedido do usuário, confirmado contra o KML real de um projeto de 4 talhões (exportado
+    // e conferido linha a linha) — "creio que não deve haver pedaços de setores deslocando qdo
+    // ainda tem linhas perto para continuar ate dar a metragem total (...) mas sempre deve ser
+    // sequencial". Causa raiz confirmada nos dados reais: o Talhão 2 fechou os setores 0-3 e
+    // sobraram só 3 linhas nele (bem pouco, ~8% da meta de um setor) — como ninguém clicou nele de
+    // novo logo depois, essas 3 linhas ficaram penduradas até o setor 7 (bem mais tarde, quando o
+    // Talhão 3 não foi suficiente sozinho) precisar "voltar" lá pra completar — criando uma ilha de
+    // 3 linhas de uma cor bem posterior NO MEIO do talhão que já parecia pronto (confirmado:
+    // as 3 linhas ficam a 4-17m das linhas do setor 3 vizinho, bem mais perto delas do que de
+    // qualquer linha de verdade do setor 7). Fix: se a sobra do talhão que ACABOU de fechar um
+    // setor é PEQUENA (≤15% da meta usada nesse setor), absorve ela JUNTO agora — em vez de deixar
+    // pendurada pra um clique futuro possivelmente bem mais tarde e geograficamente distante.
+    if(sobrouNesseTalhao) {
+      const restanteComprimento = _comprimentoDeItens(t._linhasRestantesMontagem);
+      if(restanteComprimento > 0 && restanteComprimento <= _montagemSetores.meta * 0.15) {
+        const restanteOrdenado = _ordenarLinhasDoTalhao(t._linhasRestantesMontagem, _montagemSetores.fimAnterior, t.direcaoManualBrg);
+        restanteOrdenado.forEach(o => {
+          o.pl.setStyle({ color: _montagemSetores.corAtual });
+          _montagemSetores.itensAtual.push(o);
+          _ultimaDivisaoSetores.linhasCorrigidas.push({ pl: o.pl, corOriginal: corBase });
+        });
+        comprimentoSetorAtual += restanteComprimento;
+        _montagemSetores.fimAnterior = restanteOrdenado[restanteOrdenado.length - 1].mid;
+        t._linhasRestantesMontagem = [];
+        sobrouNesseTalhao = 0;
+      }
+    }
+
     _montagemSetores.gruposFechados.push({
       cor: _montagemSetores.corAtual,
       count: _montagemSetores.itensAtual.length,
