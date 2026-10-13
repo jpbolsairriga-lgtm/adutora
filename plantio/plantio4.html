@@ -429,7 +429,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.69 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.70 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -9914,10 +9914,29 @@ let _modoMontagemSetores = false; // true enquanto a montagem por clique está "
 let _montagemSetores = null; // { modo:'metros'|'setores', nSetoresDesejado, meta (metros, meta ATUAL do setor em andamento), setorIdx, corAtual, itensAtual:[{pl,len,mid}], gruposFechados:[{cor,count,comprimento}], fimAnterior }
 
 // Sequência de cores pra setores "sem fim" (a quantidade total não é conhecida de antemão, ao
-// contrário de _paletaSetores(n) que precisa do N final pra espalhar o gradiente) — ângulo
-// dourado (137,508°) garante que cores consecutivas fiquem bem distintas visualmente, pra
-// qualquer quantidade de setores que a montagem acabar tendo.
-function _corDaMontagem(i) { return _hslParaHex((i * 137.508) % 360, 72, 48); }
+// contrário de _paletaSetores(n) que precisa do N final pra espalhar o gradiente).
+//
+// v5.70: pedido do usuário, com print de uma fazenda real — "veja a cor vermelha e roxa
+// misturadas (...) pode ser uma confusão na cores, vamos tentar cores mais distintas". Investigado:
+// a sequência de ângulo dourado (137,508°) usada antes aqui é ótima pra NUNCA repetir a mesma cor
+// exata, mas não garante distância perceptual mínima entre índices NÃO-vizinhos — com ~8-10
+// setores (comum numa fazenda real com vários talhões), índice 0 (hue 0°, vermelho) e índice 8
+// (hue 20,064°, vermelho-alaranjado) ficam a só 20° um do outro — visualmente parecidos; índice 2
+// (hue 275°, roxo) e índice 7 (hue 242,5°, azul-roxo) ficam a 32,5° — idem. Confirmado que NÃO é
+// um setor pulando pra talhão distante: cada setorIdx tem UMA cor fixa, atribuída uma única vez
+// quando o setor fecha (nunca reaproveitada) — é colisão de cor mesmo, duas cores diferentes
+// parecidas, não a mesma cor em 2 lugares. Fix: paleta CURADA de 16 cores escolhidas à mão pra
+// ficarem bem distintas entre si mesmo em sequência curta (índices próximos nunca parecidos,
+// vermelho e roxo bem separados). Ângulo dourado continua como fallback, só a partir do 17º setor
+// (caso raro que a paleta curada não cobre).
+const _PALETA_MONTAGEM = [
+  '#e53935', '#1e88e5', '#43a047', '#fb8c00', '#8e24aa', '#00acc1',
+  '#ffd600', '#5e35b1', '#c0ca33', '#d81b60', '#3949ab', '#00897b',
+  '#f4511e', '#6d4c41', '#7cb342', '#00bcd4',
+];
+function _corDaMontagem(i) {
+  return i < _PALETA_MONTAGEM.length ? _PALETA_MONTAGEM[i] : _hslParaHex((i * 137.508) % 360, 72, 48);
+}
 
 // Soma, em TODO o projeto (não só nos talhões já clicados), quantas linhas ainda não foram usadas
 // em nenhum setor desta montagem — um talhão nunca tocado conta com TODAS as linhas dele como
