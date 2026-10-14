@@ -307,6 +307,16 @@ body.layout-lateral #status{grid-area:status;}
 .modal h2{font-size:15px;font-weight:700;color:var(--acc2);margin-bottom:14px;}
 .modal-close{position:absolute;top:12px;right:14px;background:none;border:none;color:var(--panel-text-dim);font-size:20px;cursor:pointer;line-height:1;}
 .modal-close:hover{color:var(--panel-text);}
+/* v5.77: pedido do usuário — "não consigo ver o marcador se movimentando no mapa, pois não consigo
+   arrastar a janela que se abre". O fundo escuro padrão dos modais (.modal-bg acima) escondia o
+   mapa atrás do Perfil de Elevação mesmo que o modal fosse movido — aqui ele fica transparente E
+   sem capturar clique (pointer-events:none deixa o clique "passar" pro mapa por baixo, dá pra
+   pan/zoom com o perfil aberto sem fechar sem querer), e o próprio modal vira arrastável pelo
+   título (ver _tornarArrastavel) — joga ele pra qualquer canto da tela, o mapa (e o marcador) ficam
+   sempre visíveis e clicáveis por trás. */
+#modalPerfil.modal-bg{background:transparent;pointer-events:none;}
+#modalPerfil .modal{pointer-events:auto;}
+#perfilTitulo{cursor:move;user-select:none;}
 .modal ol{padding-left:18px;margin:10px 0;}
 .modal ol li{margin-bottom:10px;}
 .modal a{color:var(--acc-light);text-decoration:none;}
@@ -429,7 +439,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.76 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.77 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -16486,6 +16496,51 @@ function fecharPerfil() {
   $('modalPerfil').classList.remove('open');
   _removerMarcadorPerfilElevacao(); // v5.75: tira o marcador arrastável do mapa junto com o modal
 }
+
+// v5.77: deixa um painel (header + box) arrastável pra qualquer canto da tela, com a posição
+// lembrada entre usos (localStorage) — ver uso em #modalPerfil (CSS acima explica o porquê: o
+// fundo transparente/sem clique só resolve metade do problema, a outra metade é poder TIRAR o
+// painel de cima da linha que se quer olhar). Funciona com mouse e toque (tablet em campo).
+function _tornarArrastavel(headerEl, boxEl, chaveStorage) {
+  if(!headerEl || !boxEl) return;
+  let arrastando = false, offX = 0, offY = 0;
+  const aplicarPos = (left, top) => {
+    const maxLeft = window.innerWidth - 60, maxTop = window.innerHeight - 40;
+    left = Math.max(-(boxEl.offsetWidth || 0) + 60, Math.min(left, maxLeft));
+    top = Math.max(0, Math.min(top, maxTop));
+    boxEl.style.position = 'fixed';
+    boxEl.style.margin = '0';
+    boxEl.style.left = left + 'px';
+    boxEl.style.top = top + 'px';
+  };
+  const iniciar = (clientX, clientY) => {
+    arrastando = true;
+    const rect = boxEl.getBoundingClientRect();
+    offX = clientX - rect.left; offY = clientY - rect.top;
+  };
+  const mover = (clientX, clientY) => { if(arrastando) aplicarPos(clientX - offX, clientY - offY); };
+  const soltar = () => {
+    if(!arrastando) return;
+    arrastando = false;
+    if(chaveStorage) {
+      try { localStorage.setItem(chaveStorage, JSON.stringify({ left: parseFloat(boxEl.style.left), top: parseFloat(boxEl.style.top) })); } catch(e) {}
+    }
+  };
+  headerEl.addEventListener('mousedown', e => { iniciar(e.clientX, e.clientY); e.preventDefault(); });
+  document.addEventListener('mousemove', e => mover(e.clientX, e.clientY));
+  document.addEventListener('mouseup', soltar);
+  headerEl.addEventListener('touchstart', e => { const t = e.touches[0]; if(t) iniciar(t.clientX, t.clientY); }, { passive: true });
+  document.addEventListener('touchmove', e => { if(arrastando && e.touches[0]) { mover(e.touches[0].clientX, e.touches[0].clientY); e.preventDefault(); } }, { passive: false });
+  document.addEventListener('touchend', soltar);
+
+  if(chaveStorage) {
+    try {
+      const salvo = JSON.parse(localStorage.getItem(chaveStorage) || 'null');
+      if(salvo && Number.isFinite(salvo.left) && Number.isFinite(salvo.top)) aplicarPos(salvo.left, salvo.top);
+    } catch(e) {}
+  }
+}
+_tornarArrastavel($('perfilTitulo'), document.querySelector('#modalPerfil .modal'), 'perfilModalPos');
 
 // ── Painel de Camadas (v4.31) — liga/desliga a visibilidade de cada tipo de entidade no mapa ────
 // Cada entrada aponta pra uma função que devolve, NA HORA, a lista atual de layers Leaflet daquele
