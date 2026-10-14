@@ -429,7 +429,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.74 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.75 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -15022,7 +15022,7 @@ async function mostrarPerfilGuia() {
   $('modalPerfil').classList.add('open');
 
   const { valores: elevs } = await _buscarElevacaoFundida(samples.map(p => ({ lat: p.lat, lng: p.lng })));
-  _renderPerfilGuia(samples, elevs);
+  _renderPerfilGuia(samples, elevs, rawPts);
 }
 
 // ── Perfil de Elevação de uma Linha de Plantio já gerada (ativa ou travada) ──────────────────
@@ -15191,7 +15191,7 @@ async function mostrarPerfilLinhaPlantio(pl) {
   $('modalPerfil').classList.add('open');
 
   const { valores: elevs } = await _buscarElevacaoFundida(samples.map(p => ({ lat: p.lat, lng: p.lng })));
-  _renderPerfilGuia(samples, elevs);
+  _renderPerfilGuia(samples, elevs, rawPts);
 }
 
 // ══ Otimizar Cenário de Plantio ═══════════════════════════════════════════════════════════════
@@ -16193,13 +16193,136 @@ function _inspecionarMapaTematico(latlng) {
     .openOn(map);
 }
 
-function _renderPerfilGuia(samples, elevs) {
+// v5.75: pedido do usuário — "quero tbm poder deslocar um marcador na tela correndo a linha qdo eu
+// pegar um perfil de elevação de uma linha de plantio". _perfilAtual guarda o estado do perfil
+// ABERTO agora (linha bruta, distâncias acumuladas, elevações, escala do gráfico SVG) — é o que
+// permite o marcador arrastável no MAPA (_arrastarMarcadorPerfil) ficar sincronizado com o cursor
+// desenhado em cima do gráfico (_atualizarCursorPerfil), nos dois sentidos de uso (perfil da guia
+// OU de uma linha de plantio — mesma função _renderPerfilGuia pras duas).
+let _perfilAtual = null; // { rawPts, dists, elevs, escala:{xS,yS,pT,cH}, marcador }
+
+// Distâncias acumuladas (m) de um array de pontos — ponto 0 sempre em 0.
+function _distanciasAcumuladas(pts) {
   const dists = [0];
-  for(let i = 1; i < samples.length; i++) dists.push(dists[i-1] + haversineM(samples[i-1], samples[i]));
+  for(let i = 1; i < pts.length; i++) dists.push(dists[i-1] + haversineM(pts[i-1], pts[i]));
+  return dists;
+}
+
+// Interpola a elevação numa distância qualquer ao longo da linha, a partir dos pontos AMOSTRADOS
+// (samples/elevs/dists, já buscados) — usada pelo marcador arrastável pra mostrar a altitude exata
+// de qualquer posição ao longo da linha, não só dos ~100 pontos amostrados originalmente. Pontos
+// sem elevação (fora de cobertura) são pulados — devolve o vizinho válido mais próximo nesse caso.
+function _elevacaoNaDistancia(dists, elevs, distM) {
+  const n = dists.length;
+  if(!n) return null;
+  if(distM <= dists[0]) return elevs.find(e => e != null) ?? null;
+  if(distM >= dists[n-1]) { for(let i = n-1; i >= 0; i--) if(elevs[i] != null) return elevs[i]; return null; }
+  for(let i = 0; i < n - 1; i++) {
+    if(distM >= dists[i] && distM <= dists[i+1]) {
+      const e0 = elevs[i], e1 = elevs[i+1];
+      if(e0 == null || e1 == null) return e0 ?? e1 ?? null;
+      const f = (dists[i+1] - dists[i]) > 1e-9 ? (distM - dists[i]) / (dists[i+1] - dists[i]) : 0;
+      return e0 + (e1 - e0) * f;
+    }
+  }
+  return null;
+}
+
+// Acha o ponto mais próximo de `latlng` EM CIMA da linha bruta (rawPts) — usado pra "grudar" o
+// marcador arrastável na linha em vez de deixar ele flutuar livre, e pra saber a que distância ao
+// longo da linha esse ponto fica (turf já devolve isso pronto em `.properties.location`).
+function _pontoMaisProximoNaLinha(rawPts, latlng) {
+  const line = turf.lineString(rawPts.map(p => [p.lng, p.lat]));
+  const pt = turf.point([latlng.lng, latlng.lat]);
+  const nearest = turf.nearestPointOnLine(line, pt, { units: 'meters' });
+  const [lng, lat] = nearest.geometry.coordinates;
+  return { latlng: { lat, lng }, distM: nearest.properties.location };
+}
+
+// Desenha/atualiza o cursor (linha vertical tracejada + ponto + rótulo de altitude) em cima do
+// gráfico SVG do perfil, na posição correspondente a `distM`/`elevM` — chamado a cada passo do
+// arrasto do marcador no mapa. Atualiza os atributos direto (não re-renderiza o SVG inteiro) pra
+// ficar fluido durante o arrasto.
+function _atualizarCursorPerfil(distM, elevM) {
+  if(elevM == null || !_perfilAtual || !_perfilAtual.escala) return;
+  const svg = document.querySelector('#perfilContent svg');
+  if(!svg) return;
+  const { xS, yS, pT, cH } = _perfilAtual.escala;
+  const x = xS(distM), y = yS(elevM);
+  const NS = 'http://www.w3.org/2000/svg';
+  let g = svg.querySelector('#perfilCursorG'), linha, ponto, texto;
+  if(!g) {
+    // Monta via createElementNS/appendChild (não innerHTML) — mais correto pra SVG e testável sem
+    // precisar de um parser de HTML de verdade no harness.
+    g = document.createElementNS(NS, 'g');
+    g.setAttribute('id', 'perfilCursorG');
+    linha = document.createElementNS(NS, 'line');
+    linha.setAttribute('id', 'perfilCursorLinha');
+    linha.setAttribute('y1', pT); linha.setAttribute('y2', pT + cH);
+    linha.setAttribute('stroke', '#fff'); linha.setAttribute('stroke-width', '1');
+    linha.setAttribute('stroke-dasharray', '3,2'); linha.setAttribute('opacity', '.85');
+    ponto = document.createElementNS(NS, 'circle');
+    ponto.setAttribute('id', 'perfilCursorPonto'); ponto.setAttribute('r', '4.5');
+    ponto.setAttribute('fill', '#ff6f00'); ponto.setAttribute('stroke', '#fff'); ponto.setAttribute('stroke-width', '1.5');
+    texto = document.createElementNS(NS, 'text');
+    texto.setAttribute('id', 'perfilCursorTexto'); texto.setAttribute('font-size', '9.5');
+    texto.setAttribute('font-weight', '700'); texto.setAttribute('fill', '#fff'); texto.setAttribute('text-anchor', 'middle');
+    g.appendChild(linha); g.appendChild(ponto); g.appendChild(texto);
+    svg.appendChild(g);
+  } else {
+    linha = g.querySelector('#perfilCursorLinha');
+    ponto = g.querySelector('#perfilCursorPonto');
+    texto = g.querySelector('#perfilCursorTexto');
+  }
+  linha.setAttribute('x1', x); linha.setAttribute('x2', x);
+  ponto.setAttribute('cx', x); ponto.setAttribute('cy', y);
+  texto.setAttribute('x', x); texto.setAttribute('y', Math.max(pT + 9, y - 9));
+  texto.textContent = `${elevM.toFixed(1)}m`;
+}
+
+// Chamado a cada passo do arrasto do marcador — gruda na linha, acha a elevação interpolada
+// naquele ponto e atualiza o cursor do gráfico. `latlng` é a posição LIVRE que o usuário arrastou
+// o marcador pra (antes de grudar) — normalmente vem de marcador.getLatLng() no evento 'drag'.
+function _arrastarMarcadorPerfil(latlng) {
+  if(!_perfilAtual) return;
+  const { rawPts, dists, elevs, marcador } = _perfilAtual;
+  const info = _pontoMaisProximoNaLinha(rawPts, latlng);
+  if(marcador) marcador.setLatLng(info.latlng);
+  const elev = _elevacaoNaDistancia(dists, elevs, info.distM);
+  _atualizarCursorPerfil(info.distM, elev);
+  return { distM: info.distM, elev };
+}
+
+function _removerMarcadorPerfilElevacao() {
+  if(_perfilAtual && _perfilAtual.marcador) _perfilAtual.marcador.remove();
+  _perfilAtual = null;
+}
+
+// Cria o marcador arrastável no mapa pro perfil que acabou de ser desenhado — grudado no INÍCIO da
+// linha. Arrastar ele roda _arrastarMarcadorPerfil a cada passo (ver wiring no 'drag').
+function _iniciarMarcadorPerfilElevacao(rawPts, dists, elevs, escala) {
+  _removerMarcadorPerfilElevacao();
+  if(!rawPts.length) return;
+  const marcador = L.marker(rawPts[0], {
+    icon: L.divIcon({
+      className: 'perfil-marker',
+      html: '<div style="width:14px;height:14px;border-radius:50%;background:#ff6f00;border:2px solid #fff;box-shadow:0 0 5px rgba(0,0,0,.6);"></div>',
+      iconSize: [14,14], iconAnchor: [7,7],
+    }),
+    draggable: true, zIndexOffset: 1000,
+  }).addTo(map);
+  _perfilAtual = { rawPts, dists, elevs, escala, marcador };
+  marcador.on('drag', e => _arrastarMarcadorPerfil(e.target.getLatLng()));
+  _arrastarMarcadorPerfil(rawPts[0]); // sincroniza o cursor do gráfico já na posição inicial
+}
+
+function _renderPerfilGuia(samples, elevs, rawPts) {
+  const dists = _distanciasAcumuladas(samples);
   const totalM = dists[dists.length - 1];
 
   const validIdxs = samples.map((_,i) => i).filter(i => elevs[i] != null);
   if(!validIdxs.length) {
+    _removerMarcadorPerfilElevacao(); // linha sem nenhum dado — não deixa marcador de um perfil ANTERIOR pendurado
     // v4.51: mensagem genérica ("Erro ao buscar elevações") deixava parecer que a linha não foi
     // selecionada de verdade (bug relatado: "não consigo mais selecionar uma linha") — na
     // verdade o clique funcionou, só que essa linha específica cai FORA da área coberta pelas
@@ -16289,10 +16412,15 @@ function _renderPerfilGuia(samples, elevs) {
       <span style="display:flex;align-items:center;gap:5px;"><span style="width:22px;height:3px;background:#F44336;display:inline-block;border-radius:2px;"></span>12&#8211;20%</span>
       <span style="display:flex;align-items:center;gap:5px;"><span style="width:22px;height:3px;background:#9C27B0;display:inline-block;border-radius:2px;"></span>&gt;20%</span>
     </div>`;
+
+  // v5.75: marcador arrastável no mapa, grudado nesta linha, sincronizado com um cursor em cima do
+  // gráfico — ver _iniciarMarcadorPerfilElevacao/_arrastarMarcadorPerfil/_atualizarCursorPerfil.
+  _iniciarMarcadorPerfilElevacao(rawPts, dists, elevs, { xS, yS, pT, cH });
 }
 
 function fecharPerfil() {
   $('modalPerfil').classList.remove('open');
+  _removerMarcadorPerfilElevacao(); // v5.75: tira o marcador arrastável do mapa junto com o modal
 }
 
 // ── Painel de Camadas (v4.31) — liga/desliga a visibilidade de cada tipo de entidade no mapa ────
