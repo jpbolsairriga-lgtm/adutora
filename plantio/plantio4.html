@@ -429,7 +429,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.75 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.76 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -16196,10 +16196,17 @@ function _inspecionarMapaTematico(latlng) {
 // v5.75: pedido do usuário — "quero tbm poder deslocar um marcador na tela correndo a linha qdo eu
 // pegar um perfil de elevação de uma linha de plantio". _perfilAtual guarda o estado do perfil
 // ABERTO agora (linha bruta, distâncias acumuladas, elevações, escala do gráfico SVG) — é o que
-// permite o marcador arrastável no MAPA (_arrastarMarcadorPerfil) ficar sincronizado com o cursor
-// desenhado em cima do gráfico (_atualizarCursorPerfil), nos dois sentidos de uso (perfil da guia
-// OU de uma linha de plantio — mesma função _renderPerfilGuia pras duas).
-let _perfilAtual = null; // { rawPts, dists, elevs, escala:{xS,yS,pT,cH}, marcador }
+// permite o marcador no MAPA ficar sincronizado com o cursor desenhado em cima do gráfico
+// (_atualizarCursorPerfil), nos dois usos (perfil da guia OU de uma linha de plantio — mesma
+// função _renderPerfilGuia pras duas).
+// v5.76: pedido do usuário — "eu não consigo arrastar o marcador, nem no gráfico e nem no mapa
+// (...) quero que conforme eu passe o mouse na linha do gráfico, o marcador ande pelo mapa". O
+// modal do perfil cobre o mapa, então arrastar o marcador (v5.75) nunca ia funcionar de verdade —
+// a interação principal virou HOVER no gráfico (_hoverPerfilGrafico, sempre em primeiro plano,
+// dentro do próprio modal), que move o marcador via _moverMarcadorParaDistancia/_pontoNaDistancia.
+// O arrasto no mapa continua existindo como extra (_arrastarMarcadorPerfil), caso o mapa fique
+// visível/acessível algum dia, mas não é mais o caminho principal.
+let _perfilAtual = null; // { rawPts, dists, elevs, escala:{xS,yS,pT,cH,pL,cW,totalM}, marcador }
 
 // Distâncias acumuladas (m) de um array de pontos — ponto 0 sempre em 0.
 function _distanciasAcumuladas(pts) {
@@ -16293,13 +16300,70 @@ function _arrastarMarcadorPerfil(latlng) {
   return { distM: info.distM, elev };
 }
 
+// v5.76: pedido do usuário — "eu não consigo arrastar o marcador, nem no gráfico e nem no mapa".
+// Causa: o modal do perfil cobre o mapa com um fundo escuro que intercepta o clique antes de
+// chegar no marcador Leaflet por baixo — arrastar NO MAPA nunca ia funcionar de verdade enquanto o
+// modal estiver aberto (não é bug de um evento mal ligado, é a própria sobreposição do modal).
+// "quero que conforme eu passe o mouse na linha do gráfico, o marcador ande pelo mapa" — a melhoria
+// pedida: trocar arrasto (que depende de acertar o marcador escondido) por HOVER no gráfico (que
+// está sempre em primeiro plano, dentro do próprio modal) — _pontoNaDistancia faz o caminho
+// INVERSO de _pontoMaisProximoNaLinha: a partir de uma distância ao longo da linha (que o hover no
+// eixo X do SVG já dá de graça), interpola o ponto geográfico de verdade pra mover o marcador.
+function _pontoNaDistancia(rawPts, distM) {
+  if(rawPts.length < 2 || distM <= 0) return rawPts[0];
+  let acc = 0;
+  for(let i = 0; i < rawPts.length - 1; i++) {
+    const d = haversineM(rawPts[i], rawPts[i+1]);
+    if(acc + d >= distM || i === rawPts.length - 2) {
+      const f = d > 1e-9 ? Math.max(0, Math.min(1, (distM - acc) / d)) : 0;
+      return { lat: rawPts[i].lat + (rawPts[i+1].lat - rawPts[i].lat) * f, lng: rawPts[i].lng + (rawPts[i+1].lng - rawPts[i].lng) * f };
+    }
+    acc += d;
+  }
+  return rawPts[rawPts.length - 1];
+}
+
+// Move o marcador pra uma distância EXATA ao longo da linha (em vez de "mais perto de um ponto
+// solto", como _arrastarMarcadorPerfil) — chamada pelo hover no gráfico (_hoverPerfilGrafico), mas
+// é uma função pura o bastante (sem tocar em evento/DOM) pra também ser testada direto.
+function _moverMarcadorParaDistancia(distM) {
+  if(!_perfilAtual) return;
+  const { rawPts, dists, elevs, marcador } = _perfilAtual;
+  const distClamp = Math.max(0, Math.min(dists[dists.length - 1], distM));
+  const pt = _pontoNaDistancia(rawPts, distClamp);
+  if(marcador) marcador.setLatLng(pt);
+  const elev = _elevacaoNaDistancia(dists, elevs, distClamp);
+  _atualizarCursorPerfil(distClamp, elev);
+  return { distM: distClamp, elev };
+}
+
+// Handler de mousemove/touchmove no <svg> do gráfico (ver wiring em _renderPerfilGuia) — converte a
+// posição do ponteiro em coordenada DE VERDADE do viewBox do SVG (createSVGPoint/getScreenCTM, o
+// jeito robusto de fazer isso — funciona em qualquer tamanho de tela, já que o SVG escala por
+// width:100%) e dali pra uma distância ao longo da linha, que _moverMarcadorParaDistancia usa.
+function _hoverPerfilGrafico(evt) {
+  if(!_perfilAtual || !_perfilAtual.escala) return;
+  const svg = evt.currentTarget;
+  if(evt.touches && evt.touches.length) evt.preventDefault(); // não deixa a tela rolar junto do dedo
+  const t = evt.touches && evt.touches[0] ? evt.touches[0] : evt;
+  const pt = svg.createSVGPoint();
+  pt.x = t.clientX; pt.y = t.clientY;
+  const svgP = pt.matrixTransform(svg.getScreenCTM().inverse());
+  const { pL, cW, totalM } = _perfilAtual.escala;
+  const distM = (svgP.x - pL) / cW * totalM; // _moverMarcadorParaDistancia já faz o clamp
+  _moverMarcadorParaDistancia(distM);
+}
+
 function _removerMarcadorPerfilElevacao() {
   if(_perfilAtual && _perfilAtual.marcador) _perfilAtual.marcador.remove();
   _perfilAtual = null;
 }
 
-// Cria o marcador arrastável no mapa pro perfil que acabou de ser desenhado — grudado no INÍCIO da
-// linha. Arrastar ele roda _arrastarMarcadorPerfil a cada passo (ver wiring no 'drag').
+// Cria o marcador no mapa pro perfil que acabou de ser desenhado — grudado no INÍCIO da linha.
+// Continua tecnicamente arrastável (draggable, útil se algum dia o mapa ficar visível/acessível por
+// trás do modal) mas a interação PRINCIPAL agora é passar o mouse em cima do gráfico (ver
+// _hoverPerfilGrafico, wired no <svg> por _renderPerfilGuia) — não depende de enxergar/acertar o
+// marcador atrás do modal.
 function _iniciarMarcadorPerfilElevacao(rawPts, dists, elevs, escala) {
   _removerMarcadorPerfilElevacao();
   if(!rawPts.length) return;
@@ -16313,7 +16377,7 @@ function _iniciarMarcadorPerfilElevacao(rawPts, dists, elevs, escala) {
   }).addTo(map);
   _perfilAtual = { rawPts, dists, elevs, escala, marcador };
   marcador.on('drag', e => _arrastarMarcadorPerfil(e.target.getLatLng()));
-  _arrastarMarcadorPerfil(rawPts[0]); // sincroniza o cursor do gráfico já na posição inicial
+  _moverMarcadorParaDistancia(0); // sincroniza o cursor do gráfico já na posição inicial
 }
 
 function _renderPerfilGuia(samples, elevs, rawPts) {
@@ -16395,7 +16459,7 @@ function _renderPerfilGuia(samples, elevs, rawPts) {
       <span>&#9660; Perda: <b style="color:#ef5350">&#8722;${loss.toFixed(1)} m</b></span>
       <span>Decl. m&#225;x: <b style="color:#FF9800">${maxSlope.toFixed(1)}%</b></span>
     </div>
-    <svg width="100%" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="background:var(--panel-bg-2);border-radius:6px 6px 0 0;display:block;">
+    <svg width="100%" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="background:var(--panel-bg-2);border-radius:6px 6px 0 0;display:block;cursor:crosshair;touch-action:none;" onmousemove="_hoverPerfilGrafico(event)" ontouchmove="_hoverPerfilGrafico(event)">
       <defs><linearGradient id="eGrad" x1="0" y1="0" x2="0" y2="1">
         <stop offset="0%" stop-color="#37474f" stop-opacity=".5"/>
         <stop offset="100%" stop-color="#37474f" stop-opacity=".08"/>
@@ -16415,7 +16479,7 @@ function _renderPerfilGuia(samples, elevs, rawPts) {
 
   // v5.75: marcador arrastável no mapa, grudado nesta linha, sincronizado com um cursor em cima do
   // gráfico — ver _iniciarMarcadorPerfilElevacao/_arrastarMarcadorPerfil/_atualizarCursorPerfil.
-  _iniciarMarcadorPerfilElevacao(rawPts, dists, elevs, { xS, yS, pT, cH });
+  _iniciarMarcadorPerfilElevacao(rawPts, dists, elevs, { xS, yS, pT, cH, pL, cW, totalM });
 }
 
 function fecharPerfil() {
