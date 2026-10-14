@@ -429,7 +429,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.72 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.73 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -8217,12 +8217,6 @@ function _redesenharCurvasLocaisImportadas() {
   const raioSuavizacaoM = $('curvaSuavizacaoImportada') ? (parseFloat($('curvaSuavizacaoImportada').value) || 0) : 0;
   const malhaM = $('curvaMalhaImportada') ? (parseFloat($('curvaMalhaImportada').value) || 0) : 0;
   const intensidadeSpline = $('curvaSplineIntensidadeImportada') ? (parseInt($('curvaSplineIntensidadeImportada').value) || 3) : 3;
-  // v5.29: número de passadas da suavização por raio cresce junto com o raio escolhido (1/2/3/4
-  // pra Leve/Média/Forte/Muito forte) — uma passada só, mesmo com raio grande, ainda deixava
-  // resíduo visível (os PRÓPRIOS pontos do defeito, bem próximos entre si, ainda pesam na média
-  // dele mesmo); iterar ataca o que sobra de cada passada anterior, efeito bem mais forte.
-  const _PASSES_POR_RAIO_IMPORTADA = { 3: 1, 8: 2, 15: 3, 30: 4 };
-  const passesSuavizacao = _PASSES_POR_RAIO_IMPORTADA[raioSuavizacaoM] || (raioSuavizacaoM > 0 ? 2 : 0);
   // Desenha com a densidade DECIMADA (cl.contornosDecimados), não a original — 3315 polylines de
   // um KML denso do Google Earth com todos os pontos originais deixaria o mapa pesado à toa; a
   // decimação já preserva o formato geral (ver _decimarContornos).
@@ -8230,13 +8224,21 @@ function _redesenharCurvasLocaisImportadas() {
   // v5.30: SEGURANÇA — mesmo achado das curvas geradas (ver comentário completo em gerarCurvas):
   // raio ou malha grandes podem reintroduzir o cruzamento entre curvas de cota vizinhas, mesmo
   // sendo cada um "preso ao corredor local" — não existe um valor fixo garantidamente seguro.
-  // Gera, confere, e se cruzou, refaz sem raio/malha (mantém spline) em vez de arriscar.
-  let candidatos = _construirCandidatosCurvasImportadas(classificadas, raioSuavizacaoM, passesSuavizacao, malhaM, usarSpline, intensidadeSpline);
-  let suavizacaoDesativadaPorSeguranca = false;
-  if((raioSuavizacaoM > 0 || malhaM > 0) && _temCruzamentoEntreCandidatosImportadas(candidatos)) {
-    candidatos = _construirCandidatosCurvasImportadas(classificadas, 0, 0, 0, usarSpline, intensidadeSpline);
-    suavizacaoDesativadaPorSeguranca = true;
+  // v5.73: em vez de "pedido ou nada", desce a mesma ESCADA de níveis usada em gerarCurvas()
+  // (_candidatosSuavizacaoFallback/_PASSES_POR_RAIO_TRACADO, compartilhados) e usa o mais forte que
+  // não cruza — mesma garantia de nunca entregar curvas cruzadas, mais suavização de verdade.
+  const tentativasSuavizacao = _candidatosSuavizacaoFallback(raioSuavizacaoM, malhaM);
+  let candidatos = null, nivelUsadoSuavizacao = tentativasSuavizacao[tentativasSuavizacao.length - 1];
+  for(const t of tentativasSuavizacao) {
+    const passes = _PASSES_POR_RAIO_TRACADO[t.raio] || (t.raio > 0 ? 2 : 0);
+    const tentativa = _construirCandidatosCurvasImportadas(classificadas, t.raio, passes, t.malha, usarSpline, intensidadeSpline);
+    if(!(t.raio > 0 || t.malha > 0) || !_temCruzamentoEntreCandidatosImportadas(tentativa)) {
+      candidatos = tentativa; nivelUsadoSuavizacao = t; break;
+    }
   }
+  if(!candidatos) candidatos = _construirCandidatosCurvasImportadas(classificadas, 0, 0, 0, usarSpline, intensidadeSpline); // defensivo — a escada sempre termina em {0,0}
+  const suavizacaoReduzida = nivelUsadoSuavizacao.raio < raioSuavizacaoM || nivelUsadoSuavizacao.malha < malhaM;
+  const suavizacaoDesativadaPorSeguranca = suavizacaoReduzida && nivelUsadoSuavizacao.raio === 0 && nivelUsadoSuavizacao.malha === 0;
   const grp = L.featureGroup(); // (não layerGroup) — precisa de bringToFront(), que só FeatureGroup tem
   candidatos.forEach(c => {
     const cor = _corPorElevacao(c.z, cl.elevMin, cl.elevMax);
@@ -8254,8 +8256,11 @@ function _redesenharCurvasLocaisImportadas() {
   grp.addTo(map);
   cl.layerPreview = grp;
   _garantirCurvasNoTopo(); // sempre acima da ortofoto, não importa a ordem de importação (ver importarOrtofotoTiff)
-  if(suavizacaoDesativadaPorSeguranca) {
-    setStatus('⚠ "Suavização do traçado"/"Malha de amostragem" desativadas automaticamente nessa área — causariam curvas de nível se cruzando. Tente valores menores, ou use só o "Acabamento suave (spline)".', 'warn');
+  if(suavizacaoReduzida) {
+    setStatus(suavizacaoDesativadaPorSeguranca
+      ? '⚠ "Suavização do traçado"/"Malha de amostragem" desativadas automaticamente nessa área — causariam curvas de nível se cruzando. Tente valores menores, ou use só o "Acabamento suave (spline)".'
+      : `⚠ "Suavização do traçado"/"Malha de amostragem" reduzidas automaticamente nessa área (de ${_rotuloNivelSuavizacao(raioSuavizacaoM, malhaM)} para ${_rotuloNivelSuavizacao(nivelUsadoSuavizacao.raio, nivelUsadoSuavizacao.malha)}) — a força pedida causaria curvas de nível se cruzando ali.`,
+      'warn');
   }
 }
 
@@ -10919,6 +10924,45 @@ function _temCruzamentoEntreCandidatosCurvas(candidatos, interval) {
   return false;
 }
 
+// Tiers fixos do seletor "Suavização do traçado" (ver <select id="curvaSuavizacaoTracado"> — 3/8/15/30
+// metros) — módulo pra ficar acessível tanto em gerarCurvas() quanto no fallback progressivo abaixo.
+const _PASSES_POR_RAIO_TRACADO = { 3: 1, 8: 2, 15: 3, 30: 4 };
+
+// v5.73: pedido do usuário — "qdo importo um DEM e gero as curvas, as ferramentas de suavização não
+// funcionam, preciso ajustar para funcionar como nos demais casos, faça isso e melhore minha ideia".
+// Investigado com terreno sintético (declive + ondulação de alta frequência — textura real de
+// DEM/drone, bem mais detalhada que uma fusão online suavizada por natureza): confirmado que
+// "Suavização do traçado"/"Malha de amostragem" (ver v5.30 em gerarCurvas) seguiam vetando a si
+// mesmas POR COMPLETO sempre que a força PEDIDA causava cruzamento entre curvas vizinhas — mesmo nos
+// casos (testados e confirmados) em que uma força MENOR já funcionava sem cruzar nada nenhuma. Em
+// terreno exigente isso fazia a suavização praticamente NUNCA aparecer pro usuário: ele escolhia
+// "Forte" e recebia a curva igualzinha a "Nenhuma", sem meio-termo nenhum.
+// Fix (a melhoria pedida): em vez de "tudo ou nada", tenta uma ESCADA decrescente de combinações —
+// pedido cheio → só raio → só malha → raio reduzido tier a tier (30→15→8→3) → nenhuma — e usa a
+// PRIMEIRA que não cruza (ou seja, a mais forte que a área realmente aguenta). Mantém exatamente a
+// mesma garantia de segurança de sempre (nunca entrega curva de nível cruzada) — só que agora entrega
+// o MÁXIMO de suavização possível em vez do mínimo.
+function _candidatosSuavizacaoFallback(raioPedido, malhaPedido) {
+  const TIERS_RAIO = [30, 15, 8, 3, 0];
+  const tentativas = [];
+  const add = (r, m) => { if(!tentativas.some(t => t.raio === r && t.malha === m)) tentativas.push({ raio: r, malha: m }); };
+  add(raioPedido, malhaPedido);           // nível pedido, cheio
+  if(malhaPedido > 0) add(raioPedido, 0); // isola: será que é a MALHA a causadora?
+  if(raioPedido > 0) add(0, malhaPedido); // isola: ou é o RAIO?
+  TIERS_RAIO.filter(r => r > 0 && r < raioPedido).forEach(r => add(r, 0)); // raio reduzido, tier a tier
+  add(0, 0); // último recurso — sempre seguro, idêntico ao comportamento de antes
+  return tentativas;
+}
+
+// Rótulo legível de um nível de suavização (pros avisos de status) — ex.: "raio 15m + malha 10m",
+// "raio 8m" (só um dos dois) ou "nenhuma".
+function _rotuloNivelSuavizacao(raio, malha) {
+  const partes = [];
+  if(raio > 0) partes.push(`raio ${raio}m`);
+  if(malha > 0) partes.push(`malha ${malha}m`);
+  return partes.length ? partes.join(' + ') : 'nenhuma';
+}
+
 async function gerarCurvas() {
   const polyRef = turfCurvaPoly || turfPoly;
   if(!polyRef) { setStatus('Desenhe a área de curvas (ou o talhão) primeiro.', 'err'); return; }
@@ -11011,8 +11055,6 @@ async function gerarCurvas() {
   // curvas geradas" pra não colidir com os das curvas importadas na mesma aba) agora existem aqui
   // também e funcionam pra QUALQUER fonte de elevação usada por essa função.
   const raioSuavizacaoTracado = parseFloat($('curvaSuavizacaoTracado').value) || 0;
-  const _PASSES_POR_RAIO_TRACADO = { 3: 1, 8: 2, 15: 3, 30: 4 };
-  const passesSuavizacaoTracado = _PASSES_POR_RAIO_TRACADO[raioSuavizacaoTracado] || (raioSuavizacaoTracado > 0 ? 2 : 0);
   const malhaM = parseFloat($('curvaMalha').value) || 0;
   // v5.23: v5.21/v5.22 tinham um passo de simplificação Douglas-Peucker (turf.simplify) aqui, com
   // tolerância proporcional ao tamanho de célula da grade — REMOVIDO. Era o causador real do
@@ -11046,12 +11088,21 @@ async function gerarCurvas() {
   // raio/malha (mantém o spline, comprovadamente seguro — ver v5.23/test_curvas_chaikin.js) — nunca
   // entrega ao usuário um resultado com curvas se cruzando, mesmo que isso signifique não aplicar a
   // suavização pedida naquela área específica (com aviso claro do porquê).
-  let candidatos = _construirCandidatosCurvas(elevGrid, lats, lngs, minElev, maxElev, interval, polyRef, polyBoundRef, raioSuavizacaoTracado, passesSuavizacaoTracado, malhaM, usarSpline, intensidadeSpline);
-  let suavizacaoDesativadaPorSeguranca = false;
-  if((raioSuavizacaoTracado > 0 || malhaM > 0) && _temCruzamentoEntreCandidatosCurvas(candidatos, interval)) {
-    candidatos = _construirCandidatosCurvas(elevGrid, lats, lngs, minElev, maxElev, interval, polyRef, polyBoundRef, 0, 0, 0, usarSpline, intensidadeSpline);
-    suavizacaoDesativadaPorSeguranca = true;
+  // v5.73: em vez de tentar só o nível PEDIDO e cair direto pra zero se cruzar, desce uma ESCADA de
+  // níveis (_candidatosSuavizacaoFallback) e usa o mais forte que não cruza — ver comentário completo
+  // na função. Mantém a mesma garantia de nunca entregar curvas cruzadas.
+  const tentativasSuavizacao = _candidatosSuavizacaoFallback(raioSuavizacaoTracado, malhaM);
+  let candidatos = null, nivelUsadoSuavizacao = tentativasSuavizacao[tentativasSuavizacao.length - 1];
+  for(const t of tentativasSuavizacao) {
+    const passes = _PASSES_POR_RAIO_TRACADO[t.raio] || (t.raio > 0 ? 2 : 0);
+    const tentativa = _construirCandidatosCurvas(elevGrid, lats, lngs, minElev, maxElev, interval, polyRef, polyBoundRef, t.raio, passes, t.malha, usarSpline, intensidadeSpline);
+    if(!(t.raio > 0 || t.malha > 0) || !_temCruzamentoEntreCandidatosCurvas(tentativa, interval)) {
+      candidatos = tentativa; nivelUsadoSuavizacao = t; break;
+    }
   }
+  if(!candidatos) candidatos = _construirCandidatosCurvas(elevGrid, lats, lngs, minElev, maxElev, interval, polyRef, polyBoundRef, 0, 0, 0, usarSpline, intensidadeSpline); // defensivo — a escada sempre termina em {0,0}, que nunca cruza
+  const suavizacaoReduzida = nivelUsadoSuavizacao.raio < raioSuavizacaoTracado || nivelUsadoSuavizacao.malha < malhaM;
+  const suavizacaoDesativadaPorSeguranca = suavizacaoReduzida && nivelUsadoSuavizacao.raio === 0 && nivelUsadoSuavizacao.malha === 0;
 
   let lineCount = 0;
   candidatos.forEach(({ pontos: segFinal, level: lv, isMaster }) => {
@@ -11096,9 +11147,12 @@ async function gerarCurvas() {
   const avisoCoberturaHtml = pctComDadoReal < 90
     ? `<br><span style="color:var(--c-warn);">&#9888; só ${pctComDadoReal.toFixed(0)}% da área tem elevação real — o resto ficou achatado (repete a borda coberta mais próxima), por isso as curvas param antes de chegar lá. Importe um DEM/curvas locais que cubram a área inteira, ou use uma área de curvas menor (só a parte coberta).</span>`
     : '';
-  const avisoSuavizacaoHtml = suavizacaoDesativadaPorSeguranca
+  // v5.73: 3 estados possíveis agora (antes só "normal" ou "desativada") — "normal" (nível pedido
+  // funcionou), "reduzida" (um nível mais fraco funcionou — ainda tem suavização visível, só não a
+  // força pedida) e "desativada" (nem o nível mais fraco funcionou — mesmo aviso de sempre).
+  const avisoSuavizacaoHtml = !suavizacaoReduzida ? '' : suavizacaoDesativadaPorSeguranca
     ? `<br><span style="color:var(--c-warn);">&#9888; "Suavização do traçado"/"Malha de amostragem" desativadas automaticamente nessa área — causariam curvas de nível se cruzando (terreno íngreme/curvas bem próximas). Tente valores menores, ou use só o "Acabamento suave (spline)".</span>`
-    : '';
+    : `<br><span style="color:var(--c-warn);">&#9888; "Suavização do traçado"/"Malha de amostragem" reduzidas automaticamente nessa área (de ${_rotuloNivelSuavizacao(raioSuavizacaoTracado, malhaM)} para ${_rotuloNivelSuavizacao(nivelUsadoSuavizacao.raio, nivelUsadoSuavizacao.malha)}) — a força pedida causaria curvas de nível se cruzando ali (terreno íngreme/curvas bem próximas).</span>`;
   $('curvaInfo').innerHTML =
     `<span style="color:var(--acc2);font-weight:700;">Alt. mín:</span> ${minElev.toFixed(1)} m &nbsp;
      <span style="color:var(--acc2);font-weight:700;">Alt. máx:</span> ${maxElev.toFixed(1)} m<br>
@@ -11107,7 +11161,9 @@ async function gerarCurvas() {
   const precisaoTxt = sigmaMedio != null ? ` · precisão estimada ±${sigmaMedio.toFixed(1)}m (${fontesUsadas.length} fonte${fontesUsadas.length !== 1 ? 's' : ''})` : '';
   const clampTxt = nPedido !== n ? ` (resolução limitada a ${n}×${n} — sem DEM/curvas locais importadas, ${nPedido}×${nPedido} sobrecarregaria as APIs online)` : (usandoFonteLocal ? ` · grade ${n}×${n} amostrada direto da fonte local (${_demLocalDisponivel() ? 'DEM' : 'curvas'})` : '');
   const avisoCoberturaTxt = pctComDadoReal < 90 ? ` ⚠ só ${pctComDadoReal.toFixed(0)}% da área com elevação real — o resto ficou achatado, as curvas param antes da borda ali.` : '';
-  const avisoSuavizacaoTxt = suavizacaoDesativadaPorSeguranca ? ` ⚠ suavização do traçado/malha desativadas automaticamente nessa área (causariam curvas se cruzando) — tente valores menores.` : '';
+  const avisoSuavizacaoTxt = !suavizacaoReduzida ? '' : suavizacaoDesativadaPorSeguranca
+    ? ` ⚠ suavização do traçado/malha desativadas automaticamente nessa área (causariam curvas se cruzando) — tente valores menores.`
+    : ` ⚠ suavização do traçado/malha reduzidas automaticamente nessa área (de ${_rotuloNivelSuavizacao(raioSuavizacaoTracado, malhaM)} para ${_rotuloNivelSuavizacao(nivelUsadoSuavizacao.raio, nivelUsadoSuavizacao.malha)}) — a força pedida causaria curvas se cruzando.`;
   setStatus(`${lineCount} curvas de nível geradas (${minElev.toFixed(1)}–${maxElev.toFixed(1)} m)${precisaoTxt}${clampTxt}.${avisoCoberturaTxt}${avisoSuavizacaoTxt}`, (avisoCoberturaTxt || avisoSuavizacaoTxt) ? 'warn' : 'ok');
 }
 
