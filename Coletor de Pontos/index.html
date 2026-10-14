@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- build 2026-10-02 v1.0.0 -->
+<!-- build 2026-10-14 v1.1.0 -->
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
@@ -77,6 +77,9 @@ button[disabled]{opacity:.45}
 .pt{border:1px solid #c8e6c9;border-left:4px solid var(--gr2);border-radius:10px;padding:.65rem .8rem;margin-bottom:.55rem;background:#fff}
 .pt-head{display:flex;justify-content:space-between;align-items:flex-start;gap:.5rem}
 .pt-name{font-weight:800;font-size:.95rem;color:var(--gr1)}
+.pt-name .dup{display:inline-block;margin-left:.4rem;font-size:.64rem;font-weight:800;color:#7c4d00;
+  background:#fff3cd;border:1px solid #ffe082;border-radius:99px;padding:.05rem .45rem;vertical-align:middle}
+.pt.dup-item{border-left-color:var(--am)}
 .pt-obs{font-size:.78rem;color:var(--mu);margin-top:.1rem;word-break:break-word}
 .pt-coords{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.74rem;color:var(--mu);margin-top:.45rem;line-height:1.7}
 .pt-coords b{color:var(--tx);font-weight:700}
@@ -318,6 +321,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.9rem 1rem calc(.
     <button id="btnKml">Exportar KML</button>
     <button id="btnLimpar" style="color:var(--rd)">Limpar tudo</button>
   </div>
+  <button id="btnDedup" style="display:none;width:100%;margin-bottom:.8rem;color:#7c4d00;background:#fff3cd;border-color:#ffe082">Remover pontos com nome repetido</button>
   <div id="lista"><div class="empty">Nenhum ponto coletado ainda.</div></div>
   <div class="note">
     CSV separado por “;” (abre direto no Excel pt-BR). TXT no formato clássico de topografia:
@@ -362,8 +366,9 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.9rem 1rem calc(.
 /* ==================================================================
    VERSÃO / HISTÓRICO
    ================================================================== */
-var VERSAO_APP="1.0.0";
+var VERSAO_APP="1.1.0";
 var HISTORICO_VERSOES=[
+  {v:"1.1.0",d:"14/10/2026",t:"Corrige o arrastar/zoom do mapa ficarem invertidos durante a navegação (o travamento do gesto não acompanhava o giro quando o rumo aparecia ou sumia no meio do caminho). “Marcar ponto” agora avisa bem visível quando falha por falta de sinal de GPS, em vez de ficar em silêncio. “Próximo” pede confirmação antes de pular um alvo sem marcar (evita perder um ponto sem querer). Marcar um alvo já marcado antes pergunta se é pra substituir. Pontos com nome repetido ganham aviso na lista e um botão pra limpar de uma vez, mantendo sempre o mais recente de cada nome."},
   {v:"1.0.0",d:"02/10/2026",t:"Número de versão e botão “Buscar atualizações” (rodapé): verifica se há uma versão nova publicada e avisa sozinho, piscando, sem precisar recarregar com força no celular."},
   {v:"0.14.0",d:"02/10/2026",t:"O mapa segue a posição em tempo real durante a captura e a navegação (antes só recentralizava quando um ponto novo era gravado). Corrigido um problema em que o marcador de um alvo às vezes não reaparecia depois de o mapa mudar de posição ou zoom."},
   {v:"0.13.0",d:"29/09/2026",t:"Rumo da seta e do giro do mapa passa a priorizar a direção do GPS (vem da trajetória real, sem sofrer interferência magnética) em vez da bússola do aparelho; recentralização sem animação durante o giro."},
@@ -684,18 +689,34 @@ window.addEventListener("beforeunload",function(e){
 });
 
 /* ---------- render ---------- */
+function contaNomes(){
+  var m={};
+  pontos.forEach(function(p){ var k=p.nome.toLowerCase(); m[k]=(m[k]||0)+1; });
+  return m;
+}
 function render(){
   pintaMedicoes();
   var el=document.getElementById("lista");
   document.getElementById("count").textContent=pontos.length+(pontos.length===1?" ponto":" pontos");
+  var nomes=contaNomes();
+  var nDup=0; Object.keys(nomes).forEach(function(k){ if(nomes[k]>1) nDup+=nomes[k]-1; });
+  var btnDedup=document.getElementById("btnDedup");
+  if(btnDedup){
+    btnDedup.style.display=nDup>0?"block":"none";
+    btnDedup.textContent="Remover "+nDup+" ponto"+(nDup>1?"s":"")+" com nome repetido (mantém o mais recente)";
+  }
   if(!pontos.length){el.innerHTML='<div class="empty">Nenhum ponto coletado ainda.</div>';atualizaMapa();return;}
   el.innerHTML="";
   pontos.slice().reverse().forEach(function(p){
     var i=pontos.indexOf(p);
-    var d=document.createElement("div"); d.className="pt";
+    var d=document.createElement("div"); d.className="pt"+(nomes[p.nome.toLowerCase()]>1?" dup-item":"");
     var head=document.createElement("div"); head.className="pt-head";
     var left=document.createElement("div"); left.style.minWidth="0";
     var nm=document.createElement("div"); nm.className="pt-name"; nm.textContent=p.nome;
+    if(nomes[p.nome.toLowerCase()]>1){
+      var dup=document.createElement("span"); dup.className="dup"; dup.textContent="repetido";
+      nm.appendChild(dup);
+    }
     left.appendChild(nm);
     if(p.obs){var ob=document.createElement("div");ob.className="pt-obs";ob.textContent=p.obs;left.appendChild(ob);}
     var bt=document.createElement("button"); bt.className="del"; bt.textContent="Excluir";
@@ -937,10 +958,16 @@ function aplicaRotMapa(){
   el.querySelectorAll(".ttxt").forEach(function(t){ t.style.transform="rotate("+contrarr+")"; });
   var btn=document.getElementById("btnRot");
   if(btn) btn.classList.toggle("on",!!hd);
+  /* o travamento do arrastar/zoom tem que andar junto do giro, sempre: se o rumo aparece ou
+     some NO MEIO da navegação (perda de bússola/GPS parado) e só a rotação é reaplicada sem
+     reavaliar os gestos, o mapa fica visualmente girado mas o Leaflet continua calculando
+     arrastar/zoom como se não estivesse — dá a sensação de "invertido". */
+  aplicaGestos();
 }
 function aplicaGestos(){
   if(!map) return;
-  var travar=emFullscreen()&&rotAtivo&&!!headingEf();
+  var hd=(emFullscreen()&&rotAtivo)?headingEf():null;
+  var travar=!!hd;
   ["dragging","doubleClickZoom","touchZoom","boxZoom","scrollWheelZoom"].forEach(function(h){
     if(map[h]) travar?map[h].disable():map[h].enable();
   });
@@ -1203,7 +1230,26 @@ function pintaNav(){
 }
 function marcaNav(){
   var a=alvoPorId(navAlvo); if(!a) return;
-  if(!live){ document.getElementById("navSub").textContent="Sem posição do GPS ainda."; return; }
+  if(!live){
+    erro("Sem posição do GPS ainda — aguarde o sinal aparecer antes de marcar "+a.nome+".");
+    return;
+  }
+  var idadeGps=Date.now()-live.timestamp;
+  if(idadeGps>8000){
+    erro("GPS sem atualização há "+Math.round(idadeGps/1000)+" s — aguarde o sinal voltar antes de marcar "+a.nome+".");
+    return;
+  }
+  /* evita acumular o mesmo nome marcado várias vezes (ex.: numa segunda tentativa) —
+     pergunta se é pra substituir a marcação anterior pela posição atual */
+  var repetidos=pontos.filter(function(p){ return p.nome.toLowerCase()===a.nome.toLowerCase(); });
+  if(repetidos.length){
+    var ult=repetidos[repetidos.length-1];
+    var hora=new Date(ult.data).toLocaleTimeString("pt-BR");
+    if(confirm(a.nome+" já foi marcado às "+hora+(repetidos.length>1?" ("+repetidos.length+" vezes)":"")+
+      ".\n\nOK para substituir pela posição atual.\nCancelar para manter o(s) anterior(es) e gravar mais um "+a.nome+".")){
+      repetidos.forEach(function(p){ var i=pontos.indexOf(p); if(i>-1) pontos.splice(i,1); });
+    }
+  }
   document.getElementById("fNome").value=a.nome;
   salvaPonto(live.coords,null,false);
   var prox=maisProximo(a.id);
@@ -1435,7 +1481,9 @@ document.getElementById("btnNavSair").onclick=sairNav;
 document.getElementById("btnCentroNav").onclick=centralizar;
 document.getElementById("btnNavMarca").onclick=marcaNav;
 document.getElementById("btnNavProx").onclick=function(){
+  var atual=alvoPorId(navAlvo);
   var p=maisProximo(navAlvo); if(!p){ document.getElementById("navSub").textContent="Não há outro alvo pendente."; return; }
+  if(atual&&!confirm("Pular "+atual.nome+" sem marcar um ponto nele? Você pode voltar para ele depois, tocando em “Navegar” na lista."))return;
   navAlvo=p.id; chegouAvisado=false; atualizaMapa();
 };
 document.getElementById("btnKml").onclick=function(){exportar("kml");};
@@ -1452,6 +1500,21 @@ document.getElementById("btnLimpar").onclick=function(){
   document.getElementById("fNome").value="";
   document.getElementById("fObs").value="";
   document.getElementById("fNome").placeholder=proximoNome();
+};
+document.getElementById("btnDedup").onclick=function(){
+  var porNome={};
+  pontos.forEach(function(p){ var k=p.nome.toLowerCase(); (porNome[k]=porNome[k]||[]).push(p); });
+  var manter=[], remover=0;
+  Object.keys(porNome).forEach(function(k){
+    var lista=porNome[k].slice().sort(function(a,b){ return new Date(a.data)-new Date(b.data); });
+    remover+=lista.length-1;
+    manter.push(lista[lista.length-1]);
+  });
+  if(!remover) return;
+  if(!confirm("Remover "+remover+" ponto"+(remover>1?"s":"")+" repetido"+(remover>1?"s":"")+", mantendo sempre o mais recente de cada nome? Essa ação não pode ser desfeita.")) return;
+  pontos=manter.sort(function(a,b){ return new Date(a.data)-new Date(b.data); });
+  save(); render();
+  info(remover+" ponto"+(remover>1?"s":"")+" repetido"+(remover>1?"s":"")+" removido"+(remover>1?"s":"")+".");
 };
 document.getElementById("dlgClose").onclick=function(){document.getElementById("dlg").close();};
 document.getElementById("dlgCopy").onclick=function(){
