@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- build 2026-10-14 v1.2.0 -->
+<!-- build 2026-10-16 v1.3.0 -->
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
@@ -93,6 +93,17 @@ button[disabled]{opacity:.45}
 .dir-ico{background:none!important;border:none!important}
 .dir-rot{width:100%;height:100%;transform-origin:50% 50%;transition:transform .12s linear}
 .ttxt{display:inline-block;transform-origin:50% 50%;transition:transform .2s linear}
+/* popup de cor do alvo (abre ao tocar no ponto no mapa) */
+.pop-alvo{min-width:200px}
+.pop-nm{font-weight:800;font-size:.92rem;color:#01579b}
+.pop-ds{font-size:.76rem;color:var(--mu);margin-top:.15rem}
+.pop-lbl{font-size:.68rem;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.05em;margin:.55rem 0 .35rem}
+.pop-cores{display:flex;flex-wrap:wrap;gap:.4rem}
+.swatch{width:28px;height:28px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px var(--bdr);padding:0;cursor:pointer;flex:none}
+.swatch.sel{box-shadow:0 0 0 2px var(--tx)}
+.swatch-padrao{background:repeating-conic-gradient(#fff 0% 25%,#e2e2e2 0% 50%) 0/10px 10px}
+.pop-btns{margin-top:.65rem}
+.pop-btns .btn-main{padding:.55rem;font-size:.84rem}
 .leaflet-tooltip.rot{background:rgba(0,0,0,.62);border:none;box-shadow:none;color:#fff;font-size:11px;font-weight:700;padding:1px 5px;border-radius:4px}
 .leaflet-tooltip.rot::before{display:none}
 .leaflet-control-attribution{font-size:9px}
@@ -366,8 +377,9 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.9rem 1rem calc(.
 /* ==================================================================
    VERSÃO / HISTÓRICO
    ================================================================== */
-var VERSAO_APP="1.2.0";
+var VERSAO_APP="1.3.0";
 var HISTORICO_VERSOES=[
+  {v:"1.3.0",d:"16/10/2026",t:"Cor dos pontos de controle importados: toque num ponto no mapa de satélite pra abrir uma paleta de cores e escolher a dele — inclusive pontos já marcados/visitados. A cor fica salva, aparece na lista de alvos também, e o próprio popup ganhou um botão “Navegar até aqui”."},
   {v:"1.2.0",d:"14/10/2026",t:"A tela de navegação até um ponto agora funciona exatamente como o mapa principal por padrão: arrastar e dar zoom sempre liberados, sem travar nada. O giro automático (mapa virar sozinho pra onde você anda) deixou de ligar sozinho — agora só liga se você tocar no botão redondo (◎) no canto superior direito; enquanto ele estiver desligado (o normal), nada no mapa fica travado."},
   {v:"1.1.2",d:"14/10/2026",t:"A trava de zoom da v1.1.1 travou demais: o zoom do mapa (pinça, duplo toque) agora fica sempre liberado em qualquer tela com mapa. Só o arrastar continua travado enquanto o giro automático está ativo (a direção do dedo fica errada quando o mapa está girado) — pra arrastar livremente, desligue o giro no botão redondo do canto superior direito."},
   {v:"1.1.1",d:"14/10/2026",t:"Corrige o pinça-pra-zoom dando zoom na tela inteira do navegador em vez de só na imagem de satélite (faltava travar o zoom da página no PWA). Agora o zoom só acontece dentro do mapa, como deveria."},
@@ -853,6 +865,48 @@ function desenhaDados(){
   desenhoAgendado=true;
   requestAnimationFrame(function(){ desenhoAgendado=false; desenhaDadosAgora(); });
 }
+var CORES_ALVO=[
+  {n:"Azul",v:"#0277bd"},{n:"Verde",v:"#2e7d32"},{n:"Vermelho",v:"#c62828"},{n:"Laranja",v:"#e65100"},
+  {n:"Roxo",v:"#6a1b9a"},{n:"Amarelo",v:"#f9a825"},{n:"Rosa",v:"#ad1457"},{n:"Preto",v:"#263238"}
+];
+function corPadraoAlvo(a){ return a.feito?"#9e9e9e":"#0277bd"; }
+function popupAlvo(a,mk){
+  var box=document.createElement("div"); box.className="pop-alvo";
+  var nm=document.createElement("div"); nm.className="pop-nm"; nm.textContent=a.nome; box.appendChild(nm);
+  if(a.desc){ var ds=document.createElement("div"); ds.className="pop-ds"; ds.textContent=a.desc; box.appendChild(ds); }
+  var lbl=document.createElement("div"); lbl.className="pop-lbl"; lbl.textContent="Cor do ponto"; box.appendChild(lbl);
+  var sw=document.createElement("div"); sw.className="pop-cores";
+  function marcaSel(btnSel){
+    sw.querySelectorAll(".swatch").forEach(function(s){ s.classList.remove("sel"); });
+    btnSel.classList.add("sel");
+  }
+  var padrao=document.createElement("button"); padrao.className="swatch swatch-padrao"+(!a.cor?" sel":""); padrao.title="Cor padrão (azul/cinza)";
+  padrao.onclick=function(ev){
+    ev.stopPropagation(); a.cor=null; saveAlvos();
+    mk.setStyle({fillColor:corPadraoAlvo(a)}); marcaSel(padrao); renderAlvos();
+  };
+  sw.appendChild(padrao);
+  CORES_ALVO.forEach(function(c){
+    var b=document.createElement("button"); b.className="swatch"+(a.cor===c.v?" sel":"");
+    b.style.background=c.v; b.title=c.n;
+    b.onclick=function(ev){
+      ev.stopPropagation(); a.cor=c.v; saveAlvos();
+      mk.setStyle({fillColor:c.v}); marcaSel(b); renderAlvos();
+    };
+    sw.appendChild(b);
+  });
+  box.appendChild(sw);
+  var btns=document.createElement("div"); btns.className="pop-btns";
+  var bn=document.createElement("button"); bn.className="btn-main"; bn.textContent="Navegar até aqui";
+  bn.onclick=function(){
+    if(map) map.closePopup();
+    if(autoTimer){ erro("Pare a captura automática antes de navegar."); return; }
+    iniciaNav(a.id);
+  };
+  btns.appendChild(bn);
+  box.appendChild(btns);
+  return box;
+}
 function desenhaDadosAgora(){
   /* parte "pesada": só roda quando pontos/alvos/linhas realmente mudam — nunca a cada posição do GPS */
   if(!map||!gMarc||desenhando) return;
@@ -892,9 +946,10 @@ function desenhaDadosAgora(){
   });
   alvos.forEach(function(a){
     var mk=L.circleMarker([a.lat,a.lon],{radius:navAlvo===a.id?10:8,color:"#ffffff",weight:2,
-      fillColor:a.feito?"#9e9e9e":"#0277bd",fillOpacity:1})
-      .bindTooltip('<span class="ttxt">'+esc(a.nome)+'</span>',{permanent:true,direction:"bottom",className:"rot",offset:[0,8]}).addTo(gMarc);
-    mk.on("click",function(){ if(!autoTimer&&confirm("Navegar até "+a.nome+"?")) iniciaNav(a.id); });
+      fillColor:a.cor||corPadraoAlvo(a),fillOpacity:1})
+      .bindTooltip('<span class="ttxt">'+esc(a.nome)+'</span>',{permanent:true,direction:"bottom",className:"rot",offset:[0,8]});
+    mk.bindPopup(popupAlvo(a,mk));
+    mk.addTo(gMarc);
   });
   }finally{ desenhando=false; }
 }
@@ -1145,6 +1200,7 @@ function renderAlvos(){
   el.innerHTML="";
   alvos.forEach(function(a){
     var d=document.createElement("div"); d.className="alvo"+(a.feito?" feito":"");
+    d.style.borderLeftColor=a.cor||corPadraoAlvo(a);
     var info=document.createElement("div"); info.className="info";
     var nm=document.createElement("div"); nm.className="nm"; nm.textContent=(a.feito?"✓ ":"")+a.nome; info.appendChild(nm);
     if(a.desc){ var ds=document.createElement("div"); ds.className="ds"; ds.textContent=a.desc; info.appendChild(ds); }
