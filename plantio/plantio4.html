@@ -439,7 +439,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.77 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.78 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -13456,28 +13456,37 @@ async function importarMonitorGPS(file) {
   }
 }
 
-// ── Helpers PDF: projeção Mercator (igual ao módulo Curvas de Nível) ───────────
-function _staticMapParams(sw, ne, W, H) {
-  const T = 256, LN2 = Math.LN2;
-  const latRad = lat => Math.log((1 + Math.sin(lat * Math.PI / 180)) / (1 - Math.sin(lat * Math.PI / 180))) / 2;
-  const latF = Math.abs(latRad(ne.lat) - latRad(sw.lat)) / Math.PI;
-  const lngF = Math.abs(ne.lng - sw.lng) / 360;
-  const zL = Math.floor(Math.log(2 * H / T / latF) / LN2); // Mercator lat usa T/2
-  const zG = Math.floor(Math.log(W / T / lngF) / LN2);
-  const zoom = Math.min(zL, zG, 20);
-  const cLat = (sw.lat + ne.lat) / 2, cLng = (sw.lng + ne.lng) / 2;
-  return { zoom, cLat, cLng };
-}
-function _mkToPx(cLat, cLng, zoom, W, H) {
-  const S = 256 * Math.pow(2, zoom);
-  const wx = lng => (lng + 180) / 360 * S;
-  const wy = lat => { const s = Math.sin(lat * Math.PI / 180); return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * S; };
-  const cx = wx(cLng), cy = wy(cLat);
-  return (lat, lng) => ({ x: wx(lng) - cx + W / 2, y: wy(lat) - cy + H / 2 });
+// v5.78: _staticMapParams/_mkToPx (projeção a partir de zoom/centro CALCULADOS, pensada pro Google
+// Static Maps) removidas — o Relatório PDF não busca mais uma imagem separada por API, usa
+// _mkToPxBounds (abaixo) direto a partir do BBOX REAL devolvido pela captura do mapa 2D. Ver
+// gerarPDF.
+// Projeção linear (lng) + Mercator (lat) direto a partir de um BBOX REAL já conhecido (north/
+// south/east/west) — usada pelo Relatório PDF desde a v5.78 em vez de _mkToPx (que precisa de um
+// zoom/centro CALCULADOS, com risco de não bater exatamente com o que foi capturado de verdade).
+// Como o bbox aqui já É o que a imagem de fundo realmente cobre (devolvido por
+// _3da_captureMapTexture depois do fitBounds), o mapeamento é exato — sem conta de zoom nenhuma.
+function _mkToPxBounds(north, south, east, west, W, H) {
+  const merc = lat => Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360));
+  const yN = merc(north), yS = merc(south);
+  const rangeY = yN - yS || 1e-9, rangeX = (east - west) || 1e-9;
+  return (lat, lng) => ({
+    x: (lng - west) / rangeX * W,
+    y: (yN - merc(lat)) / rangeY * H,
+  });
 }
 
 // ── Relatório PDF ─────────────────────────────────────────────────────────────
-function gerarPDF() {
+// v5.78: pedido do usuário — "qdo vou exportar o relatorio sai sempre a foto de satelite de fundo
+// mesmo que eu desligue, quero que apareça no report sempre igual estou visualizando, se tem foto
+// de drone que seja ela, se tiver fundo vazaio que seja ele". Causa: o relatório NUNCA usava o que
+// o mapa 2D estava realmente mostrando — buscava uma imagem SEPARADA, sempre "maptype=satellite",
+// direto da API do Google Static Maps (staticUrl, removido). Fix: em vez de buscar uma foto nova,
+// captura a imagem que o PRÓPRIO mapa 2D está exibindo NAQUELE MOMENTO (_3da_captureMapTexture —
+// já usada pela Vista 3D com o mesmo objetivo: "o que o 2D mostra" e "o que isso aqui mostra" têm
+// que ser literalmente a mesma imagem). Funciona pra qualquer fundo ativo — satélite ligado,
+// ortofoto de drone importada, ou fundo vazio/grade CAD (o que estiver, é isso que sai no PDF) — e
+// não depende mais de ter chave do Google configurada.
+async function gerarPDF() {
   if (!talhoesArquivados.length && polyPts.length < 3) {
     alert('Gere pelo menos um talhão antes de gerar o relatório.');
     return;
@@ -13485,15 +13494,15 @@ function gerarPDF() {
 
   const win = window.open('', '_blank');
   if (!win) { alert('Popup bloqueado. Permita pop-ups para este site.'); return; }
+  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Gerando relatório…</title></head><body style="font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;color:#556;background:#f4f6f8;"><p>Capturando o mapa e montando o relatório…</p></body></html>');
 
   const todos      = [...talhoesArquivados];
   const date       = new Date().toLocaleDateString('pt-BR');
   const consultor  = $('rConsultor').value.trim()   || 'João Paulo de Oliveira';
   const cliente    = $('rCliente').value.trim()     || '—';
   const prop       = $('rPropriedade').value.trim() || '—';
-  const key        = localStorage.getItem('mapskey_pl') || '';
 
-  // ── Bounds: apenas polígonos dos talhões (curvas não afetam o zoom do satélite)
+  // ── Bounds: apenas polígonos dos talhões (curvas não afetam o enquadramento do fundo)
   const polyAllPts = [];
   todos.forEach(t => t.polyPts.forEach(p => polyAllPts.push(p)));
   if (polyPts.length >= 3) polyPts.forEach(p => polyAllPts.push(p));
@@ -13509,18 +13518,31 @@ function gerarPDF() {
   const sw = { lat: latMin - latSpan * pad, lng: lngMin - lngSpan * pad };
   const ne = { lat: latMax + latSpan * pad, lng: lngMax + lngSpan * pad };
 
-  // ── Mapa estático Google ───────────────────────────────────────────────────
-  // scale=2: size=512x307 são os "world-pixels" (cobertura geográfica);
-  // a API retorna imagem 1024×614px (2×) para maior resolução.
-  // _mkToPx e viewBox devem usar os world-pixels (512×307), não 1024×614.
-  const MW = 512, MH = 307;
-  const { zoom, cLat, cLng } = _staticMapParams(sw, ne, MW, MH);
-  const staticUrl = key
-    ? `https://maps.googleapis.com/maps/api/staticmap?center=${cLat},${cLng}&zoom=${zoom}&size=${MW}x${MH}&scale=2&maptype=satellite&key=${key}`
-    : '';
-
-  // ── Projeção Mercator — usa world-pixels (MW×MH), não pixels físicos ─────
-  const toPx = _mkToPx(cLat, cLng, zoom, MW, MH);
+  // ── Captura do fundo REAL (satélite ligado/desligado, ortofoto de drone, ou vazio — o que
+  // estiver ativo no mapa 2D agora) — reaproveita a mesma captura da Vista 3D, numa resolução
+  // menor (1600px, suficiente pra uma página impressa — não precisa dos 4096px da textura 3D).
+  let imgDataUrl = null, MW = 512, MH = 307, toPx;
+  try {
+    const captura = await _3da_captureMapTexture(sw.lat, ne.lat, sw.lng, ne.lng, 1600);
+    imgDataUrl = captura.canvas.toDataURL('image/jpeg', 0.9);
+    // Normaliza o tamanho real capturado (pode ter QUALQUER proporção, a da janela do navegador na
+    // hora) pra um viewBox de SVG de tamanho razoável, preservando a proporção de verdade — forçar
+    // num 512×307 fixo (como era antes, pensado pro Google Static Maps) esticaria/distorceria a
+    // imagem sempre que a proporção capturada não batesse com 512:307 por coincidência.
+    const maiorLado = 900;
+    if(captura.canvas.width >= captura.canvas.height) {
+      MW = maiorLado; MH = Math.round(maiorLado * captura.canvas.height / captura.canvas.width);
+    } else {
+      MH = maiorLado; MW = Math.round(maiorLado * captura.canvas.width / captura.canvas.height);
+    }
+    // Projeção a partir do BBOX REAL devolvido pela captura (depois do fitBounds) — não do sw/ne
+    // pedido, que o fitBounds pode ter ajustado pra caber na proporção da tela do usuário.
+    toPx = _mkToPxBounds(captura.north, captura.south, captura.east, captura.west, MW, MH);
+  } catch(e) {
+    // Captura falhou (raro — ex.: html2canvas não conseguiu ler alguma camada) — relatório
+    // continua saindo, só sem a imagem de fundo, com um aviso visível em vez de travar tudo.
+    toPx = _mkToPxBounds(ne.lat, sw.lat, ne.lng, sw.lng, MW, MH);
+  }
 
   // Extrai pontos {lat,lng} de um layer Leaflet de forma segura
   const extractPts = pl => {
@@ -13669,9 +13691,9 @@ tfoot td{background:#e3f2fd}
 <h2>&#127757; Mapa &#8212; Sistematiza&#231;&#227;o</h2>
 <div class="map-wrap" style="aspect-ratio:${MW}/${MH}">
   <svg viewBox="0 0 ${MW} ${MH}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
-    ${staticUrl
-      ? `<image href="${staticUrl}" x="0" y="0" width="${MW}" height="${MH}" preserveAspectRatio="none"/>`
-      : `<rect x="0" y="0" width="${MW}" height="${MH}" fill="#1a2535"/><text x="${MW/2}" y="${MH/2}" text-anchor="middle" font-family="Arial,sans-serif" font-size="12" fill="#556">Ative a chave Google Maps para imagem de sat&#233;lite</text>`
+    ${imgDataUrl
+      ? `<image href="${imgDataUrl}" x="0" y="0" width="${MW}" height="${MH}" preserveAspectRatio="none"/>`
+      : `<rect x="0" y="0" width="${MW}" height="${MH}" fill="#1a2535"/><text x="${MW/2}" y="${MH/2}" text-anchor="middle" font-family="Arial,sans-serif" font-size="12" fill="#556">N&#227;o foi poss&#237;vel capturar a imagem de fundo do mapa</text>`
     }
     ${svgPaths}
     <g transform="translate(${MW-24},24)">
@@ -16901,7 +16923,11 @@ const _3DA_CHUVA_TRILHA_K = 18; // nº de pontos do rastro de cada gota
 // passam a ser literalmente a mesma imagem, obtida com html2canvas. Os limites REAIS exibidos
 // (map.getBounds() após o fitBounds) são devolvidos junto — o mapeamento de UV usa esses limites
 // exatos, sem nenhuma conta de zoom/m-por-pixel/arredondamento envolvida.
-async function _3da_captureMapTexture(latMin, latMax, lngMin, lngMax) {
+// v5.78: `metaDimPx` virou parâmetro opcional (antes fixo em 4096, só pensado pra textura 3D) —
+// o Relatório PDF (gerarPDF, ver lá) reaproveita esta mesma função pra pegar o fundo REAL do mapa
+// (satélite ligado/desligado, ortofoto de drone importada, ou fundo vazio — o que estiver ativo),
+// mas numa resolução bem menor (não precisa de textura 3D, é uma imagem de página impressa).
+async function _3da_captureMapTexture(latMin, latMax, lngMin, lngMax, metaDimPx = 4096) {
   const originalCenter = map.getCenter(), originalZoom = map.getZoom();
   const overlayPane = map.getPane('overlayPane'), markerPane = map.getPane('markerPane');
   const prevOverlay = overlayPane ? overlayPane.style.display : '';
@@ -16947,7 +16973,7 @@ async function _3da_captureMapTexture(latMin, latMax, lngMin, lngMax) {
     const _mapElCaptura = document.getElementById('map');
     const _mapRectCaptura = _mapElCaptura.getBoundingClientRect();
     const _maxDimCaptura = Math.max(_mapRectCaptura.width, _mapRectCaptura.height) || 1024;
-    const _scaleCaptura = Math.max(1, Math.min(4, 4096 / _maxDimCaptura));
+    const _scaleCaptura = Math.max(1, Math.min(4, metaDimPx / _maxDimCaptura));
     const canvas = await html2canvas(_mapElCaptura, { useCORS: true, logging: false, scale: _scaleCaptura });
     const b = map.getBounds();
     return { canvas, north: b.getNorth(), south: b.getSouth(), east: b.getEast(), west: b.getWest() };
