@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<!-- build 2026-10-06 v1.20.0 -->
+<!-- build 2026-10-17 v1.21.0 -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Visualizador IrriCAD v1.20.0 &middot; TophoFarm</title>
+<title>Visualizador IrriCAD v1.21.0 &middot; TophoFarm</title>
 <meta name="theme-color" content="#1f4e4c">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -169,7 +169,19 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 /* ---------- abrir DXF (vira camadas no mesmo mapa, com satelite/GPS) ---------- */
 #dp-abrir-dxf{margin:.4rem 1rem .8rem;padding:.75rem;border-radius:10px;border:2px dashed #2b4757;background:#162732;
   color:#eaf2f6;font-size:.85rem;text-align:center}
+#dp-abrir-pacote{margin:.4rem 1rem .8rem;padding:.75rem;border-radius:10px;border:2px dashed #3a6b52;background:#162c22;
+  color:#eaf2f6;font-size:.85rem;text-align:center}
 .proj-item .tipo-badge{font-size:.6rem;font-weight:700;letter-spacing:.03em;color:#5a8296;text-transform:uppercase;display:block;margin-bottom:.1rem}
+
+/* ---------- documentos de uma "pasta de montagem" (PDFs etc.) -- lista no
+   final da gaveta de Camadas, nao sao geometria entao nao tem checkbox,
+   so abrem (o celular usa o visualizador de PDF nativo dele) ---------- */
+#lista-documentos{flex-shrink:0;border-top:1px solid rgba(255,255,255,.08)}
+#lista-documentos .doc-titulo{padding:.6rem 1rem .2rem;font-size:.68rem;font-weight:700;letter-spacing:.03em;color:#5a8296;text-transform:uppercase}
+.doc-item{display:flex;align-items:center;gap:.6rem;padding:.55rem 1rem;border-bottom:1px solid rgba(255,255,255,.05)}
+.doc-item .ico{font-size:1.1rem;flex-shrink:0}
+.doc-item .nome{flex:1;font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.doc-item small{color:#7fa0af;font-size:.7rem;display:block}
 
 /* ---------- textos do DXF (comprimento/diametro de tubo, vazao/pressao) --
    rotacionados igual ao AutoCAD, tamanho em pixels recalculado por zoom
@@ -230,6 +242,7 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
   </div>
   <input id="cam-filtro" type="text" placeholder="Filtrar camadas...">
   <div id="lista-camadas"><div id="drawer-empty">Abra um projeto para ver as camadas.</div></div>
+  <div id="lista-documentos"></div>
 </div>
 
 <!-- drawer de projetos -->
@@ -237,6 +250,7 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
   <div id="dp-head"><h2>Meus projetos</h2><button id="dp-close">&times;</button></div>
   <div id="dp-abrir">&#128194; Abrir arquivo .kmz / .kml</div>
   <div id="dp-abrir-dxf">&#128208; Abrir arquivo .dxf (tubula&#231;&#245;es, v&#225;lvulas, textos)</div>
+  <div id="dp-abrir-pacote">&#128230; Abrir Pasta de Montagem (.zip)</div>
   <div id="dp-lista"><div id="dp-empty">Nenhum projeto salvo neste aparelho ainda.</div></div>
   <div id="dp-sobre">
     <img src="tophofarm-logo-completo.png" alt="TophoFarm" id="dp-logo">
@@ -254,23 +268,26 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
   </div>
 </div>
 
-<div id="drop-overlay">Solte o arquivo .kmz, .kml ou .dxf aqui</div>
+<div id="drop-overlay">Solte o arquivo .kmz, .kml, .dxf ou .zip (Pasta de Montagem) aqui</div>
 <div id="carregando"><div class="spin"></div><div id="carregando-txt">Processando arquivo...</div></div>
 <div id="toast"></div>
 <input id="file-input" type="file" accept=".kml,.kmz">
 <input id="file-input-dxf" type="file" accept=".dxf">
+<input id="file-input-pacote" type="file" accept=".zip">
 
 <script src="lib/leaflet-src.js"></script>
 <script src="lib/leaflet-rotate-src.js"></script>
 <script src="lib/jszip.min.js"></script>
+<script src="lib/geotiff.js"></script>
 <script>
 'use strict';
 
 /* ==================================================================
    VERSAO / HISTORICO
    ================================================================== */
-const VERSAO_APP = '1.20.0';
+const VERSAO_APP = '1.21.0';
 const HISTORICO_VERSOES = [
+  {v:'1.21.0', d:'17/10/2026', t:'Nova opção "Abrir Pasta de Montagem (.zip)": abre de uma vez um pacote com vários arquivos do projeto — .dxf, .kmz/.kml, ortofoto georreferenciada (.tif) e PDFs de cálculo (lista de materiais, pressão de bombas/setores, tempo de avanço etc.) — pra equipe de campo acessar tudo pelo celular, offline, sem precisar baixar arquivo por arquivo. O .dxf e o .kmz do pacote viram camadas no mapa (como já funcionava); a ortofoto vira mais uma camada de imagem, posicionada certa usando a zona UTM que já vem gravada nela; os PDFs ficam numa lista "Documentos" na gaveta de Camadas, toque pra abrir no leitor do celular. Atenção: precisa ser .zip — .rar não funciona (o navegador não sabe abrir).'},
   {v:'1.20.0', d:'06/10/2026', t:'Fundo preto (igual AutoCAD) sempre que não há foto de satélite: 1) o botão de satélite agora "apaga" pra preto, não pra mapa de ruas; 2) em áreas rurais onde a Esri não tem foto de verdade (comum fora de cidade), ela mandava um quadrado cinza-claro escrito "Map data not available" em vez de dar erro — ficava mais óbvio em zoom alto porque esse quadrado cinza cobria mais tela; agora isso é detectado (pela cor, sem variação, bem diferente de uma foto de verdade) e escondido, mostrando preto no lugar. Vale pro .kmz e pro .dxf, já que os dois usam o mesmo mapa de fundo.'},
   {v:'1.19.1', d:'06/10/2026', t:'Corrige a moldura (quadro) de resumo de zona ("Zone no. 1 / Cota / Área...") ficando menor que o texto dentro dela em alguns zooms. Causa: o quadro é um desenho real do DXF, que escala em proporção verdadeira com o zoom do mapa; o texto tinha um tamanho mínimo/máximo artificial (8 a 60px) que não acompanhava essa mesma escala — em zooms mais afastados, o quadro encolhia mais rápido que o piso de 8px do texto permitia, e o texto vazava pra fora. Removido esse limite: agora o texto escala em proporção real (igual a moldura), sempre do tamanho certo um pro outro, em qualquer zoom.'},
   {v:'1.19.0', d:'06/10/2026', t:'Botão para desligar a foto de satélite (ícone 🛰️ na barra de baixo) — funciona tanto pro .kmz quanto pro .dxf, já que os dois desenham no mesmo mapa. Cores do DXF corrigidas pra bater com o IrriCAD de verdade: a paleta anterior (das v1.17/1.18) tinha sido "suavizada" por engano e saía diferente da cor real gravada no arquivo — agora usa a tabela oficial de 256 cores do AutoCAD (Color Index), igual o IrriCAD usa.'},
@@ -668,7 +685,9 @@ function removeProjetoDoMapa(projId){
   grupoCamadas = restantes;
   projetosCarregadosIds.delete(projId);
   registroTextosDXF = registroTextosDXF.filter(r=>r.projId!==projId);
+  documentosPacote = documentosPacote.filter(d=>d.projId!==projId);
   renderizaListaCamadas();
+  renderizaListaDocumentos();
   atualizaBadgeCamadas();
   atualizaTituloGeral();
 }
@@ -715,7 +734,10 @@ function construirCamadas(arvore, projId, projNome, opcoes){
   opcoes = opcoes || {};
   // se esse projeto ja estava carregado (reabrindo um arquivo atualizado,
   // ou reativando pela lista), tira a versao antiga antes de por a nova.
-  if(projetosCarregadosIds.has(projId)) removeProjetoDoMapa(projId);
+  // pularRemocao: usado quando uma "Pasta de Montagem" ja fez essa limpeza
+  // uma vez no inicio, pra varios arquivos do mesmo pacote (kml+dxf+tif)
+  // nao se apagarem um ao outro por terem o mesmo projId.
+  if(!opcoes.pularRemocao && projetosCarregadosIds.has(projId)) removeProjetoDoMapa(projId);
   const novasCamadas = [];
   const camadasPastas = achataCamadas(arvore);
   const bounds = L.latLngBounds([]);
@@ -959,6 +981,7 @@ async function ativarProjetoSalvo(registro, ajustarView){
 // parser certo conforme o tipo do arquivo salvo (kml/kmz ou dxf).
 async function ativarRegistroSalvo(registro, ajustarView){
   if(registro.tipo==='dxf') return ativarDxfSalvo(registro, ajustarView);
+  if(registro.tipo==='pacote') return ativarPacoteSalvo(registro, ajustarView);
   return ativarProjetoSalvo(registro, ajustarView);
 }
 async function renderizaListaProjetos(){
@@ -972,7 +995,7 @@ async function renderizaListaProjetos(){
     div.className = 'proj-item';
     const data = new Date(reg.ts).toLocaleDateString('pt-BR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
     const ligado = projetosCarregadosIds.has(reg.id);
-    const selo = reg.tipo==='dxf' ? '<span class="tipo-badge">DXF</span>' : '';
+    const selo = reg.tipo==='dxf' ? '<span class="tipo-badge">DXF</span>' : reg.tipo==='pacote' ? '<span class="tipo-badge">PACOTE</span>' : '';
     div.innerHTML = `<input type="checkbox" class="proj-check" ${ligado?'checked':''}>
       <div class="info">${selo}<b>${escHTML(reg.nome)}</b><small>${data} &middot; ${(reg.buf.byteLength/1024/1024).toFixed(1)} MB</small></div>
       <button class="del" title="Excluir">&#128465;&#65039;</button>`;
@@ -1371,7 +1394,7 @@ mapa.on('zoomend', atualizaTextosDXF);
 
 function construirCamadasDXF(dados, projId, projNome, zonaInfo, opcoes){
   opcoes = opcoes || {};
-  if(projetosCarregadosIds.has(projId)) removeProjetoDoMapa(projId);
+  if(!opcoes.pularRemocao && projetosCarregadosIds.has(projId)) removeProjetoDoMapa(projId);
   const bounds = L.latLngBounds([]);
   const porCamada = new Map(); // nome da camada DXF -> {layer:L.layerGroup(), count}
   function grupoDe(nome){
@@ -1505,11 +1528,221 @@ document.getElementById('file-input-dxf').addEventListener('change', e=>{
 });
 
 /* ==================================================================
+   PASTA DE MONTAGEM (.zip) -- pacote com varios arquivos do projeto
+   (.dxf, .kmz/.kml, ortofoto .tif georreferenciada, PDFs de calculo
+   hidraulico etc.) pra equipe de campo abrir tudo de uma vez, offline,
+   no celular. DXF/KML viram camadas no mesmo mapa (como ja funcionava
+   avulso); a ortofoto GeoTIFF vira mais uma camada de imagem (como um
+   "satelite" de alta resolucao, so dessa fazenda); os PDFs e outros
+   arquivos ficam numa lista de "Documentos" (abre no leitor nativo do
+   celular via blob -- funciona offline, o arquivo ja esta no aparelho).
+
+   Zona UTM: como um GeoTIFF de verdade TRAZ a propria zona gravada nos
+   metadados (ProjectedCSTypeGeoKey), isso tem prioridade sobre so olhar
+   um .kmz ja aberto (que pode nem ser do mesmo projeto) -- mais
+   confiavel ainda do que o criterio ja usado pro DXF avulso.
+   ================================================================== */
+// EPSG comuns de UTM (SIRGAS2000 e WGS84, hemisferio sul -- cobre os
+// datums mais usados em projetos no Brasil) -- mapeia pro numero da zona
+// e hemisferio sem precisar de uma lib de projecao cartografica completa.
+function zonaDeEPSG(codigo){
+  codigo = Number(codigo);
+  if(codigo>=31978 && codigo<=31985) return {zona: codigo-31960, sul:true};   // SIRGAS2000 / UTM zone NNS
+  if(codigo>=32718 && codigo<=32738) return {zona: codigo-32700, sul:true};   // WGS84 / UTM zone NNS
+  if(codigo>=32618 && codigo<=32638) return {zona: codigo-32600, sul:false};  // WGS84 / UTM zone NNN
+  return null;
+}
+function zonaDoGeoTIFF(image){
+  try{
+    const chaves = image.getGeoKeys ? image.getGeoKeys() : null;
+    if(!chaves) return null;
+    const porEPSG = zonaDeEPSG(chaves.ProjectedCSTypeGeoKey);
+    if(porEPSG) return porEPSG;
+    const citacao = chaves.PCSCitationGeoKey || chaves.GTCitationGeoKey || '';
+    const m = /zone\s*(\d{1,2})\s*([NS])/i.exec(citacao);
+    if(m) return {zona: parseInt(m[1],10), sul: m[2].toUpperCase()==='S'};
+  }catch(e){}
+  return null;
+}
+// decodifica uma ortofoto GeoTIFF: le numa resolucao reduzida (celular nao
+// precisa/aguenta o pixel cheio de uma imagem de dezenas de MB) e devolve
+// uma URL de imagem (JPEG) + os limites reais (lat/lng) pra virar camada
+// no mapa com L.imageOverlay.
+async function decodificaGeoTIFF(buf, zonaInfo){
+  const tiff = await GeoTIFF.fromArrayBuffer(buf);
+  const image = await tiff.getImage();
+  const w = image.getWidth(), h = image.getHeight();
+  const escala = Math.min(1, 1600/Math.max(w,h));
+  const outW = Math.max(1, Math.round(w*escala)), outH = Math.max(1, Math.round(h*escala));
+  const raster = await image.readRasters({interleave:true, width:outW, height:outH});
+  const spp = image.getSamplesPerPixel();
+  const rgba = new Uint8ClampedArray(outW*outH*4);
+  for(let i=0, px=0; px<outW*outH; px++, i+=spp){
+    const o = px*4;
+    if(spp>=3){ rgba[o]=raster[i]; rgba[o+1]=raster[i+1]; rgba[o+2]=raster[i+2]; rgba[o+3]=spp>=4?raster[i+3]:255; }
+    else { rgba[o]=rgba[o+1]=rgba[o+2]=raster[i]; rgba[o+3]=255; } // 1 banda (escala de cinza)
+  }
+  const cv = document.createElement('canvas');
+  cv.width=outW; cv.height=outH;
+  cv.getContext('2d').putImageData(new ImageData(rgba, outW, outH), 0, 0);
+  const url = await new Promise(res=>cv.toBlob(b=>res(URL.createObjectURL(b)), 'image/jpeg', 0.88));
+
+  const zona = zonaDoGeoTIFF(image) || zonaInfo;
+  const [minX,minY,maxX,maxY] = image.getBoundingBox();
+  const sw = utmParaLatLng(minX,minY,zona.zona,zona.sul), ne = utmParaLatLng(maxX,maxY,zona.zona,zona.sul);
+  return {url, bounds: L.latLngBounds([sw,ne])};
+}
+
+let documentosPacote = []; // {projId, projNome, nome, buf, mime}
+const ICONE_DOC = {pdf:'&#128196;', doc:'&#128196;', docx:'&#128196;', xls:'&#128202;', xlsx:'&#128202;',
+  jpg:'&#128247;', jpeg:'&#128247;', png:'&#128247;'};
+function abreDocumento(doc){
+  try{
+    const blob = new Blob([doc.buf], {type: doc.mime});
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+    setTimeout(()=>URL.revokeObjectURL(url), 60000);
+  }catch(e){
+    console.error(e);
+    toast('Não consegui abrir "'+doc.nome+'": '+e.message, 4000);
+  }
+}
+function renderizaListaDocumentos(){
+  const cont = document.getElementById('lista-documentos');
+  if(!documentosPacote.length){ cont.innerHTML=''; return; }
+  const multiProjeto = new Set(documentosPacote.map(d=>d.projId)).size > 1;
+  cont.innerHTML = '<div class="doc-titulo">Documentos</div>' + documentosPacote.map((d,i)=>{
+    const ext = d.nome.toLowerCase().split('.').pop();
+    const ico = ICONE_DOC[ext] || '&#128206;';
+    const sub = multiProjeto ? escHTML(d.projNome) : (d.buf.byteLength/1024/1024).toFixed(1)+' MB';
+    return `<div class="doc-item" data-i="${i}"><span class="ico">${ico}</span>
+      <div class="nome">${escHTML(d.nome)}<small>${sub}</small></div></div>`;
+  }).join('');
+  [...cont.querySelectorAll('.doc-item')].forEach((el,i)=> el.addEventListener('click', ()=>abreDocumento(documentosPacote[i])));
+}
+
+async function processaPacote(buf, nomeZip, projId, opcoes){
+  opcoes = opcoes || {};
+  if(projetosCarregadosIds.has(projId)) removeProjetoDoMapa(projId);
+  documentosPacote = documentosPacote.filter(d=>d.projId!==projId);
+  const projNome = nomeZip.replace(/\.zip$/i,'');
+  const zip = await JSZip.loadAsync(buf);
+  const entradas = Object.values(zip.files).filter(f=>!f.dir);
+  if(!entradas.length) throw new Error('O arquivo .zip está vazio.');
+
+  const MIME = {pdf:'application/pdf', doc:'application/msword',
+    docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xls:'application/vnd.ms-excel', xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png'};
+
+  // 1a passada so pra achar a zona UTM de um GeoTIFF do pacote, se tiver --
+  // prioridade maxima pra posicionar o DXF do MESMO pacote corretamente.
+  let zonaDoPacote = null;
+  for(const entrada of entradas){
+    const ext = entrada.name.toLowerCase().split('.').pop();
+    if(ext!=='tif' && ext!=='tiff') continue;
+    try{
+      const bufTif = await entrada.async('arraybuffer');
+      const image = await (await GeoTIFF.fromArrayBuffer(bufTif)).getImage();
+      const z = zonaDoGeoTIFF(image);
+      if(z){ zonaDoPacote = z; break; }
+    }catch(e){ console.warn('Não consegui ler a zona UTM do GeoTIFF', entrada.name, e); }
+  }
+  const zonaInfo = zonaDoPacote || zonaUTMAtual();
+
+  const novosDocs = [];
+  for(const entrada of entradas){
+    const nomeArq = entrada.name.split('/').pop();
+    if(!nomeArq) continue; // entrada de pasta sem nome de arquivo
+    const ext = nomeArq.toLowerCase().split('.').pop();
+    try{
+      if(ext==='dxf'){
+        const bufArq = await entrada.async('arraybuffer');
+        const dados = parseDXF(decodeTextoInteligente(bufArq));
+        if(dados.entidades.length) construirCamadasDXF(dados, projId, projNome, zonaInfo, {ajustarView:false, pularRemocao:true});
+      } else if(ext==='kml' || ext==='kmz'){
+        const bufArq = await entrada.async('arraybuffer');
+        const arquivoFake = new File([bufArq], nomeArq);
+        const arvore = parseKMLTree(await extraiTextoKML(arquivoFake, bufArq));
+        construirCamadas(arvore, projId, projNome, {ajustarView:false, pularRemocao:true});
+      } else if(ext==='tif' || ext==='tiff'){
+        const bufArq = await entrada.async('arraybuffer');
+        const resultado = await decodificaGeoTIFF(bufArq, zonaInfo);
+        const caminho = projNome+' / Ortofoto ('+nomeArq+')';
+        grupoCamadas.push({pasta:{nome:'Ortofoto', caminho}, layer:L.imageOverlay(resultado.url, resultado.bounds, {opacity:.92}),
+          cor:'#ffffff', count:1, visivel:true, projId, projNome});
+      } else {
+        const bufArq = await entrada.async('arraybuffer');
+        novosDocs.push({projId, projNome, nome:nomeArq, buf:bufArq, mime: MIME[ext]||'application/octet-stream'});
+      }
+    }catch(e){
+      console.error('erro processando', entrada.name, e);
+      toast('Não consegui abrir "'+nomeArq+'" dentro do pacote: '+e.message, 4200);
+    }
+  }
+
+  documentosPacote = documentosPacote.concat(novosDocs);
+  projetosCarregadosIds.add(projId);
+  grupoCamadas.sort((a,b)=>{
+    const ra = REALCAR.test(a.pasta.caminho) ? 0 : 1;
+    const rb = REALCAR.test(b.pasta.caminho) ? 0 : 1;
+    if(ra!==rb) return ra-rb;
+    if(a.projNome!==b.projNome) return a.projNome.localeCompare(b.projNome,'pt-BR');
+    return a.pasta.nome.localeCompare(b.pasta.nome,'pt-BR');
+  });
+  grupoCamadas.forEach(c=>{ if(c.projId===projId && c.visivel) c.layer.addTo(mapa); });
+
+  if(opcoes.ajustarView!==false){
+    const todosOsBounds = L.latLngBounds([]);
+    grupoCamadas.forEach(c=>{ if(c.projId===projId && c.layer.getBounds) todosOsBounds.extend(c.layer.getBounds()); });
+    if(todosOsBounds.isValid()) mapa.fitBounds(todosOsBounds, {padding:[30,30]});
+  }
+
+  renderizaListaCamadas();
+  renderizaListaDocumentos();
+  atualizaBadgeCamadas();
+  atualizaTituloGeral();
+}
+
+async function abrePacote(file){
+  mostraCarregando('Lendo pacote ' + file.name + '... pode levar alguns segundos');
+  try{
+    const buf = await file.arrayBuffer();
+    await processaPacote(buf, file.name, file.name, {ajustarView:true});
+    await salvarProjetoIndexedDB(file.name, buf, 'pacote');
+    toast('Pacote carregado: ' + file.name);
+  }catch(err){
+    console.error(err);
+    toast('Erro ao abrir pacote: ' + err.message, 4200);
+  }finally{
+    escondeCarregando();
+  }
+}
+async function ativarPacoteSalvo(registro, ajustarView){
+  mostraCarregando('Abrindo ' + registro.nome + '... pode levar alguns segundos');
+  try{
+    await processaPacote(registro.buf, registro.nome, registro.id, {ajustarView: ajustarView!==false});
+    toast('Pacote ligado: ' + registro.nome);
+  }catch(err){
+    console.error(err);
+    toast('Erro ao abrir pacote salvo: ' + err.message, 4200);
+  }finally{
+    escondeCarregando();
+  }
+}
+document.getElementById('dp-abrir-pacote').addEventListener('click', ()=>document.getElementById('file-input-pacote').click());
+document.getElementById('file-input-pacote').addEventListener('change', e=>{
+  const f = e.target.files[0];
+  if(f) abrePacote(f);
+  e.target.value='';
+});
+
+/* ==================================================================
    UI: drawers, busca, drag&drop, file input
    ================================================================== */
 const drawer = document.getElementById('drawer');
 const drawerProj = document.getElementById('drawer-proj');
-document.getElementById('btn-camadas').addEventListener('click', ()=>drawer.classList.add('aberto'));
+document.getElementById('btn-camadas').addEventListener('click', ()=>{ drawer.classList.add('aberto'); renderizaListaDocumentos(); });
 document.getElementById('drawer-close').addEventListener('click', ()=>drawer.classList.remove('aberto'));
 document.getElementById('btn-projetos').addEventListener('click', ()=>{ drawerProj.classList.add('aberto'); renderizaListaProjetos(); });
 document.getElementById('dp-close').addEventListener('click', fecharDrawerProjetos);
@@ -1550,7 +1783,11 @@ window.addEventListener('dragleave', e=>{ dragCount--; if(dragCount<=0){ dragCou
 window.addEventListener('drop', e=>{
   e.preventDefault(); dragCount=0; dropOverlay.classList.remove('aberto');
   const f = e.dataTransfer.files[0];
-  if(f) abrirArquivo(f);
+  if(!f) return;
+  const ext = f.name.toLowerCase().split('.').pop();
+  if(ext==='dxf') abreDXF(f);
+  else if(ext==='zip') abrePacote(f);
+  else abrirArquivo(f);
 });
 
 // busca
