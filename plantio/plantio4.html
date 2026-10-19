@@ -439,7 +439,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.78 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.79 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -13494,7 +13494,16 @@ async function gerarPDF() {
 
   const win = window.open('', '_blank');
   if (!win) { alert('Popup bloqueado. Permita pop-ups para este site.'); return; }
+  // v5.79: BUG relatado com print — "o relatorio depois das alterações se desconfigurou, deve
+  // ficar igual antes, 01 em cada pagina". Causa: este write() de placeholder (v5.78) nunca
+  // chamava document.close() — pela spec, document.write() só limpa o documento inteiro (implicit
+  // open) quando o STREAM anterior já foi FECHADO; sem o close() aqui, o write() final (que monta
+  // as 2 páginas de verdade, mais abaixo) era só ANEXADO em cima do placeholder ainda aberto, em
+  // vez de substituí-lo — o body do placeholder (display:flex, pensado só pra centralizar o texto
+  // "Capturando…") sobrava e virava o container de TUDO que vinha depois, jogando as 2 páginas
+  // lado a lado (flex-direction:row é o padrão) em vez de empilhadas uma por página.
   win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Gerando relatório…</title></head><body style="font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;color:#556;background:#f4f6f8;"><p>Capturando o mapa e montando o relatório…</p></body></html>');
+  win.document.close();
 
   const todos      = [...talhoesArquivados];
   const date       = new Date().toLocaleDateString('pt-BR');
