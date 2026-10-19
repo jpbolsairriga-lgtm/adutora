@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.5 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.5.1 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -171,7 +171,11 @@ tr.item-row.inativo{opacity:.4}
 <div class="view active" id="vLista">
   <div class="card">
     <div class="ct"><div class="ct-l">Orçamentos Salvos</div>
-      <button class="btn btn-green" onclick="novoOrcamento()">+ Novo Orçamento</button>
+      <div style="display:flex;gap:.5rem">
+        <button class="btn btn-out" onclick="document.getElementById('inputImportarOrcamento').click()">Importar (.json)</button>
+        <input type="file" id="inputImportarOrcamento" accept=".json" style="display:none" onchange="importarOrcamentoJSON(this.files[0])">
+        <button class="btn btn-green" onclick="novoOrcamento()">+ Novo Orçamento</button>
+      </div>
     </div>
     <div id="listaOrcamentos"></div>
   </div>
@@ -287,6 +291,9 @@ tr.item-row.inativo{opacity:.4}
 <script src="selecao.js"></script>
 <script src="hidraulica-adutora.js"></script>
 <script>
+// v1.5.1 (2026-10-19): adiciona Importar/Exportar orçamento (.json) na tela de
+//   Orçamentos — permite carregar um orçamento pronto (ex.: para conferência) sem
+//   precisar preencher tudo de novo na mão.
 // v1.5 (2026-10-19): CAVALETES ganha seleção real (1ª parte — baseada em nº de
 //   válvulas): a planilha original multiplica a receita de itens pela faixa de vazão
 //   da válvula × max(0, nº válvulas − 2), em vez de somar os 608 itens do template de
@@ -343,7 +350,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.5';
+const APP_VERSION='v1.5.1';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -394,7 +401,7 @@ function novoOrcDadosEntrada(){
     loja:'Franca',cliente:'',propriedade:'',cidade:'',uf:'SP',cultura:'Café',
     consultor:'João Paulo de Oliveira',telefone:'',data:new Date().toISOString().slice(0,10),versao:'v1',
     // Dados do Projeto
-    area:0,espacamentoLinhas:0,espacamentoPlantas:0,quedaNatural:0,altitude:0,lamina:0,
+    area:0,espacamentoLinhas:0,espacamentoPlantas:0,quedaNatural:'NÃO',altitude:0,lamina:0,
     fonteAgua:'',energiaRede:'trifásica',tipoSuccaoProjeto:'Negativa',bombaAuxSubmersaProjeto:'-',
     motobombas:'',classeTubulacao:'',
     // Dados dos Setores do Projeto
@@ -470,6 +477,37 @@ function persistirAtual(){
   atual.atualizadoEm=new Date().toISOString();
   salvarOrcamentos();
 }
+function exportarOrcamentoJSON(id){
+  const o=orcamentos.find(x=>x.id===id);if(!o)return;
+  const blob=new Blob([JSON.stringify(o,null,1)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=`orcamento-${(o.dadosEntrada.cliente||'sem-nome').replace(/[^a-z0-9]+/gi,'-')}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+function importarOrcamentoJSON(file){
+  if(!file)return;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    try{
+      const obj=JSON.parse(e.target.result);
+      const lista=Array.isArray(obj)?obj:[obj];
+      lista.forEach(o=>{
+        o.id=uid(); // sempre gera um id novo, nunca sobrescreve um orçamento existente por engano
+        o.atualizadoEm=new Date().toISOString();
+        orcamentos.push(o);
+      });
+      salvarOrcamentos();
+      renderListaOrcamentos();
+      alert(`${lista.length} orçamento(s) importado(s).`);
+    }catch(err){
+      alert('Erro ao importar: arquivo inválido. '+err.message);
+    }
+  };
+  reader.readAsText(file,'UTF-8');
+  $('inputImportarOrcamento').value='';
+}
 
 function renderListaOrcamentos(){
   const el=$('listaOrcamentos');
@@ -488,6 +526,7 @@ function renderListaOrcamentos(){
       <div class="li-acts">
         <button class="btn btn-blue btn-sm" onclick="abrirOrcamento('${o.id}')">Abrir</button>
         <button class="btn btn-out btn-sm" onclick="duplicarOrcamento('${o.id}')">Duplicar</button>
+        <button class="btn btn-out btn-sm" onclick="exportarOrcamentoJSON('${o.id}')">Exportar</button>
         <button class="btn btn-red btn-sm" onclick="excluirOrcamento('${o.id}')">Excluir</button>
       </div>
     </div>`;
@@ -518,7 +557,7 @@ const CAMPOS_GERAIS=[
 const CAMPOS_PROJETO=[
   ['area','number','Área a ser irrigada (ha)'],
   ['espacamentoLinhas','number','Espaçamento entre linhas (m)'],['espacamentoPlantas','number','Espaçamento entre plantas (m)'],
-  ['quedaNatural','number','Queda Natural (m)'],['altitude','number','Altitude do local (m)'],['lamina','number','Lâmina desejada (mm)'],
+  ['quedaNatural','select','Queda Natural',['SIM','Fertikit','NÃO']],['altitude','number','Altitude do local (m)'],['lamina','number','Lâmina desejada (mm)'],
   ['fonteAgua','text','Fonte de Água'],['energiaRede','select','Energia/Rede',['trifásica','monofásica']],
   ['tipoSuccaoProjeto','select','Tipo de Sucção',TIPOS_SUCCAO],['bombaAuxSubmersaProjeto','select','Bomba Auxiliar Submersa',BOMBAS_AUX],
   ['motobombas','text','Motobombas (texto livre p/ proposta)'],
@@ -605,7 +644,7 @@ function renderDadosEntrada(){
 }
 function atualizarCampo(key,val){
   if(!atual)return;
-  const numKeys=['area','espacamentoLinhas','espacamentoPlantas','quedaNatural','altitude','lamina',
+  const numKeys=['area','espacamentoLinhas','espacamentoPlantas','altitude','lamina',
     'vazaoValvula','numOperacoes','numValvulasAdutora01','numValvulasAdutora02','metrosChicoteada',
     'numRedesChicoteadas','desnivelMedioRedesChicoteadas','metrosMain','numMain','velocidadeSubmain',
     'velocidadeMain','aspersaoTamanhoMedioSubmain','vazaoEmissor','espacamentoEmissor','recalqueVazao',
