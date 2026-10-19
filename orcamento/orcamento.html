@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.4 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.4.1 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -147,10 +147,12 @@ tr.item-row.inativo{opacity:.4}
   é compartilhada entre as duas ferramentas). O golpe de aríete/transiente ainda fica fora — use o
   <a href="../transiente-moc/" target="_blank">Cálculo de Transiente</a> separadamente, se precisar. Sucção, Filtragem, Saída
   Moto-Bomba, Bomba Auxiliar e Moto-Bomba Principal/Quadro de Partida já usam o motor de seleção/dimensionamento real da
-  planilha (validado contra um orçamento real). <b>Atenção:</b> a pressão total calculada aqui pode ficar abaixo da planilha
-  antiga em alguns casos (diferença observada de ~35 mca num teste) — confira o CV do motor sugerido antes de fechar a
-  proposta. Cavaletes, Junção Adutora, Anti-Vácuo, Luvas, Rede Chicoteada, Automação e Gotejador/Conectores ainda carregam
-  as quantidades de um projeto de exemplo (não uma fórmula que se adapta ao seu projeto) — revise/ajuste manualmente.
+  planilha, com os parâmetros hidráulicos (pressão residual, perdas, folga, eficiência da bomba) alinhados aos padrões reais
+  da empresa e validados contra um orçamento real. A pressão total calculada ainda pode ficar ~10% abaixo da planilha antiga
+  (metodologia de perda de carga um pouco diferente) — ajuste "Perdas localizadas" se precisar aproximar mais, e confira o
+  CV sugerido antes de fechar a proposta. Cavaletes, Junção Adutora, Anti-Vácuo, Luvas, Rede Chicoteada, Automação e
+  Gotejador/Conectores ainda carregam as quantidades de um projeto de exemplo (não uma fórmula que se adapta ao seu
+  projeto) — revise/ajuste manualmente.
 </div>
 
 <div class="tabs">
@@ -284,6 +286,16 @@ tr.item-row.inativo{opacity:.4}
 <script src="selecao.js"></script>
 <script src="hidraulica-adutora.js"></script>
 <script>
+// v1.4.1 (2026-10-19): corrige os valores padrão da aba Adutora/Recalque — eram
+//   chutados e ficavam bem abaixo da prática real da empresa. Padrões novos, tirados
+//   das constantes da própria planilha (Projeto - Adutora 01, aba Parametros):
+//   pressão residual 10→30 mca, perda no filtro 5→10 mca, perdas localizadas 0→6 mca,
+//   folga de vazão 0→10%, margem de projeto 20→10%, eficiência da bomba 70→53%.
+//   Com esses valores + os ajustes manuais que o projeto real usou (pressão residual
+//   25, perdas localizadas 24), o CV do motor sugerido bateu exatamente com o
+//   orçamento real (12,5cv). A pressão total ainda fica ~10% abaixo da planilha
+//   antiga (resíduo da metodologia de cálculo de perda de carga, não uma constante
+//   que falta) — ainda vale conferir o resultado antes de fechar uma proposta.
 // v1.4 (2026-10-19): dados de catálogo/seleção reextraídos de um orçamento REAL de
 //   cliente (usado como referência) em vez do template em branco — corrige um
 //   bug real (coluna errada detectava nº de bombas na tabela de Saída Moto-Bomba,
@@ -322,7 +334,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.4';
+const APP_VERSION='v1.4.1';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -396,9 +408,13 @@ function novoOrcDadosEntrada(){
   };
 }
 function novaConfigAdutora(limiarBombaDupla=80){
+  // Padrões alinhados com as constantes reais da aba 'Projeto - Adutora 01/02' do
+  // template da planilha (Pressão Saída=BH5, Filtro+Perdas=BP1/BP2, Folga=CN2,
+  // Margem=BP4, Eficiência=CS3) — os defaults anteriores (10/0/5/20/0/70) eram
+  // chutados e subestimavam a pressão/potência real em ~35 mca num teste.
   return {comprimento:0,vazao:0,cotas:[0,0,0,0,0,0,0,0,0,0],
-    material:140,vazaoResidual:10,perdasLocalizadas:0,filtro:5,margemProjeto:20,
-    velocidadeMax:1.5,folgaVazao:0,eficienciaBomba:70,limiarBombaDupla,resultado:null,
+    material:140,vazaoResidual:30,perdasLocalizadas:6,filtro:10,margemProjeto:10,
+    velocidadeMax:1.5,folgaVazao:10,eficienciaBomba:53,limiarBombaDupla,resultado:null,
     tracePoints:[],profileData:null}; // tracePoints/profileData vêm do traçado no mapa (Google Elevation API)
 }
 function novoOrcamento(){
