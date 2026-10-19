@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.5.1 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.5.2 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -291,6 +291,13 @@ tr.item-row.inativo{opacity:.4}
 <script src="selecao.js"></script>
 <script src="hidraulica-adutora.js"></script>
 <script>
+// v1.5.2 (2026-10-19): corrige regressão séria — ao regravar o conjuntos.js na correção
+//   de Cavaletes (v1.5), as categorias já geridas pelo motor de seleção (Sucção,
+//   Moto-Bomba, Quadro de Partida, MB Projeto Saida, FILTRAGEM) voltaram a aparecer
+//   no dump bruto também, duplicando itens por cima da seleção real (parecia que a
+//   seleção por vazão não funcionava). Também: BOM/Margem x Venda/Proposta agora
+//   ordenam as categorias igual à planilha original (aba Margem x Venda), não mais
+//   em ordem alfabética.
 // v1.5.1 (2026-10-19): adiciona Importar/Exportar orçamento (.json) na tela de
 //   Orçamentos — permite carregar um orçamento pronto (ex.: para conferência) sem
 //   precisar preencher tudo de novo na mão.
@@ -350,7 +357,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.5.1';
+const APP_VERSION='v1.5.2';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -1256,6 +1263,31 @@ function toggleCategoriaBOM(catIdx,ativo){
 function escapeHTML(s){
   return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+// Ordem real das categorias, igual à aba "Margem x Venda - Got 01/02" da planilha original
+// (não alfabética) — usada em BOM, Margem x Venda e Proposta Comercial.
+const ORDEM_CATEGORIAS=[
+  'Sucção Projeto','Moto-Bomba','Quadro de Partida','MB Projeto - Saida','Injetro de Cloro',
+  'Automação - Projeto','Moitoramento','FILTRAGEM','Fertikit','Ferti-Irrigação',
+  'ADUTORA - PROJETO 01','ADUTORA - PROJETO 02','Adesivos/Solução','Junção Adutora','Derivação Adutora',
+  'CAVALETES','Saida Cavalete','Rede Chicoteada','Rede Secundaria',
+  'F. Linha 35 mm','F. Linha 35 mm+ AV1/2','F. Linha 50 mm+ AV1"',
+  'Av 150mm x 1"','Av 125mm x 1"','Av 100mm x 1"','Av 75mm x 1"','Av 50mm x 1"','Av 75mm x 1/2"','Av 50mm x 1/2"','Av 35mm x 1/2"',
+  'TE 150 x 35','TE 125 x 35','TE 100 x 35','TE 75 x 35','TE 50 x 35',
+  'CURVA90° 150 X 35','CURVA90° 125 X 35','CURVA90° 100 X 35','CURVA90° 75 X 35','CURVA90° 50 X 35',
+  'Luvas Secundarias','Luvas Principais','Gotejador','Tubo de Polietileno','Conectores','Monitoramento','SERIVIÇOS PROJETO',
+  // Recalque
+  'Sucção - Recalque','Moto-Bomba - Recalque','Saida bomba - Recalque','Injetro de Cloro - Recalque',
+  'Automação - Recalque','ADUTORA - RECALQUE','Adesivos/Solução - Recalque','Ventosa Recalque','SERIVIÇOS PROJETO - Recalque',
+];
+const _ordemCategoriasIdx=new Map(ORDEM_CATEGORIAS.map((c,i)=>[c,i]));
+function ordenarCategorias(lista){
+  return lista.slice().sort((a,b)=>{
+    const ia=_ordemCategoriasIdx.has(a)?_ordemCategoriasIdx.get(a):ORDEM_CATEGORIAS.length;
+    const ib=_ordemCategoriasIdx.has(b)?_ordemCategoriasIdx.get(b):ORDEM_CATEGORIAS.length;
+    if(ia!==ib)return ia-ib;
+    return a.localeCompare(b,'pt-BR'); // categorias desconhecidas (ex.: "Avulso") vão pro fim, em ordem alfabética
+  });
+}
 let _categoriasBOM=[]; // índice seguro -> nome real da categoria (evita quebrar atributos HTML com aspas no nome, ex.: Av 150mm x 1")
 function renderBOM(){
   $('catTotalCount').textContent=(CATALOGO_PRECOS.bolsa_irriga.length+CATALOGO_PRECOS.netafim.length).toLocaleString('pt-BR');
@@ -1263,7 +1295,7 @@ function renderBOM(){
   const f=fatorMargem(atual.dadosEntrada);
   const porCategoria={};
   atual.bom.forEach(it=>{(porCategoria[it.categoria]=porCategoria[it.categoria]||[]).push(it);});
-  _categoriasBOM=Object.keys(porCategoria).sort();
+  _categoriasBOM=ordenarCategorias(Object.keys(porCategoria));
   let html='';
   _categoriasBOM.forEach((categoria,catIdx)=>{
     const itens=porCategoria[categoria];
@@ -1311,7 +1343,7 @@ function renderMargem(){
   const margem=r.vendaTotal-r.custoTotal;
   const margemPct=r.vendaTotal?margem/r.vendaTotal*100:0;
   $('mvMargemTotal').textContent=`${fmtR(margem)} (${fmtN(margemPct,1)}%)`;
-  const cats=Object.keys(r.porCategoria).sort();
+  const cats=ordenarCategorias(Object.keys(r.porCategoria));
   $('margemBody').innerHTML=cats.length?cats.map(cat=>{
     const c=r.porCategoria[cat];
     const m=c.venda-c.custo;
@@ -1342,7 +1374,7 @@ function renderProposta(){
   // formata "YYYY-MM-DD" direto (sem passar por Date()) p/ evitar deslocamento de fuso horário
   const dataPartes=(dRaw.data||'').split('-');
   const data=dataPartes.length===3?`${dataPartes[2]}/${dataPartes[1]}/${dataPartes[0]}`:new Date().toLocaleDateString('pt-BR');
-  const cats=Object.keys(r.porCategoria).sort();
+  const cats=ordenarCategorias(Object.keys(r.porCategoria));
   const tabelaValores=cats.map(cat=>{
     const c=r.porCategoria[cat];
     return `<tr><td>${escapeHTML(cat)}</td><td class="num">${fmtR(c.venda)}</td></tr>`;
