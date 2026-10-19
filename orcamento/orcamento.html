@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.5.2 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.6 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -291,6 +291,13 @@ tr.item-row.inativo{opacity:.4}
 <script src="selecao.js"></script>
 <script src="hidraulica-adutora.js"></script>
 <script>
+// v1.6 (2026-10-19): categorias selecionadas (Sucção, Filtragem, MB-Saída, Bomba
+//   Auxiliar, Moto-Bomba/Quadro de Partida, Cavaletes) agora mostram o nome
+//   ESPECÍFICO da variante escolhida (ex.: "Sucção 75mm Plasson (Negativa)"), igual à
+//   planilha, em vez do nome genérico da categoria — a ordenação continua usando o
+//   grupo genérico (campo "grupo" por trás, separado do "categoria" exibido). BOM
+//   ganha recolher/expandir por categoria (começa tudo recolhido). Margem x Venda
+//   não mostra mais categorias com custo e venda zerados.
 // v1.5.2 (2026-10-19): corrige regressão séria — ao regravar o conjuntos.js na correção
 //   de Cavaletes (v1.5), as categorias já geridas pelo motor de seleção (Sucção,
 //   Moto-Bomba, Quadro de Partida, MB Projeto Saida, FILTRAGEM) voltaram a aparecer
@@ -357,7 +364,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.5.2';
+const APP_VERSION='v1.6';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -451,6 +458,7 @@ function novoOrcamento(){
 function abrirOrcamento(id){
   atual=orcamentos.find(o=>o.id===id);
   if(!atual)return;
+  _categoriasExpandidas=new Set(); // começa com tudo recolhido ao abrir um orçamento
   // compatibilidade com orçamentos salvos antes das abas de Adutora/Recalque (ou do mapa) existirem
   ['adutora01','adutora02','recalque'].forEach(k=>{
     atual[k]={...novaConfigAdutora(),...(atual[k]||{})};
@@ -1121,15 +1129,24 @@ function selecionarGrupoPorVazaoNumBombas(lista,vazao,numBombas){
 function selecionarGrupoBombaAux(lista,opcao){
   return (lista||[]).find(g=>g.opcao===opcao);
 }
-function adicionarItensSelecionados(categoria,itens){
+// Converte texto TUDO EM MAIÚSCULO (como vem de colunas da planilha, ex.: "SUCÇÃO
+// 75MM PLASSON (NEGATIVA)") para uma forma mais legível. Se o texto já tem letras
+// minúsculas (ex.: descrição de Filtragem), deixa como está.
+function tituloBonito(s){
+  if(!s)return s;
+  const temMinuscula=/[a-zà-ú]/.test(s);
+  if(temMinuscula)return s;
+  return s.toLowerCase().replace(/(^|[\s(\/-])([a-zà-ÿ])/g,(m,sep,c)=>sep+c.toUpperCase());
+}
+function adicionarItensSelecionados(categoria,itens,grupo){
   (itens||[]).forEach(it=>{
-    atual.bom.push({id:uid(),categoria,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
+    atual.bom.push({id:uid(),categoria,grupo:grupo||categoria,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
       qtd:it.qtd,custoUnit:buscarCusto(it.fornecedor,it.codigo),ativo:true});
   });
   return (itens||[]).length;
 }
-function adicionarItemCustoFixo(categoria,fornecedor,codigo,descricao,qtd,custoUnit){
-  atual.bom.push({id:uid(),categoria,fornecedor,codigo,descricao,qtd,custoUnit,ativo:true});
+function adicionarItemCustoFixo(categoria,fornecedor,codigo,descricao,qtd,custoUnit,grupo){
+  atual.bom.push({id:uid(),categoria,grupo:grupo||categoria,fornecedor,codigo,descricao,qtd,custoUnit,ativo:true});
 }
 function carregarModelo(nomeModelo){
   const modelo=CONJUNTOS[nomeModelo];
@@ -1138,7 +1155,7 @@ function carregarModelo(nomeModelo){
   Object.keys(modelo).forEach(categoria=>{
     modelo[categoria].forEach(it=>{
       atual.bom.push({
-        id:uid(),categoria,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
+        id:uid(),categoria,grupo:categoria,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
         qtd:it.qtd,custoUnit:buscarCusto(it.fornecedor,it.codigo),ativo:true,
       });
       n++;
@@ -1153,21 +1170,21 @@ function carregarModelo(nomeModelo){
     const numBombas=(adCfg.resultado&&adCfg.resultado.numBombas)||1;
 
     const grupoSuccao=selecionarGrupoPorVazaoTipo(SELECAO[cfgSel.succao],vazao,d[cfgSel.tipoSuccaoField]);
-    if(grupoSuccao)n+=adicionarItensSelecionados(cfgSel.labelSuccao,grupoSuccao.itens);
+    if(grupoSuccao)n+=adicionarItensSelecionados(tituloBonito(grupoSuccao.nomeBonito)||grupoSuccao.label,grupoSuccao.itens,cfgSel.labelSuccao);
     else avisos.push(`Sucção: nenhuma faixa de vazão/tipo compatível (vazão=${vazao}, tipo=${d[cfgSel.tipoSuccaoField]}). Confira a vazão na aba de Adutora/Recalque correspondente.`);
 
     if(cfgSel.filtragem){
       const grupoFiltro=selecionarGrupoPorVazaoTipo(SELECAO[cfgSel.filtragem],vazao,d[cfgSel.filtragemField]);
-      if(grupoFiltro)n+=adicionarItensSelecionados(cfgSel.labelFiltragem,grupoFiltro.itens);
+      if(grupoFiltro)n+=adicionarItensSelecionados(grupoFiltro.label,grupoFiltro.itens,cfgSel.labelFiltragem);
       else avisos.push(`Filtragem: nenhuma faixa de vazão/tipo compatível (vazão=${vazao}, tipo=${d[cfgSel.filtragemField]}).`);
     }
 
     const grupoMB=selecionarGrupoPorVazaoNumBombas(SELECAO[cfgSel.mbSaida],vazao,numBombas);
-    if(grupoMB)n+=adicionarItensSelecionados(cfgSel.labelMB,grupoMB.itens);
+    if(grupoMB)n+=adicionarItensSelecionados(grupoMB.label,grupoMB.itens,cfgSel.labelMB);
     else avisos.push(`Saída Moto-Bomba: nenhuma faixa compatível (vazão=${vazao}, nº de bombas=${numBombas}) — calcule a aba Adutora/Recalque primeiro para definir o nº de bombas.`);
 
     const grupoBombaAux=selecionarGrupoBombaAux(SELECAO[cfgSel.bombaAux],d[cfgSel.bombaAuxField]);
-    if(grupoBombaAux)n+=adicionarItensSelecionados(cfgSel.labelBombaAux,grupoBombaAux.itens);
+    if(grupoBombaAux&&grupoBombaAux.itens.length)n+=adicionarItensSelecionados(grupoBombaAux.opcao,grupoBombaAux.itens,cfgSel.labelBombaAux);
 
     // Moto-Bomba principal + Quadro de Partida (motor 'MB+CH Partida' da planilha):
     // dimensionado pelo CV calculado na aba Adutora/Recalque (Pcv), não por um dropdown.
@@ -1175,8 +1192,8 @@ function carregarModelo(nomeModelo){
     if(Pcv){
       const motor=calcularMotorEQuadroPartida(Pcv,numBombas,d.energiaRede);
       if(motor){
-        adicionarItemCustoFixo('Moto-Bomba','Bolsa Irriga',motor.motoBomba.codigo,motor.motoBomba.descricao,motor.motoBomba.qtd,motor.motoBomba.custo);
-        adicionarItemCustoFixo('Quadro de Partida','Bolsa Irriga',motor.quadroPartida.codigo,motor.quadroPartida.descricao,motor.quadroPartida.qtd,motor.quadroPartida.custo);
+        adicionarItemCustoFixo(motor.motoBomba.descricao,'Bolsa Irriga',motor.motoBomba.codigo,motor.motoBomba.descricao,motor.motoBomba.qtd,motor.motoBomba.custo,'Moto-Bomba');
+        adicionarItemCustoFixo(motor.quadroPartida.descricao,'Bolsa Irriga',motor.quadroPartida.codigo,motor.quadroPartida.descricao,motor.quadroPartida.qtd,motor.quadroPartida.custo,'Quadro de Partida');
         n+=2;
       }
     }else{
@@ -1194,7 +1211,7 @@ function carregarModelo(nomeModelo){
       if(gruposCavalete.length&&multCavalete>0){
         gruposCavalete.forEach(g=>{
           g.itens.forEach(it=>{
-            atual.bom.push({id:uid(),categoria:'CAVALETES',fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
+            atual.bom.push({id:uid(),categoria:g.label,grupo:'CAVALETES',fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
               qtd:it.qtd*multCavalete,custoUnit:buscarCusto(it.fornecedor,it.codigo),ativo:true});
             n++;
           });
@@ -1231,7 +1248,8 @@ function adicionarItemAvulsoPorIndice(idx){
   const categoria=prompt('Categoria deste item (para o rollup de Margem x Venda):','Avulso');
   if(categoria===null)return;
   const qtd=parseFloat(prompt('Quantidade:','1'))||1;
-  atual.bom.push({id:uid(),categoria:categoria||'Avulso',fornecedor,codigo:p.codigo,descricao:p.descricao,qtd,custoUnit:p.custo,ativo:true});
+  const cat=categoria||'Avulso';
+  atual.bom.push({id:uid(),categoria:cat,grupo:cat,fornecedor,codigo:p.codigo,descricao:p.descricao,qtd,custoUnit:p.custo,ativo:true});
   persistirAtual();renderBOM();renderMargem();renderProposta();
 }
 function bomAtivos(){return atual.bom.filter(i=>i.ativo);}
@@ -1280,33 +1298,47 @@ const ORDEM_CATEGORIAS=[
   'Automação - Recalque','ADUTORA - RECALQUE','Adesivos/Solução - Recalque','Ventosa Recalque','SERIVIÇOS PROJETO - Recalque',
 ];
 const _ordemCategoriasIdx=new Map(ORDEM_CATEGORIAS.map((c,i)=>[c,i]));
-function ordenarCategorias(lista){
-  return lista.slice().sort((a,b)=>{
-    const ia=_ordemCategoriasIdx.has(a)?_ordemCategoriasIdx.get(a):ORDEM_CATEGORIAS.length;
-    const ib=_ordemCategoriasIdx.has(b)?_ordemCategoriasIdx.get(b):ORDEM_CATEGORIAS.length;
+// Ordena nomes de categoria (específicos, ex.: "Sucção 75mm Plasson (Negativa)") pela
+// posição do seu GRUPO genérico (ex.: "Sucção Projeto") na ordem real da planilha.
+// `mapa` é um objeto {categoria: {..., grupo}} — cada valor precisa ter .grupo.
+function ordenarCategoriasMapa(mapa){
+  return Object.keys(mapa).sort((a,b)=>{
+    const grupoA=mapa[a].grupo||a,grupoB=mapa[b].grupo||b;
+    const ia=_ordemCategoriasIdx.has(grupoA)?_ordemCategoriasIdx.get(grupoA):ORDEM_CATEGORIAS.length;
+    const ib=_ordemCategoriasIdx.has(grupoB)?_ordemCategoriasIdx.get(grupoB):ORDEM_CATEGORIAS.length;
     if(ia!==ib)return ia-ib;
-    return a.localeCompare(b,'pt-BR'); // categorias desconhecidas (ex.: "Avulso") vão pro fim, em ordem alfabética
+    return a.localeCompare(b,'pt-BR'); // mesma posição (ou desconhecida): ordem alfabética
   });
 }
 let _categoriasBOM=[]; // índice seguro -> nome real da categoria (evita quebrar atributos HTML com aspas no nome, ex.: Av 150mm x 1")
+let _categoriasExpandidas=new Set(); // UI apenas — quais categorias estão expandidas no BOM (não é persistido)
+function toggleExpandirCategoria(catIdx){
+  const categoria=_categoriasBOM[catIdx];if(categoria===undefined)return;
+  if(_categoriasExpandidas.has(categoria))_categoriasExpandidas.delete(categoria);else _categoriasExpandidas.add(categoria);
+  renderBOM();
+}
 function renderBOM(){
   $('catTotalCount').textContent=(CATALOGO_PRECOS.bolsa_irriga.length+CATALOGO_PRECOS.netafim.length).toLocaleString('pt-BR');
   $('bomCount').textContent=atual.bom.length;
   const f=fatorMargem(atual.dadosEntrada);
   const porCategoria={};
-  atual.bom.forEach(it=>{(porCategoria[it.categoria]=porCategoria[it.categoria]||[]).push(it);});
-  _categoriasBOM=ordenarCategorias(Object.keys(porCategoria));
+  atual.bom.forEach(it=>{
+    if(!porCategoria[it.categoria])porCategoria[it.categoria]={itens:[],grupo:it.grupo||it.categoria};
+    porCategoria[it.categoria].itens.push(it);
+  });
+  _categoriasBOM=ordenarCategoriasMapa(porCategoria);
   let html='';
   _categoriasBOM.forEach((categoria,catIdx)=>{
-    const itens=porCategoria[categoria];
+    const itens=porCategoria[categoria].itens;
     const custoTotal=itens.reduce((s,i)=>s+(i.ativo?i.qtd*i.custoUnit:0),0);
     const vendaTotal=itens.reduce((s,i)=>s+(i.ativo?i.qtd*i.custoUnit*f:0),0);
     const todosAtivos=itens.every(i=>i.ativo);
-    html+=`<tr class="cat-head"><td><input type="checkbox" ${todosAtivos?'checked':''} onclick="toggleCategoriaBOM(${catIdx},this.checked)"></td>
-      <td colspan="5">${escapeHTML(categoria)} (${itens.length} itens)</td>
+    const expandido=_categoriasExpandidas.has(categoria);
+    html+=`<tr class="cat-head"><td><input type="checkbox" ${todosAtivos?'checked':''} onclick="event.stopPropagation();toggleCategoriaBOM(${catIdx},this.checked)"></td>
+      <td colspan="5" style="cursor:pointer" onclick="toggleExpandirCategoria(${catIdx})"><span style="display:inline-block;width:1.1em">${expandido?'▾':'▸'}</span>${escapeHTML(categoria)} (${itens.length} itens)</td>
       <td class="num">${fmtR(custoTotal)}</td><td></td><td class="num">${fmtR(vendaTotal)}</td>
-      <td><button class="btn btn-red btn-sm" onclick="removerCategoriaBOM(${catIdx})">Remover tudo</button></td></tr>`;
-    itens.forEach(it=>{
+      <td><button class="btn btn-red btn-sm" onclick="event.stopPropagation();removerCategoriaBOM(${catIdx})">Remover tudo</button></td></tr>`;
+    if(expandido)itens.forEach(it=>{
       const custoT=it.qtd*it.custoUnit, vendaU=it.custoUnit*f, vendaT=it.qtd*vendaU;
       html+=`<tr class="item-row ${it.ativo?'':'inativo'}">
         <td><input type="checkbox" ${it.ativo?'checked':''} onclick="toggleAtivoBOM('${it.id}')"></td>
@@ -1328,7 +1360,7 @@ function calcularRollup(orc){
   const porCategoria={};
   orc.bom.filter(i=>i.ativo).forEach(it=>{
     const cat=it.categoria;
-    porCategoria[cat]=porCategoria[cat]||{custo:0,venda:0};
+    if(!porCategoria[cat])porCategoria[cat]={custo:0,venda:0,grupo:it.grupo||cat};
     porCategoria[cat].custo+=it.qtd*it.custoUnit;
     porCategoria[cat].venda+=it.qtd*it.custoUnit*f;
   });
@@ -1343,7 +1375,8 @@ function renderMargem(){
   const margem=r.vendaTotal-r.custoTotal;
   const margemPct=r.vendaTotal?margem/r.vendaTotal*100:0;
   $('mvMargemTotal').textContent=`${fmtR(margem)} (${fmtN(margemPct,1)}%)`;
-  const cats=ordenarCategorias(Object.keys(r.porCategoria));
+  // esconde categorias sem custo nem venda (não aplicáveis a este orçamento)
+  const cats=ordenarCategoriasMapa(r.porCategoria).filter(cat=>r.porCategoria[cat].custo!==0||r.porCategoria[cat].venda!==0);
   $('margemBody').innerHTML=cats.length?cats.map(cat=>{
     const c=r.porCategoria[cat];
     const m=c.venda-c.custo;
@@ -1374,7 +1407,7 @@ function renderProposta(){
   // formata "YYYY-MM-DD" direto (sem passar por Date()) p/ evitar deslocamento de fuso horário
   const dataPartes=(dRaw.data||'').split('-');
   const data=dataPartes.length===3?`${dataPartes[2]}/${dataPartes[1]}/${dataPartes[0]}`:new Date().toLocaleDateString('pt-BR');
-  const cats=ordenarCategorias(Object.keys(r.porCategoria));
+  const cats=ordenarCategoriasMapa(r.porCategoria).filter(cat=>r.porCategoria[cat].custo!==0||r.porCategoria[cat].venda!==0);
   const tabelaValores=cats.map(cat=>{
     const c=r.porCategoria[cat];
     return `<tr><td>${escapeHTML(cat)}</td><td class="num">${fmtR(c.venda)}</td></tr>`;
