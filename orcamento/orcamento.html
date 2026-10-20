@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.6.1 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.6.2 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -155,7 +155,8 @@ tr.item-row.inativo{opacity:.4}
   Rede Chicoteada, Automação e Gotejador/Conectores ainda carregam as quantidades de um projeto de exemplo (já usando a
   quantidade real/filtrada daquele projeto, não a receita bruta — mas não é uma fórmula que se adapta ao seu projeto) —
   revise/ajuste manualmente. Validado contra um orçamento real: margem bateu quase exata (40,3% vs 40,33%); valor absoluto
-  ficou ~8% abaixo (esperado — vem justamente dessas categorias ainda sem fórmula própria).
+  ficou ~2,6% abaixo — confirmado que isso vem quase todo da parte 2 de Cavaletes (casamento do diâmetro da adutora com o
+  manifold), ainda sem fórmula própria.
 </div>
 
 <div class="tabs">
@@ -293,6 +294,20 @@ tr.item-row.inativo{opacity:.4}
 <script src="selecao.js"></script>
 <script src="hidraulica-adutora.js"></script>
 <script>
+// v1.6.2 (2026-10-19): corrige 2 causas reais do preço ainda não bater com a planilha
+//   (apontado pelo usuário comparando com o orçamento real):
+//   1) busca de preço era sensível a maiúsculas/minúsculas — várias linhas gravam o
+//      fornecedor como "NETAFIM" (tudo maiúsculo) em vez de "Netafim", e a busca caía
+//      na tabela errada (Bolsa Irriga) e voltava custo zero. Corrigido para comparar
+//      sem diferenciar caixa.
+//   2) alguns itens (ex.: "SERVIÇOS PROJETO" — montagem, abertura de valetas, frete —
+//      e peças avulsas raras) usam código placeholder que não existe no catálogo
+//      principal; o preço real desses está embutido na própria planilha (coluna R$
+//      Unit), não em busca por código. Agora a extração guarda esse preço embutido
+//      como plano B, usado só quando a busca no catálogo não encontra o código.
+//   Resultado: diferença de preço final caiu de ~8,7% para ~2,6% (confirmado: o que
+//   resta é quase todo a parte 2 de Cavaletes, ainda sem fórmula própria — ver nota
+//   de escopo). Dados também reextraídos do arquivo mais recente do cliente.
 // v1.6.1 (2026-10-19): corrige preço final muito acima do real — a extração das
 //   categorias ainda não geridas por seleção própria (Fertikit, Junção Adutora, Av-x,
 //   TE-x, Luvas, Rede Chicoteada etc.) usava a coluna F (Qtd.Conj, a "receita" fixa de
@@ -376,7 +391,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.6.1';
+const APP_VERSION='v1.6.2';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -408,7 +423,10 @@ const GOTEJADORES_POR_SISTEMA={
 const PRICE_MAP={bolsa_irriga:new Map(),netafim:new Map()};
 (CATALOGO_PRECOS.bolsa_irriga||[]).forEach(p=>PRICE_MAP.bolsa_irriga.set(String(p.codigo),p));
 (CATALOGO_PRECOS.netafim||[]).forEach(p=>PRICE_MAP.netafim.set(String(p.codigo),p));
-function mapaFornecedor(fornecedor){return fornecedor==='Netafim'?PRICE_MAP.netafim:PRICE_MAP.bolsa_irriga;}
+// Comparação sem diferenciar maiúsculas/minúsculas: algumas linhas da planilha
+// gravam o fornecedor como "NETAFIM" (tudo maiúsculo) em vez de "Netafim", o que
+// fazia a busca cair na tabela errada (Bolsa Irriga) e voltar custo zero.
+function mapaFornecedor(fornecedor){return String(fornecedor||'').toLowerCase()==='netafim'?PRICE_MAP.netafim:PRICE_MAP.bolsa_irriga;}
 function buscarCusto(fornecedor,codigo){const p=mapaFornecedor(fornecedor).get(String(codigo));return p?p.custo:0;}
 
 // ── Estado / Persistência ────────────────────────────────────────────
@@ -1153,7 +1171,7 @@ function tituloBonito(s){
 function adicionarItensSelecionados(categoria,itens,grupo){
   (itens||[]).forEach(it=>{
     atual.bom.push({id:uid(),categoria,grupo:grupo||categoria,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
-      qtd:it.qtd,custoUnit:buscarCusto(it.fornecedor,it.codigo),ativo:true});
+      qtd:it.qtd,custoUnit:buscarCusto(it.fornecedor,it.codigo)||it.preco||0,ativo:true});
   });
   return (itens||[]).length;
 }
@@ -1168,7 +1186,7 @@ function carregarModelo(nomeModelo){
     modelo[categoria].forEach(it=>{
       atual.bom.push({
         id:uid(),categoria,grupo:categoria,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
-        qtd:it.qtd,custoUnit:buscarCusto(it.fornecedor,it.codigo),ativo:true,
+        qtd:it.qtd,custoUnit:buscarCusto(it.fornecedor,it.codigo)||it.preco||0,ativo:true,
       });
       n++;
     });
@@ -1224,7 +1242,7 @@ function carregarModelo(nomeModelo){
         gruposCavalete.forEach(g=>{
           g.itens.forEach(it=>{
             atual.bom.push({id:uid(),categoria:g.label,grupo:'CAVALETES',fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
-              qtd:it.qtd*multCavalete,custoUnit:buscarCusto(it.fornecedor,it.codigo),ativo:true});
+              qtd:it.qtd*multCavalete,custoUnit:buscarCusto(it.fornecedor,it.codigo)||it.preco||0,ativo:true});
             n++;
           });
         });
