@@ -439,7 +439,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.79 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.80 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -13475,6 +13475,23 @@ function _mkToPxBounds(north, south, east, west, W, H) {
   });
 }
 
+// v5.80: fallback de satélite via URL EXTERNA (Esri World Imagery, gratuito/sem chave) pro
+// Relatório PDF — usado quando a captura por canvas (html2canvas) falha por causa de um canvas
+// "contaminado" (tiles de satélite sem CORS liberado, ver catch em gerarPDF). bbox=sw/ne EXATO
+// (sem zoom/tile-snapping, diferente do antigo Google Static Maps) — o export da ArcGIS REST API
+// devolve a imagem recortada certinha pro bbox pedido, no tamanho de pixel pedido. Tamanho
+// calculado preservando a proporção REAL do bbox (compensando a compressão de longitude pela
+// latitude — Mercator), pra não esticar a imagem.
+function _imagemSateliteExternaUrl(sw, ne) {
+  const latSpanDeg = Math.max(ne.lat - sw.lat, 1e-6), lngSpanDeg = Math.max(ne.lng - sw.lng, 1e-6);
+  const aspecto = (lngSpanDeg * Math.cos((sw.lat + ne.lat) / 2 * Math.PI / 180)) / latSpanDeg;
+  const maiorLado = 900;
+  let MW, MH;
+  if(aspecto >= 1) { MW = maiorLado; MH = Math.round(maiorLado / aspecto); } else { MH = maiorLado; MW = Math.round(maiorLado * aspecto); }
+  const url = `https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${sw.lng},${sw.lat},${ne.lng},${ne.lat}&bboxSR=4326&imageSR=4326&size=${MW},${MH}&format=jpg&f=image`;
+  return { url, MW, MH };
+}
+
 // ── Relatório PDF ─────────────────────────────────────────────────────────────
 // v5.78: pedido do usuário — "qdo vou exportar o relatorio sai sempre a foto de satelite de fundo
 // mesmo que eu desligue, quero que apareça no report sempre igual estou visualizando, se tem foto
@@ -13533,7 +13550,7 @@ async function gerarPDF() {
   let imgDataUrl = null, MW = 512, MH = 307, toPx;
   try {
     const captura = await _3da_captureMapTexture(sw.lat, ne.lat, sw.lng, ne.lng, 1600);
-    imgDataUrl = captura.canvas.toDataURL('image/jpeg', 0.9);
+    imgDataUrl = captura.canvas.toDataURL('image/jpeg', 0.9); // pode lançar SecurityError — ver catch abaixo
     // Normaliza o tamanho real capturado (pode ter QUALQUER proporção, a da janela do navegador na
     // hora) pra um viewBox de SVG de tamanho razoável, preservando a proporção de verdade — forçar
     // num 512×307 fixo (como era antes, pensado pro Google Static Maps) esticaria/distorceria a
@@ -13548,9 +13565,29 @@ async function gerarPDF() {
     // pedido, que o fitBounds pode ter ajustado pra caber na proporção da tela do usuário.
     toPx = _mkToPxBounds(captura.north, captura.south, captura.east, captura.west, MW, MH);
   } catch(e) {
-    // Captura falhou (raro — ex.: html2canvas não conseguiu ler alguma camada) — relatório
-    // continua saindo, só sem a imagem de fundo, com um aviso visível em vez de travar tudo.
-    toPx = _mkToPxBounds(ne.lat, sw.lat, ne.lng, sw.lng, MW, MH);
+    // v5.80: BUG relatado com print — "qdo uso imagens de satelite e vou salvar o relatorio em pdf
+    // o fundo sai preto e não qaudro direito". Causa: os tiles de satélite (Esri, pra onde
+    // _3da_captureMapTexture troca durante a captura — ver lá) nem sempre respondem com cabeçalho
+    // CORS liberado de verdade, mesmo com useCORS:true pedido — o canvas então fica "contaminado"
+    // e canvas.toDataURL() (linha acima) lança SecurityError: o navegador bloqueia LER pixels de
+    // imagem cross-origin sem permissão explícita do servidor. Isso sempre existiu na Vista 3D
+    // também, só nunca apareceu lá porque a Vista 3D usa o canvas como TEXTURA (WebGL aceita
+    // textura "write-only" de canvas contaminado sem lançar erro) — nunca chamava toDataURL.
+    // Fix: quando o satélite está ativo (_mostrarImagemOnline) e a captura falha, usa uma imagem
+    // de satélite via URL EXTERNA direta (_imagemSateliteExternaUrl) em vez de canvas — um
+    // <image href="URL"> só EXIBE a imagem (sempre permitido, até cross-origin), nunca precisa LER
+    // os pixels dela, então nunca esbarra nessa restrição de segurança.
+    if(_mostrarImagemOnline) {
+      const ext = _imagemSateliteExternaUrl(sw, ne);
+      imgDataUrl = ext.url; MW = ext.MW; MH = ext.MH;
+      // bbox EXATO (sw/ne, sem zoom/tile-snapping) — a projeção do overlay por cima sai certinha
+      // também ("não qaudro direito", o desalinhamento relatado junto com o fundo preto).
+      toPx = _mkToPxBounds(ne.lat, sw.lat, ne.lng, sw.lng, MW, MH);
+    } else {
+      // Satélite não estava nem ativo (ortofoto/vazio) — a falha foi por outro motivo qualquer
+      // (raro). Relatório continua saindo, só sem a imagem de fundo, com aviso visível.
+      toPx = _mkToPxBounds(ne.lat, sw.lat, ne.lng, sw.lng, MW, MH);
+    }
   }
 
   // Extrai pontos {lat,lng} de um layer Leaflet de forma segura
