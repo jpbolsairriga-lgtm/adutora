@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.6.2 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.7 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -150,13 +150,14 @@ tr.item-row.inativo{opacity:.4}
   planilha, com os parâmetros hidráulicos (pressão residual, perdas, folga, eficiência da bomba) alinhados aos padrões reais
   da empresa e validados contra um orçamento real. A pressão total calculada ainda pode ficar ~10% abaixo da planilha antiga
   (metodologia de perda de carga um pouco diferente) — ajuste "Perdas localizadas" se precisar aproximar mais, e confira o
-  CV sugerido antes de fechar a proposta. Cavaletes já usa parte da seleção real (faixa de vazão da válvula × nº de
-  válvulas) — falta só o casamento do diâmetro da adutora com o manifold do cavalete. Junção Adutora, Anti-Vácuo, Luvas,
-  Rede Chicoteada, Automação e Gotejador/Conectores ainda carregam as quantidades de um projeto de exemplo (já usando a
+  CV sugerido antes de fechar a proposta. Cavaletes já usa a seleção real completa (faixa de vazão da válvula × nº de
+  válvulas + casamento do diâmetro nominal da adutora com o manifold do cavalete). Junção Adutora, Anti-Vácuo, Luvas, Rede
+  Chicoteada, Automação e Gotejador/Conectores ainda carregam as quantidades de um projeto de exemplo (já usando a
   quantidade real/filtrada daquele projeto, não a receita bruta — mas não é uma fórmula que se adapta ao seu projeto) —
   revise/ajuste manualmente. Validado contra um orçamento real: margem bateu quase exata (40,3% vs 40,33%); valor absoluto
-  ficou ~2,6% abaixo — confirmado que isso vem quase todo da parte 2 de Cavaletes (casamento do diâmetro da adutora com o
-  manifold), ainda sem fórmula própria.
+  ficou ~1,7% abaixo. O que resta não é mais um bug conhecido: o diâmetro da adutora usado pelo casamento com o cavalete,
+  naquele orçamento real, foi digitado manualmente pelo engenheiro (célula fixa, não fórmula) substituindo o resultado
+  automático — o app calcula certo pela fórmula original, só não reproduz esse ajuste manual pontual daquele projeto.
 </div>
 
 <div class="tabs">
@@ -294,6 +295,20 @@ tr.item-row.inativo{opacity:.4}
 <script src="selecao.js"></script>
 <script src="hidraulica-adutora.js"></script>
 <script>
+// v1.7 (2026-10-19): implementa a 2ª parte de Cavaletes — casamento do diâmetro
+//   nominal calculado na aba Adutora com o diâmetro do manifold do cavalete (ex.:
+//   "118x75"), multiplicado pelo nº de válvulas. Reduziu a diferença de preço final
+//   de ~2,6% para ~1,7%.
+//   ACHADO IMPORTANTE: o resto da diferença NÃO é mais um bug — é porque, no
+//   orçamento real usado como referência, a célula que guarda esse diâmetro da
+//   adutora foi SOBRESCRITA À MÃO pelo engenheiro (valor fixo "75", não fórmula —
+//   confirmado pelo tipo da célula no arquivo .xlsm), substituindo o resultado
+//   automático (118, que é o que o cálculo da aba Adutora também chega). Ou seja, o
+//   app está calculando certo pela fórmula original; o arquivo de referência tem uma
+//   correção manual pontual daquele projeto específico que não é uma regra geral —
+//   não dá pra "adivinhar" isso automaticamente. Se precisar bater 100% com esse
+//   projeto específico, seria necessário um campo de ajuste manual equivalente ao
+//   que o engenheiro fez na planilha (ainda não implementado).
 // v1.6.2 (2026-10-19): corrige 2 causas reais do preço ainda não bater com a planilha
 //   (apontado pelo usuário comparando com o orçamento real):
 //   1) busca de preço era sensível a maiúsculas/minúsculas — várias linhas gravam o
@@ -391,7 +406,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.6.2';
+const APP_VERSION='v1.7';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -1232,12 +1247,12 @@ function carregarModelo(nomeModelo){
 
     // Cavaletes (parte 1 — baseada em nº de válvulas): a planilha original multiplica
     // a receita de itens por max(0, nº válvulas − 2), só para a faixa de vazão da
-    // válvula que corresponde. (Parte 2 — casamento do diâmetro da adutora com o
-    // manifold do cavalete — ainda não foi implementada; fica de fora por enquanto.)
+    // válvula que corresponde.
+    let gruposCavalete=[];
     if(nomeModelo.startsWith('gotejamento')){
       const vazaoValvula=d.vazaoValvula||0;
       const multCavalete=Math.max(0,(d.numValvulasAdutora01||0)-2)+Math.max(0,(d.numValvulasAdutora02||0)-2);
-      const gruposCavalete=(SELECAO.cavaletes_valvula||[]).filter(g=>vazaoValvula>=g.vazaoMin&&vazaoValvula<=g.vazaoMax);
+      gruposCavalete=(SELECAO.cavaletes_valvula||[]).filter(g=>vazaoValvula>=g.vazaoMin&&vazaoValvula<=g.vazaoMax);
       if(gruposCavalete.length&&multCavalete>0){
         gruposCavalete.forEach(g=>{
           g.itens.forEach(it=>{
@@ -1250,6 +1265,32 @@ function carregarModelo(nomeModelo){
         avisos.push(`Cavaletes: nenhuma faixa de vazão de válvula compatível (vazão válvula=${vazaoValvula}). Confira o campo "Vazão Válvula" em Dados de Entrada.`);
       }else if(multCavalete<=0){
         avisos.push(`Cavaletes: nº de válvulas (Adutora 01/02) resultou em 0 (precisa ser > 2 para gerar itens extras de cavalete). Confira "Número de Válvulas" em Dados de Entrada.`);
+      }
+    }
+
+    // Cavaletes (parte 2 — casamento do diâmetro da adutora com o manifold do
+    // cavalete): a planilha compara "{diâmetro nominal da adutora}x{diâmetro do
+    // manifold, ex. MF75}" numa tabela e multiplica pelo nº de válvulas. O diâmetro
+    // nominal vem direto do cálculo da aba Adutora (mesmo valor usado p/ classe PN).
+    if(nomeModelo.startsWith('gotejamento')&&gruposCavalete.length){
+      const mfMatch=gruposCavalete[0].label.match(/MF(\d+)/);
+      const manifoldDiametro=mfMatch?mfMatch[1]:null;
+      const nominalAdutora=adCfg.resultado&&adCfg.resultado.nominal;
+      const nValvulas01=d.numValvulasAdutora01||0;
+      if(manifoldDiametro&&nominalAdutora&&nValvulas01>0){
+        const chave=`${nominalAdutora}x${manifoldDiametro}`;
+        const grupoManifold=(SELECAO.cavaletes_manifold||[]).find(g=>g.chave===chave);
+        if(grupoManifold){
+          grupoManifold.itens.forEach(it=>{
+            atual.bom.push({id:uid(),categoria:`Saída Adutora x Cavalete (${chave})`,grupo:'CAVALETES',fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
+              qtd:it.qtd*nValvulas01,custoUnit:buscarCusto(it.fornecedor,it.codigo)||it.preco||0,ativo:true});
+            n++;
+          });
+        }else{
+          avisos.push(`Cavaletes (saída adutora): nenhuma combinação "${chave}" cadastrada — confira o diâmetro calculado na aba Adutora.`);
+        }
+      }else if(!nominalAdutora){
+        avisos.push('Cavaletes (saída adutora): calcule a aba Adutora/Recalque primeiro (precisa do diâmetro nominal calculado).');
       }
     }
   }
