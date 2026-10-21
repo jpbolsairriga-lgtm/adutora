@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.9 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.10 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -78,6 +78,15 @@ tr.item-row.inativo{opacity:.4}
 .tile.red{background:linear-gradient(135deg,#fde8e8,#f8c9c9);border-color:#eda3a3}
 .tile .tl input{border:none;background:transparent;font:inherit;font-weight:800;color:inherit;width:3.2em;padding:0;text-align:right}
 .tile input[type=number]{width:4em;padding:.2rem .35rem;font-size:.95rem;font-weight:800}
+.selgrupo{border:1px solid var(--bdr);border-radius:8px;margin-bottom:.5rem;overflow:hidden}
+.selgrupo-head{display:flex;align-items:center;gap:.6rem;padding:.5rem .7rem;background:var(--bl4);cursor:pointer;flex-wrap:wrap}
+.selgrupo-arrow{width:1em;flex:0 0 auto;color:#003d5c}
+.selgrupo-titulo{flex:1 1 260px;min-width:200px;font-weight:700;font-size:.85rem;color:#003d5c;border:1px solid transparent;background:transparent;padding:.15rem .3rem;border-radius:4px}
+.selgrupo-titulo:hover,.selgrupo-titulo:focus{border-color:var(--bl3);background:#fff}
+.selgrupo-badges{display:flex;gap:.5rem;flex-wrap:wrap}
+.selgrupo-badge{display:flex;flex-direction:column;font-size:.6rem;color:var(--mu);font-weight:700;text-transform:uppercase;letter-spacing:.03em}
+.selgrupo-badge input{margin-top:.1rem;width:6em;padding:.15rem .3rem;font-size:.78rem;font-weight:400;text-transform:none}
+.selgrupo-count{font-size:.7rem;color:var(--mu);white-space:nowrap}
 .lista-item{display:flex;justify-content:space-between;align-items:center;padding:.7rem .9rem;border:1px solid var(--bdr);border-radius:10px;margin-bottom:.6rem;background:#fafeff}
 .lista-item:hover{border-color:var(--bl3)}
 .lista-item .li-info b{color:#003d5c;font-size:.95rem}
@@ -395,6 +404,18 @@ tr.item-row.inativo{opacity:.4}
 <script src="selecao.js"></script>
 <script src="hidraulica-adutora.js"></script>
 <script>
+// v1.10 (2026-10-21): corrige 2 problemas reais na aba Configurações: (1) o nome de
+//   cada grupo de seleção (ex. filtro) aparecia cortado numa caixa estreita e idêntico
+//   em todas as linhas — agora o campo mais descritivo de cada grupo (nomeBonito na
+//   Sucção, label na Filtragem/MB-Saída/Cavaletes, opção na Bomba Auxiliar) vira um
+//   título de largura total no cabeçalho do grupo, com os outros campos (faixa de
+//   vazão, tipo, nº de bombas) como badges compactos ao lado. (2) re-auditados os 9
+//   grupos de seleção linha a linha contra a planilha template em branco (não o
+//   arquivo de um cliente específico, que tinha faixas zeradas manualmente para
+//   aquele projeto): corrigido Filtragem "2x20" (fatia de vazão estava 0–0, o correto
+//   é 15,1–28) e completados os 5 combos que faltavam em Cavaletes-Manifold
+//   (125x75, 150x75, 125x90, 150x90, 150x110 — de 10 para as 15 combinações reais),
+//   com itens extraídos da planilha template.
 // v1.9 (2026-10-21): a aba Configurações ganha as tabelas de seleção por faixa de
 //   vazão (Sucção, Filtragem, Saída Moto-Bomba, Bomba Auxiliar, Cavaletes) — o
 //   equivalente real da antiga aba "Parametros" da planilha, que até aqui ficava
@@ -524,7 +545,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.9';
+const APP_VERSION='v1.10';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -642,6 +663,16 @@ const SELECAO_CAMPOS_POR_CATEGORIA={
   cavaletes_valvula:['vazaoMin','vazaoMax','label'],
   cavaletes_manifold:['chave'],
 };
+// Campo usado como TÍTULO (nome legível) de cada grupo — os demais campos da
+// categoria viram badges compactos ao lado. Para Sucção usa nomeBonito (nome de
+// exibição da planilha, ex. "SUCÇÃO 50MM MARROM"); para os outros, o campo que
+// identifica o grupo de forma descritiva.
+const SELECAO_CAMPO_TITULO={
+  succao_projeto:'nomeBonito',succao_recalque:'nomeBonito',
+  filtragem:'label',mbsaida_projeto:'label',mbsaida_recalque:'label',
+  bombaaux_projeto:'opcao',bombaaux_recalque:'opcao',
+  cavaletes_valvula:'label',cavaletes_manifold:'chave',
+};
 const SELECAO_CAMPOS_NUMERICOS=new Set(['vazaoMin','vazaoMax','numBombas']);
 let SELECAO_ATUAL=null;
 let _selecaoExpandida=new Set();
@@ -704,23 +735,26 @@ function renderConfigSelecao(){
   if(!cont)return;
   cont.innerHTML=SELECAO_CATEGORIAS.map(cat=>{
     const grupos=SELECAO_ATUAL[cat.key]||[];
-    const campos=SELECAO_CAMPOS_POR_CATEGORIA[cat.key]||[];
+    const campoTitulo=SELECAO_CAMPO_TITULO[cat.key];
+    const campos=(SELECAO_CAMPOS_POR_CATEGORIA[cat.key]||[]).filter(c=>c!==campoTitulo);
     const linhas=grupos.map((g,idx)=>{
       const k=cat.key+':'+idx;
       const expandido=_selecaoExpandida.has(k);
-      const camposHtml=campos.map(c=>{
+      const titulo=g[campoTitulo]||g.label||'(sem nome)';
+      const badgesHtml=campos.map(c=>{
         const isNum=SELECAO_CAMPOS_NUMERICOS.has(c);
-        const largura=(c==='label'||c==='nomeBonito')?'11em':'5.5em';
-        return `<td><input type="${isNum?'number':'text'}" style="width:${largura}" value="${escapeHTML(g[c])}" step="any" onchange="atualizarSelecaoCampo('${cat.key}',${idx},'${c}',this.value)"></td>`;
+        return `<span class="selgrupo-badge"><label>${SELECAO_CAMPO_LABEL[c]||c}</label><input type="${isNum?'number':'text'}" value="${escapeHTML(g[c])}" step="any" onclick="event.stopPropagation()" onchange="atualizarSelecaoCampo('${cat.key}',${idx},'${c}',this.value)"></span>`;
       }).join('');
-      let html=`<tr class="cat-head">
-        <td style="cursor:pointer" onclick="toggleSelecaoGrupo('${cat.key}',${idx})"><span style="display:inline-block;width:1.1em">${expandido?'▾':'▸'}</span></td>
-        ${camposHtml}
-        <td class="num">${g.itens.length} itens</td>
-        <td><button class="btn btn-red btn-sm" onclick="removerSelecaoGrupo('${cat.key}',${idx})">Remover</button></td>
-      </tr>`;
+      let html=`<div class="selgrupo">
+        <div class="selgrupo-head" onclick="toggleSelecaoGrupo('${cat.key}',${idx})">
+          <span class="selgrupo-arrow">${expandido?'▾':'▸'}</span>
+          <input class="selgrupo-titulo" value="${escapeHTML(titulo)}" onclick="event.stopPropagation()" onchange="atualizarSelecaoCampo('${cat.key}',${idx},'${campoTitulo}',this.value)">
+          <span class="selgrupo-badges">${badgesHtml}</span>
+          <span class="selgrupo-count">${g.itens.length} itens</span>
+          <button class="btn btn-red btn-sm" onclick="event.stopPropagation();removerSelecaoGrupo('${cat.key}',${idx})">Remover</button>
+        </div>`;
       if(expandido){
-        html+=`<tr><td colspan="${campos.length+3}" style="padding:.4rem .8rem;background:#fafeff">
+        html+=`<div style="padding:.5rem .8rem;background:#fafeff;border-top:1px solid var(--bdr)">
           <table style="width:100%"><thead><tr><th>Fornecedor</th><th>Código</th><th>Descrição</th><th class="num">Qtd</th><th class="num">Preço Fallback</th><th></th></tr></thead>
           <tbody>${g.itens.map((it,ii)=>`<tr>
             <td><select onchange="atualizarSelecaoItem('${cat.key}',${idx},${ii},'fornecedor',this.value)">
@@ -733,14 +767,13 @@ function renderConfigSelecao(){
             <td><button class="btn btn-red btn-sm" onclick="removerSelecaoItem('${cat.key}',${idx},${ii})">×</button></td>
           </tr>`).join('')}</tbody></table>
           <button class="btn btn-blue btn-sm" style="margin-top:.4rem" onclick="adicionarSelecaoItem('${cat.key}',${idx})">+ Item</button>
-        </td></tr>`;
+        </div>`;
       }
-      return html;
+      return html+`</div>`;
     }).join('');
     return `<div class="card">
-      <div class="ct"><div class="ct-l">${cat.titulo}</div><button class="btn btn-blue btn-sm" onclick="adicionarSelecaoGrupo('${cat.key}')">+ Nova Faixa/Grupo</button></div>
-      <div class="tbl-wrap"><table><thead><tr><th></th>${campos.map(c=>`<th>${SELECAO_CAMPO_LABEL[c]||c}</th>`).join('')}<th>Itens</th><th></th></tr></thead>
-      <tbody>${linhas||`<tr><td colspan="99" style="text-align:center;color:var(--mu);padding:1rem">Nenhum grupo cadastrado.</td></tr>`}</tbody></table></div>
+      <div class="ct"><div class="ct-l">${cat.titulo} <span style="font-weight:400;color:var(--mu);font-size:.7rem">(${grupos.length} grupos)</span></div><button class="btn btn-blue btn-sm" onclick="adicionarSelecaoGrupo('${cat.key}')">+ Nova Faixa/Grupo</button></div>
+      ${linhas||'<p style="text-align:center;color:var(--mu);padding:1rem">Nenhum grupo cadastrado.</p>'}
     </div>`;
   }).join('');
 }
