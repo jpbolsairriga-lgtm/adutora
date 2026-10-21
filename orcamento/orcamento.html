@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.10 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.11 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -264,7 +264,9 @@ tr.item-row.inativo{opacity:.4}
     <div class="search-results" id="resultadoBusca"></div>
   </div>
   <div class="card">
-    <div class="ct"><div class="ct-l">Lista de Materiais (BOM) — <span id="bomCount">0</span> itens</div></div>
+    <div class="ct"><div class="ct-l">Lista de Materiais (BOM) — <span id="bomCount">0</span> itens</div>
+      <button class="btn btn-blue" onclick="gerarRelatorioConsolidado()">📋 Relatório Consolidado</button>
+    </div>
     <div class="tbl-wrap">
       <table id="tabelaBOM"><thead><tr>
         <th style="width:26px"></th><th>Fornecedor</th><th>Código</th><th>Descrição</th>
@@ -404,6 +406,25 @@ tr.item-row.inativo{opacity:.4}
 <script src="selecao.js"></script>
 <script src="hidraulica-adutora.js"></script>
 <script>
+// v1.11 (2026-10-21): 3 melhorias grandes pedidas pelo usuário. (1) Nova tabela de
+//   seleção "Automação Válvula Moto-Bomba" (Projeto + Recalque): antes o Regulador de
+//   Pressão da automação vinha sempre fixo (o modelo "PC-SHARP" do projeto de
+//   referência); agora é escolhido entre 7 modelos reais batendo SIMULTANEAMENTE a
+//   pressão por bomba (calculada na aba Adutora/Recalque) e a vazão — mapeamento e
+//   faixas extraídos diretamente das fórmulas da aba Parametros (linhas
+//   987-1001/900-915 das abas Conj.Irri), removidos os itens fixos duplicados do
+//   dump de Automação. (2) Proposta Comercial reescrita para bater com a aba real
+//   "Proposta Comercial - v1": tabela de Dados Técnicos completa com as mesmas
+//   contas (Lâmina do Emissor, Número de Operações, Tempo Total, Litros/Planta/dia),
+//   nova seção "Principais Componentes do Projeto", "Condições de Venda" (Valor do
+//   Projeto/Recalque/Por Hectare/Total — usando o novo breakdown por origem),
+//   Código FINAME calculado, "Forma de Pagamento" como campo de texto editável
+//   (novo campo formaPagamento, antes a planilha deixa em branco p/ preencher à
+//   mão), e lista completa de "Condições de Fornecimento" (14 itens, texto fixo da
+//   planilha). (3) Novo "Relatório Consolidado" (botão na aba Conjuntos/BOM): junta
+//   itens iguais (mesmo fornecedor+código) vindos de categorias diferentes numa
+//   única linha com quantidade e totais somados, como a planilha real "Lista de
+//   Materiais" — abre como PDF/impressão, igual ao padrão já usado na Proposta.
 // v1.10 (2026-10-21): corrige 2 problemas reais na aba Configurações: (1) o nome de
 //   cada grupo de seleção (ex. filtro) aparecia cortado numa caixa estreita e idêntico
 //   em todas as linhas — agora o campo mais descritivo de cada grupo (nomeBonito na
@@ -545,7 +566,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.10';
+const APP_VERSION='v1.11';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -647,10 +668,13 @@ const SELECAO_CATEGORIAS=[
   {key:'bombaaux_recalque',titulo:'Bomba Auxiliar Submersa — Recalque'},
   {key:'cavaletes_valvula',titulo:'Cavaletes — por Faixa de Vazão (válvula)'},
   {key:'cavaletes_manifold',titulo:'Cavaletes — Casamento Adutora x Manifold'},
+  {key:'automacao_mb_projeto',titulo:'Automação Válvula Moto-Bomba — Projeto'},
+  {key:'automacao_mb_recalque',titulo:'Automação Válvula Moto-Bomba — Recalque'},
 ];
 const SELECAO_CAMPO_LABEL={
   vazaoMin:'Vazão Mín (m³/h)',vazaoMax:'Vazão Máx (m³/h)',tipo:'Tipo',numBombas:'Nº de Bombas',
   opcao:'Opção',chave:'Chave (ex: 118x75)',label:'Categoria no BOM',nomeBonito:'Nome de Exibição',
+  pressaoMin:'Pressão Mín (mca)',pressaoMax:'Pressão Máx (mca)',
 };
 const SELECAO_CAMPOS_POR_CATEGORIA={
   succao_projeto:['vazaoMin','vazaoMax','tipo','label','nomeBonito'],
@@ -662,6 +686,8 @@ const SELECAO_CAMPOS_POR_CATEGORIA={
   bombaaux_recalque:['opcao'],
   cavaletes_valvula:['vazaoMin','vazaoMax','label'],
   cavaletes_manifold:['chave'],
+  automacao_mb_projeto:['pressaoMin','pressaoMax','vazaoMin','vazaoMax','label'],
+  automacao_mb_recalque:['pressaoMin','pressaoMax','vazaoMin','vazaoMax','label'],
 };
 // Campo usado como TÍTULO (nome legível) de cada grupo — os demais campos da
 // categoria viram badges compactos ao lado. Para Sucção usa nomeBonito (nome de
@@ -672,8 +698,9 @@ const SELECAO_CAMPO_TITULO={
   filtragem:'label',mbsaida_projeto:'label',mbsaida_recalque:'label',
   bombaaux_projeto:'opcao',bombaaux_recalque:'opcao',
   cavaletes_valvula:'label',cavaletes_manifold:'chave',
+  automacao_mb_projeto:'label',automacao_mb_recalque:'label',
 };
-const SELECAO_CAMPOS_NUMERICOS=new Set(['vazaoMin','vazaoMax','numBombas']);
+const SELECAO_CAMPOS_NUMERICOS=new Set(['vazaoMin','vazaoMax','numBombas','pressaoMin','pressaoMax']);
 let SELECAO_ATUAL=null;
 let _selecaoExpandida=new Set();
 function carregarSelecaoConfig(){
@@ -814,6 +841,7 @@ function novoOrcDadosEntrada(){
     recalqueAutomacao:'Sem automação',recalqueQuedaNatural:'NÃO',recalqueInjetorCloro:'Não',
     // Comercial
     desconto:0,conexoesPct:0,impostoSimples:CONFIG_GLOBAL.impostoSimples,impostoICMS:CONFIG_GLOBAL.impostoICMS,
+    formaPagamento:'',
   };
 }
 function novaConfigAdutora(limiarBombaDupla=CONFIG_GLOBAL.limiarBombaDuplaAdutora){
@@ -1491,14 +1519,14 @@ function desenharPerfilElevacaoCanvas(key,samples){
 // não soma todos os diâmetros possíveis. Ver selecao.js.
 const CONFIG_SELECAO={
   gotejamento_01:{adutoraKey:'adutora01',tipoSuccaoField:'tipoSuccaoProjeto',filtragemField:'filtragem',bombaAuxField:'bombaAuxSubmersaProjeto',
-    succao:'succao_projeto',filtragem:'filtragem',mbSaida:'mbsaida_projeto',bombaAux:'bombaaux_projeto',
-    labelSuccao:'Sucção Projeto',labelFiltragem:'FILTRAGEM',labelMB:'MB Projeto - Saida',labelBombaAux:'Moto-Bomba'},
+    succao:'succao_projeto',filtragem:'filtragem',mbSaida:'mbsaida_projeto',bombaAux:'bombaaux_projeto',automacaoMB:'automacao_mb_projeto',
+    labelSuccao:'Sucção Projeto',labelFiltragem:'FILTRAGEM',labelMB:'MB Projeto - Saida',labelBombaAux:'Moto-Bomba',labelAutomacaoMB:'Automação - Projeto'},
   gotejamento_02:{adutoraKey:'adutora02',tipoSuccaoField:'tipoSuccaoProjeto',filtragemField:'filtragem',bombaAuxField:'bombaAuxSubmersaProjeto',
-    succao:'succao_projeto',filtragem:'filtragem',mbSaida:'mbsaida_projeto',bombaAux:'bombaaux_projeto',
-    labelSuccao:'Sucção Projeto',labelFiltragem:'FILTRAGEM',labelMB:'MB Projeto - Saida',labelBombaAux:'Moto-Bomba'},
+    succao:'succao_projeto',filtragem:'filtragem',mbSaida:'mbsaida_projeto',bombaAux:'bombaaux_projeto',automacaoMB:'automacao_mb_projeto',
+    labelSuccao:'Sucção Projeto',labelFiltragem:'FILTRAGEM',labelMB:'MB Projeto - Saida',labelBombaAux:'Moto-Bomba',labelAutomacaoMB:'Automação - Projeto'},
   recalque:{adutoraKey:'recalque',tipoSuccaoField:'recalqueTipoSuccao',filtragemField:null,bombaAuxField:'recalqueBombaAuxSubmersa',
-    succao:'succao_recalque',filtragem:null,mbSaida:'mbsaida_recalque',bombaAux:'bombaaux_recalque',
-    labelSuccao:'Sucção - Recalque',labelFiltragem:null,labelMB:'Saida bomba - Recalque',labelBombaAux:'Moto-Bomba - Recalque'},
+    succao:'succao_recalque',filtragem:null,mbSaida:'mbsaida_recalque',bombaAux:'bombaaux_recalque',automacaoMB:'automacao_mb_recalque',
+    labelSuccao:'Sucção - Recalque',labelFiltragem:null,labelMB:'Saida bomba - Recalque',labelBombaAux:'Moto-Bomba - Recalque',labelAutomacaoMB:'Automação - Recalque'},
 };
 function selecionarGrupoPorVazaoTipo(lista,vazao,tipo){
   return (lista||[]).find(g=>vazao>=g.vazaoMin&&vazao<=g.vazaoMax&&(!g.tipo||g.tipo===tipo));
@@ -1508,6 +1536,13 @@ function selecionarGrupoPorVazaoNumBombas(lista,vazao,numBombas){
 }
 function selecionarGrupoBombaAux(lista,opcao){
   return (lista||[]).find(g=>g.opcao===opcao);
+}
+// Seleção do Regulador de Pressão da Válvula de Automação da Moto-Bomba (aba
+// "Parametros" — tabela "Automação Válvula Moto-Bomba"): precisa bater AMBAS as
+// faixas (pressão de cada bomba E vazão), igual à lógica real (colunas E/H/I da
+// planilha fazem E=pressão-ok AND H=vazão-ok -> I=1 só se os dois baterem).
+function selecionarGrupoPorPressaoVazao(lista,pressao,vazao){
+  return (lista||[]).find(g=>pressao>=g.pressaoMin&&pressao<=g.pressaoMax&&vazao>=g.vazaoMin&&vazao<=g.vazaoMax);
 }
 // Converte texto TUDO EM MAIÚSCULO (como vem de colunas da planilha, ex.: "SUCÇÃO
 // 75MM PLASSON (NEGATIVA)") para uma forma mais legível. Se o texto já tem letras
@@ -1581,6 +1616,20 @@ function carregarModelo(nomeModelo){
       }
     }else{
       avisos.push('Moto-Bomba principal/Quadro de Partida: calcule a aba Adutora/Recalque primeiro (precisa da potência calculada).');
+    }
+
+    // Regulador de Pressão da Válvula de Automação da Moto-Bomba (aba Parametros,
+    // tabela "Automação Válvula Moto-Bomba"): seleciona 1 de 7 modelos de piloto
+    // batendo SIMULTANEAMENTE a pressão de cada bomba e a vazão — antes o sistema
+    // sempre incluía um modelo fixo (o que o projeto de referência usava), sem
+    // considerar a pressão/vazão reais do projeto.
+    const pressaoPorBomba=adCfg.resultado&&adCfg.resultado.pressaoPorBomba;
+    if(pressaoPorBomba){
+      const grupoAutomacaoMB=selecionarGrupoPorPressaoVazao(SELECAO_ATUAL[cfgSel.automacaoMB],pressaoPorBomba,vazao);
+      if(grupoAutomacaoMB)n+=adicionarItensSelecionados(grupoAutomacaoMB.label,grupoAutomacaoMB.itens,cfgSel.labelAutomacaoMB,origem);
+      else avisos.push(`Automação Válvula Moto-Bomba: nenhuma faixa compatível (pressão por bomba=${fmtN(pressaoPorBomba,1)}, vazão=${vazao}).`);
+    }else{
+      avisos.push('Automação Válvula Moto-Bomba: calcule a aba Adutora/Recalque primeiro (precisa da pressão por bomba calculada).');
     }
 
     // Cavaletes (parte 1 — baseada em nº de válvulas): a planilha original multiplica
@@ -1838,32 +1887,143 @@ function atualizarImpostoMargem(key,val){
   renderMargem();
 }
 
+// ── Relatório Consolidado (Lista de Materiais unificada) ──────────────
+// Junta itens iguais (mesmo fornecedor+código) vindos de categorias/grupos
+// diferentes do BOM numa única linha, somando quantidade e totais — útil para
+// conferência/compra, igual à planilha real "Lista de Materiais".
+function calcularConsolidado(orc){
+  const f=fatorMargem(orc.dadosEntrada);
+  const porCodigo={};
+  orc.bom.filter(i=>i.ativo).forEach(it=>{
+    const key=(it.fornecedor||'')+'|'+it.codigo;
+    if(!porCodigo[key])porCodigo[key]={fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,qtd:0,custoTotal:0,vendaTotal:0};
+    const c=porCodigo[key];
+    c.qtd+=it.qtd;
+    c.custoTotal+=it.qtd*it.custoUnit;
+    c.vendaTotal+=it.qtd*it.custoUnit*f;
+  });
+  return Object.values(porCodigo)
+    .map(it=>({...it,custoUnitMedio:it.qtd?it.custoTotal/it.qtd:0}))
+    .sort((a,b)=>a.descricao.localeCompare(b.descricao,'pt-BR'));
+}
+function gerarRelatorioConsolidado(){
+  if(!atual.bom.length){alert('Nenhum item no BOM ainda.');return;}
+  const itens=calcularConsolidado(atual);
+  const custoTotal=itens.reduce((s,i)=>s+i.custoTotal,0);
+  const vendaTotal=itens.reduce((s,i)=>s+i.vendaTotal,0);
+  const linhas=itens.map(it=>`<tr>
+    <td><span class="tag ${it.fornecedor==='Netafim'?'tag-nt':'tag-bi'}">${escapeHTML(it.fornecedor)}</span></td>
+    <td>${escapeHTML(it.codigo)}</td><td>${escapeHTML(it.descricao)}</td>
+    <td class="num">${fmtN(it.qtd,2)}</td><td class="num">${fmtR(it.custoUnitMedio)}</td>
+    <td class="num">${fmtR(it.custoTotal)}</td><td class="num">${fmtR(it.vendaTotal)}</td></tr>`).join('');
+  const win=window.open('','_blank');
+  if(!win){alert('Popup bloqueado. Permita pop-ups para este site.');return;}
+  const html=`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
+    <title>Relatório Consolidado — ${escapeHTML(atual.dadosEntrada.cliente||'')}</title>
+    <style>
+      body{font-family:'Segoe UI',system-ui,sans-serif;font-size:12px;color:#1a2535;padding:2rem}
+      h2{color:#1F4E79;font-size:1.3rem;margin-bottom:.2rem}
+      p{color:#666;margin-bottom:1rem}
+      table{width:100%;border-collapse:collapse}
+      td,th{border:1px solid #d0e4f0;padding:.35rem .5rem;font-size:.78rem}
+      th{background:#eef6fc;text-align:left}
+      .num{text-align:right}
+      .tag{display:inline-block;padding:.05rem .4rem;border-radius:8px;font-size:.68rem;font-weight:700}
+      .tag-bi{background:#e3f2fd;color:#0077b6}.tag-nt{background:#fff3e0;color:#e65100}
+      tfoot td{font-weight:800;background:#f4f7fb}
+      @media print{body{padding:0 1rem}}
+    </style></head><body>
+    <h2>Relatório Consolidado — Lista de Materiais</h2>
+    <p>${escapeHTML(atual.dadosEntrada.cliente||'—')} · ${itens.length} itens únicos</p>
+    <table><thead><tr><th>Fornecedor</th><th>Código</th><th>Descrição</th><th class="num">Qtd. Total</th><th class="num">R$ Unit. (méd.)</th><th class="num">R$ Custo Total</th><th class="num">R$ Venda Total</th></tr></thead>
+    <tbody>${linhas}</tbody>
+    <tfoot><tr><td colspan="5">TOTAL</td><td class="num">${fmtR(custoTotal)}</td><td class="num">${fmtR(vendaTotal)}</td></tr></tfoot>
+    </table></body></html>`;
+  win.document.write(html);win.document.close();
+  win.onload=()=>setTimeout(()=>win.print(),400);
+}
+
 // ── Proposta Comercial ───────────────────────────────────────────────
+// Texto institucional e estrutura transcritos da aba real "Proposta Comercial - v1"
+// do template (seções 1-7 + assinatura), com os campos interpolados batendo com as
+// mesmas células/fórmulas da planilha (ex.: B18/B20/B21 texto fixo, B26/B28/B32/B34
+// com concatenação de campos, B39-C50 tabela de dados técnicos com as mesmas contas,
+// B53-C66 "Principais componentes", B77-C93 "Condições de venda", B95-136 texto
+// fixo de condições comerciais/fornecimento).
 function textoEmissores(sistema){
   if(sistema==='Gotejamento')return 'tubos gotejadores Netafim autocompensantes';
   if(sistema==='Micro-Aspersão')return 'micro-aspersores Netafim';
   return 'Aspersores Netafim';
 }
-function textoFiltro(filtragem){return filtragem==='Disco'?'filtro de disco manual':'filtro de areia automático';}
-function textoFertirrigacao(fert,fertikitLabel){
-  if(fert==='Sem Ferti')return 'Sem Sistema de Injeção de Fertilizantes previsto no projeto.';
-  if(fert==='Direta')return 'Também está incluso no projeto um sistema de fertirrigação direta, otimizando assim os processos de aplicação de fertilizantes, defensivos, orgânicos e biológicos.';
-  return 'Também está incluso no projeto um sistema de Fertikit, otimizando assim os processos de aplicação de fertilizantes, defensivos, orgânicos e biológicos.';
+function textoFiltroEscopo(filtragem){return filtragem==='Disco'?'filtro de disco manual':'filtro de areia automático';}
+function textoFiltroComponente(filtragem){
+  if(filtragem==='Areia')return 'Filtro de Areia Automático';
+  if(filtragem==='Disco')return 'Filtro de Disco Manual';
+  if(filtragem==='Disco Automatico')return 'Disco Automático';
+  return 'Sem Filtragem';
 }
+function textoFertirrigacao(fert){
+  if(fert==='Sem Ferti')return 'Sem Sistema de Injeção de Fertilizantes';
+  const tipo=fert==='Direta'?'fertirrigação direta':'Fertikit';
+  return `Também está incluso no projeto um sistema de ${tipo}, otimizando assim os processos de aplicação de fertilizantes, defensivos, orgânicos e biológicos.`;
+}
+function codigoFiname(valorTotal){
+  if(!valorTotal||valorTotal<250000)return'Não Finalizável';
+  return valorTotal>1500000?'04306642':'04320600';
+}
+function atualizarFormaPagamento(val){
+  atual.dadosEntrada.formaPagamento=val;
+  persistirAtual();
+}
+const CONDICOES_FORNECIMENTO=[
+  'Fornecimento da parte de alvenaria, incluindo todas as ancoragens, casa de bomba e filtros, caixas de cavaletes e serviços gerais de acabamento.',
+  'Fornecimento de um trator com carreta e um operador para uso na obra de irrigação.',
+  'Fechamento de todas as valetas.',
+  'Fornecimento de mão de obra braçal para auxílio na implantação durante toda a obra: cinco a sete pessoas. Não havendo o número requisitado, a obra será paralisada.',
+  'Fornecimento de refeição e alojamento para equipe de montagem.',
+  'Fornecimento de toda parte de eletricidade para ligação de motores e automação, bem como a mão de obra do eletricista. Ou seja, alimentação da casa incluindo tomadas, cabeamento total para alimentação e saída dos painéis para os motores e aterramento geral.',
+  'Abertura e fechamento de valetas com retroescavadeira para instalação da adutora e em locais onde a valetadeira não tenha condições para execução do trabalho na abertura de linhas secundárias.',
+  'Fornecimento da captação de água do córrego existente na fazenda.',
+  'Distribuição, acomodação e enterrio de tubo gotejador na lavoura. A máquina para enterrio será disponibilizada pela Bolsa Irriga sob agendamento. Sendo o frete por conta do cliente.',
+  'Fornecimento de óleo diesel para valetadeira durante seu trabalho na fazenda. A valetadeira será entregue na fazenda com tanque cheio e deverá ser devolvida da mesma forma.',
+  'Construção de estação de bombeamento composta de casas de bomba e tomada de água, conforme orientação da Bolsa Irriga. Garantindo um desnível máximo entre o nível mínimo da água e o eixo da bomba de 2,50 m e vazão mínima disponível superior à 10% a referida, e especificada no projeto técnico, bem como a qualidade química, física e biológica da água.',
+  'Levantamento planialtimétrico da área que será instalado o projeto.',
+  'Construção do reservatório para captação do projeto.',
+  'Descarregamento do material na fazenda.',
+];
 function renderProposta(){
   const dRaw=atual.dadosEntrada;
   // escapa campos de texto livre antes de interpolar no HTML da proposta (evita quebrar o layout)
   const d={...dRaw};
-  ['cliente','propriedade','cidade','uf','cultura','fonteAgua','energiaRede','motobombas','classeTubulacao','loja'].forEach(k=>{d[k]=escapeHTML(dRaw[k]);});
+  ['cliente','propriedade','cidade','uf','cultura','fonteAgua','energiaRede','motobombas','classeTubulacao','loja','gotejador1','automacao'].forEach(k=>{d[k]=escapeHTML(dRaw[k]);});
   const r=calcularRollup(atual);
   // formata "YYYY-MM-DD" direto (sem passar por Date()) p/ evitar deslocamento de fuso horário
   const dataPartes=(dRaw.data||'').split('-');
   const data=dataPartes.length===3?`${dataPartes[2]}/${dataPartes[1]}/${dataPartes[0]}`:new Date().toLocaleDateString('pt-BR');
-  const cats=ordenarCategoriasMapa(r.porCategoria).filter(cat=>r.porCategoria[cat].custo!==0||r.porCategoria[cat].venda!==0);
-  const tabelaValores=cats.map(cat=>{
-    const c=r.porCategoria[cat];
-    return `<tr><td>${escapeHTML(cat)}</td><td class="num">${fmtR(c.venda)}</td></tr>`;
-  }).join('');
+
+  // 3. Dados técnicos — mesmas contas da planilha (Lâmina do emissor, Número de
+  // Operações, Tempo da Operação/Total, Litros por Planta/dia).
+  const vazaoEmissor=parseFloat(d.vazaoEmissor)||0, espEmissor=parseFloat(d.espacamentoEmissor)||0;
+  const espLinhas=parseFloat(d.espacamentoLinhas)||0, espPlantas=parseFloat(d.espacamentoPlantas)||0;
+  const laminaDesejada=parseFloat(d.lamina)||0;
+  const laminaEmissor=(espEmissor&&espLinhas)?(vazaoEmissor/espEmissor)/espLinhas:0;
+  const numOperacoesCalc=laminaEmissor?Math.floor(22/(laminaDesejada/laminaEmissor)):0;
+  const tempoOperacao=laminaEmissor?(laminaDesejada/laminaEmissor)/24:0;
+  const tempoTotal=tempoOperacao*numOperacoesCalc;
+  const vazaoProjeto=atual.adutora01?.vazao||0;
+  const litrosPorPlanta=(espEmissor&&numOperacoesCalc)?(vazaoEmissor/espEmissor)*espPlantas*(21/numOperacoesCalc):0;
+
+  // 4. Principais componentes do projeto
+  const potenciaProjeto=atual.adutora01?.resultado
+    ?`${atual.adutora01.resultado.motorCV} cv — ${atual.adutora01.resultado.numBombas} Conj. Moto-Bomba`:'—';
+  const potenciaRecalque=atual.recalque?.resultado
+    ?`${atual.recalque.resultado.motorCV} cv — ${atual.recalque.resultado.numBombas} Conj. Moto-Bomba`:'-';
+
+  // 5. Condições de venda (Valor do Projeto/Recalque/Por Hectare/Total — mesmos
+  // números da aba Margem x Venda redesenhada, já com Projeto x Recalque separados)
+  const area=parseFloat(d.area)||0;
+  const valorPorHectare=area?r.vendaTotal/area:0;
+
   $('propostaPreview').innerHTML=`
     <h2>PROPOSTA COMERCIAL</h2>
     <p><b>Bolsa Irriga</b> &middot; Loja ${d.loja||''} &middot; ${data}</p>
@@ -1888,21 +2048,53 @@ function renderProposta(){
     comando ${d.automacao||'—'} e será feita pelo controlador Rain Bird, que aciona os conjuntos de bombeamento e comanda
     as válvulas no campo.</p>
     <p>A pressurização do sistema será feita por motobombas elétricas ${d.motobombas||'—'} e para filtragem da água está
-    previsto um conjunto de ${textoFiltro(d.filtragem)}. A tubulação de PVC projetada possui diâmetros e classes de
+    previsto um conjunto de ${textoFiltroEscopo(d.filtragem)}. A tubulação de PVC projetada possui diâmetros e classes de
     pressão de 35/40 a ${d.classeTubulacao||'—'}.</p>
     <p>${textoFertirrigacao(d.fertirrigacao)}</p>
     <h4>3. Dados técnicos</h4>
     <table><tbody>
-      <tr><td><b>Área do projeto (ha)</b></td><td>${d.area||0}</td></tr>
-      <tr><td><b>Sistema de Irrigação</b></td><td>${d.sistemaIrrigacao||'—'}</td></tr>
-      <tr><td><b>Altitude do local (m)</b></td><td>${d.altitude||0}</td></tr>
-      <tr><td><b>Lâmina desejada (mm)</b></td><td>${d.lamina||0}</td></tr>
-      <tr><td><b>Energia/Rede</b></td><td>${d.energiaRede||'—'}</td></tr>
+      <tr><td>Área do projeto (ha)</td><td>${fmtN(area,2)}</td></tr>
+      <tr><td>Sistema de Irrigação</td><td>${d.sistemaIrrigacao||'—'}</td></tr>
+      <tr><td>Vazão do Emissor (l/h)</td><td>${fmtN(vazaoEmissor,2)}</td></tr>
+      <tr><td>Espaçamento entre Emissores (m)</td><td>${fmtN(espEmissor,2)}</td></tr>
+      <tr><td>Espaçamento entre Linhas (m)</td><td>${fmtN(espLinhas,2)}</td></tr>
+      <tr><td>Lâmina do emissor (mm/h)</td><td>${fmtN(laminaEmissor,3)}</td></tr>
+      <tr><td>Lâmina Desejada (mm/dia)</td><td>${fmtN(laminaDesejada,2)}</td></tr>
+      <tr><td>Número Operações</td><td>${numOperacoesCalc}</td></tr>
+      <tr><td>Tempo da Operação (horas)</td><td>${fmtN(tempoOperacao,2)}</td></tr>
+      <tr><td>Tempo Total (horas)</td><td>${fmtN(tempoTotal,2)}</td></tr>
+      <tr><td>Vazão do projeto (m³/h)</td><td>${fmtN(vazaoProjeto,2)}</td></tr>
+      <tr><td>Litros por Planta/dia</td><td>${fmtN(litrosPorPlanta,2)}</td></tr>
     </tbody></table>
-    <h3>5. Valores do Orçamento</h3>
-    <table><thead><tr><th>Categoria</th><th class="num">R$ Venda</th></tr></thead>
-    <tbody>${tabelaValores||'<tr><td colspan="2" style="text-align:center">Nenhum item no BOM ainda.</td></tr>'}</tbody>
-    <tfoot><tr style="font-weight:800"><td>TOTAL GERAL</td><td class="num">${fmtR(r.vendaTotal)}</td></tr></tfoot></table>
+    <h4>4. Principais componentes do projeto</h4>
+    <table><tbody>
+      <tr><td>Automação do sistema</td><td>${d.automacaoProjeto==='SIM'?'Controlador AC':'-'}</td></tr>
+      <tr><td>Emissores</td><td>${d.gotejador1||'—'}</td></tr>
+      <tr><td>Tubos e conexões PVC</td><td>Corr Plastik</td></tr>
+      <tr><td>Filtragem</td><td>${textoFiltroComponente(d.filtragem)}</td></tr>
+      <tr><td>Cavaletes</td><td>Plasson Padrão Netafim</td></tr>
+      <tr><td>Fertirrigação</td><td>${d.fertirrigacao||'—'}</td></tr>
+      <tr><td>Automação</td><td>${d.automacao||'—'}</td></tr>
+      <tr><td>Diâmetros Tubulação Utilizada</td><td>35/40 a ${d.classeTubulacao||'—'}.</td></tr>
+      <tr><td>Conjuntos Motobomba</td><td>Thebe</td></tr>
+      <tr><td>Potência do projeto (cv)</td><td>${potenciaProjeto}</td></tr>
+      <tr><td>Potência do recalque (cv)</td><td>${potenciaRecalque}</td></tr>
+    </tbody></table>
+    <h3>5. Condições de venda</h3>
+    <h4>5.1 Primeira Opção de Orçamento${d.gotejador1?' — '+d.gotejador1:''}</h4>
+    <table><thead><tr><th>Descrição</th><th class="num">Valores</th></tr></thead><tbody>
+      <tr><td>Valor do Projeto</td><td class="num">${fmtR(r.porOrigem.projeto.venda)}</td></tr>
+      <tr><td>Valor do Recalque</td><td class="num">${fmtR(r.porOrigem.recalque.venda)}</td></tr>
+      <tr><td>Valor por Hectare</td><td class="num">${fmtR(valorPorHectare)}</td></tr>
+      <tr style="font-weight:800"><td>Total</td><td class="num">${fmtR(r.vendaTotal)}</td></tr>
+    </tbody></table>
+    <p>- Validade da proposta: 21 dias<br>- Frete: CIF<br>- Prazo de entrega dos materiais: será estipulado a partir da data de assinatura do contrato.</p>
+    <p><b>CÓDIGO FINAME:</b> ${codigoFiname(r.vendaTotal)}</p>
+    <h4>6. Forma de pagamento</h4>
+    <textarea style="width:100%;min-height:4.5rem;font:inherit;padding:.5rem;border:1px solid var(--bdr);border-radius:6px" placeholder="Descreva aqui as condições de pagamento combinadas para esta proposta…" onchange="atualizarFormaPagamento(this.value)">${escapeHTML(dRaw.formaPagamento)}</textarea>
+    <h4>7. Condições de fornecimento</h4>
+    <p>São de responsabilidade do cliente a realização das obras de infraestrutura, tais como:</p>
+    <ol>${CONDICOES_FORNECIMENTO.map(t=>`<li>${t}</li>`).join('')}</ol>
     <h3>Aprovação e autoridade para proceder</h3>
     <p>Aprovamos o projeto como descrito acima e autorizamos a equipe a prosseguir.</p>
     <table style="margin-top:1.5rem"><tbody>
