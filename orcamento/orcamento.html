@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.8 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.9 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -379,6 +379,13 @@ tr.item-row.inativo{opacity:.4}
     <button class="btn btn-green" onclick="salvarConfig()">💾 Salvar Configurações</button>
     <button class="btn btn-red" onclick="restaurarConfigPadrao()">↺ Restaurar Padrões de Fábrica</button>
   </div>
+
+  <h2 style="margin:1.4rem 0 .4rem;font-size:1rem;color:#003d5c">Tabelas de Seleção por Faixa de Vazão <span style="font-size:.7rem;font-weight:400;color:var(--mu)">(equivalente à antiga aba "Parametros")</span></h2>
+  <div class="sbox info">Estas tabelas definem <b>qual grupo de itens entra no BOM</b> para cada faixa de vazão (Sucção, Filtragem, Saída da Moto-Bomba, Bomba Auxiliar, Cavaletes) — o mesmo papel da aba "Parametros" da planilha original. Edite a faixa (Vazão Mín/Máx), o rótulo, ou os itens de cada grupo; as alterações são salvas automaticamente e passam a valer no próximo "Carregar Modelo". Clique no ▸ para ver/editar os itens de um grupo.</div>
+  <div id="configSelecaoBody"></div>
+  <div style="display:flex;gap:.6rem;margin:.8rem 0 1.4rem">
+    <button class="btn btn-red" onclick="restaurarSelecaoPadrao()">↺ Restaurar Tabelas de Seleção (padrão da planilha)</button>
+  </div>
 </div>
 
 </div>
@@ -388,6 +395,16 @@ tr.item-row.inativo{opacity:.4}
 <script src="selecao.js"></script>
 <script src="hidraulica-adutora.js"></script>
 <script>
+// v1.9 (2026-10-21): a aba Configurações ganha as tabelas de seleção por faixa de
+//   vazão (Sucção, Filtragem, Saída Moto-Bomba, Bomba Auxiliar, Cavaletes) — o
+//   equivalente real da antiga aba "Parametros" da planilha, que até aqui ficava
+//   fixa em selecao.js e não era editável. Agora existe uma cópia editável
+//   (SELECAO_ATUAL, clonada de SELECAO na 1ª vez, persistida em
+//   'orcamento_selecao') com CRUD completo: editar faixa min/máx, rótulo, tipo/nº
+//   de bombas/opção/chave de cada grupo, e adicionar/editar/remover os itens
+//   dentro de cada grupo — tudo com "Restaurar Padrão" para voltar aos valores
+//   extraídos da planilha. O motor de seleção do BOM (carregarModelo) passou a ler
+//   de SELECAO_ATUAL em vez de SELECAO fixo.
 // v1.8 (2026-10-21): Margem x Venda redesenhada (Condições Comerciais, Resumo por
 //   Origem Projeto/Recalque/Total, Impostos Simples/ICMS editáveis com Margem
 //   Líquida, Venda/Custo por Hectare) e nova aba "Configurações" — regras de
@@ -507,7 +524,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.8';
+const APP_VERSION='v1.9';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -592,6 +609,140 @@ function restaurarConfigPadrao(){
   CONFIG_GLOBAL={...CONFIG_GLOBAL_PADRAO};
   salvarConfigGlobal();
   renderConfig();
+}
+
+// ── Tabelas de Seleção (faixas de vazão) — equivalente à antiga aba "Parametros" ──
+// SELECAO (de selecao.js) são os dados ORIGINAIS extraídos da planilha, intocados.
+// SELECAO_ATUAL é a cópia editável (clonada de SELECAO na 1ª vez, depois persistida
+// em localStorage própria) — todo o motor de seleção do BOM lê de SELECAO_ATUAL,
+// nunca de SELECAO direto, para que as edições do usuário aqui realmente valham.
+const SELECAO_CATEGORIAS=[
+  {key:'succao_projeto',titulo:'Sucção — Projeto (Gotejamento/Aspersão)'},
+  {key:'succao_recalque',titulo:'Sucção — Recalque'},
+  {key:'filtragem',titulo:'Filtragem'},
+  {key:'mbsaida_projeto',titulo:'Saída Moto-Bomba — Projeto'},
+  {key:'mbsaida_recalque',titulo:'Saída Moto-Bomba — Recalque'},
+  {key:'bombaaux_projeto',titulo:'Bomba Auxiliar Submersa — Projeto'},
+  {key:'bombaaux_recalque',titulo:'Bomba Auxiliar Submersa — Recalque'},
+  {key:'cavaletes_valvula',titulo:'Cavaletes — por Faixa de Vazão (válvula)'},
+  {key:'cavaletes_manifold',titulo:'Cavaletes — Casamento Adutora x Manifold'},
+];
+const SELECAO_CAMPO_LABEL={
+  vazaoMin:'Vazão Mín (m³/h)',vazaoMax:'Vazão Máx (m³/h)',tipo:'Tipo',numBombas:'Nº de Bombas',
+  opcao:'Opção',chave:'Chave (ex: 118x75)',label:'Categoria no BOM',nomeBonito:'Nome de Exibição',
+};
+const SELECAO_CAMPOS_POR_CATEGORIA={
+  succao_projeto:['vazaoMin','vazaoMax','tipo','label','nomeBonito'],
+  succao_recalque:['vazaoMin','vazaoMax','tipo','label','nomeBonito'],
+  filtragem:['vazaoMin','vazaoMax','tipo','label'],
+  mbsaida_projeto:['vazaoMin','vazaoMax','numBombas','label'],
+  mbsaida_recalque:['vazaoMin','vazaoMax','numBombas','label'],
+  bombaaux_projeto:['opcao'],
+  bombaaux_recalque:['opcao'],
+  cavaletes_valvula:['vazaoMin','vazaoMax','label'],
+  cavaletes_manifold:['chave'],
+};
+const SELECAO_CAMPOS_NUMERICOS=new Set(['vazaoMin','vazaoMax','numBombas']);
+let SELECAO_ATUAL=null;
+let _selecaoExpandida=new Set();
+function carregarSelecaoConfig(){
+  try{
+    const raw=localStorage.getItem('orcamento_selecao');
+    SELECAO_ATUAL=raw?JSON.parse(raw):JSON.parse(JSON.stringify(SELECAO));
+  }catch(e){SELECAO_ATUAL=JSON.parse(JSON.stringify(SELECAO));}
+}
+function salvarSelecaoConfig(){
+  try{localStorage.setItem('orcamento_selecao',JSON.stringify(SELECAO_ATUAL));}catch(e){alert('Não foi possível salvar: '+e.message);}
+}
+function restaurarSelecaoPadrao(){
+  if(!confirm('Restaurar as tabelas de seleção (faixas de vazão, itens) para os valores originais extraídos da planilha? Isso descarta as edições feitas aqui.'))return;
+  SELECAO_ATUAL=JSON.parse(JSON.stringify(SELECAO));
+  salvarSelecaoConfig();
+  renderConfigSelecao();
+}
+function atualizarSelecaoCampo(catKey,idx,campo,valor){
+  const g=SELECAO_ATUAL[catKey][idx];if(!g)return;
+  g[campo]=SELECAO_CAMPOS_NUMERICOS.has(campo)?(parseFloat(valor)||0):valor;
+  salvarSelecaoConfig();
+}
+function atualizarSelecaoItem(catKey,idx,itemIdx,campo,valor){
+  const it=SELECAO_ATUAL[catKey][idx].itens[itemIdx];if(!it)return;
+  it[campo]=(campo==='qtd'||campo==='preco')?(parseFloat(valor)||0):valor;
+  salvarSelecaoConfig();
+}
+function adicionarSelecaoGrupo(catKey){
+  const campos=SELECAO_CAMPOS_POR_CATEGORIA[catKey]||[];
+  const novo={itens:[]};
+  campos.forEach(c=>{novo[c]=SELECAO_CAMPOS_NUMERICOS.has(c)?0:'';});
+  SELECAO_ATUAL[catKey].push(novo);
+  salvarSelecaoConfig();
+  renderConfigSelecao();
+}
+function removerSelecaoGrupo(catKey,idx){
+  if(!confirm('Remover este grupo inteiro (faixa + itens)?'))return;
+  SELECAO_ATUAL[catKey].splice(idx,1);
+  salvarSelecaoConfig();
+  renderConfigSelecao();
+}
+function adicionarSelecaoItem(catKey,idx){
+  SELECAO_ATUAL[catKey][idx].itens.push({fornecedor:'Bolsa Irriga',codigo:'',descricao:'',qtd:1,preco:0});
+  salvarSelecaoConfig();
+  renderConfigSelecao();
+}
+function removerSelecaoItem(catKey,idx,itemIdx){
+  SELECAO_ATUAL[catKey][idx].itens.splice(itemIdx,1);
+  salvarSelecaoConfig();
+  renderConfigSelecao();
+}
+function toggleSelecaoGrupo(catKey,idx){
+  const k=catKey+':'+idx;
+  if(_selecaoExpandida.has(k))_selecaoExpandida.delete(k);else _selecaoExpandida.add(k);
+  renderConfigSelecao();
+}
+function renderConfigSelecao(){
+  const cont=document.getElementById('configSelecaoBody');
+  if(!cont)return;
+  cont.innerHTML=SELECAO_CATEGORIAS.map(cat=>{
+    const grupos=SELECAO_ATUAL[cat.key]||[];
+    const campos=SELECAO_CAMPOS_POR_CATEGORIA[cat.key]||[];
+    const linhas=grupos.map((g,idx)=>{
+      const k=cat.key+':'+idx;
+      const expandido=_selecaoExpandida.has(k);
+      const camposHtml=campos.map(c=>{
+        const isNum=SELECAO_CAMPOS_NUMERICOS.has(c);
+        const largura=(c==='label'||c==='nomeBonito')?'11em':'5.5em';
+        return `<td><input type="${isNum?'number':'text'}" style="width:${largura}" value="${escapeHTML(g[c])}" step="any" onchange="atualizarSelecaoCampo('${cat.key}',${idx},'${c}',this.value)"></td>`;
+      }).join('');
+      let html=`<tr class="cat-head">
+        <td style="cursor:pointer" onclick="toggleSelecaoGrupo('${cat.key}',${idx})"><span style="display:inline-block;width:1.1em">${expandido?'▾':'▸'}</span></td>
+        ${camposHtml}
+        <td class="num">${g.itens.length} itens</td>
+        <td><button class="btn btn-red btn-sm" onclick="removerSelecaoGrupo('${cat.key}',${idx})">Remover</button></td>
+      </tr>`;
+      if(expandido){
+        html+=`<tr><td colspan="${campos.length+3}" style="padding:.4rem .8rem;background:#fafeff">
+          <table style="width:100%"><thead><tr><th>Fornecedor</th><th>Código</th><th>Descrição</th><th class="num">Qtd</th><th class="num">Preço Fallback</th><th></th></tr></thead>
+          <tbody>${g.itens.map((it,ii)=>`<tr>
+            <td><select onchange="atualizarSelecaoItem('${cat.key}',${idx},${ii},'fornecedor',this.value)">
+              <option ${it.fornecedor==='Bolsa Irriga'?'selected':''}>Bolsa Irriga</option>
+              <option ${it.fornecedor==='Netafim'?'selected':''}>Netafim</option></select></td>
+            <td><input value="${escapeHTML(it.codigo)}" style="width:7em" onchange="atualizarSelecaoItem('${cat.key}',${idx},${ii},'codigo',this.value)"></td>
+            <td><input value="${escapeHTML(it.descricao)}" style="width:18em" onchange="atualizarSelecaoItem('${cat.key}',${idx},${ii},'descricao',this.value)"></td>
+            <td class="num"><input type="number" value="${it.qtd}" style="width:4em" onchange="atualizarSelecaoItem('${cat.key}',${idx},${ii},'qtd',this.value)"></td>
+            <td class="num"><input type="number" value="${it.preco}" style="width:5em" onchange="atualizarSelecaoItem('${cat.key}',${idx},${ii},'preco',this.value)"></td>
+            <td><button class="btn btn-red btn-sm" onclick="removerSelecaoItem('${cat.key}',${idx},${ii})">×</button></td>
+          </tr>`).join('')}</tbody></table>
+          <button class="btn btn-blue btn-sm" style="margin-top:.4rem" onclick="adicionarSelecaoItem('${cat.key}',${idx})">+ Item</button>
+        </td></tr>`;
+      }
+      return html;
+    }).join('');
+    return `<div class="card">
+      <div class="ct"><div class="ct-l">${cat.titulo}</div><button class="btn btn-blue btn-sm" onclick="adicionarSelecaoGrupo('${cat.key}')">+ Nova Faixa/Grupo</button></div>
+      <div class="tbl-wrap"><table><thead><tr><th></th>${campos.map(c=>`<th>${SELECAO_CAMPO_LABEL[c]||c}</th>`).join('')}<th>Itens</th><th></th></tr></thead>
+      <tbody>${linhas||`<tr><td colspan="99" style="text-align:center;color:var(--mu);padding:1rem">Nenhum grupo cadastrado.</td></tr>`}</tbody></table></div>
+    </div>`;
+  }).join('');
 }
 
 // ── Estado / Persistência ────────────────────────────────────────────
@@ -751,7 +902,7 @@ function irPara(view){
   $(view).classList.add('active');
   document.querySelector(`.tab[data-view="${view}"]`).classList.add('active');
   if(view==='vLista')renderListaOrcamentos();
-  if(view==='vConfig')renderConfig();
+  if(view==='vConfig'){renderConfig();renderConfigSelecao();}
 }
 
 // ── Dados de Entrada ─────────────────────────────────────────────────
@@ -1368,21 +1519,21 @@ function carregarModelo(nomeModelo){
     const vazao=adCfg.vazao||0;
     const numBombas=(adCfg.resultado&&adCfg.resultado.numBombas)||1;
 
-    const grupoSuccao=selecionarGrupoPorVazaoTipo(SELECAO[cfgSel.succao],vazao,d[cfgSel.tipoSuccaoField]);
+    const grupoSuccao=selecionarGrupoPorVazaoTipo(SELECAO_ATUAL[cfgSel.succao],vazao,d[cfgSel.tipoSuccaoField]);
     if(grupoSuccao)n+=adicionarItensSelecionados(tituloBonito(grupoSuccao.nomeBonito)||grupoSuccao.label,grupoSuccao.itens,cfgSel.labelSuccao,origem);
     else avisos.push(`Sucção: nenhuma faixa de vazão/tipo compatível (vazão=${vazao}, tipo=${d[cfgSel.tipoSuccaoField]}). Confira a vazão na aba de Adutora/Recalque correspondente.`);
 
     if(cfgSel.filtragem){
-      const grupoFiltro=selecionarGrupoPorVazaoTipo(SELECAO[cfgSel.filtragem],vazao,d[cfgSel.filtragemField]);
+      const grupoFiltro=selecionarGrupoPorVazaoTipo(SELECAO_ATUAL[cfgSel.filtragem],vazao,d[cfgSel.filtragemField]);
       if(grupoFiltro)n+=adicionarItensSelecionados(grupoFiltro.label,grupoFiltro.itens,cfgSel.labelFiltragem,origem);
       else avisos.push(`Filtragem: nenhuma faixa de vazão/tipo compatível (vazão=${vazao}, tipo=${d[cfgSel.filtragemField]}).`);
     }
 
-    const grupoMB=selecionarGrupoPorVazaoNumBombas(SELECAO[cfgSel.mbSaida],vazao,numBombas);
+    const grupoMB=selecionarGrupoPorVazaoNumBombas(SELECAO_ATUAL[cfgSel.mbSaida],vazao,numBombas);
     if(grupoMB)n+=adicionarItensSelecionados(grupoMB.label,grupoMB.itens,cfgSel.labelMB,origem);
     else avisos.push(`Saída Moto-Bomba: nenhuma faixa compatível (vazão=${vazao}, nº de bombas=${numBombas}) — calcule a aba Adutora/Recalque primeiro para definir o nº de bombas.`);
 
-    const grupoBombaAux=selecionarGrupoBombaAux(SELECAO[cfgSel.bombaAux],d[cfgSel.bombaAuxField]);
+    const grupoBombaAux=selecionarGrupoBombaAux(SELECAO_ATUAL[cfgSel.bombaAux],d[cfgSel.bombaAuxField]);
     if(grupoBombaAux&&grupoBombaAux.itens.length)n+=adicionarItensSelecionados(grupoBombaAux.opcao,grupoBombaAux.itens,cfgSel.labelBombaAux,origem);
 
     // Moto-Bomba principal + Quadro de Partida (motor 'MB+CH Partida' da planilha):
@@ -1406,7 +1557,7 @@ function carregarModelo(nomeModelo){
     if(nomeModelo.startsWith('gotejamento')){
       const vazaoValvula=d.vazaoValvula||0;
       const multCavalete=Math.max(0,(d.numValvulasAdutora01||0)-2)+Math.max(0,(d.numValvulasAdutora02||0)-2);
-      gruposCavalete=(SELECAO.cavaletes_valvula||[]).filter(g=>vazaoValvula>=g.vazaoMin&&vazaoValvula<=g.vazaoMax);
+      gruposCavalete=(SELECAO_ATUAL.cavaletes_valvula||[]).filter(g=>vazaoValvula>=g.vazaoMin&&vazaoValvula<=g.vazaoMax);
       if(gruposCavalete.length&&multCavalete>0){
         gruposCavalete.forEach(g=>{
           g.itens.forEach(it=>{
@@ -1433,7 +1584,7 @@ function carregarModelo(nomeModelo){
       const nValvulas01=d.numValvulasAdutora01||0;
       if(manifoldDiametro&&nominalAdutora&&nValvulas01>0){
         const chave=`${nominalAdutora}x${manifoldDiametro}`;
-        const grupoManifold=(SELECAO.cavaletes_manifold||[]).find(g=>g.chave===chave);
+        const grupoManifold=(SELECAO_ATUAL.cavaletes_manifold||[]).find(g=>g.chave===chave);
         if(grupoManifold){
           grupoManifold.itens.forEach(it=>{
             atual.bom.push({id:uid(),categoria:`Saída Adutora x Cavalete (${chave})`,grupo:'CAVALETES',fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
@@ -1749,6 +1900,7 @@ function gerarPDFProposta(){
 
 // ── Init ─────────────────────────────────────────────────────────────
 carregarConfigGlobal();
+carregarSelecaoConfig();
 carregarOrcamentos();
 renderListaOrcamentos();
 </script>
