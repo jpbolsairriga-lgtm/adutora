@@ -112,15 +112,18 @@ function calcularAdutoraSimples(cfg){
 // validado contra orçamento real: Moto-Bomba Trifásico = R$800/cv, Monofásico = R$850/cv,
 // Quadro de Partida = R$450/cv nas duas fases; margem de segurança sobre o CV calculado:
 // ≤2cv → +20%, ≤20cv → +15%, >20cv → +10%; CV arredondado para cima ao catálogo padrão).
-function calcularMotorEQuadroPartida(Pcv,numBombas,fase){
+// precos opcional: {trif,mono,quadro} — vem da aba "Configurações" do orçamento; se omitido,
+// usa os valores padrão acima (compatibilidade com chamadas antigas).
+function calcularMotorEQuadroPartida(Pcv,numBombas,fase,precos){
   if(!Pcv||!numBombas)return null;
+  const p={trif:800,mono:850,quadro:450,...(precos||{})};
   const margem=Pcv<=2?1.2:Pcv<=20?1.15:1.1;
   const cvComMargem=Pcv*margem;
   const cvPorBomba=cvComMargem/numBombas;
   const cvCatalogo=nextMotorCV(cvPorBomba);
   const trifasico=fase!=='monofásica';
-  const custoMotoBomba=cvCatalogo*(trifasico?800:850);
-  const custoQuadroPartida=cvCatalogo*450;
+  const custoMotoBomba=cvCatalogo*(trifasico?p.trif:p.mono);
+  const custoQuadroPartida=cvCatalogo*p.quadro;
   const cvFmt=String(cvCatalogo).replace('.',',');
   const faseTag=trifasico?'TRIF':'MONO';
   const faseTxt=trifasico?'Trifásico':'Monofásico';
