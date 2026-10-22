@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.11 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.12 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -87,6 +87,10 @@ tr.item-row.inativo{opacity:.4}
 .selgrupo-badge{display:flex;flex-direction:column;font-size:.6rem;color:var(--mu);font-weight:700;text-transform:uppercase;letter-spacing:.03em}
 .selgrupo-badge input{margin-top:.1rem;width:6em;padding:.15rem .3rem;font-size:.78rem;font-weight:400;text-transform:none}
 .selgrupo-count{font-size:.7rem;color:var(--mu);white-space:nowrap}
+.modal-overlay{position:fixed;inset:0;background:rgba(10,20,30,.5);display:flex;align-items:center;justify-content:center;z-index:999;padding:1rem}
+.modal-box{background:#fff;border-radius:12px;padding:1.3rem 1.4rem;max-width:680px;width:100%;max-height:85vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+.chk-row{display:flex;align-items:center;gap:.5rem;padding:.3rem 0;font-size:.82rem;cursor:pointer}
+.chk-row input{width:auto;cursor:pointer}
 .lista-item{display:flex;justify-content:space-between;align-items:center;padding:.7rem .9rem;border:1px solid var(--bdr);border-radius:10px;margin-bottom:.6rem;background:#fafeff}
 .lista-item:hover{border-color:var(--bl3)}
 .lista-item .li-info b{color:#003d5c;font-size:.95rem}
@@ -265,7 +269,7 @@ tr.item-row.inativo{opacity:.4}
   </div>
   <div class="card">
     <div class="ct"><div class="ct-l">Lista de Materiais (BOM) — <span id="bomCount">0</span> itens</div>
-      <button class="btn btn-blue" onclick="gerarRelatorioConsolidado()">📋 Relatório Consolidado</button>
+      <button class="btn btn-blue" onclick="abrirModalConsolidado()">📋 Relatório Consolidado</button>
     </div>
     <div class="tbl-wrap">
       <table id="tabelaBOM"><thead><tr>
@@ -401,11 +405,50 @@ tr.item-row.inativo{opacity:.4}
 
 </div>
 
+<!-- ============ MODAL: RELATÓRIO CONSOLIDADO ============ -->
+<div class="modal-overlay" id="modalConsolidado" style="display:none" onclick="if(event.target===this)fecharModalConsolidado()">
+  <div class="modal-box">
+    <div class="ct"><div class="ct-l">Relatório Consolidado</div>
+      <button class="btn btn-sm" onclick="fecharModalConsolidado()">✕ Fechar</button>
+    </div>
+    <p style="font-size:.8rem;color:var(--mu);margin-bottom:.8rem">Junta itens iguais (mesmo fornecedor+código) de categorias diferentes numa única linha. Escolha quais listas entram na unificação e quais colunas aparecem.</p>
+    <div class="g2">
+      <div>
+        <div class="ct" style="padding:0;margin-bottom:.4rem"><div class="ct-l" style="font-size:.78rem">Listas a unificar</div></div>
+        <div id="consolModelos"></div>
+        <div style="margin-top:.5rem;display:flex;gap:.4rem">
+          <button class="btn btn-sm" onclick="marcarTodosConsol('consolModelos',true)">Marcar todas</button>
+          <button class="btn btn-sm" onclick="marcarTodosConsol('consolModelos',false)">Desmarcar todas</button>
+        </div>
+      </div>
+      <div>
+        <div class="ct" style="padding:0;margin-bottom:.4rem"><div class="ct-l" style="font-size:.78rem">Colunas a exibir/exportar</div></div>
+        <div id="consolColunas"></div>
+      </div>
+    </div>
+    <div style="display:flex;gap:.6rem;margin-top:1.2rem;flex-wrap:wrap">
+      <button class="btn btn-green" onclick="gerarRelatorioConsolidado()">🖨️ Gerar PDF</button>
+      <button class="btn btn-blue" onclick="exportarConsolidadoCSV()">⬇ Exportar CSV</button>
+    </div>
+  </div>
+</div>
+
 <script src="catalogo-precos.js"></script>
 <script src="conjuntos.js"></script>
 <script src="selecao.js"></script>
 <script src="hidraulica-adutora.js"></script>
 <script>
+// v1.12 (2026-10-22): Relatório Consolidado ganha um modal de configuração antes de
+//   gerar — escolher QUAIS "listas" entram na unificação (cada item do BOM agora
+//   carrega um campo 'modelo': gotejamento_01/gotejamento_02/recalque/avulso,
+//   identificando de qual "Carregar Modelo" ele veio) e QUAIS colunas aparecem/são
+//   exportadas (Fornecedor/Código/Descrição/Qtd/R$Unit/R$Custo/R$Venda, qualquer
+//   combinação). Resolve o caso de uso real: projetos que só usam 1 opção de
+//   gotejo + recalque podem excluir a 2ª opção de gotejo do relatório sem precisar
+//   desativar a categoria inteira no BOM (o que afetaria a Margem x Venda). Inclui
+//   também exportação em CSV (Excel), além do PDF/impressão já existente. As
+//   escolhas de listas/colunas ficam salvas (localStorage) e voltam pré-marcadas
+//   da próxima vez.
 // v1.11 (2026-10-21): 3 melhorias grandes pedidas pelo usuário. (1) Nova tabela de
 //   seleção "Automação Válvula Moto-Bomba" (Projeto + Recalque): antes o Regulador de
 //   Pressão da automação vinha sempre fixo (o modelo "PC-SHARP" do projeto de
@@ -566,7 +609,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.11';
+const APP_VERSION='v1.12';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -1553,28 +1596,32 @@ function tituloBonito(s){
   if(temMinuscula)return s;
   return s.toLowerCase().replace(/(^|[\s(\/-])([a-zà-ÿ])/g,(m,sep,c)=>sep+c.toUpperCase());
 }
-function adicionarItensSelecionados(categoria,itens,grupo,origem){
+function adicionarItensSelecionados(categoria,itens,grupo,origem,modeloBOM){
   (itens||[]).forEach(it=>{
     atual.bom.push({id:uid(),categoria,grupo:grupo||categoria,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
-      qtd:it.qtd,custoUnit:buscarCusto(it.fornecedor,it.codigo)||it.preco||0,ativo:true,origem:origem||'projeto'});
+      qtd:it.qtd,custoUnit:buscarCusto(it.fornecedor,it.codigo)||it.preco||0,ativo:true,origem:origem||'projeto',modelo:modeloBOM||null});
   });
   return (itens||[]).length;
 }
-function adicionarItemCustoFixo(categoria,fornecedor,codigo,descricao,qtd,custoUnit,grupo,origem){
-  atual.bom.push({id:uid(),categoria,grupo:grupo||categoria,fornecedor,codigo,descricao,qtd,custoUnit,ativo:true,origem:origem||'projeto'});
+function adicionarItemCustoFixo(categoria,fornecedor,codigo,descricao,qtd,custoUnit,grupo,origem,modeloBOM){
+  atual.bom.push({id:uid(),categoria,grupo:grupo||categoria,fornecedor,codigo,descricao,qtd,custoUnit,ativo:true,origem:origem||'projeto',modelo:modeloBOM||null});
 }
 function carregarModelo(nomeModelo){
-  const modelo=CONJUNTOS[nomeModelo];
-  if(!modelo){alert('Modelo não encontrado.');return;}
+  const modeloConj=CONJUNTOS[nomeModelo];
+  if(!modeloConj){alert('Modelo não encontrado.');return;}
   // origem: usada no rollup de Margem x Venda (Projeto x Recalque x Total) — todo
   // modelo "recalque" entra como Recalque, os de gotejamento como Projeto de Irrigação.
+  // modelo (campo "modelo" do item): identifica DE QUAL "Carregar Modelo" o item veio
+  // (gotejamento_01/gotejamento_02/recalque) — usado só pelo Relatório Consolidado,
+  // para o usuário poder excluir ex. os itens do gotejamento_02 quando o projeto só
+  // usa 1 opção de gotejo + recalque.
   const origem=nomeModelo==='recalque'?'recalque':'projeto';
   let n=0;
-  Object.keys(modelo).forEach(categoria=>{
-    modelo[categoria].forEach(it=>{
+  Object.keys(modeloConj).forEach(categoria=>{
+    modeloConj[categoria].forEach(it=>{
       atual.bom.push({
         id:uid(),categoria,grupo:categoria,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
-        qtd:it.qtd,custoUnit:buscarCusto(it.fornecedor,it.codigo)||it.preco||0,ativo:true,origem,
+        qtd:it.qtd,custoUnit:buscarCusto(it.fornecedor,it.codigo)||it.preco||0,ativo:true,origem,modelo:nomeModelo,
       });
       n++;
     });
@@ -1588,21 +1635,21 @@ function carregarModelo(nomeModelo){
     const numBombas=(adCfg.resultado&&adCfg.resultado.numBombas)||1;
 
     const grupoSuccao=selecionarGrupoPorVazaoTipo(SELECAO_ATUAL[cfgSel.succao],vazao,d[cfgSel.tipoSuccaoField]);
-    if(grupoSuccao)n+=adicionarItensSelecionados(tituloBonito(grupoSuccao.nomeBonito)||grupoSuccao.label,grupoSuccao.itens,cfgSel.labelSuccao,origem);
+    if(grupoSuccao)n+=adicionarItensSelecionados(tituloBonito(grupoSuccao.nomeBonito)||grupoSuccao.label,grupoSuccao.itens,cfgSel.labelSuccao,origem,nomeModelo);
     else avisos.push(`Sucção: nenhuma faixa de vazão/tipo compatível (vazão=${vazao}, tipo=${d[cfgSel.tipoSuccaoField]}). Confira a vazão na aba de Adutora/Recalque correspondente.`);
 
     if(cfgSel.filtragem){
       const grupoFiltro=selecionarGrupoPorVazaoTipo(SELECAO_ATUAL[cfgSel.filtragem],vazao,d[cfgSel.filtragemField]);
-      if(grupoFiltro)n+=adicionarItensSelecionados(grupoFiltro.label,grupoFiltro.itens,cfgSel.labelFiltragem,origem);
+      if(grupoFiltro)n+=adicionarItensSelecionados(grupoFiltro.label,grupoFiltro.itens,cfgSel.labelFiltragem,origem,nomeModelo);
       else avisos.push(`Filtragem: nenhuma faixa de vazão/tipo compatível (vazão=${vazao}, tipo=${d[cfgSel.filtragemField]}).`);
     }
 
     const grupoMB=selecionarGrupoPorVazaoNumBombas(SELECAO_ATUAL[cfgSel.mbSaida],vazao,numBombas);
-    if(grupoMB)n+=adicionarItensSelecionados(grupoMB.label,grupoMB.itens,cfgSel.labelMB,origem);
+    if(grupoMB)n+=adicionarItensSelecionados(grupoMB.label,grupoMB.itens,cfgSel.labelMB,origem,nomeModelo);
     else avisos.push(`Saída Moto-Bomba: nenhuma faixa compatível (vazão=${vazao}, nº de bombas=${numBombas}) — calcule a aba Adutora/Recalque primeiro para definir o nº de bombas.`);
 
     const grupoBombaAux=selecionarGrupoBombaAux(SELECAO_ATUAL[cfgSel.bombaAux],d[cfgSel.bombaAuxField]);
-    if(grupoBombaAux&&grupoBombaAux.itens.length)n+=adicionarItensSelecionados(grupoBombaAux.opcao,grupoBombaAux.itens,cfgSel.labelBombaAux,origem);
+    if(grupoBombaAux&&grupoBombaAux.itens.length)n+=adicionarItensSelecionados(grupoBombaAux.opcao,grupoBombaAux.itens,cfgSel.labelBombaAux,origem,nomeModelo);
 
     // Moto-Bomba principal + Quadro de Partida (motor 'MB+CH Partida' da planilha):
     // dimensionado pelo CV calculado na aba Adutora/Recalque (Pcv), não por um dropdown.
@@ -1610,8 +1657,8 @@ function carregarModelo(nomeModelo){
     if(Pcv){
       const motor=calcularMotorEQuadroPartida(Pcv,numBombas,d.energiaRede,{trif:CONFIG_GLOBAL.precoCVMotoBombaTrif,mono:CONFIG_GLOBAL.precoCVMotoBombaMono,quadro:CONFIG_GLOBAL.precoCVQuadroPartida});
       if(motor){
-        adicionarItemCustoFixo(motor.motoBomba.descricao,'Bolsa Irriga',motor.motoBomba.codigo,motor.motoBomba.descricao,motor.motoBomba.qtd,motor.motoBomba.custo,'Moto-Bomba',origem);
-        adicionarItemCustoFixo(motor.quadroPartida.descricao,'Bolsa Irriga',motor.quadroPartida.codigo,motor.quadroPartida.descricao,motor.quadroPartida.qtd,motor.quadroPartida.custo,'Quadro de Partida',origem);
+        adicionarItemCustoFixo(motor.motoBomba.descricao,'Bolsa Irriga',motor.motoBomba.codigo,motor.motoBomba.descricao,motor.motoBomba.qtd,motor.motoBomba.custo,'Moto-Bomba',origem,nomeModelo);
+        adicionarItemCustoFixo(motor.quadroPartida.descricao,'Bolsa Irriga',motor.quadroPartida.codigo,motor.quadroPartida.descricao,motor.quadroPartida.qtd,motor.quadroPartida.custo,'Quadro de Partida',origem,nomeModelo);
         n+=2;
       }
     }else{
@@ -1626,7 +1673,7 @@ function carregarModelo(nomeModelo){
     const pressaoPorBomba=adCfg.resultado&&adCfg.resultado.pressaoPorBomba;
     if(pressaoPorBomba){
       const grupoAutomacaoMB=selecionarGrupoPorPressaoVazao(SELECAO_ATUAL[cfgSel.automacaoMB],pressaoPorBomba,vazao);
-      if(grupoAutomacaoMB)n+=adicionarItensSelecionados(grupoAutomacaoMB.label,grupoAutomacaoMB.itens,cfgSel.labelAutomacaoMB,origem);
+      if(grupoAutomacaoMB)n+=adicionarItensSelecionados(grupoAutomacaoMB.label,grupoAutomacaoMB.itens,cfgSel.labelAutomacaoMB,origem,nomeModelo);
       else avisos.push(`Automação Válvula Moto-Bomba: nenhuma faixa compatível (pressão por bomba=${fmtN(pressaoPorBomba,1)}, vazão=${vazao}).`);
     }else{
       avisos.push('Automação Válvula Moto-Bomba: calcule a aba Adutora/Recalque primeiro (precisa da pressão por bomba calculada).');
@@ -1644,7 +1691,7 @@ function carregarModelo(nomeModelo){
         gruposCavalete.forEach(g=>{
           g.itens.forEach(it=>{
             atual.bom.push({id:uid(),categoria:g.label,grupo:'CAVALETES',fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
-              qtd:it.qtd*multCavalete,custoUnit:buscarCusto(it.fornecedor,it.codigo)||it.preco||0,ativo:true,origem});
+              qtd:it.qtd*multCavalete,custoUnit:buscarCusto(it.fornecedor,it.codigo)||it.preco||0,ativo:true,origem,modelo:nomeModelo});
             n++;
           });
         });
@@ -1670,7 +1717,7 @@ function carregarModelo(nomeModelo){
         if(grupoManifold){
           grupoManifold.itens.forEach(it=>{
             atual.bom.push({id:uid(),categoria:`Saída Adutora x Cavalete (${chave})`,grupo:'CAVALETES',fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
-              qtd:it.qtd*nValvulas01,custoUnit:buscarCusto(it.fornecedor,it.codigo)||it.preco||0,ativo:true,origem});
+              qtd:it.qtd*nValvulas01,custoUnit:buscarCusto(it.fornecedor,it.codigo)||it.preco||0,ativo:true,origem,modelo:nomeModelo});
             n++;
           });
         }else{
@@ -1707,7 +1754,7 @@ function adicionarItemAvulsoPorIndice(idx){
   if(categoria===null)return;
   const qtd=parseFloat(prompt('Quantidade:','1'))||1;
   const cat=categoria||'Avulso';
-  atual.bom.push({id:uid(),categoria:cat,grupo:cat,fornecedor,codigo:p.codigo,descricao:p.descricao,qtd,custoUnit:p.custo,ativo:true});
+  atual.bom.push({id:uid(),categoria:cat,grupo:cat,fornecedor,codigo:p.codigo,descricao:p.descricao,qtd,custoUnit:p.custo,ativo:true,origem:'projeto',modelo:'avulso'});
   persistirAtual();renderBOM();renderMargem();renderProposta();
 }
 function bomAtivos(){return atual.bom.filter(i=>i.ativo);}
@@ -1890,11 +1937,53 @@ function atualizarImpostoMargem(key,val){
 // ── Relatório Consolidado (Lista de Materiais unificada) ──────────────
 // Junta itens iguais (mesmo fornecedor+código) vindos de categorias/grupos
 // diferentes do BOM numa única linha, somando quantidade e totais — útil para
-// conferência/compra, igual à planilha real "Lista de Materiais".
-function calcularConsolidado(orc){
+// conferência/compra, igual à planilha real "Lista de Materiais". O usuário
+// escolhe quais "listas" (modelo de onde o item veio: Gotejamento 1ª/2ª opção,
+// Recalque, Avulso) entram na unificação — ex.: projetos que só usam 1 opção de
+// gotejo + recalque excluem a 2ª opção — e quais colunas aparecem/exportam.
+const MODELO_LABELS={gotejamento_01:'Gotejamento — 1ª Opção (Adutora 01)',gotejamento_02:'Gotejamento — 2ª Opção (Adutora 02)',recalque:'Recalque',avulso:'Itens Avulsos',outros:'Outros (sem modelo definido)'};
+const CONSOL_COLUNAS=[
+  {key:'fornecedor',label:'Fornecedor'},{key:'codigo',label:'Código'},{key:'descricao',label:'Descrição'},
+  {key:'qtd',label:'Qtd. Total'},{key:'custoUnit',label:'R$ Unit. (méd.)'},{key:'custoTotal',label:'R$ Custo Total'},{key:'vendaTotal',label:'R$ Venda Total'},
+];
+function carregarPrefsConsolidado(){
+  try{return JSON.parse(localStorage.getItem('orcamento_consolidado_prefs')||'{}');}catch(e){return{};}
+}
+function salvarPrefsConsolidado(prefs){
+  try{localStorage.setItem('orcamento_consolidado_prefs',JSON.stringify(prefs));}catch(e){}
+}
+function abrirModalConsolidado(){
+  if(!atual.bom.length){alert('Nenhum item no BOM ainda.');return;}
+  const modelosPresentes=[...new Set(atual.bom.map(i=>i.modelo||'outros'))];
+  const prefs=carregarPrefsConsolidado();
+  const excluidos=new Set(prefs.modelosExcluidos||[]);
+  const colunasPref=prefs.colunas&&prefs.colunas.length?new Set(prefs.colunas):new Set(CONSOL_COLUNAS.map(c=>c.key));
+  $('consolModelos').innerHTML=modelosPresentes.map(m=>{
+    const label=MODELO_LABELS[m]||m;
+    const n=atual.bom.filter(i=>(i.modelo||'outros')===m).length;
+    return `<label class="chk-row"><input type="checkbox" data-modelo="${escapeHTML(m)}" ${excluidos.has(m)?'':'checked'}> ${escapeHTML(label)} <span class="tl">(${n} itens)</span></label>`;
+  }).join('');
+  $('consolColunas').innerHTML=CONSOL_COLUNAS.map(c=>
+    `<label class="chk-row"><input type="checkbox" id="consolcol_${c.key}" ${colunasPref.has(c.key)?'checked':''}> ${c.label}</label>`
+  ).join('');
+  $('modalConsolidado').style.display='flex';
+}
+function fecharModalConsolidado(){$('modalConsolidado').style.display='none';}
+function marcarTodosConsol(containerId,valor){
+  document.querySelectorAll('#'+containerId+' input[type=checkbox]').forEach(cb=>cb.checked=valor);
+}
+function lerSelecaoConsolidado(){
+  const modelos=new Set([...document.querySelectorAll('#consolModelos input:checked')].map(cb=>cb.dataset.modelo));
+  const todosModelos=[...document.querySelectorAll('#consolModelos input')].map(cb=>cb.dataset.modelo);
+  const excluidos=todosModelos.filter(m=>!modelos.has(m));
+  const colunas=CONSOL_COLUNAS.map(c=>c.key).filter(k=>$('consolcol_'+k).checked);
+  salvarPrefsConsolidado({modelosExcluidos:excluidos,colunas});
+  return {modelos,colunas};
+}
+function calcularConsolidado(orc,modelosPermitidos){
   const f=fatorMargem(orc.dadosEntrada);
   const porCodigo={};
-  orc.bom.filter(i=>i.ativo).forEach(it=>{
+  orc.bom.filter(i=>i.ativo&&(!modelosPermitidos||modelosPermitidos.has(i.modelo||'outros'))).forEach(it=>{
     const key=(it.fornecedor||'')+'|'+it.codigo;
     if(!porCodigo[key])porCodigo[key]={fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,qtd:0,custoTotal:0,vendaTotal:0};
     const c=porCodigo[key];
@@ -1903,19 +1992,31 @@ function calcularConsolidado(orc){
     c.vendaTotal+=it.qtd*it.custoUnit*f;
   });
   return Object.values(porCodigo)
-    .map(it=>({...it,custoUnitMedio:it.qtd?it.custoTotal/it.qtd:0}))
+    .map(it=>({...it,custoUnit:it.qtd?it.custoTotal/it.qtd:0}))
     .sort((a,b)=>a.descricao.localeCompare(b.descricao,'pt-BR'));
 }
+function formatarColunaConsol(key,it){
+  if(key==='fornecedor')return `<span class="tag ${it.fornecedor==='Netafim'?'tag-nt':'tag-bi'}">${escapeHTML(it.fornecedor)}</span>`;
+  if(key==='codigo')return escapeHTML(it.codigo);
+  if(key==='descricao')return escapeHTML(it.descricao);
+  if(key==='qtd')return fmtN(it.qtd,2);
+  if(key==='custoUnit')return fmtR(it.custoUnit);
+  if(key==='custoTotal')return fmtR(it.custoTotal);
+  if(key==='vendaTotal')return fmtR(it.vendaTotal);
+  return'';
+}
 function gerarRelatorioConsolidado(){
-  if(!atual.bom.length){alert('Nenhum item no BOM ainda.');return;}
-  const itens=calcularConsolidado(atual);
+  const {modelos,colunas}=lerSelecaoConsolidado();
+  if(!colunas.length){alert('Selecione ao menos 1 coluna.');return;}
+  const itens=calcularConsolidado(atual,modelos);
+  if(!itens.length){alert('Nenhum item ativo nas listas selecionadas.');return;}
   const custoTotal=itens.reduce((s,i)=>s+i.custoTotal,0);
   const vendaTotal=itens.reduce((s,i)=>s+i.vendaTotal,0);
-  const linhas=itens.map(it=>`<tr>
-    <td><span class="tag ${it.fornecedor==='Netafim'?'tag-nt':'tag-bi'}">${escapeHTML(it.fornecedor)}</span></td>
-    <td>${escapeHTML(it.codigo)}</td><td>${escapeHTML(it.descricao)}</td>
-    <td class="num">${fmtN(it.qtd,2)}</td><td class="num">${fmtR(it.custoUnitMedio)}</td>
-    <td class="num">${fmtR(it.custoTotal)}</td><td class="num">${fmtR(it.vendaTotal)}</td></tr>`).join('');
+  const colunasInfo=CONSOL_COLUNAS.filter(c=>colunas.includes(c.key));
+  const numericas=new Set(['qtd','custoUnit','custoTotal','vendaTotal']);
+  const linhas=itens.map(it=>'<tr>'+colunasInfo.map(c=>`<td class="${numericas.has(c.key)?'num':''}">${formatarColunaConsol(c.key,it)}</td>`).join('')+'</tr>').join('');
+  const temCustoTotal=colunas.includes('custoTotal'), temVendaTotal=colunas.includes('vendaTotal');
+  const colsAntesDoTotal=colunasInfo.length-(temCustoTotal?1:0)-(temVendaTotal?1:0);
   const win=window.open('','_blank');
   if(!win){alert('Popup bloqueado. Permita pop-ups para este site.');return;}
   const html=`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
@@ -1935,12 +2036,33 @@ function gerarRelatorioConsolidado(){
     </style></head><body>
     <h2>Relatório Consolidado — Lista de Materiais</h2>
     <p>${escapeHTML(atual.dadosEntrada.cliente||'—')} · ${itens.length} itens únicos</p>
-    <table><thead><tr><th>Fornecedor</th><th>Código</th><th>Descrição</th><th class="num">Qtd. Total</th><th class="num">R$ Unit. (méd.)</th><th class="num">R$ Custo Total</th><th class="num">R$ Venda Total</th></tr></thead>
+    <table><thead><tr>${colunasInfo.map(c=>`<th>${c.label}</th>`).join('')}</tr></thead>
     <tbody>${linhas}</tbody>
-    <tfoot><tr><td colspan="5">TOTAL</td><td class="num">${fmtR(custoTotal)}</td><td class="num">${fmtR(vendaTotal)}</td></tr></tfoot>
+    <tfoot><tr>${colsAntesDoTotal>0?`<td colspan="${colsAntesDoTotal}">TOTAL</td>`:''}${temCustoTotal?`<td class="num">${fmtR(custoTotal)}</td>`:''}${temVendaTotal?`<td class="num">${fmtR(vendaTotal)}</td>`:''}</tr></tfoot>
     </table></body></html>`;
   win.document.write(html);win.document.close();
   win.onload=()=>setTimeout(()=>win.print(),400);
+}
+function exportarConsolidadoCSV(){
+  const {modelos,colunas}=lerSelecaoConsolidado();
+  if(!colunas.length){alert('Selecione ao menos 1 coluna.');return;}
+  const itens=calcularConsolidado(atual,modelos);
+  if(!itens.length){alert('Nenhum item ativo nas listas selecionadas.');return;}
+  const colunasInfo=CONSOL_COLUNAS.filter(c=>colunas.includes(c.key));
+  const csvEscape=v=>{const s=String(v??'');return/[;"\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;};
+  const valorBruto=(key,it)=>{
+    if(key==='qtd')return fmtN(it.qtd,2);
+    if(key==='custoUnit'||key==='custoTotal'||key==='vendaTotal')return fmtN(it[key],2);
+    return it[key]??'';
+  };
+  const linhas=[colunasInfo.map(c=>csvEscape(c.label)).join(';')]
+    .concat(itens.map(it=>colunasInfo.map(c=>csvEscape(valorBruto(c.key,it))).join(';')));
+  const blob=new Blob(['﻿'+linhas.join('\r\n')],{type:'text/csv;charset=utf-8;'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download=`relatorio-consolidado-${(atual.dadosEntrada.cliente||'orcamento').replace(/[^a-z0-9]+/gi,'-')}.csv`;
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // ── Proposta Comercial ───────────────────────────────────────────────
