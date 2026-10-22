@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<!-- build 2026-10-17 v1.21.0 -->
+<!-- build 2026-10-22 v1.21.1 -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Visualizador IrriCAD v1.21.0 &middot; TophoFarm</title>
+<title>Visualizador IrriCAD v1.21.1 &middot; TophoFarm</title>
 <meta name="theme-color" content="#1f4e4c">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -188,7 +188,7 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
    (ver tamanhoFontePx/atualizaTextosDXF). Contorno escuro (nao caixa solida)
    pra ficar legivel em qualquer parte da foto de satelite. ---------- */
 .dxf-texto-wrap{background:transparent!important;border:none!important}
-.dxf-texto{position:absolute;left:0;top:0;transform-origin:0% 50%;white-space:pre;font-weight:600;
+.dxf-texto{position:absolute;left:0;top:0;white-space:pre;font-weight:600;
   line-height:1.15;cursor:pointer;text-shadow:-1px -1px 2px rgba(0,0,0,.85),1px -1px 2px rgba(0,0,0,.85),
   -1px 1px 2px rgba(0,0,0,.85),1px 1px 2px rgba(0,0,0,.85),0 0 4px rgba(0,0,0,.85)}
 </style>
@@ -285,8 +285,9 @@ html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-seri
 /* ==================================================================
    VERSAO / HISTORICO
    ================================================================== */
-const VERSAO_APP = '1.21.0';
+const VERSAO_APP = '1.21.1';
 const HISTORICO_VERSOES = [
+  {v:'1.21.1', d:'22/10/2026', t:'Corrige texto do DXF saindo de dentro de molduras/caixas (ex.: "Max:23,00m"), reportado com print comparando AutoCAD x app. Causa: o DXF marca texto centralizado com um código de justificação (72/73) e grava a POSIÇÃO REAL num ponto separado (grupo 11/21) — o parser ignorava isso e sempre lia a posição "esquerda" antiga (grupo 10/20), bem mais afastada do centro da caixa. Agora lê a justificação certa e centraliza o texto no ponto correto, igual o AutoCAD. Vale tanto pros textos soltos quanto pros de comprimento/diâmetro de tubo (que também ficaram mais precisos).'},
   {v:'1.21.0', d:'17/10/2026', t:'Nova opção "Abrir Pasta de Montagem (.zip)": abre de uma vez um pacote com vários arquivos do projeto — .dxf, .kmz/.kml, ortofoto georreferenciada (.tif) e PDFs de cálculo (lista de materiais, pressão de bombas/setores, tempo de avanço etc.) — pra equipe de campo acessar tudo pelo celular, offline, sem precisar baixar arquivo por arquivo. O .dxf e o .kmz do pacote viram camadas no mapa (como já funcionava); a ortofoto vira mais uma camada de imagem, posicionada certa usando a zona UTM que já vem gravada nela; os PDFs ficam numa lista "Documentos" na gaveta de Camadas, toque pra abrir no leitor do celular. Atenção: precisa ser .zip — .rar não funciona (o navegador não sabe abrir).'},
   {v:'1.20.0', d:'06/10/2026', t:'Fundo preto (igual AutoCAD) sempre que não há foto de satélite: 1) o botão de satélite agora "apaga" pra preto, não pra mapa de ruas; 2) em áreas rurais onde a Esri não tem foto de verdade (comum fora de cidade), ela mandava um quadrado cinza-claro escrito "Map data not available" em vez de dar erro — ficava mais óbvio em zoom alto porque esse quadrado cinza cobria mais tela; agora isso é detectado (pela cor, sem variação, bem diferente de uma foto de verdade) e escondido, mostrando preto no lugar. Vale pro .kmz e pro .dxf, já que os dois usam o mesmo mapa de fundo.'},
   {v:'1.19.1', d:'06/10/2026', t:'Corrige a moldura (quadro) de resumo de zona ("Zone no. 1 / Cota / Área...") ficando menor que o texto dentro dela em alguns zooms. Causa: o quadro é um desenho real do DXF, que escala em proporção verdadeira com o zoom do mapa; o texto tinha um tamanho mínimo/máximo artificial (8 a 60px) que não acompanhava essa mesma escala — em zooms mais afastados, o quadro encolhia mais rápido que o piso de 8px do texto permitia, e o texto vazava pra fora. Removido esse limite: agora o texto escala em proporção real (igual a moldura), sempre do tamanho certo um pro outro, em qualquer zoom.'},
@@ -1133,16 +1134,28 @@ function parseDXF(texto){
           if(!pr) break;
           if(pr.code===0 && pr.val==='ENDBLK') break;
           if(pr.code===0 && (pr.val==='TEXT' || pr.val==='MTEXT')){
-            const t={x:0,y:0,h:1,rot:0,texto:'',cor:null};
+            const t={x:0,y:0,h:1,rot:0,texto:'',cor:null,justH:0,justV:0};
+            let altX=null, altY=null;
             while(p<total && peekCode()!==0){
               const c=readPair(); if(!c) break;
               if(c.code===62){ const cc=corDoGrupo62(c.val); if(cc) t.cor=cc; }
               else if(c.code===10) t.x=parseFloat(c.val);
               else if(c.code===20) t.y=parseFloat(c.val);
+              else if(c.code===11) altX=parseFloat(c.val);
+              else if(c.code===21) altY=parseFloat(c.val);
+              else if(c.code===72) t.justH=parseInt(c.val,10)||0;
+              else if(c.code===73) t.justV=parseInt(c.val,10)||0;
               else if(c.code===40) t.h=parseFloat(c.val);
               else if(c.code===50) t.rot=parseFloat(c.val);
               else if(c.code===1 || c.code===3) t.texto += c.val;
             }
+            // texto justificado (centralizado/a direita/etc, nao "esquerda
+            // encostado na base") usa o PONTO DE ALINHAMENTO (11/21) como
+            // ancora de verdade, nao o 10/20 -- se nao olhar isso o texto
+            // sai deslocado (foi o que o usuario reportou: "escrita fora da
+            // caixa", a caixa fica centrada no 11/21 mas o texto desenhava
+            // a partir do 10/20, bem mais a esquerda).
+            if((t.justH || t.justV) && altX!=null && altY!=null){ t.x=altX; t.y=altY; }
             t.texto = t.texto.replace(/\\P/g,'\n').replace(/\\[A-Za-z][0-9.]*;?/g,'').trim();
             if(t.texto) textos.push(t);
           } else if(pr.code===0){
@@ -1236,17 +1249,25 @@ function parseDXF(texto){
         }
         if(e.pts.length>1) entidades.push(e);
       } else if(tipo==='TEXT' || tipo==='MTEXT'){
-        const e={tipo:'text', x:0,y:0, h:1, rot:0, texto:'', cor:null, layer:'0'};
+        const e={tipo:'text', x:0,y:0, h:1, rot:0, texto:'', cor:null, layer:'0', justH:0, justV:0};
+        let altX=null, altY=null;
         while(p<total && peekCode()!==0){
           const c=readPair(); if(!c) break;
           if(c.code===8) e.layer=c.val;
           else if(c.code===62){ const cc=corDoGrupo62(c.val); if(cc) e.cor=cc; }
           else if(c.code===10) e.x=parseFloat(c.val);
           else if(c.code===20) e.y=parseFloat(c.val);
+          else if(c.code===11) altX=parseFloat(c.val);
+          else if(c.code===21) altY=parseFloat(c.val);
+          else if(c.code===72) e.justH=parseInt(c.val,10)||0;
+          else if(c.code===73) e.justV=parseInt(c.val,10)||0;
           else if(c.code===40) e.h=parseFloat(c.val);
           else if(c.code===50) e.rot=parseFloat(c.val);
           else if(c.code===1 || c.code===3) e.texto += c.val;
         }
+        // mesma regra do texto dentro de blocos: justificado usa o ponto de
+        // alinhamento (11/21), nao o 10/20 -- ver comentario em parseBlocks.
+        if((e.justH || e.justV) && altX!=null && altY!=null){ e.x=altX; e.y=altY; }
         e.texto = e.texto.replace(/\\P/g,'\n').replace(/\\[A-Za-z][0-9.]*;?/g,'').trim();
         if(e.texto){ marca(e.x,e.y); entidades.push(e); }
       } else if(tipo==='INSERT'){
@@ -1298,7 +1319,7 @@ function parseDXF(texto){
       const wx = e.x + lx*cosR - ly*sinR, wy = e.y + lx*sinR + ly*cosR;
       marca(wx,wy);
       entidades.push({tipo:'text', x:wx, y:wy, h:t.h*((e.esx+e.esy)/2), rot:(e.rot||0)+(t.rot||0),
-        texto:t.texto, cor:t.cor, layer:e.layer});
+        texto:t.texto, cor:t.cor, layer:e.layer, justH:t.justH, justV:t.justV});
     });
   });
 
@@ -1452,9 +1473,20 @@ function construirCamadasDXF(dados, projId, projNome, zonaInfo, opcoes){
       const p = ll(e.x,e.y);
       const rotCss = -(e.rot||0); // DXF: graus anti-horario a partir do leste; CSS rotate() e horario
       const fontePx = tamanhoFontePx(Math.max(0.3,e.h));
+      // DXF guarda a JUSTIFICACAO do texto (72=horizontal, 73=vertical) e,
+      // quando ela nao e "esquerda/base" (o padrao), o ponto gravado no
+      // arquivo (11/21, ja resolvido no parser) e o CENTRO/direita/meio do
+      // texto, nao o canto onde ele comeca a ser desenhado -- por isso o
+      // texto precisa ficar centralizado/alinhado nesse ponto, nao "escorrer"
+      // pra direita e pra baixo dele a partir do canto (o que fazia o texto
+      // sair visualmente de dentro de caixas/molduras desenhadas ao redor).
+      const hPct = e.justH===1 ? 50 : e.justH===2 ? 100 : (e.justH>=3 ? 50 : 0);
+      const vPct = e.justV===2 ? 50 : e.justV===3 ? 0 : 100;
       const icone = L.divIcon({
         className:'dxf-texto-wrap', iconSize:[1,1], iconAnchor:[0,0],
-        html:`<span class="dxf-texto" style="color:${cor};font-size:${fontePx}px;transform:rotate(${rotCss}deg)">${escMultilinha(e.texto)}</span>`
+        html:`<span class="dxf-texto" style="color:${cor};font-size:${fontePx}px;`+
+          `transform-origin:${hPct}% ${vPct}%;transform:translate(${-hPct}%,${-vPct}%) rotate(${rotCss}deg)">`+
+          `${escMultilinha(e.texto)}</span>`
       });
       const m = L.marker(p, {icon:icone, pane:'pontosInfoPane', interactive:true});
       m.bindPopup(`<b>${escMultilinha(e.texto)}</b><br><small style="color:#5a7a88">Camada: ${escHTML(e.layer)}</small>`);
