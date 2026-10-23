@@ -441,7 +441,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.86 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.87 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -14026,13 +14026,30 @@ async function gerarPDF() {
 </div>`;
   const footerHtml = `<div class="footer">Bolsa Irriga&#174; &mdash; Av. Elias Abr&#227;o, n&#186; 140 &middot; Franca &#8211; SP &middot; (16) 99401-2495 &middot; bolsairriga.com.br<br>&#169; 2025 Jo&#227;o Paulo de Oliveira &middot; Gerado em ${date}</div>`;
 
-  const paginaMapa = (titulo, svgConteudo) => `<div class="pagina pg1">
+  // v5.87: pedido do usuário — "o fundo esta saindo negro, sem foto de satelite, e a foto esta
+  // ativada" (relatório PDF). Causa: window.onload (no <script> final) tentava esperar uma imagem
+  // de id="smap" que NUNCA existiu no HTML gerado desde que o fundo virou um <image> dentro do SVG
+  // (v5.78) — document.getElementById('smap') sempre devolvia null, então `!img` era sempre
+  // verdadeiro e window.print() disparava num setTimeout FIXO de 500ms, sem esperar a imagem de
+  // fundo de verdade. Com o canvas capturado (data URL) isso nunca dava problema visível (decodifica
+  // quase instantâneo, bem dentro dos 500ms) — mas no fallback do satélite via URL EXTERNA (v5.80,
+  // quando a captura por canvas falha com SecurityError) a imagem precisa de uma requisição de rede
+  // de verdade, que pode facilmente levar mais que 500ms — o PDF era impresso com a imagem ainda
+  // não carregada, saindo em branco/preto onde ela deveria estar. Fix: cada <image> de fundo real
+  // (não o rect/text de aviso, que não tem nada pra esperar) ganha onload/onerror chamando
+  // _bgImgPronta() (função global no <script> final) — window.print() só dispara quando TODAS as
+  // imagens de fundo (pode haver mais de uma agora, 1 por página de mapa — v5.84) carregaram, com um
+  // teto de 6s de segurança pra nunca travar o print pra sempre se uma imagem nunca responder.
+  let nPaginasMapa = 0;
+  const paginaMapa = (titulo, svgConteudo) => {
+    nPaginasMapa++;
+    return `<div class="pagina pg1">
 <h2>${titulo}</h2>
 <div class="map-wrap-outer">
 <div class="map-wrap" style="width:${mapaLarguraMm}mm;height:${mapaAlturaMm}mm">
   <svg viewBox="0 0 ${MW} ${MH}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
     ${imgDataUrl
-      ? `<image href="${imgDataUrl}" x="0" y="0" width="${MW}" height="${MH}" preserveAspectRatio="none"/>`
+      ? `<image href="${imgDataUrl}" x="0" y="0" width="${MW}" height="${MH}" preserveAspectRatio="none" onload="_bgImgPronta()" onerror="_bgImgPronta()"/>`
       : `<rect x="0" y="0" width="${MW}" height="${MH}" fill="#1a2535"/><text x="${MW/2}" y="${MH/2}" text-anchor="middle" font-family="Arial,sans-serif" font-size="12" fill="#556">N&#227;o foi poss&#237;vel capturar a imagem de fundo do mapa</text>`
     }
     ${svgConteudo}
@@ -14045,6 +14062,7 @@ async function gerarPDF() {
 </div>
 </div>
 </div>`;
+  };
 
   const paginaTabela = (corpoHtml) => `<div class="pagina">
 ${headerCompacto}
@@ -14079,6 +14097,10 @@ ${footerHtml}
 <tbody>${todos.map(t => `<tr><td><b>Talh&#227;o ${t.idx}</b></td><td>${(t.areaHa||0).toFixed(2)} ha</td></tr>`).join('')}</tbody>
 </table></div>`));
   }
+
+  // Quantas páginas de mapa têm uma imagem de fundo REAL pra esperar carregar antes de imprimir
+  // (0 se a captura falhou e nem o fallback de satélite tinha o que mostrar — ver imgDataUrl acima).
+  const nImagensFundo = imgDataUrl ? nPaginasMapa : 0;
 
   // ── HTML completo ─────────────────────────────────────────────────────────
   const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
@@ -14115,11 +14137,15 @@ tfoot td{background:#e3f2fd}
 ${paginas.join('')}
 <script>
 window.onafterprint = function(){ try{ window.close(); }catch(e){} };
-window.onload = function(){
-  var img = document.getElementById('smap');
-  var go  = function(){ setTimeout(function(){ window.print(); }, 500); };
-  if(!img || img.complete !== false) go(); else { img.onload = go; img.onerror = go; }
-};
+// v5.87: espera as ${nImagensFundo} imagem(ns) de fundo REAIS carregarem antes de imprimir — cada
+// <image> de mapa chama _bgImgPronta() via onload/onerror inline (ver paginaMapa em gerarPDF).
+// Teto de 6s de segurança: nunca trava o print pra sempre se uma imagem nunca responder (ex.: o
+// serviço externo de satélite do fallback ficou fora do ar).
+var _bgTotal = ${nImagensFundo}, _bgProntas = 0, _impresso = false;
+function _imprimirAgora(){ if(_impresso) return; _impresso = true; setTimeout(function(){ window.print(); }, 300); }
+function _bgImgPronta(){ _bgProntas++; if(_bgProntas >= _bgTotal) _imprimirAgora(); }
+window.onload = function(){ if(_bgProntas >= _bgTotal) _imprimirAgora(); };
+setTimeout(_imprimirAgora, 6000);
 <\/script>
 </body></html>`;
 
