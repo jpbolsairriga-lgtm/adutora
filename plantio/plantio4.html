@@ -439,7 +439,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.84 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.85 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -563,6 +563,11 @@ body.layout-lateral #status{grid-area:status;}
             <div class="rcol">
               <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--panel-text);cursor:pointer;height:26px;">
                 <input type="checkbox" id="carreadorIntSuave"> Desenhar talhão interno como linha suave
+              </label>
+            </div>
+            <div class="rcol">
+              <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--panel-text);cursor:pointer;height:26px;" title="Por padrão o contorno externo fica no mapa só como referência visual (tracejado laranja), sem contar em nenhuma soma. Marque aqui pra apagar essa referência depois de criar o talhão interno.">
+                <input type="checkbox" id="carreadorIntExcluirExterno"> Excluir contorno externo ao criar
               </label>
             </div>
             <div class="rcol">
@@ -5742,6 +5747,7 @@ function confirmarCarreadorInterno() {
   if(polyPts.length < 3) { setStatus('Desenhe e feche o contorno externo primeiro.', 'err'); return; }
   const larguraM = parseFloat($('larguraCarreadorInt').value);
   const suave = $('carreadorIntSuave').checked;
+  const excluirExterno = $('carreadorIntExcluirExterno').checked;
   const outerPts = polyPts.slice(); // contorno recém-fechado (ainda não travado) — vira a referência externa
   const resultado = _calcularCarreadorInterno(outerPts, larguraM, suave, 3);
   if(resultado.erro) { setStatus(resultado.erro, 'err'); return; }
@@ -5772,16 +5778,23 @@ function confirmarCarreadorInterno() {
   // relatório. Anel = polígono com FURO (ring externo + ring interno) — truque nativo do Leaflet
   // pra desenhar "a faixa entre 2 contornos" sem precisar de turf.difference (evita a divergência
   // de assinatura entre turf v6 — usado aqui no app — e v7, usado só no harness de teste).
-  const outerLayer = L.polygon([...outerPts, outerPts[0]], { color:'#ff6f00', weight:2, dashArray:'8,5', fill:false }).addTo(map);
-  const ringLayer = L.polygon([outerPts, polyPts], { color:'#ff6f00', weight:0, fillColor:'#ff6f00', fillOpacity:.15, interactive:false }).addTo(map);
-  _carreadoresInternosVisuais.push({ outerLayer, ringLayer });
+  // v5.85: pedido do usuário — "quero a opção de deletar o contorno extreno qdo eu for desenho o
+  // interno, ajuste isso". Antes essas 2 camadas eram criadas sempre, sem opção de não ficarem no
+  // mapa. Com "Excluir contorno externo ao criar" marcado, nem chega a criar as camadas (nada pra
+  // limpar depois) — sem isso, comportamento de sempre (referência tracejada fica no mapa).
+  if(!excluirExterno) {
+    const outerLayer = L.polygon([...outerPts, outerPts[0]], { color:'#ff6f00', weight:2, dashArray:'8,5', fill:false }).addTo(map);
+    const ringLayer = L.polygon([outerPts, polyPts], { color:'#ff6f00', weight:0, fillColor:'#ff6f00', fillOpacity:.15, interactive:false }).addTo(map);
+    _carreadoresInternosVisuais.push({ outerLayer, ringLayer });
+  }
 
   $('grpCarreadorIntConfig').style.display = 'none';
 
   const avisoTxt = resultado.avisoMultiplasPartes
     ? ' ⚠ o formato do contorno era irregular demais pra essa largura em alguns trechos — ficou só com a maior parte contígua.'
     : '';
-  setStatus(`Talhão interno criado: ${resultado.areaInnerHa.toFixed(2)} ha (carreador de ${larguraM}m ao redor, ${resultado.areaOuterHa.toFixed(2)} ha de limite externo — não contabilizado). Trave o talhão, desenhe a guia ou gere as linhas.${avisoTxt}`, resultado.avisoMultiplasPartes ? 'warn' : 'ok');
+  const excluirTxt = excluirExterno ? ' O contorno externo foi excluído (não fica como referência no mapa).' : '';
+  setStatus(`Talhão interno criado: ${resultado.areaInnerHa.toFixed(2)} ha (carreador de ${larguraM}m ao redor, ${resultado.areaOuterHa.toFixed(2)} ha de limite externo — não contabilizado).${excluirTxt} Trave o talhão, desenhe a guia ou gere as linhas.${avisoTxt}`, resultado.avisoMultiplasPartes ? 'warn' : 'ok');
 }
 
 // ── Busca de Local ────────────────────────────────────────────────────────────
