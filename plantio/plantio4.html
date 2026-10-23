@@ -439,7 +439,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.83 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.84 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -13700,6 +13700,20 @@ function _ajustarTamanhoMapaRelatorio(mw, mh, maxWmm, maxHmm) {
   return { larguraMm, alturaMm };
 }
 
+// v5.84 — pedido do usuário: "quero melhorar o relatorio em pdf, quero que cada poduto, cada
+// situação seja um pagina... e quero q apareças a tabelas referente a cada situação na sequencia
+// de sua pagina". Resumo por talhão do Mapa de Escoamento (nº de trechos de talvegue + comprimento
+// total), pra alimentar a tabela da nova página "Escoamento" — puro, recebe os segmentos JÁ
+// extraídos (array de {idx, segs}, onde segs é um array de trechos, cada trecho um array de
+// {lat,lng}), sem depender do Leaflet/mapa, pra poder ser testado isoladamente.
+function _resumoEscoamentoTalhoes(itens) {
+  return itens.map(it => {
+    let comprimentoM = 0;
+    it.segs.forEach(seg => { for(let i = 0; i < seg.length - 1; i++) comprimentoM += haversineM(seg[i], seg[i+1]); });
+    return { idx: it.idx, trechos: it.segs.length, comprimentoM };
+  });
+}
+
 // ── Relatório PDF ─────────────────────────────────────────────────────────────
 // v5.78: pedido do usuário — "qdo vou exportar o relatorio sai sempre a foto de satelite de fundo
 // mesmo que eu desligue, quero que apareça no report sempre igual estou visualizando, se tem foto
@@ -13824,6 +13838,28 @@ async function gerarPDF() {
     return `<path d="${llPath(pts)}" stroke="${col}" stroke-width="${w}" fill="none" stroke-opacity="${op}" stroke-linecap="round" stroke-linejoin="round"/>`;
   };
 
+  // v5.84: talvegues do Mapa de Escoamento são guardados como uma MULTI-polyline (vários trechos
+  // DESCONEXOS, ver gerarMapaEscoamento) — svgLine (acima) usa extractPts, que achata tudo num só
+  // array de pontos e ligaria o FIM de um trecho ao INÍCIO do próximo com uma linha reta fantasma.
+  // Aqui cada trecho vira o seu próprio <path>, sem conectar trechos que não têm nada a ver.
+  const svgMultiLine = (pl) => {
+    if (!pl) return '';
+    let grupos;
+    try { grupos = pl.getLatLngs(); } catch(e) { return ''; }
+    if (!Array.isArray(grupos) || !grupos.length) return '';
+    if (!Array.isArray(grupos[0])) grupos = [grupos]; // layer com 1 trecho só — normaliza
+    const col = pl.options.color || '#FFD600';
+    const w   = (pl.options.weight || 2) * 0.7;
+    const op  = pl.options.opacity ?? 1;
+    let out = '';
+    grupos.forEach(g => {
+      const pts = g.map(ll => ({ lat: ll.lat, lng: ll.lng }));
+      if (pts.length < 2) return;
+      out += `<path d="${llPath(pts)}" stroke="${col}" stroke-width="${w}" fill="none" stroke-opacity="${op}" stroke-linecap="round" stroke-linejoin="round"/>`;
+    });
+    return out;
+  };
+
   // Centróide área-ponderado (garante label dentro do polígono)
   const polyCentroid = pts => {
     let twoA = 0, clat = 0, clng = 0;
@@ -13855,22 +13891,57 @@ async function gerarPDF() {
     </g>`;
   };
 
-  // ── Gerar paths SVG ────────────────────────────────────────────────────────
-  let svgPaths = '';
-  todos.forEach(t => {
-    svgPaths += svgPoly(t.polyPts, t.cor);
-    const lns = (t.linhasDecl && t.linhasDecl.length) ? t.linhasDecl : t.linhas;
-    lns.forEach(pl => { svgPaths += svgLine(pl); });
-    svgPaths += svgLabel(t.polyPts, t.idx, t.cor, t.areaHa, t.count || t.linhas.length);
-  });
-  if (polyPts.length >= 3) {
-    svgPaths += svgPoly(polyPts, '#42a5f5');
-    (linhasDecl.length ? linhasDecl : linhas).forEach(pl => { svgPaths += svgLine(pl); });
-    svgPaths += svgLabel(polyPts, talhoesArquivados.length + 1, '#42a5f5', areaHaAtual, countLinhasAtual);
-  }
-  curvaLayers.forEach(pl => { svgPaths += svgLine(pl); });
+  // ── Gerar paths SVG por "situação" (produto) ──────────────────────────────────────────────────
+  // v5.84: pedido do usuário — "quero melhorar o relatorio em pdf, quero que cada poduto, cada
+  // situação seja um pagina, uma pagina par alinhas de plantio, 01 pagina para curvas de nivel, 01
+  // pagina para escoamento, cada pagina so aparece se sua layer estiver ativa, e quero q apareças
+  // a tabelas referente a cada situação na sequencia de sua pagina". Antes era 1 mapa combinado
+  // (tudo junto) + 1 página com todas as tabelas juntas. Agora cada situação (Linhas de Plantio /
+  // Curvas de Nível / Escoamento) tem seu próprio par de páginas — mapa cheio da página, tabela
+  // logo depois, na sequência — reaproveitando a MESMA captura de fundo (imgDataUrl/MW/MH/toPx,
+  // calculada acima, só muda o que é desenhado por cima) e o MESMO filtro de visibilidade
+  // _layerVisivel (v5.81, já usado na exportação KML/DXF): camada desligada no Painel de Camadas
+  // → elementos somem do SVG → contagem zera → a página inteira (mapa + tabela) nem é gerada.
+  const svgContornos = (() => {
+    let s = '';
+    todos.forEach(t => { if (_layerVisivel(t.polyLayer)) s += svgPoly(t.polyPts, t.cor); });
+    if (polyPts.length >= 3 && _layerVisivel(polyLayer)) s += svgPoly(polyPts, '#42a5f5');
+    return s;
+  })();
 
-  // ── Tabela de talhões ─────────────────────────────────────────────────────
+  // Situação 1: Linhas de Plantio (ou Declividade, se essa coloração estiver em uso — mutuamente
+  // exclusivas por talhão, são o mesmo "produto" visto de 2 jeitos, não 2 situações separadas).
+  let svgLinhas = svgContornos, nLinhasVisiveis = 0;
+  todos.forEach(t => {
+    const lns = ((t.linhasDecl && t.linhasDecl.length) ? t.linhasDecl : t.linhas).filter(_layerVisivel);
+    lns.forEach(pl => { svgLinhas += svgLine(pl); });
+    nLinhasVisiveis += lns.length;
+    if (lns.length) svgLinhas += svgLabel(t.polyPts, t.idx, t.cor, t.areaHa, lns.length);
+  });
+  if (polyPts.length >= 3 && _layerVisivel(polyLayer)) {
+    const lnsAtivo = (linhasDecl.length ? linhasDecl : linhas).filter(_layerVisivel);
+    lnsAtivo.forEach(pl => { svgLinhas += svgLine(pl); });
+    nLinhasVisiveis += lnsAtivo.length;
+    if (lnsAtivo.length) svgLinhas += svgLabel(polyPts, talhoesArquivados.length + 1, '#42a5f5', areaHaAtual, lnsAtivo.length);
+  }
+
+  // Situação 2: Curvas de Nível — contornos só como referência (número do talhão, sem área/linhas,
+  // que não são o assunto dessa página).
+  let svgCurvas = svgContornos, nCurvasVisiveis = 0;
+  todos.forEach(t => { if (_layerVisivel(t.polyLayer)) svgCurvas += svgLabel(t.polyPts, t.idx, t.cor, null, null); });
+  if (polyPts.length >= 3 && _layerVisivel(polyLayer)) svgCurvas += svgLabel(polyPts, talhoesArquivados.length + 1, '#42a5f5', null, null);
+  curvaLayers.filter(_layerVisivel).forEach(pl => { svgCurvas += svgLine(pl); nCurvasVisiveis++; });
+
+  // Situação 3: Escoamento (talvegues) — só existe pra talhão TRAVADO (ver gerarMapaEscoamento),
+  // nunca pro contorno ativo ainda não travado. svgMultiLine (acima) evita ligar trechos desconexos.
+  let svgEscoamento = svgContornos;
+  todos.forEach(t => { if (_layerVisivel(t.polyLayer)) svgEscoamento += svgLabel(t.polyPts, t.idx, t.cor, null, null); });
+  if (polyPts.length >= 3 && _layerVisivel(polyLayer)) svgEscoamento += svgLabel(polyPts, talhoesArquivados.length + 1, '#42a5f5', null, null);
+  const talhoesComEscoamentoVisivel = todos.filter(t => _layerVisivel(t.escoamentoLinhas));
+  talhoesComEscoamentoVisivel.forEach(t => { svgEscoamento += svgMultiLine(t.escoamentoLinhas); });
+  const nEscoamentoVisiveis = talhoesComEscoamentoVisivel.length;
+
+  // ── Tabela de talhões (Linhas de Plantio) ─────────────────────────────────
   const fmtN = n => Math.round(n).toLocaleString('pt-BR');
   let linhasTable = '', totalHa = 0, totalLinhas = 0, totalMetros = 0;
   todos.forEach(t => {
@@ -13887,7 +13958,7 @@ async function gerarPDF() {
     </tr>`;
   });
 
-  // ── Seções extras ─────────────────────────────────────────────────────────
+  // ── Tabela de Curvas de Nível ──────────────────────────────────────────────
   const curvaHtml = curvaLayers.length ? `<div class="sec"><h2>&#128200; Curvas de N&#237;vel</h2><div class="grid">
     <div class="box"><div class="bv">${curvaMinElev.toFixed(1)} m</div><div class="bl">Alt. m&#237;nima</div></div>
     <div class="box"><div class="bv">${curvaMaxElev.toFixed(1)} m</div><div class="bl">Alt. m&#225;xima</div></div>
@@ -13904,11 +13975,95 @@ async function gerarPDF() {
     <span><span style="display:inline-block;width:10px;height:10px;background:#9C27B0;border-radius:2px;vertical-align:middle;margin-right:3px"></span>&gt;20% Preserva&#231;&#227;o</span>
   </div></div>` : '';
 
+  // ── Tabela de Escoamento (nova — v5.84) ───────────────────────────────────
+  const resumoEscoamento = _resumoEscoamentoTalhoes(
+    talhoesComEscoamentoVisivel.map(t => ({ idx: t.idx, segs: t.escoamentoLinhas.getLatLngs() }))
+  );
+  let escoamentoTable = '', totalTrechos = 0, totalComprimentoEscoamento = 0;
+  resumoEscoamento.forEach(r => {
+    totalTrechos += r.trechos;
+    totalComprimentoEscoamento += r.comprimentoM;
+    escoamentoTable += `<tr>
+      <td><b>Talh&#227;o ${r.idx}</b></td>
+      <td>${r.trechos}</td>
+      <td>${fmtN(r.comprimentoM)} m</td>
+    </tr>`;
+  });
+  const escoamentoHtml = `<div class="sec"><h2>&#128167; Mapa de Escoamento &#8212; Talvegues</h2>
+  <table><thead><tr><th>Talh&#227;o</th><th>Trechos de Talvegue</th><th>Comprimento</th></tr></thead>
+  <tbody>${escoamentoTable}</tbody>
+  <tfoot><tr><td><b>Total</b></td><td><b>${totalTrechos}</b></td><td><b>${fmtN(totalComprimentoEscoamento)} m</b></td></tr></tfoot>
+  </table></div>`;
+
   // ── Tamanho do mapa na página 1 — cabe a folha inteira (menos a barra de título), sem esticar
   // nem cortar (ver _ajustarTamanhoMapaRelatorio). 281×186mm = largura/altura do miolo imprimível
   // (A4 paisagem 297×210mm, margem .8cm de cada lado do @page, menos uns 8mm pra barra de título
   // "🌍 Mapa — Sistematização" que continua em cima do mapa nessa página).
   const { larguraMm: mapaLarguraMm, alturaMm: mapaAlturaMm } = _ajustarTamanhoMapaRelatorio(MW, MH, 281, 186);
+
+  // ── Montagem das páginas por situação (v5.84) ─────────────────────────────
+  // headerCompacto/footer: mesmo cabeçalho/rodapé que já existia na antiga "página 2" — agora
+  // reaproveitado em TODAS as páginas de tabela (cada situação tem a sua).
+  const headerCompacto = `<div class="hdr" style="padding-bottom:.3rem;margin-bottom:.4rem">
+  <img src="data:image/png;base64,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" alt="Agrolinhas">
+  <div class="hdr-info"><h1>Sistematiza&#231;&#227;o de Plantio</h1><div class="hdr-sub">Cliente: <b>${cliente}</b> &middot; Propriedade: <b>${prop}</b> &middot; ${date}</div></div>
+  <div class="hdr-r"><b>${consultor}</b>bolsairriga.com.br &middot; (16) 99401-2495</div>
+</div>`;
+  const footerHtml = `<div class="footer">Bolsa Irriga&#174; &mdash; Av. Elias Abr&#227;o, n&#186; 140 &middot; Franca &#8211; SP &middot; (16) 99401-2495 &middot; bolsairriga.com.br<br>&#169; 2025 Jo&#227;o Paulo de Oliveira &middot; Gerado em ${date}</div>`;
+
+  const paginaMapa = (titulo, svgConteudo) => `<div class="pagina pg1">
+<h2>${titulo}</h2>
+<div class="map-wrap-outer">
+<div class="map-wrap" style="width:${mapaLarguraMm}mm;height:${mapaAlturaMm}mm">
+  <svg viewBox="0 0 ${MW} ${MH}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+    ${imgDataUrl
+      ? `<image href="${imgDataUrl}" x="0" y="0" width="${MW}" height="${MH}" preserveAspectRatio="none"/>`
+      : `<rect x="0" y="0" width="${MW}" height="${MH}" fill="#1a2535"/><text x="${MW/2}" y="${MH/2}" text-anchor="middle" font-family="Arial,sans-serif" font-size="12" fill="#556">N&#227;o foi poss&#237;vel capturar a imagem de fundo do mapa</text>`
+    }
+    ${svgConteudo}
+    <g transform="translate(${MW-24},24)">
+      <circle r="16" fill="rgba(255,255,255,.80)" stroke="#999" stroke-width=".6"/>
+      <text y="4" text-anchor="middle" font-size="11" font-weight="bold" fill="#003d5c">N</text>
+      <path d="M0,-13 L3.5,-5 L0,-8 L-3.5,-5 Z" fill="#003d5c"/>
+    </g>
+  </svg>
+</div>
+</div>
+</div>`;
+
+  const paginaTabela = (corpoHtml) => `<div class="pagina">
+${headerCompacto}
+${corpoHtml}
+${footerHtml}
+</div>`;
+
+  const paginas = [];
+  if (nLinhasVisiveis > 0) {
+    paginas.push(paginaMapa(`&#127757; Mapa &#8212; Linhas de Plantio (${cliente !== '—' ? cliente : prop})`, svgLinhas));
+    paginas.push(paginaTabela(`<div class="sec"><h2>&#9632; Talh&#245;es &#8212; Linhas de Plantio</h2>
+<table><thead><tr><th>Talh&#227;o</th><th>&#193;rea</th><th>Espa&#231;amento</th><th>Linhas</th><th>Metros Lineares</th><th>Cor</th></tr></thead>
+<tbody>${linhasTable}</tbody>
+<tfoot><tr><td><b>Total</b></td><td><b>${totalHa.toFixed(2)} ha</b></td><td>&#8212;</td><td><b>${totalLinhas}</b></td><td><b>${fmtN(totalMetros)} m</b></td><td>&#8212;</td></tr></tfoot>
+</table></div>${declivHtml}`));
+  }
+  if (nCurvasVisiveis > 0) {
+    paginas.push(paginaMapa('&#127757; Mapa &#8212; Curvas de N&#237;vel', svgCurvas));
+    paginas.push(paginaTabela(curvaHtml));
+  }
+  if (nEscoamentoVisiveis > 0) {
+    paginas.push(paginaMapa('&#127757; Mapa &#8212; Escoamento', svgEscoamento));
+    paginas.push(paginaTabela(escoamentoHtml));
+  }
+  // Nenhuma situação ativa pra mostrar (tudo desligado no Painel de Camadas) — nunca manda um
+  // relatório vazio: cai no mínimo que SEMPRE existe nesse ponto (contorno dos talhões — já
+  // garantido pela checagem no início da função).
+  if (!paginas.length) {
+    paginas.push(paginaMapa('&#127757; Mapa &#8212; Sistematiza&#231;&#227;o', svgContornos));
+    paginas.push(paginaTabela(`<div class="sec"><h2>&#9632; Talh&#245;es</h2>
+<table><thead><tr><th>Talh&#227;o</th><th>&#193;rea</th></tr></thead>
+<tbody>${todos.map(t => `<tr><td><b>Talh&#227;o ${t.idx}</b></td><td>${(t.areaHa||0).toFixed(2)} ha</td></tr>`).join('')}</tbody>
+</table></div>`));
+  }
 
   // ── HTML completo ─────────────────────────────────────────────────────────
   const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
@@ -13939,42 +14094,10 @@ tfoot td{background:#e3f2fd}
 .map-wrap-outer{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center}
 .map-wrap{position:relative;overflow:hidden;border:1px solid #b0b0b0;border-radius:3px}
 .map-wrap svg{display:block;width:100%;height:100%}
+.pagina{page-break-before:always}
+.pagina:first-child{page-break-before:auto}
 </style></head><body>
-<div class="pg1"><!-- página 1 — v5.81: SÓ o mapa (cabeçalho cheio foi pra página 2, que já tinha o
-dela) — o mapa ocupa a folha inteira (tamanho calculado em JS por _ajustarTamanhoMapaRelatorio, ver
-gerarPDF — mais confiável pra impressão que depender só de aspect-ratio dentro de flexbox), sem
-esticar nem cortar nenhuma parte, não importa a proporção de tela que foi capturada. -->
-<h2>&#127757; Mapa &#8212; Sistematiza&#231;&#227;o (${cliente !== '—' ? cliente : prop})</h2>
-<div class="map-wrap-outer">
-<div class="map-wrap" style="width:${mapaLarguraMm}mm;height:${mapaAlturaMm}mm">
-  <svg viewBox="0 0 ${MW} ${MH}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
-    ${imgDataUrl
-      ? `<image href="${imgDataUrl}" x="0" y="0" width="${MW}" height="${MH}" preserveAspectRatio="none"/>`
-      : `<rect x="0" y="0" width="${MW}" height="${MH}" fill="#1a2535"/><text x="${MW/2}" y="${MH/2}" text-anchor="middle" font-family="Arial,sans-serif" font-size="12" fill="#556">N&#227;o foi poss&#237;vel capturar a imagem de fundo do mapa</text>`
-    }
-    ${svgPaths}
-    <g transform="translate(${MW-24},24)">
-      <circle r="16" fill="rgba(255,255,255,.80)" stroke="#999" stroke-width=".6"/>
-      <text y="4" text-anchor="middle" font-size="11" font-weight="bold" fill="#003d5c">N</text>
-      <path d="M0,-13 L3.5,-5 L0,-8 L-3.5,-5 Z" fill="#003d5c"/>
-    </g>
-  </svg>
-</div>
-</div><!-- fim página 1 -->
-<div style="page-break-before:always">
-<div class="hdr" style="padding-bottom:.3rem;margin-bottom:.4rem">
-  <img src="data:image/png;base64,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" alt="Agrolinhas">
-  <div class="hdr-info"><h1>Sistematiza&#231;&#227;o de Plantio</h1><div class="hdr-sub">Cliente: <b>${cliente}</b> &middot; Propriedade: <b>${prop}</b> &middot; ${date}</div></div>
-  <div class="hdr-r"><b>${consultor}</b>bolsairriga.com.br &middot; (16) 99401-2495</div>
-</div>
-<div class="sec"><h2>&#9632; Talh&#245;es</h2>
-<table><thead><tr><th>Talh&#227;o</th><th>&#193;rea</th><th>Espa&#231;amento</th><th>Linhas</th><th>Metros Lineares</th><th>Cor</th></tr></thead>
-<tbody>${linhasTable}</tbody>
-<tfoot><tr><td><b>Total</b></td><td><b>${totalHa.toFixed(2)} ha</b></td><td>&#8212;</td><td><b>${totalLinhas}</b></td><td><b>${fmtN(totalMetros)} m</b></td><td>&#8212;</td></tr></tfoot>
-</table></div>
-${curvaHtml}${declivHtml}
-<div class="footer">Bolsa Irriga&#174; &mdash; Av. Elias Abr&#227;o, n&#186; 140 &middot; Franca &#8211; SP &middot; (16) 99401-2495 &middot; bolsairriga.com.br<br>&#169; 2025 Jo&#227;o Paulo de Oliveira &middot; Gerado em ${date}</div>
-</div><!-- fim página 2 -->
+${paginas.join('')}
 <script>
 window.onafterprint = function(){ try{ window.close(); }catch(e){} };
 window.onload = function(){
