@@ -439,7 +439,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.82 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.83 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -546,17 +546,15 @@ body.layout-lateral #status{grid-area:status;}
         <div class="rgroup-title">Contorno do Talhão</div>
       </div>
       <div class="rgroup">
-        <!-- v5.82: pedido do usuário — "queria a opção do limite interno junto com as ferramentas
-        de talhão, aproveitar o que ja tem pronto, é mais logico". Movido da aba "Carreador" (que é
-        sobre DIVIDIR um talhão já existente, algo bem diferente) pra aqui, do lado de "Desenhar
-        Contorno" — é outro jeito de criar um talhão, então faz sentido ficar junto. O botão
-        "Travar Talhão" logo abaixo já é compartilhado por esse fluxo (confirmarCarreadorInterno já
-        deixava ele visível) — nenhuma lógica mudou, só a posição na tela.
+        <!-- v5.83: pedido do usuário — "pela logica seria melhor usar a opção desenhar o talhao
+        com a ferramenta que ja existe e so ter uma nova opção para criar a area interna, pense
+        nisso e faço isso". Não é mais uma ferramenta de desenho própria: usa o contorno que
+        "Desenhar Contorno"/"Fechar Contorno" (acima) já deixou pronto em polyPts. Esse botão só
+        aparece quando há um contorno fechado (mesma condição de "Travar Talhão", espelhada via
+        MutationObserver — ver mais abaixo no script, perto do espelho #btnTravarTalhao2).
         Ver iniciarCarreadorInterno/_calcularCarreadorInterno/confirmarCarreadorInterno. -->
         <div class="rgroup-body">
-          <button class="rbtn c-orange" id="btnCarreadorInt" onclick="iniciarCarreadorInterno()" title="Contorna o limite EXTERNO da área (clique ponto a ponto no mapa) — esse contorno é só referência, não vira talhão nem entra em nenhuma soma. Depois de fechar, informe a largura do carreador e o app desloca o limite pra DENTRO automaticamente, criando um talhão interno pronto pra travar."><span class="ico">&#9974;</span><span class="lbl">Desenhar Limite Externo</span></button>
-          <button class="rbtn-sm ok" id="btnFecharCarreadorInt" style="display:none;" onclick="fecharCarreadorInterno()">&#10003; Fechar Contorno</button>
-          <button class="rbtn-sm clr" id="btnCancelarCarreadorInt" style="display:none;" onclick="cancelarCarreadorInterno()">&#10005; Cancelar</button>
+          <button class="rbtn-sm" id="btnCarreadorInt" style="display:none;" onclick="iniciarCarreadorInterno()" title="Transforma o contorno fechado acima num talhão interno: desloca o limite pra DENTRO pela largura do carreador informada. O contorno original (externo) fica só como referência visual — não entra em nenhuma soma, exportação ou relatório.">&#9974; Criar Área Interna</button>
           <div id="grpCarreadorIntConfig" style="display:none;gap:14px;" class="rgroup-body">
             <div class="rcol">
               <label>Largura do carreador (m)</label>
@@ -568,11 +566,14 @@ body.layout-lateral #status{grid-area:status;}
               </label>
             </div>
             <div class="rcol">
-              <button class="rbtn c-green" id="btnConfirmarCarreadorInt" onclick="confirmarCarreadorInterno()"><span class="ico">&#10003;</span><span class="lbl">Criar Talhão Interno</span></button>
+              <button class="rbtn c-green" id="btnConfirmarCarreadorInt" onclick="confirmarCarreadorInterno()"><span class="ico">&#10003;</span><span class="lbl">Confirmar Offset</span></button>
+            </div>
+            <div class="rcol">
+              <button class="rbtn-sm clr" onclick="cancelarCarreadorInterno()">&#10005; Cancelar</button>
             </div>
           </div>
         </div>
-        <div class="rgroup-title">Carreador Interno (a partir do limite externo)</div>
+        <div class="rgroup-title">Área Interna (offset a partir do contorno acima)</div>
       </div>
       <div class="rgroup">
         <div class="rgroup-body">
@@ -5457,7 +5458,6 @@ map.on('click', e => {
   else if(modo === 'divisao') addDivisaoPt(e.latlng);
   else if(modo === 'regua') addReguaPt(e.latlng);
   else if(modo === 'sentido') _addSentidoPt(e.latlng);
-  else if(modo === 'carreadorInt') _addCariIntPt(e.latlng);
 });
 map.on('dblclick', e => {
   if(modo === 'poly' && polyPts.length >= 3) fecharPoligono();
@@ -5465,7 +5465,6 @@ map.on('dblclick', e => {
   else if(modo === 'curvapoly' && curvaPolyPts.length >= 3) fecharPoligonoCurva();
   else if(modo === 'divisao' && divisaoPts.length >= 2) finalizarDivisaoLinha();
   else if(modo === 'regua') limparRegua();
-  else if(modo === 'carreadorInt' && _cariIntPts.length >= 3) fecharCarreadorInterno();
 });
 
 // ── Barra de status estilo AutoCAD (v5.62) — coordenadas em tempo real + escala + ferramenta
@@ -5479,7 +5478,6 @@ function _descricaoModoAtual() {
   if(modo === 'curvapoly') return 'Desenhando Área de Curvas';
   if(modo === 'divisao' || modoDivisao) return 'Dividindo Talhão';
   if(modo === 'regua') return 'Régua';
-  if(modo === 'carreadorInt') return 'Desenhando Limite Externo (Carreador Interno)';
   if(_modoPickLinha === 'perfil') return 'Selecionando Linha (Perfil)';
   if(_modoPickLinha === 'carreador') return 'Selecionando Linha (Carreador)';
   if(_modoPickLinha === 'corrigirSetorOrigem') return 'Corrigir Setor — clique na linha ERRADA';
@@ -5654,80 +5652,42 @@ function buildTurfPoly() {
   } catch(e) { turfPoly = null; turfBound = null; }
 }
 
-// ══ Carreador Interno (v5.81) ═══════════════════════════════════════════════════════════════
-// Pedido do usuário: "quer um metodo para criar carreador interno, tipo eu contorno o limite da
-// areas e coloca qual a metragem devo criar o carreador/talhão interno e ele faz um offset e cria,
-// uma coisa importante, a contorno externo que eu fizer não deve ser contabilizado nas somatorio,
-// tbm quero opção de desenha o talhão como uma linha suave".
+// ══ Carreador Interno (v5.81, refeito em v5.83) ════════════════════════════════════════════════
+// v5.81 — pedido original do usuário: "quer um metodo para criar carreador interno, tipo eu
+// contorno o limite da areas e coloca qual a metragem devo criar o carreador/talhão interno e ele
+// faz um offset e cria, uma coisa importante, a contorno externo que eu fizer não deve ser
+// contabilizado nas somatorio, tbm quero opção de desenha o talhão como uma linha suave".
+// v5.83 — pedido de ajuste: "pela logica seria melhor usar a opção desenhar o talhao com a
+// ferramenta que ja existe e so ter uma nova opção para criar a area interna, pense nisso e faço
+// isso". A v5.81 desenhava o limite externo com uma ferramenta de clique PRÓPRIA (_cariIntPts/
+// _cariIntMarkers/_cariIntTempLine + modo 'carreadorInt'), duplicando o que "Desenhar Contorno"/
+// "Fechar Contorno" (iniciarPoligono/fecharPoligono) já faz. Removido: agora o limite externo é
+// desenhado com essa MESMA ferramenta normal — só existe um botão NOVO, que aparece junto com
+// "Travar Talhão" assim que o contorno fecha, pra virar área interna em vez de travar direto.
 //
-// Fluxo: (1) contorna o limite EXTERNO da área (clique ponto a ponto, igual desenhar um talhão
-// normal); (2) fecha o contorno; (3) informa a largura do carreador (m) e se quer linha suave; (4)
-// confirma — turf.buffer com distância NEGATIVA desloca o contorno pra DENTRO por essa largura
-// (erosão — o mesmo princípio geométrico de um "offset" de CAD), virando o contorno do talhão
-// INTERNO, que entra no fluxo normal de "talhão ativo" (polyPts/turfPoly/polyLayer — dali pra
-// frente é exatamente como se o usuário tivesse desenhado ele à mão: guia, linhas, travar).
+// Fluxo: (1) desenha o limite EXTERNO com "Desenhar Contorno"/"Fechar Contorno", igual sempre; (2)
+// com o contorno fechado, clica em "Criar Área Interna"; (3) informa a largura do carreador (m) e
+// se quer linha suave; (4) confirma — turf.buffer com distância NEGATIVA desloca o contorno pra
+// DENTRO por essa largura (erosão), virando o contorno do talhão INTERNO, que SUBSTITUI o externo
+// como "talhão ativo" (polyPts/turfPoly/polyLayer) — dali pra frente é exatamente como se o
+// usuário tivesse desenhado ele à mão: guia, linhas, travar.
 //
-// O contorno EXTERNO nunca vira talhão — fica só como 2 camadas VISUAIS (o próprio limite,
-// tracejado, e o anel entre ele e o talhão interno, preenchido, representando a faixa do
-// carreador/estrada) guardadas em _carreadoresInternosVisuais, fora de talhoesArquivados — por
-// isso nunca entra em área/metros totais, nunca é exportado (KML/DXF) e nunca aparece no
-// relatório PDF (todos esses só enxergam talhoesArquivados/polyPts do talhão ATIVO).
-let _cariIntPts = [];
-let _cariIntMarkers = [];
-let _cariIntTempLine = null;
+// O contorno EXTERNO nunca vira talhão — ele é substituído pelo interno antes de qualquer "Travar
+// Talhão"; some como polígono ativo e vira 2 camadas VISUAIS (o próprio limite, tracejado, e o
+// anel entre ele e o talhão interno, preenchido) guardadas em _carreadoresInternosVisuais, fora de
+// talhoesArquivados — por isso nunca entra em área/metros totais, nunca é exportado (KML/DXF) e
+// nunca aparece no relatório PDF (todos esses só enxergam talhoesArquivados/polyPts do ativo).
 let _carreadoresInternosVisuais = []; // [{outerLayer, ringLayer}] — só visual, nunca contabilizado
 
 function iniciarCarreadorInterno() {
-  if(modo !== 'idle') { setStatus('Finalize ou cancele a ferramenta atual antes de desenhar o limite externo.', 'err'); return; }
-  modo = 'carreadorInt';
-  _cariIntPts = []; _cariIntMarkers = [];
-  if(_cariIntTempLine) { _cariIntTempLine.remove(); _cariIntTempLine = null; }
-  map.getContainer().style.cursor = 'crosshair';
-  $('btnFecharCarreadorInt').style.display = 'none';
-  $('btnCancelarCarreadorInt').style.display = 'flex';
-  $('grpCarreadorIntConfig').style.display = 'none';
-  setStatus('Clique no mapa pra traçar o limite EXTERNO da área (é só referência — não entra em nenhuma soma). Depois de pelo menos 3 pontos, clique em "Fechar Contorno" (ou dê um duplo clique).', 'info');
-}
-
-function _addCariIntPt(ll) {
-  _cariIntPts.push(ll);
-  const mk = L.marker(ll, { icon: mkIcon('vertex-marker'), draggable: true }).addTo(map);
-  mk.on('drag', _rebuildCariIntTempLine);
-  mk.on('dragend', () => { _cariIntPts = _cariIntMarkers.map(m => m.getLatLng()); });
-  _cariIntMarkers.push(mk);
-  _rebuildCariIntTempLine();
-  if(_cariIntMarkers.length >= 3) $('btnFecharCarreadorInt').style.display = 'flex';
-}
-
-function _rebuildCariIntTempLine() {
-  const pts = _cariIntMarkers.map(m => m.getLatLng());
-  if(_cariIntTempLine) { _cariIntTempLine.remove(); _cariIntTempLine = null; }
-  if(pts.length >= 2) {
-    _cariIntTempLine = L.polyline([...pts, pts[0]], { color:'#ff6f00', weight:2, dashArray:'6,4', opacity:.85 }).addTo(map);
-  }
-}
-
-function fecharCarreadorInterno() {
-  if(_cariIntMarkers.length < 3) { setStatus('Mínimo 3 pontos.', 'err'); return; }
-  _cariIntPts = _cariIntMarkers.map(m => m.getLatLng());
-  modo = 'idle';
-  map.getContainer().style.cursor = '';
-  $('btnFecharCarreadorInt').style.display = 'none';
+  if(polyPts.length < 3) { setStatus('Desenhe e feche o contorno externo primeiro (use "Desenhar Contorno").', 'err'); return; }
   $('grpCarreadorIntConfig').style.display = 'flex';
-  const ha = areaHa(_cariIntPts);
-  setStatus(`Limite externo fechado (${ha.toFixed(2)} ha, só referência — não conta no total). Informe a largura do carreador e confirme.`, 'ok');
+  setStatus('Informe a largura do carreador e confirme pra transformar o contorno atual num talhão interno.', 'info');
 }
 
 function cancelarCarreadorInterno() {
-  _cariIntMarkers.forEach(m => m.remove()); _cariIntMarkers = [];
-  if(_cariIntTempLine) { _cariIntTempLine.remove(); _cariIntTempLine = null; }
-  _cariIntPts = [];
-  modo = 'idle';
-  map.getContainer().style.cursor = '';
-  $('btnFecharCarreadorInt').style.display = 'none';
-  $('btnCancelarCarreadorInt').style.display = 'none';
-  $('grpCarreadorIntConfig').style.display = 'none';
-  setStatus('', '');
+  const g = $('grpCarreadorIntConfig');
+  if(g) g.style.display = 'none';
 }
 
 // Núcleo geométrico — PURO (não mexe no mapa/DOM/estado global), testável isoladamente. Recebe o
@@ -5779,14 +5739,15 @@ function _calcularCarreadorInterno(outerPts, larguraM, suave, intensidadeSuave) 
 }
 
 function confirmarCarreadorInterno() {
-  if(_cariIntPts.length < 3) { setStatus('Desenhe e feche o limite externo primeiro.', 'err'); return; }
+  if(polyPts.length < 3) { setStatus('Desenhe e feche o contorno externo primeiro.', 'err'); return; }
   const larguraM = parseFloat($('larguraCarreadorInt').value);
   const suave = $('carreadorIntSuave').checked;
-  const resultado = _calcularCarreadorInterno(_cariIntPts, larguraM, suave, 3);
+  const outerPts = polyPts.slice(); // contorno recém-fechado (ainda não travado) — vira a referência externa
+  const resultado = _calcularCarreadorInterno(outerPts, larguraM, suave, 3);
   if(resultado.erro) { setStatus(resultado.erro, 'err'); return; }
 
-  // Descarta um talhão ATIVO (não travado) que porventura já estivesse em andamento — o contorno
-  // interno computado aqui vira o novo "talhão ativo" do zero, igual começar um contorno manual.
+  // Descarta o contorno externo como "talhão ATIVO" (markers/polyLayer/turfPoly) — já foi
+  // capturado em outerPts acima; o interno computado aqui assume o lugar dele do zero.
   limparLinhas(); limparGuia(); limparPoligono();
 
   // Instala o contorno INTERNO como o talhão ATIVO — dali pra frente segue o fluxo de sempre
@@ -5811,14 +5772,10 @@ function confirmarCarreadorInterno() {
   // relatório. Anel = polígono com FURO (ring externo + ring interno) — truque nativo do Leaflet
   // pra desenhar "a faixa entre 2 contornos" sem precisar de turf.difference (evita a divergência
   // de assinatura entre turf v6 — usado aqui no app — e v7, usado só no harness de teste).
-  const outerLayer = L.polygon([..._cariIntPts, _cariIntPts[0]], { color:'#ff6f00', weight:2, dashArray:'8,5', fill:false }).addTo(map);
-  const ringLayer = L.polygon([_cariIntPts, polyPts], { color:'#ff6f00', weight:0, fillColor:'#ff6f00', fillOpacity:.15, interactive:false }).addTo(map);
+  const outerLayer = L.polygon([...outerPts, outerPts[0]], { color:'#ff6f00', weight:2, dashArray:'8,5', fill:false }).addTo(map);
+  const ringLayer = L.polygon([outerPts, polyPts], { color:'#ff6f00', weight:0, fillColor:'#ff6f00', fillOpacity:.15, interactive:false }).addTo(map);
   _carreadoresInternosVisuais.push({ outerLayer, ringLayer });
 
-  // Limpa o estado de desenho do contorno externo (marcadores auxiliares, linha tracejada temp)
-  _cariIntMarkers.forEach(m => m.remove()); _cariIntMarkers = [];
-  _cariIntPts = [];
-  $('btnCancelarCarreadorInt').style.display = 'none';
   $('grpCarreadorIntConfig').style.display = 'none';
 
   const avisoTxt = resultado.avisoMultiplasPartes
@@ -16956,7 +16913,7 @@ function _abandonarFerramentaAtiva() {
   else if(modo === 'curvapoly') limparPoligonoCurva();
   else if(modo === 'regua') limparRegua();
   else if(modo === 'sentido') cancelarDefinirSentido();
-  else if(modo === 'carreadorInt') cancelarCarreadorInterno();
+  cancelarCarreadorInterno(); // v5.83: só esconde o painel de configuração (Largura/Suave) se estiver aberto — não é mais um "modo" de desenho próprio
   if(modoDivisao || modo === 'divisao') cancelarDivisaoUsuario();
   if(_modoPickLinha === 'perfil') cancelarPerfilLinhaPlantio();
   else if(_modoPickLinha === 'carreador') cancelarCarreadorDeLinha();
@@ -17004,6 +16961,23 @@ function _atualizarDicaRolagem() {
   const espelho = document.getElementById('btnTravarTalhao2');
   if(!original || !espelho) return;
   const sync = () => { espelho.style.display = original.style.display; };
+  sync();
+  new MutationObserver(sync).observe(original, {attributes:true, attributeFilter:['style']});
+})();
+
+// v5.83: "Criar Área Interna" (Carreador Interno) só faz sentido quando há um contorno fechado
+// esperando decisão — exatamente a mesma condição de "Travar Talhão". Reaproveita o mesmo truque
+// de observer acima em vez de duplicar as ~10 linhas que já controlam #btnTravarTalhao; também
+// fecha o painel de configuração (Largura/Suave) se o contorno for limpo enquanto ele está aberto.
+(function() {
+  const original = document.getElementById('btnTravarTalhao');
+  const botao = document.getElementById('btnCarreadorInt');
+  const config = document.getElementById('grpCarreadorIntConfig');
+  if(!original || !botao) return;
+  const sync = () => {
+    botao.style.display = original.style.display;
+    if(original.style.display === 'none' && config) config.style.display = 'none';
+  };
   sync();
   new MutationObserver(sync).observe(original, {attributes:true, attributeFilter:['style']});
 })();
