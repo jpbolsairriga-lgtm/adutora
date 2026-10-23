@@ -439,7 +439,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.80 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.81 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -569,6 +569,36 @@ body.layout-lateral #status{grid-area:status;}
 
     <!-- ══ Carreador / Divisão ══ -->
     <div class="rpanel" id="rp-carreador">
+      <!-- v5.81: pedido do usuário — "quer um metodo para criar carreador interno, tipo eu
+      contorno o limite da areas e coloca qual a metragem devo criar o carreador/talhão interno e
+      ele faz um offset e cria (...) a contorno externo que eu fizer não deve ser contabilizado nas
+      somatorio, tbm quero opção de desenha o talhão como uma linha suave". Diferente do
+      "Traçar Divisão" abaixo (que corta um talhão JÁ EXISTENTE em 2 pedaços) — aqui o contorno
+      externo ainda NÃO é um talhão: é só referência geométrica pro offset, nunca entra em
+      talhoesArquivados (não conta em área/metros totais, não é exportado, não entra no relatório).
+      Ver iniciarCarreadorInterno/_calcularCarreadorInterno/confirmarCarreadorInterno. -->
+      <div class="rgroup">
+        <div class="rgroup-body">
+          <button class="rbtn c-orange" id="btnCarreadorInt" onclick="iniciarCarreadorInterno()" title="Contorna o limite EXTERNO da área (clique ponto a ponto no mapa) — esse contorno é só referência, não vira talhão nem entra em nenhuma soma. Depois de fechar, informe a largura do carreador e o app desloca o limite pra DENTRO automaticamente, criando um talhão interno pronto pra travar."><span class="ico">&#9974;</span><span class="lbl">Desenhar Limite Externo</span></button>
+          <button class="rbtn-sm ok" id="btnFecharCarreadorInt" style="display:none;" onclick="fecharCarreadorInterno()">&#10003; Fechar Contorno</button>
+          <button class="rbtn-sm clr" id="btnCancelarCarreadorInt" style="display:none;" onclick="cancelarCarreadorInterno()">&#10005; Cancelar</button>
+          <div id="grpCarreadorIntConfig" style="display:none;gap:14px;" class="rgroup-body">
+            <div class="rcol">
+              <label>Largura do carreador (m)</label>
+              <input type="number" id="larguraCarreadorInt" class="rfield" value="6" min="0.5" max="200" step="0.5">
+            </div>
+            <div class="rcol">
+              <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--panel-text);cursor:pointer;height:26px;">
+                <input type="checkbox" id="carreadorIntSuave"> Desenhar talhão interno como linha suave
+              </label>
+            </div>
+            <div class="rcol">
+              <button class="rbtn c-green" id="btnConfirmarCarreadorInt" onclick="confirmarCarreadorInterno()"><span class="ico">&#10003;</span><span class="lbl">Criar Talhão Interno</span></button>
+            </div>
+          </div>
+        </div>
+        <div class="rgroup-title">Carreador Interno (a partir do limite externo)</div>
+      </div>
       <div class="rgroup">
         <div class="rgroup-body">
           <div id="divSelInfo" class="talhao-sel-info">Clique em um talhão travado para selecionar</div>
@@ -5428,6 +5458,7 @@ map.on('click', e => {
   else if(modo === 'divisao') addDivisaoPt(e.latlng);
   else if(modo === 'regua') addReguaPt(e.latlng);
   else if(modo === 'sentido') _addSentidoPt(e.latlng);
+  else if(modo === 'carreadorInt') _addCariIntPt(e.latlng);
 });
 map.on('dblclick', e => {
   if(modo === 'poly' && polyPts.length >= 3) fecharPoligono();
@@ -5435,6 +5466,7 @@ map.on('dblclick', e => {
   else if(modo === 'curvapoly' && curvaPolyPts.length >= 3) fecharPoligonoCurva();
   else if(modo === 'divisao' && divisaoPts.length >= 2) finalizarDivisaoLinha();
   else if(modo === 'regua') limparRegua();
+  else if(modo === 'carreadorInt' && _cariIntPts.length >= 3) fecharCarreadorInterno();
 });
 
 // ── Barra de status estilo AutoCAD (v5.62) — coordenadas em tempo real + escala + ferramenta
@@ -5448,6 +5480,7 @@ function _descricaoModoAtual() {
   if(modo === 'curvapoly') return 'Desenhando Área de Curvas';
   if(modo === 'divisao' || modoDivisao) return 'Dividindo Talhão';
   if(modo === 'regua') return 'Régua';
+  if(modo === 'carreadorInt') return 'Desenhando Limite Externo (Carreador Interno)';
   if(_modoPickLinha === 'perfil') return 'Selecionando Linha (Perfil)';
   if(_modoPickLinha === 'carreador') return 'Selecionando Linha (Carreador)';
   if(_modoPickLinha === 'corrigirSetorOrigem') return 'Corrigir Setor — clique na linha ERRADA';
@@ -5620,6 +5653,179 @@ function buildTurfPoly() {
     turf.rewind(turfPoly, {mutate:true});
     turfBound = turf.polygonToLine(turfPoly);
   } catch(e) { turfPoly = null; turfBound = null; }
+}
+
+// ══ Carreador Interno (v5.81) ═══════════════════════════════════════════════════════════════
+// Pedido do usuário: "quer um metodo para criar carreador interno, tipo eu contorno o limite da
+// areas e coloca qual a metragem devo criar o carreador/talhão interno e ele faz um offset e cria,
+// uma coisa importante, a contorno externo que eu fizer não deve ser contabilizado nas somatorio,
+// tbm quero opção de desenha o talhão como uma linha suave".
+//
+// Fluxo: (1) contorna o limite EXTERNO da área (clique ponto a ponto, igual desenhar um talhão
+// normal); (2) fecha o contorno; (3) informa a largura do carreador (m) e se quer linha suave; (4)
+// confirma — turf.buffer com distância NEGATIVA desloca o contorno pra DENTRO por essa largura
+// (erosão — o mesmo princípio geométrico de um "offset" de CAD), virando o contorno do talhão
+// INTERNO, que entra no fluxo normal de "talhão ativo" (polyPts/turfPoly/polyLayer — dali pra
+// frente é exatamente como se o usuário tivesse desenhado ele à mão: guia, linhas, travar).
+//
+// O contorno EXTERNO nunca vira talhão — fica só como 2 camadas VISUAIS (o próprio limite,
+// tracejado, e o anel entre ele e o talhão interno, preenchido, representando a faixa do
+// carreador/estrada) guardadas em _carreadoresInternosVisuais, fora de talhoesArquivados — por
+// isso nunca entra em área/metros totais, nunca é exportado (KML/DXF) e nunca aparece no
+// relatório PDF (todos esses só enxergam talhoesArquivados/polyPts do talhão ATIVO).
+let _cariIntPts = [];
+let _cariIntMarkers = [];
+let _cariIntTempLine = null;
+let _carreadoresInternosVisuais = []; // [{outerLayer, ringLayer}] — só visual, nunca contabilizado
+
+function iniciarCarreadorInterno() {
+  if(modo !== 'idle') { setStatus('Finalize ou cancele a ferramenta atual antes de desenhar o limite externo.', 'err'); return; }
+  modo = 'carreadorInt';
+  _cariIntPts = []; _cariIntMarkers = [];
+  if(_cariIntTempLine) { _cariIntTempLine.remove(); _cariIntTempLine = null; }
+  map.getContainer().style.cursor = 'crosshair';
+  $('btnFecharCarreadorInt').style.display = 'none';
+  $('btnCancelarCarreadorInt').style.display = 'flex';
+  $('grpCarreadorIntConfig').style.display = 'none';
+  setStatus('Clique no mapa pra traçar o limite EXTERNO da área (é só referência — não entra em nenhuma soma). Depois de pelo menos 3 pontos, clique em "Fechar Contorno" (ou dê um duplo clique).', 'info');
+}
+
+function _addCariIntPt(ll) {
+  _cariIntPts.push(ll);
+  const mk = L.marker(ll, { icon: mkIcon('vertex-marker'), draggable: true }).addTo(map);
+  mk.on('drag', _rebuildCariIntTempLine);
+  mk.on('dragend', () => { _cariIntPts = _cariIntMarkers.map(m => m.getLatLng()); });
+  _cariIntMarkers.push(mk);
+  _rebuildCariIntTempLine();
+  if(_cariIntMarkers.length >= 3) $('btnFecharCarreadorInt').style.display = 'flex';
+}
+
+function _rebuildCariIntTempLine() {
+  const pts = _cariIntMarkers.map(m => m.getLatLng());
+  if(_cariIntTempLine) { _cariIntTempLine.remove(); _cariIntTempLine = null; }
+  if(pts.length >= 2) {
+    _cariIntTempLine = L.polyline([...pts, pts[0]], { color:'#ff6f00', weight:2, dashArray:'6,4', opacity:.85 }).addTo(map);
+  }
+}
+
+function fecharCarreadorInterno() {
+  if(_cariIntMarkers.length < 3) { setStatus('Mínimo 3 pontos.', 'err'); return; }
+  _cariIntPts = _cariIntMarkers.map(m => m.getLatLng());
+  modo = 'idle';
+  map.getContainer().style.cursor = '';
+  $('btnFecharCarreadorInt').style.display = 'none';
+  $('grpCarreadorIntConfig').style.display = 'flex';
+  const ha = areaHa(_cariIntPts);
+  setStatus(`Limite externo fechado (${ha.toFixed(2)} ha, só referência — não conta no total). Informe a largura do carreador e confirme.`, 'ok');
+}
+
+function cancelarCarreadorInterno() {
+  _cariIntMarkers.forEach(m => m.remove()); _cariIntMarkers = [];
+  if(_cariIntTempLine) { _cariIntTempLine.remove(); _cariIntTempLine = null; }
+  _cariIntPts = [];
+  modo = 'idle';
+  map.getContainer().style.cursor = '';
+  $('btnFecharCarreadorInt').style.display = 'none';
+  $('btnCancelarCarreadorInt').style.display = 'none';
+  $('grpCarreadorIntConfig').style.display = 'none';
+  setStatus('', '');
+}
+
+// Núcleo geométrico — PURO (não mexe no mapa/DOM/estado global), testável isoladamente. Recebe o
+// contorno externo (array de {lat,lng}, SEM duplicar o 1º ponto no fim — convenção de polyPts no
+// resto do app) e devolve o contorno do talhão INTERNO na mesma convenção, mais as áreas de cada
+// um e um aviso se o formato era complexo demais pro offset sair numa peça só.
+function _calcularCarreadorInterno(outerPts, larguraM, suave, intensidadeSuave) {
+  if(!outerPts || outerPts.length < 3) return { erro: 'Contorno externo precisa de pelo menos 3 pontos.' };
+  if(!(larguraM > 0)) return { erro: 'Informe uma largura de carreador maior que zero.' };
+
+  const coords = outerPts.map(p => [p.lng, p.lat]);
+  coords.push(coords[0]);
+  let outerPoly;
+  try { outerPoly = turf.polygon([coords]); turf.rewind(outerPoly, { mutate: true }); }
+  catch(e) { return { erro: 'Contorno externo inválido (linhas se cruzando?).' }; }
+
+  let inner;
+  try { inner = turf.buffer(outerPoly, -larguraM, { units: 'meters' }); }
+  catch(e) { inner = null; }
+  if(!inner) return { erro: `Largura de ${larguraM}m é maior do que essa área suporta — experimente um valor menor.` };
+
+  // Formato muito estreito/irregular pode fazer o offset quebrar em várias partes — fica só com a
+  // MAIOR (por área); avisa pro usuário saber que algumas pontas finas do contorno "sumiram".
+  let avisoMultiplasPartes = false, innerPoly = inner;
+  if(inner.geometry.type === 'MultiPolygon') {
+    avisoMultiplasPartes = true;
+    let maiorArea = -1, maiorCoords = null;
+    inner.geometry.coordinates.forEach(polyCoords => {
+      const a = turf.area(turf.polygon(polyCoords));
+      if(a > maiorArea) { maiorArea = a; maiorCoords = polyCoords; }
+    });
+    innerPoly = turf.polygon(maiorCoords);
+  }
+
+  let ring = innerPoly.geometry.coordinates[0].map(c => ({ lat: c[1], lng: c[0] }));
+  if(ring.length > 1 && ring[0].lat === ring[ring.length-1].lat && ring[0].lng === ring[ring.length-1].lng) ring.pop(); // tira a duplicata (convenção GeoJSON) — polyPts não duplica
+
+  if(suave && ring.length >= 3) {
+    const fechado = [...ring, ring[0]];
+    ring = _suavizarTracoCurva(fechado, true, intensidadeSuave || 3).slice(0, -1);
+  }
+
+  return {
+    inner: ring,
+    areaInnerHa: turf.area(innerPoly) / 10000,
+    areaOuterHa: turf.area(outerPoly) / 10000,
+    avisoMultiplasPartes,
+  };
+}
+
+function confirmarCarreadorInterno() {
+  if(_cariIntPts.length < 3) { setStatus('Desenhe e feche o limite externo primeiro.', 'err'); return; }
+  const larguraM = parseFloat($('larguraCarreadorInt').value);
+  const suave = $('carreadorIntSuave').checked;
+  const resultado = _calcularCarreadorInterno(_cariIntPts, larguraM, suave, 3);
+  if(resultado.erro) { setStatus(resultado.erro, 'err'); return; }
+
+  // Descarta um talhão ATIVO (não travado) que porventura já estivesse em andamento — o contorno
+  // interno computado aqui vira o novo "talhão ativo" do zero, igual começar um contorno manual.
+  limparLinhas(); limparGuia(); limparPoligono();
+
+  // Instala o contorno INTERNO como o talhão ATIVO — dali pra frente segue o fluxo de sempre
+  // (desenhar guia, gerar linhas, travar) sem precisar duplicar nada disso aqui.
+  polyPts = resultado.inner;
+  polyMarkers = polyPts.map(ll => {
+    const mk = L.marker(ll, { icon: mkIcon('vertex-marker'), draggable: true }).addTo(map);
+    mk.on('drag', updatePolyDisplay);
+    mk.on('dragend', rebuildPoly);
+    return mk;
+  });
+  buildTurfPoly();
+  polyLayer = L.polygon(polyPts, { color:'#42a5f5', fillColor:'#1565c0', fillOpacity:.08, weight:2 }).addTo(map);
+  areaHaAtual = resultado.areaInnerHa;
+  $('iArea').textContent = resultado.areaInnerHa.toFixed(2) + ' ha';
+  $('btnCurvas').disabled = false;
+  polyMarkers.forEach(m => m.dragging && m.dragging.disable());
+  $('btnTravarTalhao').style.display = 'flex';
+
+  // Camadas VISUAIS do contorno externo + anel do carreador — fora de talhoesArquivados de
+  // propósito (ver comentário grande no topo da seção): nunca contam em totais, exportação ou
+  // relatório. Anel = polígono com FURO (ring externo + ring interno) — truque nativo do Leaflet
+  // pra desenhar "a faixa entre 2 contornos" sem precisar de turf.difference (evita a divergência
+  // de assinatura entre turf v6 — usado aqui no app — e v7, usado só no harness de teste).
+  const outerLayer = L.polygon([..._cariIntPts, _cariIntPts[0]], { color:'#ff6f00', weight:2, dashArray:'8,5', fill:false }).addTo(map);
+  const ringLayer = L.polygon([_cariIntPts, polyPts], { color:'#ff6f00', weight:0, fillColor:'#ff6f00', fillOpacity:.15, interactive:false }).addTo(map);
+  _carreadoresInternosVisuais.push({ outerLayer, ringLayer });
+
+  // Limpa o estado de desenho do contorno externo (marcadores auxiliares, linha tracejada temp)
+  _cariIntMarkers.forEach(m => m.remove()); _cariIntMarkers = [];
+  _cariIntPts = [];
+  $('btnCancelarCarreadorInt').style.display = 'none';
+  $('grpCarreadorIntConfig').style.display = 'none';
+
+  const avisoTxt = resultado.avisoMultiplasPartes
+    ? ' ⚠ o formato do contorno era irregular demais pra essa largura em alguns trechos — ficou só com a maior parte contígua.'
+    : '';
+  setStatus(`Talhão interno criado: ${resultado.areaInnerHa.toFixed(2)} ha (carreador de ${larguraM}m ao redor, ${resultado.areaOuterHa.toFixed(2)} ha de limite externo — não contabilizado). Trave o talhão, desenhe a guia ou gere as linhas.${avisoTxt}`, resultado.avisoMultiplasPartes ? 'warn' : 'ok');
 }
 
 // ── Busca de Local ────────────────────────────────────────────────────────────
@@ -11840,6 +12046,16 @@ function kmlPolygonCoords(pts) {
   return [...pts, pts[0]].map(p=>`${p.lng},${p.lat},0`).join(' ');
 }
 
+// v5.81: pedido do usuário — "qdo eu desligo as layer, e vou exportar as layer desligadas são
+// exportadas, e isso não deve acontecer, somente deve ser exportado tudo que estiver ativo".
+// Camadas ocultas (Painel de Camadas — ver _CAMADAS/_aplicarCamada) são removidas do MAPA de
+// verdade (layer.remove()), não só "pintadas invisível" — então map.hasLayer(layer) já reflete
+// exatamente o que está ligado/desligado agora, sem precisar saber de qual _CAMADAS[id] cada
+// layer faz parte (um talhão pode ter o contorno desligado mas as linhas ligadas, por exemplo —
+// checar o layer individual, não a categoria inteira, cobre esse caso certinho). Usada por
+// exportarKML/exportarDXF (ver lá) pra exportar só o que está realmente visível no mapa agora.
+function _layerVisivel(layer) { return !!(layer && map.hasLayer(layer)); }
+
 function exportarKML() {
   try { _exportarKMLInterno(); }
   catch(e) { alert('Erro ao gerar KML: ' + e.message); console.error(e); }
@@ -11909,14 +12125,21 @@ function _exportarKMLInterno() {
     return f + `</Folder>\n`;
   }
 
-  // ── 1. Talhões (arquivados + ativo) ──────────────────────────────────────
+  // ── 1. Talhões (arquivados + ativo) — só o que está VISÍVEL agora (ver _layerVisivel) ──────
   talhoesArquivados.forEach(t => {
-    kml += kmlTalhao(`Talhão ${t.idx}`, t.cor, t.polyPts, t.linhas, t.linhasDecl, t.corLinha, t.escoamentoLinhas);
+    const ptsVis = _layerVisivel(t.polyLayer) ? t.polyPts : [];
+    const linhasVis = t.linhas.filter(_layerVisivel);
+    const linhasDeclVis = t.linhasDecl.filter(_layerVisivel);
+    const escoamentoVis = _layerVisivel(t.escoamentoLinhas) ? t.escoamentoLinhas : null;
+    kml += kmlTalhao(`Talhão ${t.idx}`, t.cor, ptsVis, linhasVis, linhasDeclVis, t.corLinha, escoamentoVis);
   });
-  // Talhão ativo (se tiver linhas)
+  // Talhão ativo (se tiver linhas) — mesmo filtro de visibilidade
   if(polyPts.length >= 3 || linhas.length) {
     const idxAtivo = talhoesArquivados.length + 1;
-    kml += kmlTalhao(`Talhão ${idxAtivo}`, '#42a5f5', polyPts, linhas, linhasDecl, corLinhaAtual);
+    const ptsVis = _layerVisivel(polyLayer) ? polyPts : [];
+    const linhasVis = linhas.filter(_layerVisivel);
+    const linhasDeclVis = linhasDecl.filter(_layerVisivel);
+    kml += kmlTalhao(`Talhão ${idxAtivo}`, '#42a5f5', ptsVis, linhasVis, linhasDeclVis, corLinhaAtual);
   }
 
   // ── 2. Área de curvas de nível (se desenhada) ─────────────────────────────
@@ -11930,8 +12153,8 @@ function _exportarKMLInterno() {
     kml += `</Folder>\n`;
   }
 
-  // ── 3. Curvas de nível (com cota Z para AutoCAD) ─────────────────────────
-  if(curvaLayers.length) {
+  // ── 3. Curvas de nível (com cota Z para AutoCAD) — só se alguma estiver visível ────────────
+  if(curvaLayers.some(_layerVisivel)) {
     kml += `<Folder><name>Curvas de Nível</name>\n`;
     kml += `<description>Alt. mín: ${curvaMinElev.toFixed(1)} m  Alt. máx: ${curvaMaxElev.toFixed(1)} m</description>\n`;
 
@@ -11948,15 +12171,16 @@ function _exportarKMLInterno() {
         `<coordinates>${coords}</coordinates></LineString></Placemark>\n`;
     };
 
-    // Sub-pasta: Curvas Mestras
-    const mestras = curvaLayers.filter(pl => pl._isMaster);
+    // Sub-pasta: Curvas Mestras (só visíveis — "curvasMestras"/"curvasMenores" são 2 camadas
+    // independentes no Painel de Camadas, ver _CAMADAS, por isso o filtro é por linha individual)
+    const mestras = curvaLayers.filter(pl => pl._isMaster && _layerVisivel(pl));
     if(mestras.length) {
       kml += `<Folder><name>Curvas Mestras</name>\n`;
       mestras.forEach(pl => { kml += kmlCurvaLine(pl); });
       kml += `</Folder>\n`;
     }
     // Sub-pasta: Curvas Intermediárias
-    const intermediarias = curvaLayers.filter(pl => !pl._isMaster);
+    const intermediarias = curvaLayers.filter(pl => !pl._isMaster && _layerVisivel(pl));
     if(intermediarias.length) {
       kml += `<Folder><name>Curvas Intermediárias</name>\n`;
       intermediarias.forEach(pl => { kml += kmlCurvaLine(pl); });
@@ -11969,7 +12193,10 @@ function _exportarKMLInterno() {
   // online (curvaLayers) — bug relatado: "em kml ele não exporta as curvas de nível que
   // importei". Cada ponto tem sua própria cota real (vem do levantamento, não de um nível único
   // por linha como as geradas online), então usa a cota de CADA vértice, não uma constante.
-  if(_curvasLocais && _curvasLocais.contornosDecimados && _curvasLocais.contornosDecimados.length) {
+  // Camada "Curvas de Nível Locais (DXF importado)" controla UM layerPreview só (não uma linha por
+  // contorno) — se estiver desligada, _curvasLocais.layerPreview foi removido do mapa (ver
+  // _CAMADAS.curvasLocais/_aplicarCamada), então pula a seção inteira.
+  if(_curvasLocais && _curvasLocais.contornosDecimados && _curvasLocais.contornosDecimados.length && _layerVisivel(_curvasLocais.layerPreview)) {
     kml += `<Folder><name>Curvas de Nível (importadas)</name>\n`;
     kml += `<description>Alt. mín: ${_curvasLocais.elevMin.toFixed(1)} m  Alt. máx: ${_curvasLocais.elevMax.toFixed(1)} m</description>\n`;
     _curvasLocais.contornosDecimados.forEach(c => {
@@ -12132,13 +12359,19 @@ function _exportarDXFInterno() {
     }
   }
 
-  // ── 1. Talhões (arquivados + ativo) ──────────────────────────────────────
+  // ── 1. Talhões (arquivados + ativo) — só o que está VISÍVEL agora (ver _layerVisivel) ──────
   talhoesArquivados.forEach(t => {
-    exportarTalhaoDxf(`Talhao_${t.idx}`, t.cor, t.polyPts, t.linhas, t.linhasDecl, t.corLinha);
+    const ptsVis = _layerVisivel(t.polyLayer) ? t.polyPts : [];
+    const linhasVis = t.linhas.filter(_layerVisivel);
+    const linhasDeclVis = t.linhasDecl.filter(_layerVisivel);
+    exportarTalhaoDxf(`Talhao_${t.idx}`, t.cor, ptsVis, linhasVis, linhasDeclVis, t.corLinha);
   });
   if(polyPts.length >= 3 || linhas.length) {
     const idxAtivo = talhoesArquivados.length + 1;
-    exportarTalhaoDxf(`Talhao_${idxAtivo}`, '#42a5f5', polyPts, linhas, linhasDecl, corLinhaAtual);
+    const ptsVis = _layerVisivel(polyLayer) ? polyPts : [];
+    const linhasVis = linhas.filter(_layerVisivel);
+    const linhasDeclVis = linhasDecl.filter(_layerVisivel);
+    exportarTalhaoDxf(`Talhao_${idxAtivo}`, '#42a5f5', ptsVis, linhasVis, linhasDeclVis, corLinhaAtual);
   }
 
   // ── 2. Área de curvas de nível ────────────────────────────────────────────
@@ -12147,11 +12380,11 @@ function _exportarDXFInterno() {
     addPolyline(curvaPolyPts, ln, true, null);
   }
 
-  // ── 3. Curvas de nível (com cota Z real) ──────────────────────────────────
-  if(curvaLayers.length) {
+  // ── 3. Curvas de nível (com cota Z real) — só as visíveis ─────────────────
+  if(curvaLayers.some(_layerVisivel)) {
     const lnM = addLayer('Curvas_Mestras', '#ea5832');
     const lnI = addLayer('Curvas_Intermediarias', '#7de2bd');
-    curvaLayers.forEach(pl => {
+    curvaLayers.filter(_layerVisivel).forEach(pl => {
       const pts = pl.getLatLngs().flat();
       if(pts.length < 2) return;
       addPolyline(pts, pl._isMaster ? lnM : lnI, false, pl._level ?? 0);
@@ -12162,8 +12395,9 @@ function _exportarDXFInterno() {
   // GERADAS online (curvaLayers), mesmo bug do KML. addPolyline() só aceita UMA elevação
   // constante por polilinha, mas cada curva importada já É de um nível só (mesma cota em todos
   // os pontos, ver _classificarMestraMenor) — então dá pra reusar direto, exportando cada
-  // contorno como uma POLYLINE 3D separada por cota.
-  if(_curvasLocais && _curvasLocais.contornosDecimados && _curvasLocais.contornosDecimados.length) {
+  // contorno como uma POLYLINE 3D separada por cota. Camada controla UM layerPreview só (ver
+  // mesmo comentário no KML) — se desligada, pula a seção inteira.
+  if(_curvasLocais && _curvasLocais.contornosDecimados && _curvasLocais.contornosDecimados.length && _layerVisivel(_curvasLocais.layerPreview)) {
     const step = (() => {
       const unicas = [...new Set(_curvasLocais.contornosDecimados.map(c => c.pontos[0].z))].sort((a,b)=>a-b);
       if(unicas.length < 2) return null;
@@ -13492,6 +13726,24 @@ function _imagemSateliteExternaUrl(sw, ne) {
   return { url, MW, MH };
 }
 
+// v5.81: pedido do usuário — "o relatorio não esta enquadrando todo o mapa na visualização,
+// pensei em talvez deixar uma folha inteira para o mapa e o restante ser em outra folha". Causa:
+// a página 1 dividia a altura entre um cabeçalho cheio (logo/cliente/consultor) E o mapa, e o mapa
+// em si só usava "width:100%" com a altura vindo de aspect-ratio — se a proporção capturada (que
+// depende do tamanho da JANELA do navegador na hora, não tem relação com a proporção da folha)
+// fosse mais "larga" que a folha, sobrava espaço em branco embaixo; se fosse mais "alta", o
+// overflow:hidden da página CORTAVA um pedaço do mapa. Fix: página 1 vira SÓ o mapa (cabeçalho
+// cheio mudou pra página 2, que já tinha o dela — ver HTML completo em gerarPDF) + esta função
+// calcula em JS (mais confiável pra impressão que depender de aspect-ratio dentro de flexbox) o
+// MAIOR tamanho que cabe na folha inteira SEM esticar nem cortar — o clássico ajuste "contain":
+// tenta a largura máxima primeiro; se a altura que isso dá estourar o limite, usa a altura máxima
+// em vez disso (e recalcula a largura a partir dela).
+function _ajustarTamanhoMapaRelatorio(mw, mh, maxWmm, maxHmm) {
+  let larguraMm = maxWmm, alturaMm = maxWmm * mh / mw;
+  if(alturaMm > maxHmm) { alturaMm = maxHmm; larguraMm = maxHmm * mw / mh; }
+  return { larguraMm, alturaMm };
+}
+
 // ── Relatório PDF ─────────────────────────────────────────────────────────────
 // v5.78: pedido do usuário — "qdo vou exportar o relatorio sai sempre a foto de satelite de fundo
 // mesmo que eu desligue, quero que apareça no report sempre igual estou visualizando, se tem foto
@@ -13696,6 +13948,12 @@ async function gerarPDF() {
     <span><span style="display:inline-block;width:10px;height:10px;background:#9C27B0;border-radius:2px;vertical-align:middle;margin-right:3px"></span>&gt;20% Preserva&#231;&#227;o</span>
   </div></div>` : '';
 
+  // ── Tamanho do mapa na página 1 — cabe a folha inteira (menos a barra de título), sem esticar
+  // nem cortar (ver _ajustarTamanhoMapaRelatorio). 281×186mm = largura/altura do miolo imprimível
+  // (A4 paisagem 297×210mm, margem .8cm de cada lado do @page, menos uns 8mm pra barra de título
+  // "🌍 Mapa — Sistematização" que continua em cima do mapa nessa página).
+  const { larguraMm: mapaLarguraMm, alturaMm: mapaAlturaMm } = _ajustarTamanhoMapaRelatorio(MW, MH, 281, 186);
+
   // ── HTML completo ─────────────────────────────────────────────────────────
   const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
 <title>Sistematiza&#231;&#227;o de Plantio &#8212; Bolsa Irriga</title>
@@ -13720,22 +13978,19 @@ th{background:#f4f7fb;padding:.28rem .5rem;font-size:7.5px;text-transform:upperc
 td{padding:.28rem .5rem;border:1px solid #d0e4f0;text-align:center}
 tfoot td{background:#e3f2fd}
 .footer{margin-top:.65rem;padding-top:.38rem;border-top:1px solid #d0e4f0;font-size:8px;color:#aaa;text-align:center;line-height:1.8}
-.pg1{height:194mm;overflow:hidden;page-break-inside:avoid;page-break-after:always}
-.map-wrap{position:relative;width:100%;overflow:hidden;border:1px solid #b0b0b0;border-radius:3px}
+.pg1{height:194mm;display:flex;flex-direction:column;overflow:hidden;page-break-inside:avoid;page-break-after:always}
+.pg1 h2{flex:0 0 auto}
+.map-wrap-outer{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center}
+.map-wrap{position:relative;overflow:hidden;border:1px solid #b0b0b0;border-radius:3px}
 .map-wrap svg{display:block;width:100%;height:100%}
 </style></head><body>
-<div class="pg1"><!-- página 1 -->
-<div class="hdr">
-  <img src="data:image/png;base64,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" alt="Agrolinhas">
-  <div class="hdr-info">
-    <h1>Sistematiza&#231;&#227;o de Plantio</h1>
-    <div class="hdr-sub">Talh&#245;es &middot; Linhas de Plantio &middot; Curvas de N&#237;vel &middot; Declividade</div>
-    <div class="hdr-sub">Cliente: <b>${cliente}</b> &middot; Propriedade: <b>${prop}</b></div>
-  </div>
-  <div class="hdr-r"><b>${consultor}</b>Eng. Agr&#244;nomo &middot; Irriga&#231;&#227;o<br>bolsairriga.com.br &middot; (16) 99401-2495<br>${date}</div>
-</div>
-<h2>&#127757; Mapa &#8212; Sistematiza&#231;&#227;o</h2>
-<div class="map-wrap" style="aspect-ratio:${MW}/${MH}">
+<div class="pg1"><!-- página 1 — v5.81: SÓ o mapa (cabeçalho cheio foi pra página 2, que já tinha o
+dela) — o mapa ocupa a folha inteira (tamanho calculado em JS por _ajustarTamanhoMapaRelatorio, ver
+gerarPDF — mais confiável pra impressão que depender só de aspect-ratio dentro de flexbox), sem
+esticar nem cortar nenhuma parte, não importa a proporção de tela que foi capturada. -->
+<h2>&#127757; Mapa &#8212; Sistematiza&#231;&#227;o (${cliente !== '—' ? cliente : prop})</h2>
+<div class="map-wrap-outer">
+<div class="map-wrap" style="width:${mapaLarguraMm}mm;height:${mapaAlturaMm}mm">
   <svg viewBox="0 0 ${MW} ${MH}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
     ${imgDataUrl
       ? `<image href="${imgDataUrl}" x="0" y="0" width="${MW}" height="${MH}" preserveAspectRatio="none"/>`
@@ -16620,6 +16875,7 @@ const _CAMADAS = {
   linhas:        { label: 'Linhas de Plantio',            get: () => [...talhoesArquivados.flatMap(t => t.linhas), ...linhas] },
   rotulos:       { label: 'Rótulos dos Talhões',          get: () => talhoesArquivados.map(t => t.infoMarker).filter(Boolean) },
   carreadores:   { label: 'Carreadores',                  get: () => carreadorLayers },
+  carreadorIntRef: { label: 'Carreador Interno (limite externo de referência)', get: () => _carreadoresInternosVisuais.flatMap(c => [c.outerLayer, c.ringLayer]).filter(Boolean) },
   curvasMestras: { label: 'Curvas de Nível (mestras)',    get: () => [...curvaLayers.filter(l => l._isMaster), ...curvaLabels] },
   curvasMenores: { label: 'Curvas de Nível (menores)',    get: () => curvaLayers.filter(l => !l._isMaster) },
   declividade:   { label: 'Classificação de Declividade', get: () => [...talhoesArquivados.flatMap(t => t.linhasDecl), ...linhasDecl] },
@@ -16701,6 +16957,7 @@ function _abandonarFerramentaAtiva() {
   else if(modo === 'curvapoly') limparPoligonoCurva();
   else if(modo === 'regua') limparRegua();
   else if(modo === 'sentido') cancelarDefinirSentido();
+  else if(modo === 'carreadorInt') cancelarCarreadorInterno();
   if(modoDivisao || modo === 'divisao') cancelarDivisaoUsuario();
   if(_modoPickLinha === 'perfil') cancelarPerfilLinhaPlantio();
   else if(_modoPickLinha === 'carreador') cancelarCarreadorDeLinha();
