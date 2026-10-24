@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.14 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.15 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -438,6 +438,15 @@ tr.item-row.inativo{opacity:.4}
 <script src="selecao.js"></script>
 <script src="hidraulica-adutora.js"></script>
 <script>
+// v1.15 (2026-10-24): a tabela "Perfil de Elevação (10 pontos)" nas abas
+//   Adutora/Recalque ficava sempre zerada depois de importar DXF/KML/traçar no
+//   mapa — o cálculo usa o perfil denso (profileData, centenas de amostras), mas
+//   essa tabela de 10 linhas (pensada como fallback manual) nunca era preenchida
+//   com os valores reais, dando a impressão de que a extração não tinha
+//   funcionado. Agora, ao gerar o perfil de elevação (de qualquer origem — mapa,
+//   KML ou DXF), os 10 pontos são reamostrados a partir do perfil real
+//   (interpolando a cota entre as 2 amostras mais próximas de cada distância) e a
+//   tabela é redesenhada mostrando os valores de verdade.
 // v1.14 (2026-10-24): corrige o fluxo da importação DXF/KML pra ser realmente
 //   automático. Antes, depois de importar, o perfil de elevação só era gerado se o
 //   usuário clicasse "Gerar Perfil de Elevação" manualmente — e como o cálculo
@@ -638,7 +647,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.14';
+const APP_VERSION='v1.15';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -1255,7 +1264,7 @@ function renderAdutoraView(key){
       ).join('')}</div>
     </div>
     <div class="card">
-      <div class="ct">Perfil de Elevação Manual (fallback — usado só se nenhum traçado de mapa foi gerado)</div>
+      <div class="ct">Perfil de Elevação (10 pontos — preenchido automaticamente ao gerar o traçado no mapa/KML/DXF; edite à mão se não usar traçado)</div>
       <div class="tbl-wrap"><table><thead><tr><th>Ponto</th><th class="num">Distância (m)</th><th class="num">Cota (m)</th></tr></thead>
       <tbody id="perfilManualBody-${key}"></tbody></table></div>
       <button class="btn btn-blue" style="margin-top:.8rem" onclick="calcularAdutoraTab('${key}')">Calcular</button>
@@ -1730,6 +1739,26 @@ async function gerarPerfilElevacao(key){
     setMStatusKey(key,'⚠ Erro: '+e.message+'. Verifique se a Elevation API está ativa na chave.','err');
   }finally{$('btnPerfil-'+key).disabled=false;}
 }
+// Reamostra o perfil denso (centenas de pontos do Elevation API) em N pontos
+// igualmente espaçados por distância, interpolando a cota entre as 2 amostras
+// mais próximas — usado para preencher a tabela "Perfil Manual" com os valores
+// REAIS extraídos (antes ficava zerada até o usuário editar à mão, o que não
+// deixava claro que o traçado/mapa já tinha funcionado).
+function resampleParaCotas(profileData,n){
+  if(!profileData||profileData.length<2)return new Array(n).fill(0);
+  const total=profileData[profileData.length-1].dist;
+  const out=[];
+  for(let i=0;i<n;i++){
+    const alvo=total*i/(n-1);
+    let j=1;
+    while(j<profileData.length-1&&profileData[j].dist<alvo)j++;
+    const a=profileData[j-1],b=profileData[j];
+    const span=b.dist-a.dist;
+    const t=span>0?(alvo-a.dist)/span:0;
+    out.push(Math.round((a.elev+(b.elev-a.elev)*t)*100)/100);
+  }
+  return out;
+}
 function preencherDaAdutora(key,samples){
   const cfg=atual[key];
   const elevs=samples.map(s=>s.elevation);
@@ -1739,8 +1768,10 @@ function preencherDaAdutora(key,samples){
   const cotaMax=Math.max(...elevs);
   cfg.comprimento=L;
   cfg.profileData=samples.map((s,i)=>({dist:dists[i],elev:s.elevation}));
+  cfg.cotas=resampleParaCotas(cfg.profileData,cfg.cotas.length||10);
   persistirAtual();
   $('adpar-'+key+'-comprimento').value=L;
+  renderPerfilManual(key); // mostra os valores reais extraídos, não mais zerado
   mostrarCapturados(key,cfg,elevs[0],elevs[elevs.length-1],cotaMax,L);
   // silencioso=true: comprimento+perfil acabaram de ser preenchidos automaticamente
   // (mapa/KML/DXF), mas a Vazão ainda pode estar em branco — isso é esperado aqui
