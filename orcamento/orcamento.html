@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.13 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.14 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -438,6 +438,20 @@ tr.item-row.inativo{opacity:.4}
 <script src="selecao.js"></script>
 <script src="hidraulica-adutora.js"></script>
 <script>
+// v1.14 (2026-10-24): corrige o fluxo da importação DXF/KML pra ser realmente
+//   automático. Antes, depois de importar, o perfil de elevação só era gerado se o
+//   usuário clicasse "Gerar Perfil de Elevação" manualmente — e como o cálculo
+//   automático de comprimento/perfil disparava um alert() de "preencha comprimento
+//   e vazão" sempre que a Vazão ainda estivesse em branco (comportamento que já
+//   existia por baixo), isso ficava confuso. Agora: (1) importar DXF já gera o
+//   perfil de elevação sozinho (sem precisar clicar em nada), preenchendo
+//   comprimento e cotas; (2) esse alert foi silenciado quando o cálculo é
+//   disparado automaticamente (só aparece se o usuário clicar no botão
+//   "Calcular" manualmente com campo faltando — aí faz sentido avisar); (3)
+//   editar Comprimento ou Vazão agora recalcula sozinho, sem precisar clicar em
+//   "Calcular" depois — fluxo fica: importar DXF → digitar Vazão → pronto. (4) um
+//   marcador azul "B" aparece no mapa na posição da bomba (camada "Bomba" do DXF),
+//   pra confirmar visualmente onde o traçado começa.
 // v1.13 (2026-10-24): novo "Importar traçado DXF (CAD)" nas abas Adutora 01/02 e
 //   Recalque, ao lado do já existente "Importar KML": lê a polilinha da camada da
 //   Adutora (padrão "Adutora", busca por nome) e usa a camada da "Bomba" (o marco
@@ -624,7 +638,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.13';
+const APP_VERSION='v1.14';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -1169,7 +1183,7 @@ const PARAMS_ADUTORA=[
 // Estado "ao vivo" do mapa por aba — NÃO é persistido (objetos do Google Maps não são serializáveis);
 // o que é persistido em atual[key].tracePoints/profileData são apenas dados simples (lat/lng, dist/elev).
 const mapState={adutora01:criarMapState(),adutora02:criarMapState(),recalque:criarMapState()};
-function criarMapState(){return{map:null,elevService:null,tracePoints:[],traceMarkers:[],tracePolyline:null,modoDesenho:false};}
+function criarMapState(){return{map:null,elevService:null,tracePoints:[],traceMarkers:[],tracePolyline:null,modoDesenho:false,bombaMarker:null};}
 
 function renderAdutoraView(key){
   const {viewId,titulo,nota}=ADUTORA_TABS[key];
@@ -1298,15 +1312,19 @@ function atualizarParamAdutora(key,campo,val){
   atual[key][campo]=parseFloat(val)||0;
   persistirAtual();
   if(campo==='comprimento')renderPerfilManual(key); // distâncias do perfil manual dependem do comprimento
+  // recalcula sozinho ao editar Comprimento/Vazão (os 2 campos mínimos p/ calcular)
+  // — com o traçado importado automaticamente (DXF/KML), o usuário só precisa
+  // digitar a Vazão e o resultado já aparece, sem precisar clicar em "Calcular".
+  if(campo==='comprimento'||campo==='vazao')calcularAdutoraTab(key,true);
 }
 function atualizarCotaAdutora(key,idx,val){
   atual[key].cotas[idx]=parseFloat(val)||0;
   persistirAtual();
 }
-function calcularAdutoraTab(key){
+function calcularAdutoraTab(key,silencioso){
   const cfg=atual[key];
   const r=calcularAdutoraSimples(cfg);
-  if(!r){alert('Preencha comprimento e vazão antes de calcular.');return;}
+  if(!r){if(!silencioso)alert('Preencha comprimento e vazão antes de calcular.');return;}
   // serializa (localStorage não guarda Set nem funções)
   cfg.resultado={
     AMT_hid:r.multi.AMT_hid,AMT_design:r.multi.AMT_design,pIni:r.multi.pIni,totalHf:r.multi.totalHf,
@@ -1476,6 +1494,7 @@ function limparTrace(key){
   const st=mapState[key];
   st.tracePoints=[];st.traceMarkers.forEach(m=>m.setMap(null));st.traceMarkers=[];
   if(st.tracePolyline){st.tracePolyline.setMap(null);st.tracePolyline=null;}
+  if(st.bombaMarker){st.bombaMarker.setMap(null);st.bombaMarker=null;}
   st.modoDesenho=false;
   $('traceInfo-'+key).style.display='none';$('btnPerfil-'+key).disabled=true;$('btnLimpar-'+key).disabled=true;
   $('capDiv-'+key).style.display='none';$('elev-canvas-'+key).style.display='none';
@@ -1638,12 +1657,19 @@ function encontrarCamada(nomes,palavraChave){
   return nomes.find(n=>n.toLowerCase().includes(palavraChave))||null;
 }
 function salvarZonaUTM(v){try{localStorage.setItem('dxf_zona_utm',v);}catch(e){}}
+function marcarBombaNoMapa(key,latLng){
+  const st=mapState[key];
+  if(st.bombaMarker)st.bombaMarker.setMap(null);
+  st.bombaMarker=new google.maps.Marker({position:latLng,map:st.map,
+    icon:{path:google.maps.SymbolPath.CIRCLE,scale:11,fillColor:'#0077b6',fillOpacity:1,strokeColor:'#fff',strokeWeight:2.5},
+    label:{text:'B',fontSize:'12px',fontWeight:'800',color:'#fff'},zIndex:20,title:'Bomba (início da adutora)'});
+}
 function importarDXF(key){
   const st=mapState[key];
   if(!st.map){setMStatusKey(key,'Carregue o mapa primeiro.','err');$('dxfInput-'+key).value='';return;}
   const f=$('dxfInput-'+key).files[0];if(!f)return;
   const fr=new FileReader();
-  fr.onload=ev=>{
+  fr.onload=async ev=>{
     let dados;
     try{dados=parseDXFCamadas(ev.target.result);}catch(e){setMStatusKey(key,'Erro ao ler o DXF: '+e.message,'err');return;}
     const camadaAdutora=encontrarCamada(Object.keys(dados.polilinhas),'adutora');
@@ -1656,11 +1682,11 @@ function importarDXF(key){
     if(pts.length<2){setMStatusKey(key,'A polilinha da camada de Adutora não tem pontos suficientes.','err');return;}
 
     const camadaBomba=encontrarCamada(Object.keys(dados.pontos),'bomba');
-    let invertido=false;
+    let invertido=false,bombaXY=null;
     if(camadaBomba){
-      const bomba=dados.pontos[camadaBomba][0];
-      const dIni=Math.hypot(pts[0][0]-bomba.x,pts[0][1]-bomba.y);
-      const dFim=Math.hypot(pts[pts.length-1][0]-bomba.x,pts[pts.length-1][1]-bomba.y);
+      bombaXY=dados.pontos[camadaBomba][0];
+      const dIni=Math.hypot(pts[0][0]-bombaXY.x,pts[0][1]-bombaXY.y);
+      const dFim=Math.hypot(pts[pts.length-1][0]-bombaXY.x,pts[pts.length-1][1]-bombaXY.y);
       if(dFim<dIni){pts=pts.slice().reverse();invertido=true;}
     }
 
@@ -1669,11 +1695,19 @@ function importarDXF(key){
 
     limparTrace(key);
     latlngs.forEach(ll=>addTracePoint(key,ll));
+    if(bombaXY){
+      const[lat,lng]=utmParaLatLng(bombaXY.x,bombaXY.y,zona,true);
+      marcarBombaNoMapa(key,new google.maps.LatLng(lat,lng));
+    }
     const bounds=new google.maps.LatLngBounds();
     st.tracePoints.forEach(p=>bounds.extend(p));
     st.map.fitBounds(bounds);
     const avisoBomba=camadaBomba?`início pela camada "${camadaBomba}"${invertido?' (traçado invertido p/ começar nela)':''}`:'camada de "Bomba" não encontrada — mantida a ordem original dos pontos do DXF';
-    setMStatusKey(key,`${pts.length} pontos importados do DXF (camada "${camadaAdutora}"), ${avisoBomba} · ${fmtDistM(calcDistTrace(key))}. Gere o perfil de elevação — só falta informar a Vazão.`,'ok');
+    setMStatusKey(key,`${pts.length} pontos importados do DXF (camada "${camadaAdutora}"), ${avisoBomba} · ${fmtDistM(calcDistTrace(key))}. Buscando elevações automaticamente...`,'ok');
+    // comprimento + cotas são automáticos: gera o perfil de elevação na hora,
+    // sem precisar de um clique manual extra — depois do DXF importado, só
+    // falta o usuário informar a Vazão.
+    await gerarPerfilElevacao(key);
   };
   fr.onerror=()=>setMStatusKey(key,'Erro ao ler o arquivo DXF.','err');
   fr.readAsText(f,'UTF-8');
@@ -1708,7 +1742,10 @@ function preencherDaAdutora(key,samples){
   persistirAtual();
   $('adpar-'+key+'-comprimento').value=L;
   mostrarCapturados(key,cfg,elevs[0],elevs[elevs.length-1],cotaMax,L);
-  calcularAdutoraTab(key);
+  // silencioso=true: comprimento+perfil acabaram de ser preenchidos automaticamente
+  // (mapa/KML/DXF), mas a Vazão ainda pode estar em branco — isso é esperado aqui
+  // (falta só o usuário digitar), não um erro a avisar com alert().
+  calcularAdutoraTab(key,true);
 }
 function mostrarCapturados(key,cfg,cotaS,cotaR,cotaMax,L){
   if(cotaS===undefined&&cfg.profileData){
