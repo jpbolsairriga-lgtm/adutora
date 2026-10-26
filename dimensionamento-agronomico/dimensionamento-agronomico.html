@@ -119,6 +119,25 @@ details.card[open] summary .chev{transform:rotate(180deg)}
 .bar{height:6px;background:var(--line-2);border-radius:3px;overflow:hidden;min-width:60px}
 .bar>i{display:block;height:100%;background:var(--brand-2)}
 .tag{display:inline-block;font-size:.66rem;font-weight:700;padding:1px 6px;border-radius:4px;background:var(--ok-soft);color:var(--ok);margin-left:6px;vertical-align:1px}
+.tag.ad{background:var(--brand-2);color:#fff}
+.altinfo{font-size:.8rem;color:var(--ink-2);margin:-6px 0 10px}
+.tbl small{font-size:.72rem;color:var(--ink-3);font-weight:500}
+.tbl .att{min-width:150px}
+.tblwrap.full{max-height:none}
+#altTbl td{white-space:nowrap;padding:8px 6px}
+#altTbl th{white-space:normal;line-height:1.25;vertical-align:bottom}
+.attw{display:flex;align-items:center;gap:8px}
+.lbar{position:relative;flex:1;height:8px;background:var(--line-2);border-radius:4px;min-width:60px}
+.lbar>i{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--ok)}
+.lbar>s{position:absolute;top:-3px;bottom:-3px;width:2px;margin-left:-1px;background:var(--ink)}
+.short .lbar>i{background:var(--err)}
+.pct{width:42px;text-align:right;font-weight:700}
+.attsub{font-size:.7rem;color:var(--ink-3);margin-top:3px}
+.short .attsub{color:var(--err)}
+.okc{color:var(--ok)}.errc{color:var(--err)}
+.tbl tbody tr.short td{background:#FFFBFA}
+.tbl tbody tr.short.sel td{background:var(--err-soft)}
+.tbl tbody tr.short.sel td:first-child{box-shadow:inset 3px 0 0 var(--err)}
 
 /* ---------- Memorial ---------- */
 .memo{font-size:.84rem}
@@ -274,13 +293,15 @@ details.card[open] summary .chev{transform:rotate(180deg)}
       </div>
 
       <div class="card">
-        <h2>Alternativas de setorização<span class="right no-print">toque numa linha para adotar</span></h2>
-        <div class="tblwrap">
+        <h2>Alternativas de setorização — simulação de lâmina<span class="right no-print">toque numa linha para adotar</span></h2>
+        <div class="altinfo" id="altInfo"></div>
+        <div class="tblwrap full">
           <table class="tbl" id="altTbl">
-            <thead><tr><th>Setores</th><th class="num">Área/setor</th><th class="num">Vazão/setor</th><th class="num">Tempo total</th><th class="num">Folga</th><th>Ocupação</th></tr></thead>
+            <thead><tr id="altHead"></tr></thead>
             <tbody></tbody>
           </table>
         </div>
+        <div class="legend"><span><i style="background:var(--ok)"></i>Atende a demanda</span><span><i style="background:var(--err)"></i>Não atende</span><span><i style="background:var(--ink);width:2px"></i>Lâmina demandada</span><span>Lâmina máx. = Ta × (ciclo ÷ setores) × Ef ÷ TR</span></div>
       </div>
 
       <div class="card">
@@ -414,10 +435,12 @@ details.card[open] summary .chev{transform:rotate(180deg)}
       alerts.push({t:'ok', m:`Sistema atende à demanda: ${N} setor(es) de ${fmt(r.As)} ha, ${fmt(r.Qs,1)} m³/h por setor, ocupando ${fmt(r.oc*100,0)}% do tempo disponível.`});
     }
 
+    // simulação: 3 setores abaixo e 3 acima do adotado — lâmina máxima que cabe no ciclo
+    const ref = Math.max(1, N), ini = Math.max(1, ref - 3);
     r.alts = [];
-    for (let i = 1; i <= Math.min(Nmax, 60); i++) {
-      const As = A / i, Tt = i * Top;
-      r.alts.push({n:i, As, Qs:As * r.qHa, Tt, folga:Tc - Tt, oc:Tt / Tc});
+    for (let i = ini; i <= ini + 6; i++) {
+      const As = A / i, Tt = i * Top, Tsm = Tc / i, LBm = Ta * Tsm, LLm = LBm * ef / F;
+      r.alts.push({n:i, As, Qs:As * r.qHa, Tt, folga:Tc - Tt, oc:Tt / Tc, Tsm, LBm, LLm, at:LLm / LL, ok:LLm >= LL - 1e-9});
     }
     return r;
   }
@@ -445,7 +468,7 @@ details.card[open] summary .chev{transform:rotate(180deg)}
     if (!r.valid) {
       ['kLb','kTa','kTop','kN','kQ','kOc'].forEach(id => set(id, '—'));
       ['kLbS','kTaS','kTopS','kNS','kQS','kOcS','tlInfo'].forEach(id => set(id, ''));
-      set('tl',''); set('axis',''); $('altTbl').tBodies[0].innerHTML = ''; set('detTbl',''); set('memo','');
+      set('tl',''); set('axis',''); $('altTbl').tBodies[0].innerHTML = ''; set('altInfo',''); set('detTbl',''); set('memo','');
       renderPrint(r); return;
     }
     const ok = r.N >= 1;
@@ -480,16 +503,21 @@ details.card[open] summary .chev{transform:rotate(180deg)}
     set('tlInfo', `ciclo de ${hm(r.Tc)}${r.F>1?` (${r.F} dias × ${fmt(r.Td,1)} h)`:''}`);
 
     // alternativas
-    const maxQ = r.alts.length ? r.alts[0].Qs : 1;
-    $('altTbl').tBodies[0].innerHTML = r.alts.length ? r.alts.slice().reverse().map(a => `
-      <tr class="pick${a.n===r.N?' sel':''}" data-n="${a.n}">
-        <td>${a.n}${a.n===r.Nmax?'<span class="tag">máx.</span>':''}</td>
+    const lbU = r.F > 1 ? 'mm/irrig.' : 'mm/dia';
+    $('altHead').innerHTML = `<th>Setores</th><th class="num">Área/setor</th><th class="num">Vazão/setor</th><th class="num">Tempo máx./setor</th><th class="num">Lâmina bruta máx.</th><th class="num">Lâmina líquida máx.</th><th class="att">Atendimento da demanda</th>`;
+    const lsc = Math.max(...r.alts.map(a => a.LLm), r.LL) * 1.08;
+    $('altTbl').tBodies[0].innerHTML = r.alts.map(a => `
+      <tr class="pick${a.n===r.N?' sel':''}${a.ok?'':' short'}" data-n="${a.n}">
+        <td>${a.n}${a.n===r.N?'<span class="tag ad">adotado</span>':''}${a.n===r.Nmax?'<span class="tag">máx.</span>':''}</td>
         <td class="num">${fmt(a.As)} ha</td>
         <td class="num">${fmt(a.Qs,1)} m³/h</td>
-        <td class="num">${hm(a.Tt)}</td>
-        <td class="num">${hm(a.folga)}</td>
-        <td><div style="display:flex;align-items:center;gap:8px"><div class="bar" style="flex:1"><i style="width:${a.oc*100}%"></i></div><span style="width:34px;text-align:right">${fmt(a.oc*100,0)}%</span></div></td>
-      </tr>`).join('') : `<tr><td colspan="6" style="color:var(--ink-3)">Nenhuma setorização viável com os parâmetros atuais.</td></tr>`;
+        <td class="num">${hm(a.Tsm)}</td>
+        <td class="num">${fmt(a.LBm)} <small>${lbU}</small></td>
+        <td class="num"><b class="${a.ok?'okc':'errc'}">${fmt(a.LLm)}</b> <small>mm/dia</small></td>
+        <td class="att"><div class="attw"><div class="lbar"><i style="width:${a.LLm/lsc*100}%"></i><s style="left:${r.LL/lsc*100}%"></s></div><span class="pct ${a.ok?'okc':'errc'}">${fmt(a.at*100,0)}%</span></div>
+          <div class="attsub">${a.ok ? `folga ${hm(a.folga)}` : `faltam ${fmt(r.LL - a.LLm)} mm/dia`}</div></td>
+      </tr>`).join('');
+    set('altInfo', `Demanda: <b>${fmt(r.LL)} mm/dia</b> líquida · Ta ${fmt(r.Ta,3)} mm/h · ciclo ${hm(r.Tc)} · Ef. ${fmt(r.ef*100,0)}%`);
 
     // detalhes
     const row = (k, v, u='') => `<tr><td>${k}</td><td class="num"><b>${v}</b> ${u}</td></tr>`;
@@ -529,6 +557,8 @@ details.card[open] summary .chev{transform:rotate(180deg)}
       m += eq('Área por setor', `As = A / N = ${fmt(r.A)} / ${r.N}`, `${fmt(r.As)} ha`);
       m += eq('Vazão por setor', `Qs = As × Ta × 10 = ${fmt(r.As)} × ${fmt(r.Ta,3)} × 10`, `${fmt(r.Qs)} m³/h`);
       m += eq('Tempo total / folga', `Tt = N × Top = ${r.N} × ${fmt(r.Top)};  folga = ${fmt(r.Tc)} − Tt`, `${fmt(r.Tt)} h / ${fmt(r.folga)} h`);
+      const aN = r.alts.find(a => a.n === r.N);
+      m += eq('Lâmina líquida máxima com N setores', `LLmax = Ta × (Tc / N) × Ef / TR = ${fmt(r.Ta,3)} × (${fmt(r.Tc)} / ${r.N}) × ${fmt(r.ef,2)} / ${r.F}`, `${fmt(aN.LLm)} mm/dia`);
     }
     m += eq('Volume por planta', `V = LBd × E1 × Ep = ${fmt(r.LBd)} × ${fmt(r.e1)} × ${fmt(r.Ep)}`, `${fmt(r.volPl)} L/dia`);
     m += eq('Emissores por planta', `n × Ep / E2 = ${r.nlat} × ${fmt(r.Ep)} / ${fmt(r.e2)}`, fmt(r.emPlanta));
@@ -587,7 +617,12 @@ details.card[open] summary .chev{transform:rotate(180deg)}
       ['Resultado','Área por setor',n(r.As),'ha'],['Resultado','Vazão por setor',n(r.Qs),'m³/h'],['Resultado','Tempo total de irrigação',n(r.Tt),'h'],['Resultado','Folga operacional',n(r.folga),'h'],
       ['Resultado','Vazão teórica contínua',n(r.Qcont),'m³/h'],['Resultado','Volume bruto diário',n(r.Vdia,1),'m³/dia'],
       ['Resultado','Volume por planta',n(r.volPl),'L/dia'],['Resultado','Emissores por planta',n(r.emPlanta),''],['Resultado','Plantas por hectare',n(r.plHa,0),'pl/ha'],
-      ['Resultado','Emissores por hectare',n(r.emHa,0),'em/ha'],['Resultado','Tubo gotejador por hectare',n(r.tuboHa,0),'m/ha'],['Resultado','Tubo gotejador total',n(r.tuboHa*r.A/1000,2),'km']
+      ['Resultado','Emissores por hectare',n(r.emHa,0),'em/ha'],['Resultado','Tubo gotejador por hectare',n(r.tuboHa,0),'m/ha'],['Resultado','Tubo gotejador total',n(r.tuboHa*r.A/1000,2),'km'],
+      ...r.alts.flatMap(a => [
+        [`Simulação ${a.n} setores`,'Vazão por setor',n(a.Qs,1),'m³/h'],
+        [`Simulação ${a.n} setores`,'Lâmina líquida máxima',n(a.LLm),'mm/dia'],
+        [`Simulação ${a.n} setores`,'Atendimento da demanda',n(a.at*100,0),'%']
+      ])
     ];
     const csv = '﻿' + rows.map(r => r.map(c => { const s = String(c ?? ''); return /[;"\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s; }).join(';')).join('\r\n');
     const slug = (S.fazenda || 'projeto').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^\w]+/g,'_').replace(/^_|_$/g,'');
