@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dimensionamento Agronômico</title>
+<style>
+:root{
+  --brand:#0B4F8A; --brand-2:#1572C9; --brand-soft:#E8F1FB;
+  --ink:#14212E; --ink-2:#465767; --ink-3:#7C8B99;
+  --bg:#F2F5F8; --surface:#FFFFFF; --line:#DCE3EA; --line-2:#EEF2F6;
+  --ok:#1F7A45; --ok-soft:#E6F4EC; --warn:#9A6411; --warn-soft:#FDF3E1; --err:#B4362A; --err-soft:#FBEAE8;
+  --seg-a:#1572C9; --seg-b:#0B4F8A;
+  --radius:10px;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink);font-size:15px;line-height:1.4}
+button{font:inherit;cursor:pointer}
+[hidden]{display:none!important}
+
+/* ---------- Header ---------- */
+.topbar{background:var(--brand);color:#fff}
+.topbar .in{max-width:1240px;margin:0 auto;padding:14px 16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.topbar h1{font-size:1.15rem;margin:0;font-weight:650;letter-spacing:.2px}
+.topbar .sub{font-size:.8rem;opacity:.8}
+.topbar .actions{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.btn{border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.08);color:#fff;border-radius:8px;padding:8px 12px;font-size:.85rem;font-weight:600;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{background:rgba(255,255,255,.18)}
+.btn svg{width:16px;height:16px;fill:currentColor}
+.btn.solid{background:#fff;color:var(--brand);border-color:#fff}
+.btn.solid:hover{background:#EAF2FB}
+
+/* ---------- Layout ---------- */
+.wrap{max-width:1240px;margin:0 auto;padding:18px 16px 48px}
+.layout{display:grid;grid-template-columns:minmax(320px,420px) 1fr;gap:18px;align-items:start}
+.col{display:flex;flex-direction:column;gap:16px;min-width:0}
+@media (max-width:900px){.layout{grid-template-columns:1fr}}
+
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px 16px 18px}
+.card h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.8px;color:var(--brand);margin:0 0 14px;display:flex;align-items:center;gap:8px;font-weight:700}
+.card h2 .n{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;background:var(--brand-soft);color:var(--brand);font-size:.72rem}
+.card h2 .right{margin-left:auto;text-transform:none;letter-spacing:0;font-weight:500;color:var(--ink-3)}
+
+details.card summary{list-style:none;cursor:pointer}
+details.card summary::-webkit-details-marker{display:none}
+details.card summary h2{margin:0}
+details.card[open] summary h2{margin-bottom:14px}
+details.card summary .chev{margin-left:auto;transition:transform .2s;color:var(--ink-3)}
+details.card[open] summary .chev{transform:rotate(180deg)}
+
+/* ---------- Fields ---------- */
+.fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.fields .full{grid-column:1/-1}
+.field{display:flex;flex-direction:column;gap:5px;min-width:0}
+.field .lbl{font-size:.8rem;font-weight:600;color:var(--ink-2)}
+.field .lbl i{font-style:normal;color:var(--ink-3);font-weight:500}
+.inp{display:flex;align-items:stretch;border:1px solid var(--line);border-radius:8px;background:#FAFBFC;transition:border-color .15s,box-shadow .15s}
+.inp:focus-within{border-color:var(--brand-2);background:#fff;box-shadow:0 0 0 3px rgba(21,114,201,.12)}
+.inp.bad{border-color:var(--err);box-shadow:0 0 0 3px rgba(180,54,42,.1)}
+.inp input,.inp select{flex:1;min-width:0;border:0;background:transparent;padding:10px 11px;font-size:16px;color:var(--ink);font-weight:550;outline:none;font-variant-numeric:tabular-nums;font-family:inherit}
+.inp select{appearance:none;-webkit-appearance:none;padding-right:28px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%230B4F8A'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 11px center}
+.inp em{font-style:normal;font-size:.78rem;color:var(--ink-3);padding:0 11px 0 2px;display:flex;align-items:center;white-space:nowrap}
+.hint{font-size:.74rem;color:var(--ink-3)}
+
+.seg{display:flex;background:var(--line-2);border-radius:8px;padding:3px;gap:3px;margin-bottom:12px}
+.seg button{flex:1;border:0;background:transparent;padding:8px 6px;border-radius:6px;font-size:.82rem;font-weight:600;color:var(--ink-2)}
+.seg button.on{background:#fff;color:var(--brand);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+
+.derived{display:flex;justify-content:space-between;align-items:center;background:var(--brand-soft);border-radius:8px;padding:9px 12px;font-size:.82rem;color:var(--ink-2)}
+.derived b{color:var(--brand);font-variant-numeric:tabular-nums}
+
+/* ---------- KPIs ---------- */
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+@media (max-width:640px){.kpis{grid-template-columns:1fr 1fr}}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:13px 14px;position:relative;overflow:hidden}
+.kpi::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--brand-2)}
+.kpi.hl::before{background:var(--ok)}
+.kpi .k{font-size:.72rem;text-transform:uppercase;letter-spacing:.6px;color:var(--ink-3);font-weight:650}
+.kpi .v{font-size:1.55rem;font-weight:700;color:var(--ink);margin-top:4px;font-variant-numeric:tabular-nums;letter-spacing:-.3px}
+.kpi .v small{font-size:.8rem;font-weight:600;color:var(--ink-2);margin-left:3px;letter-spacing:0}
+.kpi .s{font-size:.76rem;color:var(--ink-2);margin-top:2px;font-variant-numeric:tabular-nums}
+
+/* ---------- Alerts ---------- */
+.alerts{display:flex;flex-direction:column;gap:8px}
+.alert{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:8px;font-size:.84rem;border:1px solid}
+.alert .ic{font-weight:800;width:18px;height:18px;border-radius:50%;display:grid;place-items:center;font-size:.72rem;flex:none;color:#fff;margin-top:1px}
+.alert.err{background:var(--err-soft);border-color:#F1C7C2;color:#6E1F17}.alert.err .ic{background:var(--err)}
+.alert.warn{background:var(--warn-soft);border-color:#F1DDB5;color:#5C3D08}.alert.warn .ic{background:var(--warn)}
+.alert.ok{background:var(--ok-soft);border-color:#C3E3CF;color:#174D2E}.alert.ok .ic{background:var(--ok)}
+.alert.info{background:var(--brand-soft);border-color:#C9DDF3;color:#123E66}.alert.info .ic{background:var(--brand-2)}
+
+/* ---------- Timeline ---------- */
+.tl{position:relative;height:38px;border-radius:7px;background:repeating-linear-gradient(45deg,#EEF2F6,#EEF2F6 6px,#E5EAF0 6px,#E5EAF0 12px);overflow:hidden;display:flex}
+.tl .sg{height:100%;display:grid;place-items:center;color:#fff;font-size:.7rem;font-weight:700;border-right:1px solid rgba(255,255,255,.45);white-space:nowrap;overflow:hidden}
+.tl .sg:nth-child(odd){background:var(--seg-a)}
+.tl .sg:nth-child(even){background:var(--seg-b)}
+.tl .sg.over{background:var(--err)!important}
+.tl .lim{position:absolute;top:0;bottom:0;width:2px;background:var(--err)}
+.axis{position:relative;height:18px;margin-top:4px;font-size:.7rem;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.axis span{position:absolute;transform:translateX(-50%);white-space:nowrap}
+.axis span:first-child{transform:none}.axis span:last-child{transform:translateX(-100%)}
+.legend{display:flex;gap:14px;font-size:.75rem;color:var(--ink-2);margin-top:6px;flex-wrap:wrap}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+
+/* ---------- Tables ---------- */
+.tbl{width:100%;border-collapse:collapse;font-size:.84rem;font-variant-numeric:tabular-nums}
+.tbl th{text-align:left;font-size:.7rem;text-transform:uppercase;letter-spacing:.5px;color:var(--ink-3);font-weight:650;padding:7px 8px;border-bottom:1px solid var(--line)}
+.tbl td{padding:8px;border-bottom:1px solid var(--line-2)}
+.tbl td.num,.tbl th.num{text-align:right}
+.tbl tr.grp td{background:var(--line-2);font-size:.7rem;text-transform:uppercase;letter-spacing:.6px;font-weight:700;color:var(--ink-2);padding:6px 8px}
+.tbl tbody tr.pick{cursor:pointer}
+.tbl tbody tr.pick:hover td{background:#F5F9FD}
+.tbl tbody tr.sel td{background:var(--brand-soft);font-weight:650}
+.tbl tbody tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--brand-2)}
+.tblwrap{overflow-x:auto;max-height:340px;overflow-y:auto;border:1px solid var(--line-2);border-radius:8px}
+.tblwrap .tbl th{position:sticky;top:0;background:#fff}
+.bar{height:6px;background:var(--line-2);border-radius:3px;overflow:hidden;min-width:60px}
+.bar>i{display:block;height:100%;background:var(--brand-2)}
+.tag{display:inline-block;font-size:.66rem;font-weight:700;padding:1px 6px;border-radius:4px;background:var(--ok-soft);color:var(--ok);margin-left:6px;vertical-align:1px}
+
+/* ---------- Memorial ---------- */
+.memo{font-size:.84rem}
+.memo .eq{display:grid;grid-template-columns:1fr auto;gap:4px 12px;padding:9px 0;border-bottom:1px dashed var(--line)}
+.memo .eq:last-child{border-bottom:0}
+.memo .nm{font-weight:650;color:var(--ink)}
+.memo .f{font-family:var(--mono);font-size:.78rem;color:var(--ink-2);grid-column:1/-1}
+.memo .r{font-weight:700;color:var(--brand);font-variant-numeric:tabular-nums;text-align:right}
+
+/* ---------- Toast ---------- */
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);background:var(--ink);color:#fff;padding:10px 16px;border-radius:8px;font-size:.85rem;opacity:0;pointer-events:none;transition:all .25s;z-index:10}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+.print-only{display:none}
+.foot{font-size:.74rem;color:var(--ink-3);text-align:center;margin-top:22px}
+
+/* ---------- Print ---------- */
+@media print{
+  @page{size:A4;margin:14mm}
+  body{background:#fff;font-size:11px}
+  .no-print{display:none!important}
+  .print-only{display:block}
+  .topbar{background:#fff;color:var(--ink);border-bottom:2px solid var(--brand)}
+  .topbar h1{color:var(--brand)}
+  .wrap{padding:10px 0}
+  .layout{display:block}
+  .card,.kpi{break-inside:avoid;border-color:#ccc}
+  .col{gap:10px}
+  .kpis{grid-template-columns:repeat(3,1fr)}
+  .tblwrap{max-height:none;overflow:visible}
+  .tl .sg{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .kpi::before,.tbl tr.sel td{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="in">
+    <div>
+      <h1>Dimensionamento Agronômico — Irrigação Localizada</h1>
+      <div class="sub" id="hdrSub">Baseado no Manual de Projeto Netafim Brasil</div>
+    </div>
+    <div class="actions no-print">
+      <button class="btn" id="btnLink" title="Copiar link com todos os dados preenchidos">
+        <svg viewBox="0 0 24 24"><path d="M10.6 13.4a1 1 0 0 1 0-1.4l3-3a1 1 0 1 1 1.4 1.4l-3 3a1 1 0 0 1-1.4 0zM8 17a3 3 0 0 1-2.1-5.1l2-2a1 1 0 0 0-1.4-1.4l-2 2a5 5 0 0 0 7 7l2-2a1 1 0 0 0-1.4-1.4l-2 2A3 3 0 0 1 8 17zm11.5-12.5a5 5 0 0 0-7 0l-2 2a1 1 0 0 0 1.4 1.4l2-2a3 3 0 0 1 4.2 4.2l-2 2a1 1 0 0 0 1.4 1.4l2-2a5 5 0 0 0 0-7z"/></svg>Link</button>
+      <button class="btn" id="btnCsv"><svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>CSV</button>
+      <button class="btn solid" id="btnPrint"><svg viewBox="0 0 24 24"><path d="M19 8H5a3 3 0 0 0-3 3v6h4v4h12v-4h4v-6a3 3 0 0 0-3-3zm-3 11H8v-5h8v5zm3-7a1 1 0 1 1 0-2 1 1 0 0 1 0 2zM18 3H6v4h12V3z"/></svg>Relatório / PDF</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="layout">
+
+    <!-- ================= ENTRADAS ================= -->
+    <section class="col no-print" id="inputs">
+
+      <details class="card" id="projCard">
+        <summary><h2><span class="n">0</span>Identificação do projeto<span class="chev">▾</span></h2></summary>
+        <div class="fields">
+          <label class="field full"><span class="lbl">Cliente / Produtor</span><div class="inp"><input id="cliente" type="text" autocomplete="off"></div></label>
+          <label class="field"><span class="lbl">Fazenda / Gleba</span><div class="inp"><input id="fazenda" type="text" autocomplete="off"></div></label>
+          <label class="field"><span class="lbl">Cultura</span><div class="inp"><input id="cultura" type="text" autocomplete="off"></div></label>
+          <label class="field"><span class="lbl">Projetista</span><div class="inp"><input id="projetista" type="text" autocomplete="off"></div></label>
+          <label class="field"><span class="lbl">Data</span><div class="inp"><input id="data" type="date"></div></label>
+        </div>
+      </details>
+
+      <div class="card">
+        <h2><span class="n">1</span>Área e plantio</h2>
+        <div class="fields">
+          <label class="field full"><span class="lbl">Área irrigada</span><div class="inp"><input id="area" inputmode="decimal"><em>ha</em></div></label>
+          <label class="field"><span class="lbl">Entre fileiras <i>E1</i></span><div class="inp"><input id="e1" inputmode="decimal"><em>m</em></div></label>
+          <label class="field"><span class="lbl">Entre plantas <i>Ep</i></span><div class="inp"><input id="ep" inputmode="decimal"><em>m</em></div></label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2><span class="n">2</span>Demanda hídrica</h2>
+        <div class="seg" role="tablist">
+          <button data-modo="direta">Lâmina direta</button>
+          <button data-modo="eto">ETo × Kc × Kr</button>
+        </div>
+        <div class="fields">
+          <label class="field full" data-show="direta"><span class="lbl">Lâmina líquida (ETc localizada)</span><div class="inp"><input id="lamina" inputmode="decimal"><em>mm/dia</em></div></label>
+
+          <label class="field" data-show="eto"><span class="lbl">ETo de projeto</span><div class="inp"><input id="eto" inputmode="decimal"><em>mm/dia</em></div></label>
+          <label class="field" data-show="eto"><span class="lbl">Kc</span><div class="inp"><input id="kc" inputmode="decimal"></div></label>
+          <label class="field full" data-show="eto"><span class="lbl">Coeficiente de localização (Kr)</span>
+            <div class="inp"><select id="krMetodo">
+              <option value="kk">Keller &amp; Karmeli (1974) — Kr = P/0,85</option>
+              <option value="keller">Keller (1978) — Kr = P + 0,15(1−P)</option>
+              <option value="fereres">Fereres (1981)</option>
+              <option value="manual">Informar Kr manualmente</option>
+            </select></div></label>
+          <label class="field" data-show="eto" data-kr="calc"><span class="lbl">Área sombreada <i>P</i></span><div class="inp"><input id="sombra" inputmode="decimal"><em>%</em></div><span class="hint">Café em renque: largura da copa ÷ E1</span></label>
+          <label class="field" data-show="eto" data-kr="manual"><span class="lbl">Kr</span><div class="inp"><input id="krManual" inputmode="decimal"></div></label>
+          <div class="field full" data-show="eto"><div class="derived"><span>ETc localizada</span><b id="etcOut">—</b></div></div>
+
+          <label class="field"><span class="lbl">Eficiência de aplicação</span><div class="inp"><input id="eficiencia" inputmode="decimal"><em>%</em></div></label>
+          <label class="field"><span class="lbl">Turno de rega</span><div class="inp"><input id="freq" inputmode="numeric"><em>dia(s)</em></div></label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2><span class="n">3</span>Emissor</h2>
+        <div class="fields">
+          <label class="field"><span class="lbl">Vazão nominal <i>q</i></span><div class="inp"><input id="q" inputmode="decimal" list="qList"><em>L/h</em></div></label>
+          <label class="field"><span class="lbl">Entre emissores <i>E2</i></span><div class="inp"><input id="e2" inputmode="decimal" list="e2List"><em>m</em></div></label>
+          <label class="field full"><span class="lbl">Laterais por fileira</span><div class="inp"><select id="nlat"><option value="1">1 linha por fileira</option><option value="2">2 linhas por fileira</option></select></div></label>
+        </div>
+        <datalist id="qList"><option value="0,6"><option value="1,0"><option value="1,6"><option value="2,0"><option value="2,3"><option value="3,5"></datalist>
+        <datalist id="e2List"><option value="0,3"><option value="0,4"><option value="0,5"><option value="0,6"><option value="0,75"><option value="1,0"></datalist>
+      </div>
+
+      <div class="card">
+        <h2><span class="n">4</span>Operação</h2>
+        <div class="fields">
+          <label class="field"><span class="lbl">Tempo disponível</span><div class="inp"><input id="tdisp" inputmode="decimal"><em>h/dia</em></div></label>
+          <label class="field"><span class="lbl">Nº de setores</span><div class="inp"><input id="nAdot" inputmode="numeric" placeholder="Auto"></div><span class="hint">Vazio = máximo possível</span></label>
+        </div>
+      </div>
+
+      <button class="btn no-print" id="btnReset" style="color:var(--ink-2);border-color:var(--line);background:#fff;justify-content:center">Restaurar valores padrão</button>
+    </section>
+
+    <!-- ================= RESULTADOS ================= -->
+    <section class="col" id="results">
+
+      <div class="card print-only" id="printHead"></div>
+
+      <div class="kpis">
+        <div class="kpi"><div class="k">Lâmina bruta</div><div class="v" id="kLb">—</div><div class="s" id="kLbS"></div></div>
+        <div class="kpi"><div class="k">Taxa de aplicação</div><div class="v" id="kTa">—</div><div class="s" id="kTaS"></div></div>
+        <div class="kpi"><div class="k">Tempo por setor</div><div class="v" id="kTop">—</div><div class="s" id="kTopS"></div></div>
+        <div class="kpi hl"><div class="k">Setores</div><div class="v" id="kN">—</div><div class="s" id="kNS"></div></div>
+        <div class="kpi hl"><div class="k">Vazão por setor</div><div class="v" id="kQ">—</div><div class="s" id="kQS"></div></div>
+        <div class="kpi"><div class="k">Ocupação do tempo</div><div class="v" id="kOc">—</div><div class="s" id="kOcS"></div></div>
+      </div>
+
+      <div class="alerts" id="alerts"></div>
+
+      <div class="card">
+        <h2>Escala de operação<span class="right" id="tlInfo"></span></h2>
+        <div class="tl" id="tl"></div>
+        <div class="axis" id="axis"></div>
+        <div class="legend"><span><i style="background:var(--seg-a)"></i>Setor irrigando</span><span><i style="background:#E5EAF0"></i>Folga</span><span id="lgOver" hidden><i style="background:var(--err)"></i>Excede tempo disponível</span></div>
+      </div>
+
+      <div class="card">
+        <h2>Alternativas de setorização<span class="right no-print">toque numa linha para adotar</span></h2>
+        <div class="tblwrap">
+          <table class="tbl" id="altTbl">
+            <thead><tr><th>Setores</th><th class="num">Área/setor</th><th class="num">Vazão/setor</th><th class="num">Tempo total</th><th class="num">Folga</th><th>Ocupação</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Resultados detalhados</h2>
+        <table class="tbl"><tbody id="detTbl"></tbody></table>
+      </div>
+
+      <details class="card" id="memoCard">
+        <summary><h2>Memorial de cálculo<span class="chev">▾</span></h2></summary>
+        <div class="memo" id="memo"></div>
+      </details>
+
+      <div class="card print-only">
+        <h2>Dados de entrada</h2>
+        <table class="tbl"><tbody id="inTbl"></tbody></table>
+      </div>
+
+      <div class="foot">Setores considerados com áreas iguais. Verificar no projeto hidráulico a uniformidade de emissão, perdas de carga e a capacidade do conjunto motobomba.</div>
+    </section>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const STORE = 'dimAgronomico.v2';
+  const today = () => new Date().toISOString().slice(0, 10);
+
+  const DEFAULTS = {
+    cliente:'', fazenda:'', cultura:'Café', projetista:'', data:today(),
+    area:'40', e1:'3,5', ep:'0,5',
+    modo:'direta', lamina:'4,0', eto:'5,0', kc:'1,0', krMetodo:'kk', sombra:'60', krManual:'0,80',
+    eficiencia:'95', freq:'1',
+    q:'1,6', e2:'0,5', nlat:'1',
+    tdisp:'21', nAdot:''
+  };
+  const FIELDS = Object.keys(DEFAULTS).filter(k => k !== 'modo');
+  let S = {...DEFAULTS};
+
+  /* ---------- utilidades ---------- */
+  const num = v => { if (v === null || v === undefined) return NaN; const s = String(v).trim().replace(/\s/g,'').replace(',', '.'); return s === '' ? NaN : Number(s); };
+  const fmt = (v, d = 2) => Number.isFinite(v) ? v.toLocaleString('pt-BR', {minimumFractionDigits:d, maximumFractionDigits:d}) : '—';
+  const hm = h => { if (!Number.isFinite(h)) return '—'; let H = Math.floor(h), M = Math.round((h - H) * 60); if (M === 60) { H++; M = 0; } return `${H}h${String(M).padStart(2,'0')}`; };
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+  function toast(msg){ const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 2200); }
+
+  function krCalc(met, P, krMan){
+    switch (met) {
+      case 'kk': return Math.min(1, P / 0.85);
+      case 'keller': return P + 0.15 * (1 - P);
+      case 'fereres': return P >= 0.65 ? 1 : P > 0.20 ? 1.09 * P + 0.30 : 1.94 * P + 0.10;
+      default: return krMan;
+    }
+  }
+
+  /* ---------- cálculo ---------- */
+  function calc(s){
+    const n = k => num(s[k]);
+    const A = n('area'), e1 = n('e1'), Ep = n('ep'), q = n('q'), e2 = n('e2'), Td = n('tdisp');
+    const ef = n('eficiencia') / 100;
+    const nlat = Math.max(1, Math.round(n('nlat') || 1));
+    const F = Math.max(1, Math.round(Number.isFinite(n('freq')) ? n('freq') : 1));
+    const alerts = [], bad = new Set();
+
+    let ETo = NaN, Kc = NaN, Kr = NaN, P = NaN, LL;
+    if (s.modo === 'eto') {
+      ETo = n('eto'); Kc = n('kc'); P = n('sombra') / 100;
+      Kr = krCalc(s.krMetodo, P, n('krManual'));
+      LL = ETo * Kc * Kr;
+      if (!(ETo > 0)) bad.add('eto');
+      if (!(Kc > 0)) bad.add('kc');
+      if (s.krMetodo === 'manual') { if (!(Kr > 0 && Kr <= 1)) bad.add('krManual'); }
+      else if (!(P > 0 && P <= 1)) bad.add('sombra');
+      if (Kc > 1.4) alerts.push({t:'warn', m:`Kc = ${fmt(Kc)} está acima da faixa usual (≤ 1,4). Confira o valor adotado.`});
+    } else {
+      LL = n('lamina');
+      if (!(LL > 0)) bad.add('lamina');
+    }
+
+    const req = {area:A, e1, ep:Ep, q, e2, tdisp:Td};
+    for (const [k, v] of Object.entries(req)) if (!(v > 0)) bad.add(k);
+    if (!(ef > 0 && ef <= 1)) bad.add('eficiencia');
+    if (Td > 24) bad.add('tdisp');
+
+    if (bad.size) {
+      const msg = Td > 24 ? 'Tempo disponível não pode passar de 24 h/dia.' : 'Revise os campos destacados: valores devem ser maiores que zero (eficiência e Kr até 100%).';
+      return {valid:false, bad, alerts:[{t:'err', m:msg}], LL, Kr};
+    }
+
+    if (ef < 0.85) alerts.push({t:'warn', m:`Eficiência de ${fmt(ef*100,0)}% está abaixo do usual para gotejamento (85–95%).`});
+
+    const LBd = LL / ef;                 // lâmina bruta diária (mm/dia)
+    const LB = LBd * F;                  // lâmina bruta por irrigação (mm)
+    const Ta = nlat * q / (e1 * e2);     // mm/h
+    const Top = LB / Ta;                 // h por setor
+    const Tc = Td * F;                   // tempo disponível no ciclo (h)
+    const Nmax = Math.floor(Tc / Top + 1e-9);
+
+    let manual = num(s.nAdot); manual = Number.isFinite(manual) && manual >= 1 ? Math.round(manual) : null;
+    const N = manual ?? Nmax;
+
+    const r = {valid:true, A, e1, Ep, q, e2, nlat, Td, ef, F, ETo, Kc, Kr, P, LL, LBd, LB, Ta, Top, Tc, Nmax, N, manual, alerts, bad};
+    r.qLin = q / e2;                                 // L/h/m
+    r.qHa = Ta * 10;                                 // m³/h/ha
+    r.emPlanta = nlat * Ep / e2;
+    r.emHa = 1e4 * nlat / (e1 * e2);
+    r.tuboHa = 1e4 * nlat / e1;                      // m/ha
+    r.plHa = 1e4 / (e1 * Ep);
+    r.volPl = LBd * e1 * Ep;                         // L/planta/dia
+    r.Qcont = A * LBd * 10 / Td;                     // m³/h, operação contínua
+    r.Vdia = A * LBd * 10;                           // m³/dia
+
+    if (N >= 1) {
+      r.As = A / N; r.Qs = r.As * r.qHa; r.Tt = N * Top; r.folga = Tc - r.Tt; r.oc = r.Tt / Tc;
+    }
+
+    if (Nmax < 1) {
+      alerts.push({t:'err', m:`Um único setor precisa de ${hm(Top)} e o tempo disponível no ciclo é ${hm(Tc)}. Aumente a vazão do emissor, reduza E2, use 2 laterais por fileira ou amplie o tempo disponível.`});
+    } else if (manual && manual > Nmax) {
+      alerts.push({t:'err', m:`Com ${manual} setores a operação leva ${hm(r.Tt)}, acima das ${hm(Tc)} disponíveis. Máximo viável: ${Nmax} setores.`});
+    } else if (manual && manual < Nmax) {
+      alerts.push({t:'info', m:`Adotados ${manual} setores (máximo viável ${Nmax}). Vazão por setor ${fmt(r.Qs/ (A/Nmax*r.qHa) * 100 - 100,0)}% maior que na setorização máxima.`});
+    }
+    if (r.emPlanta < 1) alerts.push({t:'warn', m:`Menos de 1 emissor por planta (${fmt(r.emPlanta)}). Avalie reduzir E2 para garantir umedecimento contínuo na linha.`});
+    if (Ta > 0 && Top < 0.5) alerts.push({t:'warn', m:`Tempo por setor muito curto (${hm(Top)}). Considere aumentar o turno de rega ou reduzir a vazão do emissor.`});
+    if (N >= 1 && r.oc <= 1 && alerts.every(a => a.t !== 'err')) {
+      alerts.push({t:'ok', m:`Sistema atende à demanda: ${N} setor(es) de ${fmt(r.As)} ha, ${fmt(r.Qs,1)} m³/h por setor, ocupando ${fmt(r.oc*100,0)}% do tempo disponível.`});
+    }
+
+    r.alts = [];
+    for (let i = 1; i <= Math.min(Nmax, 60); i++) {
+      const As = A / i, Tt = i * Top;
+      r.alts.push({n:i, As, Qs:As * r.qHa, Tt, folga:Tc - Tt, oc:Tt / Tc});
+    }
+    return r;
+  }
+
+  /* ---------- render ---------- */
+  const set = (id, html) => { $(id).innerHTML = html; };
+  const unit = (v, u) => `${v}<small>${u}</small>`;
+
+  function render(){
+    const r = calc(S);
+
+    // estados de campo
+    FIELDS.forEach(k => { const el = $(k); if (el) el.closest('.inp')?.classList.toggle('bad', r.bad?.has(k) || false); });
+    document.querySelectorAll('.seg button').forEach(b => b.classList.toggle('on', b.dataset.modo === S.modo));
+    document.querySelectorAll('[data-show]').forEach(el => el.hidden = el.dataset.show !== S.modo);
+    if (S.modo === 'eto') document.querySelectorAll('[data-kr]').forEach(el => el.hidden = (el.dataset.kr === 'manual') !== (S.krMetodo === 'manual'));
+    $('etcOut').textContent = Number.isFinite(r.LL) && r.LL > 0 ? `${fmt(r.LL)} mm/dia  ·  Kr ${fmt(r.Kr)}` : '—';
+
+    const sub = [S.cliente, S.fazenda, S.cultura].filter(Boolean).join(' · ');
+    $('hdrSub').textContent = sub || 'Baseado no Manual de Projeto Netafim Brasil';
+
+    // alertas
+    set('alerts', r.alerts.map(a => `<div class="alert ${a.t}"><span class="ic">${a.t==='ok'?'✓':a.t==='info'?'i':'!'}</span><div>${a.m}</div></div>`).join(''));
+
+    if (!r.valid) {
+      ['kLb','kTa','kTop','kN','kQ','kOc'].forEach(id => set(id, '—'));
+      ['kLbS','kTaS','kTopS','kNS','kQS','kOcS','tlInfo'].forEach(id => set(id, ''));
+      set('tl',''); set('axis',''); $('altTbl').tBodies[0].innerHTML = ''; set('detTbl',''); set('memo','');
+      renderPrint(r); return;
+    }
+    const ok = r.N >= 1;
+
+    set('kLb', unit(fmt(r.LB), r.F > 1 ? 'mm/irrig.' : 'mm/dia'));
+    set('kLbS', `Líquida ${fmt(r.LL)} mm/dia · Ef. ${fmt(r.ef*100,0)}%${r.F>1?` · TR ${r.F} d`:''}`);
+    set('kTa', unit(fmt(r.Ta), 'mm/h'));
+    set('kTaS', `${fmt(r.qHa)} m³/h/ha · ${fmt(r.qLin)} L/h/m`);
+    set('kTop', unit(fmt(r.Top), 'h'));
+    set('kTopS', `${hm(r.Top)} por setor`);
+    set('kN', ok ? String(r.N) : '0');
+    set('kNS', r.manual ? `Adotado · máx. viável ${r.Nmax}` : `Automático (máximo viável)`);
+    set('kQ', ok ? unit(fmt(r.Qs,1), 'm³/h') : '—');
+    set('kQS', ok ? `${fmt(r.As)} ha por setor` : '');
+    set('kOc', ok ? unit(fmt(r.oc*100,0), '%') : '—');
+    set('kOcS', ok ? `${hm(r.Tt)} em uso · folga ${hm(Math.max(0,r.folga))}` : '');
+
+    // linha do tempo
+    const scale = Math.max(r.Tc, ok ? r.Tt : 0) || 1;
+    let tl = '', acc = 0;
+    if (ok) for (let i = 1; i <= r.N; i++) {
+      const w = r.Top / scale * 100, over = acc + r.Top > r.Tc + 1e-9;
+      tl += `<div class="sg${over?' over':''}" style="width:${w}%" title="Setor ${i}: ${hm(acc)} – ${hm(acc+r.Top)}">${w > 4.5 ? 'S'+i : ''}</div>`;
+      acc += r.Top;
+    }
+    if (scale > r.Tc) tl += `<div class="lim" style="left:${r.Tc/scale*100}%"></div>`;
+    set('tl', tl);
+    $('lgOver').hidden = !(scale > r.Tc);
+    const ticks = 4; let ax = '';
+    for (let i = 0; i <= ticks; i++) { const h = scale * i / ticks; ax += `<span style="left:${i/ticks*100}%">${fmt(h, h % 1 ? 1 : 0)} h</span>`; }
+    set('axis', ax);
+    set('tlInfo', `ciclo de ${hm(r.Tc)}${r.F>1?` (${r.F} dias × ${fmt(r.Td,1)} h)`:''}`);
+
+    // alternativas
+    const maxQ = r.alts.length ? r.alts[0].Qs : 1;
+    $('altTbl').tBodies[0].innerHTML = r.alts.length ? r.alts.slice().reverse().map(a => `
+      <tr class="pick${a.n===r.N?' sel':''}" data-n="${a.n}">
+        <td>${a.n}${a.n===r.Nmax?'<span class="tag">máx.</span>':''}</td>
+        <td class="num">${fmt(a.As)} ha</td>
+        <td class="num">${fmt(a.Qs,1)} m³/h</td>
+        <td class="num">${hm(a.Tt)}</td>
+        <td class="num">${hm(a.folga)}</td>
+        <td><div style="display:flex;align-items:center;gap:8px"><div class="bar" style="flex:1"><i style="width:${a.oc*100}%"></i></div><span style="width:34px;text-align:right">${fmt(a.oc*100,0)}%</span></div></td>
+      </tr>`).join('') : `<tr><td colspan="6" style="color:var(--ink-3)">Nenhuma setorização viável com os parâmetros atuais.</td></tr>`;
+
+    // detalhes
+    const row = (k, v, u='') => `<tr><td>${k}</td><td class="num"><b>${v}</b> ${u}</td></tr>`;
+    const grp = t => `<tr class="grp"><td colspan="2">${t}</td></tr>`;
+    set('detTbl',
+      grp('Planta') +
+      row('Volume por planta', fmt(r.volPl), 'L/dia') +
+      row('Emissores por planta', fmt(r.emPlanta)) +
+      row('Plantas por hectare', fmt(r.plHa,0), 'pl/ha') +
+      row('Total de plantas', fmt(r.plHa*r.A,0), 'pl') +
+      grp('Área') +
+      row('Emissores por hectare', fmt(r.emHa,0), 'em/ha') +
+      row('Tubo gotejador por hectare', fmt(r.tuboHa,0), 'm/ha') +
+      row('Tubo gotejador total', fmt(r.tuboHa*r.A/1000,2), 'km') +
+      grp('Hidráulica') +
+      row('Vazão por metro de lateral', fmt(r.qLin), 'L/h/m') +
+      row('Vazão específica', fmt(r.qHa), 'm³/h/ha') +
+      row('Volume bruto diário (área total)', fmt(r.Vdia,1), 'm³/dia') +
+      row('Vazão teórica contínua', fmt(r.Qcont,1), 'm³/h') +
+      (ok ? row('Vazão máxima por setor (bomba)', fmt(r.Qs,1), 'm³/h') + row('Tempo total de irrigação', `${fmt(r.Tt)} h (${hm(r.Tt)})`) + row('Folga operacional', `${fmt(r.folga)} h (${hm(r.folga)})`) : '')
+    );
+
+    // memorial
+    const eq = (nm, f, res) => `<div class="eq"><span class="nm">${nm}</span><span class="r">${res}</span><span class="f">${f}</span></div>`;
+    let m = '';
+    if (S.modo === 'eto') {
+      const krTxt = {kk:`Kr = P/0,85 = ${fmt(r.P,2)}/0,85`, keller:`Kr = P + 0,15(1−P) = ${fmt(r.P,2)} + 0,15×${fmt(1-r.P,2)}`, fereres:`Fereres (P = ${fmt(r.P,2)})`, manual:'Kr informado'}[S.krMetodo];
+      m += eq('Coeficiente de localização', krTxt + (S.krMetodo==='kk' && r.P/0.85>1 ? ' → limitado a 1' : ''), fmt(r.Kr,3));
+      m += eq('Lâmina líquida (ETc loc.)', `LL = ETo × Kc × Kr = ${fmt(r.ETo)} × ${fmt(r.Kc)} × ${fmt(r.Kr,3)}`, `${fmt(r.LL)} mm/dia`);
+    }
+    m += eq('Lâmina bruta diária', `LBd = LL / Ef = ${fmt(r.LL)} / ${fmt(r.ef,2)}`, `${fmt(r.LBd)} mm/dia`);
+    if (r.F > 1) m += eq('Lâmina bruta por irrigação', `LB = LBd × TR = ${fmt(r.LBd)} × ${r.F}`, `${fmt(r.LB)} mm`);
+    m += eq('Taxa de aplicação', `Ta = n × q / (E1 × E2) = ${r.nlat} × ${fmt(r.q)} / (${fmt(r.e1)} × ${fmt(r.e2)})`, `${fmt(r.Ta,3)} mm/h`);
+    m += eq('Tempo de operação por setor', `Top = LB / Ta = ${fmt(r.LB)} / ${fmt(r.Ta,3)}`, `${fmt(r.Top)} h`);
+    m += eq('Nº máximo de setores', `Nmax = ⌊(Td × TR) / Top⌋ = ⌊${fmt(r.Tc)} / ${fmt(r.Top)}⌋`, `${r.Nmax}`);
+    if (ok) {
+      m += eq('Área por setor', `As = A / N = ${fmt(r.A)} / ${r.N}`, `${fmt(r.As)} ha`);
+      m += eq('Vazão por setor', `Qs = As × Ta × 10 = ${fmt(r.As)} × ${fmt(r.Ta,3)} × 10`, `${fmt(r.Qs)} m³/h`);
+      m += eq('Tempo total / folga', `Tt = N × Top = ${r.N} × ${fmt(r.Top)};  folga = ${fmt(r.Tc)} − Tt`, `${fmt(r.Tt)} h / ${fmt(r.folga)} h`);
+    }
+    m += eq('Volume por planta', `V = LBd × E1 × Ep = ${fmt(r.LBd)} × ${fmt(r.e1)} × ${fmt(r.Ep)}`, `${fmt(r.volPl)} L/dia`);
+    m += eq('Emissores por planta', `n × Ep / E2 = ${r.nlat} × ${fmt(r.Ep)} / ${fmt(r.e2)}`, fmt(r.emPlanta));
+    set('memo', m);
+
+    renderPrint(r);
+  }
+
+  function inputRows(){
+    const kr = S.modo === 'eto';
+    const krLbl = $('krMetodo').selectedOptions[0]?.text || '';
+    return [
+      ['Área irrigada', S.area, 'ha'], ['Espaçamento entre fileiras (E1)', S.e1, 'm'], ['Espaçamento entre plantas (Ep)', S.ep, 'm'],
+      ...(kr ? [['ETo de projeto', S.eto, 'mm/dia'], ['Kc', S.kc, ''], ['Método Kr', krLbl, ''], S.krMetodo==='manual' ? ['Kr', S.krManual, ''] : ['Área sombreada (P)', S.sombra, '%']]
+             : [['Lâmina líquida', S.lamina, 'mm/dia']]),
+      ['Eficiência de aplicação', S.eficiencia, '%'], ['Turno de rega', S.freq, 'dia(s)'],
+      ['Vazão do emissor (q)', S.q, 'L/h'], ['Espaçamento entre emissores (E2)', S.e2, 'm'], ['Laterais por fileira', S.nlat, ''],
+      ['Tempo disponível', S.tdisp, 'h/dia'], ['Nº de setores', S.nAdot || 'Automático', '']
+    ];
+  }
+
+  function renderPrint(){
+    const d = S.data ? S.data.split('-').reverse().join('/') : '';
+    const it = (k, v) => v ? `<div><span style="color:var(--ink-3)">${k}:</span> <b>${esc(v)}</b></div>` : '';
+    set('printHead', `<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 18px;font-size:12px">${it('Cliente',S.cliente)}${it('Fazenda / Gleba',S.fazenda)}${it('Cultura',S.cultura)}${it('Projetista',S.projetista)}${it('Data',d)}</div>`);
+    set('inTbl', inputRows().map(([k,v,u]) => `<tr><td>${k}</td><td class="num"><b>${esc(v)}</b> ${u}</td></tr>`).join(''));
+  }
+
+  /* ---------- estado ---------- */
+  function save(){
+    try { localStorage.setItem(STORE, JSON.stringify(S)); } catch (e) {}
+  }
+  function load(){
+    let src = null;
+    if (location.hash.length > 1) {
+      try { src = JSON.parse(decodeURIComponent(escape(atob(location.hash.slice(1))))); } catch (e) {}
+    }
+    if (!src) { try { src = JSON.parse(localStorage.getItem(STORE)); } catch (e) {} }
+    S = {...DEFAULTS, ...(src || {})};
+  }
+  function toForm(){ FIELDS.forEach(k => { const el = $(k); if (el) el.value = S[k] ?? ''; }); }
+
+  /* ---------- exportação ---------- */
+  function exportCSV(){
+    const r = calc(S);
+    if (!r.valid) { toast('Corrija os campos destacados antes de exportar.'); return; }
+    const n = (v, d=2) => Number.isFinite(v) ? v.toFixed(d).replace('.', ',') : '';
+    const rows = [['Seção','Parâmetro','Valor','Unidade'],
+      ['Projeto','Cliente',S.cliente,''],['Projeto','Fazenda/Gleba',S.fazenda,''],['Projeto','Cultura',S.cultura,''],['Projeto','Projetista',S.projetista,''],['Projeto','Data',S.data,''],
+      ...inputRows().map(([k,v,u]) => ['Entrada',k,v,u]),
+      ['Resultado','Lâmina líquida',n(r.LL),'mm/dia'],
+      ...(S.modo==='eto' ? [['Resultado','Kr',n(r.Kr,3),'']] : []),
+      ['Resultado','Lâmina bruta diária',n(r.LBd),'mm/dia'],['Resultado','Lâmina bruta por irrigação',n(r.LB),'mm'],
+      ['Resultado','Taxa de aplicação',n(r.Ta,3),'mm/h'],['Resultado','Vazão específica',n(r.qHa),'m³/h/ha'],['Resultado','Vazão por metro',n(r.qLin),'L/h/m'],
+      ['Resultado','Tempo por setor',n(r.Top),'h'],['Resultado','Nº máximo de setores',r.Nmax,''],['Resultado','Nº de setores adotado',r.N,''],
+      ['Resultado','Área por setor',n(r.As),'ha'],['Resultado','Vazão por setor',n(r.Qs),'m³/h'],['Resultado','Tempo total de irrigação',n(r.Tt),'h'],['Resultado','Folga operacional',n(r.folga),'h'],
+      ['Resultado','Vazão teórica contínua',n(r.Qcont),'m³/h'],['Resultado','Volume bruto diário',n(r.Vdia,1),'m³/dia'],
+      ['Resultado','Volume por planta',n(r.volPl),'L/dia'],['Resultado','Emissores por planta',n(r.emPlanta),''],['Resultado','Plantas por hectare',n(r.plHa,0),'pl/ha'],
+      ['Resultado','Emissores por hectare',n(r.emHa,0),'em/ha'],['Resultado','Tubo gotejador por hectare',n(r.tuboHa,0),'m/ha'],['Resultado','Tubo gotejador total',n(r.tuboHa*r.A/1000,2),'km']
+    ];
+    const csv = '﻿' + rows.map(r => r.map(c => { const s = String(c ?? ''); return /[;"\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s; }).join(';')).join('\r\n');
+    const slug = (S.fazenda || 'projeto').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^\w]+/g,'_').replace(/^_|_$/g,'');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv;charset=utf-8'}));
+    a.download = `dimensionamento_${slug}_${S.data || today()}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    toast('CSV exportado');
+  }
+
+  async function copyLink(){
+    const hash = btoa(unescape(encodeURIComponent(JSON.stringify(S))));
+    history.replaceState(null, '', '#' + hash);
+    const url = location.href;
+    try { await navigator.clipboard.writeText(url); toast('Link com os dados copiado'); }
+    catch (e) {
+      const t = document.createElement('textarea'); t.value = url; document.body.appendChild(t); t.select();
+      try { document.execCommand('copy'); toast('Link com os dados copiado'); } catch (_) { toast('Não foi possível copiar o link'); }
+      t.remove();
+    }
+  }
+
+  /* ---------- eventos ---------- */
+  let raf;
+  function onChange(){
+    FIELDS.forEach(k => { const el = $(k); if (el) S[k] = el.value; });
+    cancelAnimationFrame(raf); raf = requestAnimationFrame(() => { render(); save(); });
+  }
+
+  function init(){
+    load(); toForm();
+    document.querySelectorAll('#inputs input, #inputs select').forEach(el => {
+      el.addEventListener('input', onChange);
+      el.addEventListener('change', onChange);
+      if (el.inputMode === 'decimal' || el.inputMode === 'numeric') el.addEventListener('focus', () => setTimeout(() => el.select(), 0));
+    });
+    document.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => { S.modo = b.dataset.modo; render(); save(); }));
+    $('altTbl').addEventListener('click', e => {
+      const tr = e.target.closest('tr[data-n]'); if (!tr) return;
+      const n = +tr.dataset.n, r = calc(S);
+      S.nAdot = (n === r.Nmax) ? '' : String(n); $('nAdot').value = S.nAdot;
+      render(); save(); toast(`${n} setor(es) adotado(s)`);
+    });
+    $('btnCsv').addEventListener('click', exportCSV);
+    $('btnPrint').addEventListener('click', () => { $('memoCard').open = true; window.print(); });
+    $('btnLink').addEventListener('click', copyLink);
+    const rb = $('btnReset');
+    rb.addEventListener('click', () => {
+      if (!rb.dataset.armed) { rb.dataset.armed = '1'; rb.textContent = 'Toque novamente para confirmar'; setTimeout(() => { delete rb.dataset.armed; rb.textContent = 'Restaurar valores padrão'; }, 3000); return; }
+      delete rb.dataset.armed; rb.textContent = 'Restaurar valores padrão';
+      S = {...DEFAULTS, data:today()}; history.replaceState(null, '', location.pathname); toForm(); render(); save(); toast('Valores padrão restaurados');
+    });
+    if (S.cliente || S.fazenda) $('projCard').open = true;
+    render();
+  }
+  init();
+})();
+</script>
+</body>
+</html>
