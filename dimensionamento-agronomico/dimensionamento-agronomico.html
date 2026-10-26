@@ -134,6 +134,8 @@ details.card[open] summary .chev{transform:rotate(180deg)}
 .pct{width:42px;text-align:right;font-weight:700}
 .attsub{font-size:.7rem;color:var(--ink-3);margin-top:3px}
 .short .attsub{color:var(--err)}
+@keyframes chg{from{background:#FFF3C4}to{background:transparent}}
+#detTbl tr.chg td{animation:chg 1.2s ease-out}
 .okc{color:var(--ok)}.errc{color:var(--err)}
 .tbl tbody tr.short td{background:#FFFBFA}
 .tbl tbody tr.short.sel td{background:var(--err-soft)}
@@ -347,7 +349,7 @@ details.card[open] summary .chev{transform:rotate(180deg)}
   /* ---------- utilidades ---------- */
   const num = v => { if (v === null || v === undefined) return NaN; const s = String(v).trim().replace(/\s/g,'').replace(',', '.'); return s === '' ? NaN : Number(s); };
   const fmt = (v, d = 2) => Number.isFinite(v) ? v.toLocaleString('pt-BR', {minimumFractionDigits:d, maximumFractionDigits:d}) : '—';
-  const hm = h => { if (!Number.isFinite(h)) return '—'; let H = Math.floor(h), M = Math.round((h - H) * 60); if (M === 60) { H++; M = 0; } return `${H}h${String(M).padStart(2,'0')}`; };
+  const hm = h => { if (!Number.isFinite(h)) return '—'; if (h < 0) return '−' + hm(-h); let H = Math.floor(h), M = Math.round((h - H) * 60); if (M === 60) { H++; M = 0; } return `${H}h${String(M).padStart(2,'0')}`; };
   const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
   function toast(msg){ const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 2200); }
@@ -520,9 +522,20 @@ details.card[open] summary .chev{transform:rotate(180deg)}
     set('altInfo', `Demanda: <b>${fmt(r.LL)} mm/dia</b> líquida · Ta ${fmt(r.Ta,3)} mm/h · ciclo ${hm(r.Tc)} · Ef. ${fmt(r.ef*100,0)}%`);
 
     // detalhes
-    const row = (k, v, u='') => `<tr><td>${k}</td><td class="num"><b>${v}</b> ${u}</td></tr>`;
+    const row = (k, v, u='') => `<tr data-k="${k}"><td>${k}</td><td class="num"><b>${v}</b> ${u}</td></tr>`;
     const grp = t => `<tr class="grp"><td colspan="2">${t}</td></tr>`;
+    const aN = r.alts.find(a => a.n === r.N);
+    const prev = {}; $('detTbl').querySelectorAll('tr[data-k]').forEach(tr => prev[tr.dataset.k] = tr.cells[1].textContent);
     set('detTbl',
+      (ok ? grp(`Setorização adotada — ${r.N} setor(es)${r.manual ? '' : ' (máximo viável)'}`) +
+        row('Área por setor', fmt(r.As), 'ha') +
+        row('Vazão por setor (bomba)', fmt(r.Qs,1), 'm³/h') +
+        row('Tempo de irrigação por setor', `${fmt(r.Top)} h (${hm(r.Top)})`) +
+        row('Tempo máximo disponível por setor', `${fmt(aN.Tsm)} h (${hm(aN.Tsm)})`) +
+        row('Lâmina líquida máxima possível', fmt(aN.LLm), `mm/dia (${fmt(aN.at*100,0)}% da demanda)`) +
+        row('Tempo total de irrigação', `${fmt(r.Tt)} h (${hm(r.Tt)})`) +
+        row(r.folga >= 0 ? 'Folga operacional' : 'Excesso sobre o tempo disponível', `${fmt(Math.abs(r.folga))} h (${hm(Math.abs(r.folga))})`) +
+        row('Ocupação do tempo disponível', fmt(r.oc*100,0), '%') : '') +
       grp('Planta') +
       row('Volume por planta', fmt(r.volPl), 'L/dia') +
       row('Emissores por planta', fmt(r.emPlanta)) +
@@ -536,9 +549,13 @@ details.card[open] summary .chev{transform:rotate(180deg)}
       row('Vazão por metro de lateral', fmt(r.qLin), 'L/h/m') +
       row('Vazão específica', fmt(r.qHa), 'm³/h/ha') +
       row('Volume bruto diário (área total)', fmt(r.Vdia,1), 'm³/dia') +
-      row('Vazão teórica contínua', fmt(r.Qcont,1), 'm³/h') +
-      (ok ? row('Vazão máxima por setor (bomba)', fmt(r.Qs,1), 'm³/h') + row('Tempo total de irrigação', `${fmt(r.Tt)} h (${hm(r.Tt)})`) + row('Folga operacional', `${fmt(r.folga)} h (${hm(r.folga)})`) : '')
+      row('Vazão teórica contínua', fmt(r.Qcont,1), 'm³/h')
     );
+    $('detTbl').querySelectorAll('tr[data-k]').forEach(tr => {
+      const k = tr.dataset.k;
+      if (k in prev && prev[k] !== tr.cells[1].textContent) { tr.classList.add('chg'); setTimeout(() => tr.classList.remove('chg'), 1200); }
+      if (k.startsWith('Excesso') || (k.startsWith('Lâmina líquida máx') && !aN.ok)) tr.cells[1].classList.add('errc');
+    });
 
     // memorial
     const eq = (nm, f, res) => `<div class="eq"><span class="nm">${nm}</span><span class="r">${res}</span><span class="f">${f}</span></div>`;
@@ -557,7 +574,6 @@ details.card[open] summary .chev{transform:rotate(180deg)}
       m += eq('Área por setor', `As = A / N = ${fmt(r.A)} / ${r.N}`, `${fmt(r.As)} ha`);
       m += eq('Vazão por setor', `Qs = As × Ta × 10 = ${fmt(r.As)} × ${fmt(r.Ta,3)} × 10`, `${fmt(r.Qs)} m³/h`);
       m += eq('Tempo total / folga', `Tt = N × Top = ${r.N} × ${fmt(r.Top)};  folga = ${fmt(r.Tc)} − Tt`, `${fmt(r.Tt)} h / ${fmt(r.folga)} h`);
-      const aN = r.alts.find(a => a.n === r.N);
       m += eq('Lâmina líquida máxima com N setores', `LLmax = Ta × (Tc / N) × Ef / TR = ${fmt(r.Ta,3)} × (${fmt(r.Tc)} / ${r.N}) × ${fmt(r.ef,2)} / ${r.F}`, `${fmt(aN.LLm)} mm/dia`);
     }
     m += eq('Volume por planta', `V = LBd × E1 × Ep = ${fmt(r.LBd)} × ${fmt(r.e1)} × ${fmt(r.Ep)}`, `${fmt(r.volPl)} L/dia`);
