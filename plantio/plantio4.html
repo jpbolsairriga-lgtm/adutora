@@ -441,7 +441,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.87 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.88 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -587,6 +587,21 @@ body.layout-lateral #status{grid-area:status;}
           <button class="rbtn-sm" id="btnTravarTalhao" style="display:none;" onclick="arquivarTalhaoAtual()">&#128274; Travar Talhão</button>
         </div>
         <div class="rgroup-title">Travar</div>
+      </div>
+      <div class="rgroup">
+        <!-- v5.88: pedido do usuário — "dentro da ferramenta talhao quero uma opção para ajustar
+        o poligono, arrastando a vertice, faça isso e melhore essa ideia". Os vértices do contorno
+        ATIVO (recém-fechado, vindo do Carreador Interno, ou trazido de volta por "Editar Linhas")
+        já tinham handlers de drag prontos (ver addPolyPt/rebuildPoly) — só nunca ficavam
+        arrastáveis de propósito, pra não mexer sem querer enquanto desenha a guia/linhas. Este
+        botão liga/desliga isso explicitamente. Melhoria: duplo clique num vértice REMOVE ele (ver
+        _removerVerticePoligono) — sem precisar refazer o contorno inteiro pra tirar um ponto torto.
+        Mesma condição de visibilidade de "Travar Talhão" (espelhada via MutationObserver, igual o
+        botão de Carreador Interno acima — ver mais abaixo no script). -->
+        <div class="rgroup-body">
+          <button class="rbtn-sm" id="btnAjustarVertices" style="display:none;" onclick="toggleAjustarVertices()" title="Arraste um vértice do contorno atual pra mover; dê duplo clique num vértice pra remover (mínimo 3). Clique de novo aqui quando terminar.">&#9999; Ajustar Vértices</button>
+        </div>
+        <div class="rgroup-title">Ajustar Contorno</div>
       </div>
       <div class="rgroup" id="secCarreador">
         <div class="rgroup-body">
@@ -5620,7 +5635,16 @@ function rebuildPoly() {
   polyPts = polyMarkers.map(m => m.getLatLng());
   if(polyLayer) { polyLayer.remove(); polyLayer = null; }
   if(polyPts.length >= 3 && modo === 'idle') {
-    polyLayer = L.polygon(polyPts, {color:'#42a5f5', fillColor:'#1565c0', fillOpacity:.1, weight:2}).addTo(map);
+    polyLayer = L.polygon(polyPts, _ajustandoVertices
+      ? { color:'#ff6f00', fillColor:'#ff6f00', fillOpacity:.08, weight:2, dashArray:'8,5' }
+      : { color:'#42a5f5', fillColor:'#1565c0', fillOpacity:.1, weight:2 }
+    ).addTo(map);
+    // v5.88: antes, arrastar um vértice de um contorno JÁ FECHADO (ver "Ajustar Vértices") só
+    // recriava a camada visual aqui — a área mostrada (iArea/areaHaAtual) nunca acompanhava o
+    // novo formato. Esse caminho (modo==='idle' com o contorno fechado) só passou a ser exercido
+    // de verdade com esse botão — antes dele, dragging ficava sempre desligado nesse estado.
+    areaHaAtual = areaHa(polyPts);
+    $('iArea').textContent = areaHaAtual.toFixed(2) + ' ha';
   }
   buildTurfPoly();
 }
@@ -5657,6 +5681,52 @@ function buildTurfPoly() {
     turf.rewind(turfPoly, {mutate:true});
     turfBound = turf.polygonToLine(turfPoly);
   } catch(e) { turfPoly = null; turfBound = null; }
+}
+
+// ══ Ajustar Vértices do contorno ativo (v5.88) ═════════════════════════════════════════════════
+// Pedido do usuário: "dentro da ferramenta talhao quero uma opção para ajustar o poligono,
+// arrastando a vertice, faça isso e melhore essa ideia".
+//
+// Os vértices do contorno ATIVO já tinham handlers de drag prontos desde sempre (ver addPolyPt,
+// ativarTalhaoParaEdicao, confirmarCarreadorInterno — todos usam updatePolyDisplay/rebuildPoly) —
+// só ficavam com .dragging.disable() chamado assim que o contorno fecha, de propósito (pra não
+// mexer sem querer enquanto desenha a guia/linhas). Este botão só liga/desliga esse dragging já
+// existente — funciona em QUALQUER contorno ativo fechado (recém-desenhado, trazido de volta por
+// "Editar Linhas", ou criado pelo Carreador Interno), sem precisar duplicar nada.
+//
+// Melhoria pedida ("melhore essa ideia"): duplo clique num vértice REMOVE ele (mínimo 3 restantes)
+// — sem isso, corrigir um vértice torto exigia redesenhar o contorno inteiro do zero.
+let _ajustandoVertices = false;
+
+function toggleAjustarVertices() {
+  if(polyPts.length < 3 || modo !== 'idle') { setStatus('Desenhe e feche o contorno primeiro.', 'err'); return; }
+  _ajustandoVertices = !_ajustandoVertices;
+  polyMarkers.forEach(m => {
+    if(!m.dragging) return;
+    if(_ajustandoVertices) { m.dragging.enable(); m.on('dblclick', _onDblClickVerticePoligono); }
+    else { m.dragging.disable(); m.off('dblclick', _onDblClickVerticePoligono); }
+  });
+  rebuildPoly(); // reaplica o estilo (laranja tracejado em ajuste / azul normal) sem mover nada
+  const btn = $('btnAjustarVertices');
+  if(btn) btn.innerHTML = _ajustandoVertices ? '&#10003; Concluir Ajuste' : '&#9999; Ajustar V&eacute;rtices';
+  setStatus(_ajustandoVertices
+    ? 'Ajuste de vértices ativo: arraste um vértice pra mover, dê duplo clique pra remover (mínimo 3). Clique em "Concluir Ajuste" quando terminar.'
+    : `Ajuste concluído: ${areaHaAtual.toFixed(2)} ha.`, 'ok');
+}
+
+function _onDblClickVerticePoligono(e) {
+  _removerVerticePoligono(e.target);
+}
+
+function _removerVerticePoligono(mk) {
+  const idx = polyMarkers.indexOf(mk);
+  if(idx < 0) return;
+  if(polyPts.length <= 3) { setStatus('O contorno precisa de pelo menos 3 vértices — não dá pra remover mais.', 'err'); return; }
+  mk.off('dblclick', _onDblClickVerticePoligono);
+  mk.remove();
+  polyMarkers.splice(idx, 1);
+  rebuildPoly();
+  setStatus(`Vértice removido — ${polyPts.length} restantes (${areaHaAtual.toFixed(2)} ha).`, 'ok');
 }
 
 // ══ Carreador Interno (v5.81, refeito em v5.83) ════════════════════════════════════════════════
@@ -14228,6 +14298,10 @@ function limparPoligono() {
   $('btnTravarTalhao').style.display='none';
   // Só desabilita "Gerar Curvas" se também não houver área de curvas desenhada
   if(!turfCurvaPoly) $('btnCurvas').disabled=true;
+  // v5.88: sem contorno ativo não há o que ajustar — volta o botão "Ajustar Vértices" pro rótulo
+  // de sempre (senão ficava preso em "Concluir Ajuste" na próxima vez que um contorno aparecesse).
+  _ajustandoVertices = false;
+  const btnAjustar = $('btnAjustarVertices'); if(btnAjustar) btnAjustar.innerHTML = '&#9999; Ajustar V&eacute;rtices';
 }
 
 // ── Desfazer (undo) — pedido explícito do usuário: "as vezes eu deleto algum talhão ou elemento
@@ -17141,6 +17215,26 @@ function _atualizarDicaRolagem() {
   const sync = () => {
     botao.style.display = original.style.display;
     if(original.style.display === 'none' && config) config.style.display = 'none';
+  };
+  sync();
+  new MutationObserver(sync).observe(original, {attributes:true, attributeFilter:['style']});
+})();
+
+// v5.88: "Ajustar Vértices" também só faz sentido com um contorno fechado ativo — mesmo truque de
+// espelho das 2 acima. Se o contorno some enquanto o ajuste está ligado (ex.: "Travar Talhão" ou
+// "Novo Projeto"), desliga o modo de ajuste também — sem isso, _ajustandoVertices ficava "true"
+// órfão, e o PRÓXIMO contorno desenhado já nasceria com os vértices arrastáveis sem o usuário ter
+// pedido.
+(function() {
+  const original = document.getElementById('btnTravarTalhao');
+  const botao = document.getElementById('btnAjustarVertices');
+  if(!original || !botao) return;
+  const sync = () => {
+    botao.style.display = original.style.display;
+    if(original.style.display === 'none' && typeof _ajustandoVertices !== 'undefined' && _ajustandoVertices) {
+      _ajustandoVertices = false;
+      botao.innerHTML = '&#9999; Ajustar V&eacute;rtices';
+    }
   };
   sync();
   new MutationObserver(sync).observe(original, {attributes:true, attributeFilter:['style']});
