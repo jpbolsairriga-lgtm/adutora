@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.16 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.17 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -195,6 +195,8 @@ tr.item-row.inativo{opacity:.4}
       <div style="display:flex;gap:.5rem">
         <button class="btn btn-out" onclick="document.getElementById('inputImportarOrcamento').click()">Importar (.json)</button>
         <input type="file" id="inputImportarOrcamento" accept=".json" style="display:none" onchange="importarOrcamentoJSON(this.files[0])">
+        <button class="btn btn-out" onclick="document.getElementById('inputImportarExcel').click()" title="Importa só a aba &quot;Dados de Entrada&quot; de um orçamento antigo (.xlsm/.xlsx) — o resto (BOM, margem, proposta) você gera com as regras ATUAIS do sistema, pra conferir/evoluir o app contra orçamentos reais">📥 Importar Orçamento Antigo (Excel)</button>
+        <input type="file" id="inputImportarExcel" accept=".xlsm,.xlsx" style="display:none" onchange="importarOrcamentoExcel(this.files[0])">
         <button class="btn btn-green" onclick="novoOrcamento()">+ Novo Orçamento</button>
       </div>
     </div>
@@ -283,6 +285,15 @@ tr.item-row.inativo{opacity:.4}
 
 <!-- ============ VIEW 4: MARGEM X VENDA ============ -->
 <div class="view" id="vMargem">
+  <div class="card" id="mvRefHistoricaCard" style="display:none">
+    <div class="ct">📥 Referência Histórica (valor real da planilha importada — só para conferência, não entra no cálculo)</div>
+    <div class="g4">
+      <div class="tile orange"><div class="tl">Custo Total (real)</div><div class="tv" id="mvRefCusto">—</div></div>
+      <div class="tile orange"><div class="tl">Venda Total (real)</div><div class="tv" id="mvRefVenda">—</div></div>
+      <div class="tile orange"><div class="tl">Margem Bruta (real)</div><div class="tv" id="mvRefMargem">—</div></div>
+      <div class="tile red"><div class="tl">Diferença vs. App (venda)</div><div class="tv" id="mvRefDiff">—</div></div>
+    </div>
+  </div>
   <div class="card">
     <div class="ct">Condições Comerciais</div>
     <div class="g4" style="margin-bottom:1rem">
@@ -437,7 +448,25 @@ tr.item-row.inativo{opacity:.4}
 <script src="conjuntos.js"></script>
 <script src="selecao.js"></script>
 <script src="hidraulica-adutora.js"></script>
+<!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.17 (2026-10-27): novo "📥 Importar Orçamento Antigo (Excel)" na tela de
+//   Orçamentos — lê um .xlsm/.xlsx de orçamento real (igual aos já fechados) e
+//   importa SÓ a aba "Dados de Entrada" (cliente, área, vazões, todos os
+//   dropdowns de projeto/setores/emissores/filtragem/recalque — ~45 campos,
+//   mapeados célula a célula pela posição real da aba). O resto (seleção de
+//   BOM, moto-bomba, cavaletes, margem, proposta) o usuário gera do zero com as
+//   regras ATUAIS do app (calcula Adutora/Recalque e clica "Carregar Modelo") —
+//   serve tanto pra atualizar orçamentos antigos pro sistema novo quanto como
+//   mecanismo de conferência: se a aba "Margens" existir no arquivo, o valor
+//   real que a planilha fechou (Custo/Venda/Margem Bruta) fica salvo como
+//   "referência histórica" (óbviamente só leitura, nunca entra em nenhum
+//   cálculo) e aparece num card na aba Margem x Venda, lado a lado com o que o
+//   app calcula hoje — dá pra comparar direto e ir evoluindo as regras do
+//   sistema. Valores de dropdown que não baterem com nenhuma opção conhecida
+//   entram como texto livre, com aviso na hora da importação. Usa a biblioteca
+//   SheetJS (via CDN) só para ler o arquivo — nenhuma dependência de build.
 // v1.16 (2026-10-27): corrige 2 bugs reais reportados pelo usuário. (1) "Novo
 //   orçamento parece puxar de outro salvo": o mapa (markers/polyline/traçado "ao
 //   vivo" do Google Maps) é um estado GLOBAL por aba (adutora01/02/recalque), não
@@ -669,7 +698,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.16';
+const APP_VERSION='v1.17';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -1039,6 +1068,129 @@ function importarOrcamentoJSON(file){
   $('inputImportarOrcamento').value='';
 }
 
+// ── Importar orçamento antigo (.xlsm/.xlsx) — só a aba "Dados de Entrada" ──
+// Objetivo: trazer SÓ o que é dado de entrada real (cliente, área, vazões,
+// dropdowns de projeto) de um orçamento antigo da planilha; tudo que é
+// resultado/seleção (BOM, moto-bomba, cavaletes, margem, proposta) o sistema
+// gera do zero com as regras ATUAIS dele — serve tanto pra atualizar orçamentos
+// antigos pro sistema novo quanto pra conferir/evoluir o app comparando com o
+// valor real que a planilha fechou (fica salvo em `referenciaHistorica`).
+// Mapa célula (aba "Dados de Entrada") -> campo. destino 'adutora01'/'adutora02'/
+// 'recalque' escreve na config daquela adutora (não em dadosEntrada), porque é
+// lá que esses 2 campos (comprimento/vazão) realmente vivem no app.
+const MAPA_IMPORT_DADOS_ENTRADA=[
+  ['D5','dadosEntrada','loja','text'],['D6','dadosEntrada','cliente','text'],['D7','dadosEntrada','propriedade','text'],
+  ['D8','dadosEntrada','cidade','text'],['D9','dadosEntrada','uf','select'],['D10','dadosEntrada','cultura','select'],
+  ['D11','dadosEntrada','altitude','number'],['D12','dadosEntrada','lamina','number'],['D13','dadosEntrada','fonteAgua','text'],
+  ['D14','dadosEntrada','energiaRede','select'],['D15','dadosEntrada','data','date'],['D16','dadosEntrada','versao','text'],
+  ['D17','dadosEntrada','consultor','select'],['D18','dadosEntrada','telefone','text'],
+  ['D25','dadosEntrada','area','number'],['D26','dadosEntrada','espacamentoLinhas','number'],['D27','dadosEntrada','espacamentoPlantas','number'],
+  ['D30','adutora01','comprimento','number'],['D31','adutora01','vazao','number'],
+  ['D32','adutora02','comprimento','number'],['D33','adutora02','vazao','number'],
+  ['D34','dadosEntrada','quedaNatural','select'],['D37','dadosEntrada','classeTubulacao','text'],
+  ['D38','dadosEntrada','tipoSuccaoProjeto','select'],['D39','dadosEntrada','bombaAuxSubmersaProjeto','select'],
+  ['D42','dadosEntrada','vazaoValvula','number'],['D43','dadosEntrada','numOperacoes','number'],
+  ['D44','dadosEntrada','numValvulasAdutora01','number'],['D45','dadosEntrada','numValvulasAdutora02','number'],
+  ['D46','dadosEntrada','automacaoProjeto','select'],['D47','dadosEntrada','automacao','select'],['D48','dadosEntrada','automacaoCavalete','select'],
+  ['D51','dadosEntrada','metrosChicoteada','number'],['D52','dadosEntrada','numRedesChicoteadas','number'],
+  ['D53','dadosEntrada','desnivelMedioRedesChicoteadas','number'],['D54','dadosEntrada','metrosMain','number'],
+  ['D55','dadosEntrada','numMain','number'],['D56','dadosEntrada','tipoSaidaLateral','text'],
+  ['D57','dadosEntrada','aspersaoTamanhoMedioSubmain','number'],
+  ['D60','dadosEntrada','sistemaIrrigacao','select'],['D61','dadosEntrada','gotejador1','text'],['D62','dadosEntrada','gotejador2','text'],
+  ['D63','dadosEntrada','vazaoEmissor','number'],['D64','dadosEntrada','espacamentoEmissor','number'],
+  ['D67','dadosEntrada','filtragem','select'],['D68','dadosEntrada','fertirrigacao','select'],
+  ['D71','dadosEntrada','monitoramentoSolo','select'],['D72','dadosEntrada','injetorCloro','select'],
+  ['D79','recalque','vazao','number'],['D80','dadosEntrada','recalqueTipoSuccao','select'],
+  ['D81','dadosEntrada','recalqueBombaAuxSubmersa','select'],['D82','dadosEntrada','recalqueTuboSaida','text'],
+  ['D83','recalque','comprimento','number'],['D84','dadosEntrada','recalqueAutomacao','select'],
+  ['D85','dadosEntrada','recalqueQuedaNatural','select'],['D88','dadosEntrada','recalqueInjetorCloro','select'],
+];
+// campo -> lista de opções válidas (pra avisar quando o valor importado não bate
+// com nenhuma, sem travar a importação — fica como texto livre mesmo assim)
+const OPCOES_VALIDAS_IMPORT={
+  uf:UFS,cultura:CULTURAS,consultor:CONSULTORES,energiaRede:['trifásica','monofásica'],
+  quedaNatural:['SIM','Fertikit','NÃO'],tipoSuccaoProjeto:TIPOS_SUCCAO,bombaAuxSubmersaProjeto:BOMBAS_AUX,
+  automacaoProjeto:SIM_NAO,automacao:['Hidraulico','Pneumatico'],automacaoCavalete:['Piloto + Galit','Piloto + Sagiv','Piloto','Manual Reg Pressão'],
+  sistemaIrrigacao:['Gotejamento','Micro-Aspersão','Aspersão','Botão Gotejador'],filtragem:['Disco','Areia','Disco Automatico'],
+  fertirrigacao:['Direta','Fertikit','Sem Ferti'],monitoramentoSolo:['Analogico','Digital','Sem Monitoramento'],
+  injetorCloro:SIM_NAO,recalqueTipoSuccao:TIPOS_SUCCAO,recalqueBombaAuxSubmersa:BOMBAS_AUX,
+  recalqueAutomacao:['Pneumatico','Eletrico','Sem automação'],recalqueQuedaNatural:['SIM','Fertikit','NÃO'],recalqueInjetorCloro:SIM_NAO,
+};
+function normalizarOpcaoImport(valor,opcoes){
+  if(!opcoes)return{valor,bateu:true};
+  const alvo=String(valor).trim().toLowerCase();
+  const achada=opcoes.find(o=>String(o).trim().toLowerCase()===alvo);
+  return achada?{valor:achada,bateu:true}:{valor,bateu:false};
+}
+function importarOrcamentoExcel(file){
+  if(!file)return;
+  if(typeof XLSX==='undefined'){alert('Biblioteca de leitura de Excel não carregou (precisa de internet na primeira vez). Tente de novo.');return;}
+  const reader=new FileReader();
+  reader.onload=e=>{
+    try{
+      const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array',cellDates:true});
+      const nomeAba=wb.SheetNames.find(n=>n.trim().toLowerCase()==='dados de entrada');
+      if(!nomeAba){alert(`Não encontrei a aba "Dados de Entrada" neste arquivo. Abas encontradas: ${wb.SheetNames.join(', ')}`);return;}
+      const sheet=wb.Sheets[nomeAba];
+
+      const dadosEntrada=novoOrcDadosEntrada();
+      const adutora01=novaConfigAdutora(CONFIG_GLOBAL.limiarBombaDuplaAdutora);
+      const adutora02=novaConfigAdutora(CONFIG_GLOBAL.limiarBombaDuplaAdutora);
+      const recalque=novaConfigAdutora(CONFIG_GLOBAL.limiarBombaDuplaRecalque);
+      const destinos={dadosEntrada,adutora01,adutora02,recalque};
+      const avisos=[];let nImportados=0;
+
+      MAPA_IMPORT_DADOS_ENTRADA.forEach(([cel,destino,campo,tipo])=>{
+        const cell=sheet[cel];
+        if(!cell||cell.v===undefined||cell.v===null||cell.v==='')return;
+        let valor=cell.v;
+        if(tipo==='number'){valor=parseFloat(valor);if(isNaN(valor))return;}
+        else if(tipo==='date'){
+          const d=(valor instanceof Date)?valor:new Date(valor);
+          if(isNaN(d.getTime()))return;
+          valor=d.toISOString().slice(0,10);
+        }else{
+          valor=String(valor).trim();
+          if(tipo==='select'){
+            const{valor:norm,bateu}=normalizarOpcaoImport(valor,OPCOES_VALIDAS_IMPORT[campo]);
+            valor=norm;
+            if(!bateu)avisos.push(`"${campo}": valor "${valor}" da planilha não bate com nenhuma opção conhecida — importado como texto livre, confira/ajuste em Dados de Entrada.`);
+          }
+        }
+        destinos[destino][campo]=valor;
+        nImportados++;
+      });
+
+      // Referência histórica (só leitura, pra comparar com o que o app calcular) —
+      // vem da aba "Margens" (Valor do Projeto/Recalque/Total + Margem Bruta), se existir.
+      let referenciaHistorica=null;
+      const nomeMargens=wb.SheetNames.find(n=>n.trim().toLowerCase()==='margens');
+      if(nomeMargens){
+        const sm=wb.Sheets[nomeMargens];
+        const num=cel=>{const c=sm[cel];return c&&typeof c.v==='number'?c.v:0;};
+        referenciaHistorica={
+          custoProjeto:num('D8'),vendaProjeto:num('E8'),custoRecalque:num('D9'),vendaRecalque:num('E9'),
+          custoTotal:num('D10'),vendaTotal:num('E10'),margemBrutaRS:num('D14'),margemBrutaPct:num('D15'),
+          arquivoOrigem:file.name,importadoEm:new Date().toISOString(),
+        };
+      }
+
+      atual={id:uid(),criadoEm:new Date().toISOString(),dadosEntrada,bom:[],adutora01,adutora02,recalque,referenciaHistorica};
+      orcamentos.push(atual);
+      salvarOrcamentos();
+      abrirOrcamento(atual.id);
+      alert(`Importado de "${file.name}": ${nImportados} campos da aba "Dados de Entrada".`
+        +(referenciaHistorica?`\n\nValor real na planilha (referência, não usado no cálculo): ${fmtR(referenciaHistorica.vendaTotal)}.`:'\n\n(Não encontrei a aba "Margens" pra referência de valor real.)')
+        +`\n\nO resto (BOM, moto-bomba, margem, proposta) é gerado pelas regras ATUAIS do sistema — confira os dados importados, calcule a Adutora/Recalque e clique em "Carregar Modelo".`
+        +(avisos.length?`\n\nAtenção:\n`+avisos.join('\n'):''));
+    }catch(err){
+      alert('Erro ao importar o Excel: '+err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+  $('inputImportarExcel').value='';
+}
+
 function renderListaOrcamentos(){
   const el=$('listaOrcamentos');
   if(!orcamentos.length){
@@ -1052,6 +1204,7 @@ function renderListaOrcamentos(){
       <div class="li-info">
         <b>${escapeHTML(d.cliente)||'(sem nome)'}</b> — ${escapeHTML(d.propriedade)}
         <span>${escapeHTML(d.cidade)}/${escapeHTML(d.uf)} &middot; ${d.area||0} ha &middot; ${escapeHTML(d.sistemaIrrigacao)} &middot; Venda total: ${fmtR(rollup.vendaTotal)} &middot; atualizado ${new Date(o.atualizadoEm||o.criadoEm).toLocaleString('pt-BR')}</span>
+        ${o.referenciaHistorica?`<span class="tag" style="background:#fff3e0;color:#e65100;margin-top:.25rem;display:inline-block">📥 Importado de "${escapeHTML(o.referenciaHistorica.arquivoOrigem)}" — venda real na planilha: ${fmtR(o.referenciaHistorica.vendaTotal)}</span>`:''}
       </div>
       <div class="li-acts">
         <button class="btn btn-blue btn-sm" onclick="abrirOrcamento('${o.id}')">Abrir</button>
@@ -2249,6 +2402,21 @@ function renderMargem(){
   const d=atual.dadosEntrada;
   const margemBruta=r.vendaTotal-r.custoTotal;
   const margemBrutaPct=r.vendaTotal?margemBruta/r.vendaTotal*100:0;
+
+  // Referência histórica (só aparece em orçamentos importados de Excel) — compara
+  // o que a planilha antiga realmente fechou com o que o app calcula hoje, pra
+  // ajudar a conferir/evoluir as regras do sistema.
+  const ref=atual.referenciaHistorica;
+  $('mvRefHistoricaCard').style.display=ref?'block':'none';
+  if(ref){
+    const margemRefPct=ref.vendaTotal?(ref.vendaTotal-ref.custoTotal)/ref.vendaTotal*100:0;
+    $('mvRefCusto').textContent=fmtR(ref.custoTotal);
+    $('mvRefVenda').textContent=fmtR(ref.vendaTotal);
+    $('mvRefMargem').textContent=`${fmtR(ref.vendaTotal-ref.custoTotal)} (${fmtN(margemRefPct,1)}%)`;
+    const diff=r.vendaTotal-ref.vendaTotal;
+    const diffPct=ref.vendaTotal?diff/ref.vendaTotal*100:0;
+    $('mvRefDiff').textContent=`${diff>=0?'+':''}${fmtR(diff)} (${diffPct>=0?'+':''}${fmtN(diffPct,1)}%)`;
+  }
 
   // Condições comerciais (recap)
   $('mvEstado').textContent=d.uf||'—';
