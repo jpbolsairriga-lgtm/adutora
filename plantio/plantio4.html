@@ -443,7 +443,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.90 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.91 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -5702,6 +5702,11 @@ function buildTurfPoly() {
 // Melhoria pedida ("melhore essa ideia"): duplo clique num vértice REMOVE ele (mínimo 3 restantes)
 // — sem isso, corrigir um vértice torto exigia redesenhar o contorno inteiro do zero.
 let _ajustandoVertices = false;
+// v5.91: ver comentário grande dentro de toggleAjustarVertices — guarda a identidade (uid/cor) do
+// talhão TRAVADO que esse botão puxou sozinho pro slot ativo, só pra poder re-travar ele sozinho
+// de volta (mesma identidade) quando o ajuste terminar. Fica null sempre que o contorno ativo não
+// veio desse atalho específico (desenho novo, "Editar Linhas" explícito, Carreador Interno, etc.).
+let _origemAjusteRapido = null;
 
 function toggleAjustarVertices() {
   // v5.89: pedido do usuário — "eu fiz um talhão, tirei a seleção e qdo selecionei novamente, não
@@ -5713,7 +5718,22 @@ function toggleAjustarVertices() {
   // (ativarTalhaoParaEdicao) — daí liga o ajuste direto, sem precisar clicar em "Editar Linhas"
   // à parte. Ver também _atualizarVisibilidadeAjustarVertices (mostra o botão com um talhão só
   // selecionado, não só com um contorno ativo).
-  if(polyPts.length < 3 && talhaoSelecionadoUid !== null) ativarTalhaoParaEdicao();
+  //
+  // v5.91: pedido do usuário — "qdo edito os poligonos, esta gerando um talhão de linha azul ao
+  // fundo (...) é como se a marcação antiga ficasse ativa ainda". Causa: ativarTalhaoParaEdicao
+  // (o mesmo mecanismo de "Editar Linhas") sempre deixa o talhão deliberadamente DESTRAVADO ao
+  // terminar — faz sentido pra "Editar Linhas" (o usuário pode querer regerar linhas antes de
+  // travar de novo), mas nesse atalho de um clique só o usuário só queria ajustar um vértice; ele
+  // nunca pediu pra destravar nada, e "Concluir Ajuste" não travava de volta — o talhão ficava
+  // visível com o estilo "ativo" (azul simples, sem a cor própria dele), parecendo uma marcação
+  // velha esquecida por cima do mapa. Fix: guarda a identidade original (uid/cor) só quando É esse
+  // atalho que está puxando o talhão do arquivo, e re-trava sozinho (mesma identidade) assim que
+  // "Concluir Ajuste" é clicado — ver abaixo.
+  if(polyPts.length < 3 && talhaoSelecionadoUid !== null) {
+    const t0 = talhoesArquivados.find(t => t.uid === talhaoSelecionadoUid);
+    _origemAjusteRapido = t0 ? { uid: t0.uid, cor: t0.cor } : null;
+    ativarTalhaoParaEdicao();
+  }
   if(polyPts.length < 3 || modo !== 'idle') { setStatus('Desenhe e feche o contorno, ou selecione um talhão travado, primeiro.', 'err'); return; }
   _ajustandoVertices = !_ajustandoVertices;
   polyMarkers.forEach(m => {
@@ -5722,6 +5742,14 @@ function toggleAjustarVertices() {
     else { m.dragging.disable(); m.off('dblclick', _onDblClickVerticePoligono); }
   });
   rebuildPoly(); // reaplica o estilo (laranja tracejado em ajuste / azul normal) e os midpoints, sem mover nada
+  if(!_ajustandoVertices && _origemAjusteRapido) {
+    const origem = _origemAjusteRapido;
+    _origemAjusteRapido = null;
+    const areaFinal = areaHaAtual;
+    arquivarTalhaoAtual(origem); // re-trava com a MESMA identidade (uid/cor) de antes — não é um talhão novo
+    setStatus(`Ajuste concluído e talhão travado de volta — ${areaFinal.toFixed(2)} ha.`, 'ok');
+    return;
+  }
   _atualizarVisibilidadeAjustarVertices();
   const btn = $('btnAjustarVertices');
   if(btn) btn.innerHTML = _ajustandoVertices ? '&#10003; Concluir Ajuste' : '&#9999; Ajustar V&eacute;rtices';
@@ -6154,10 +6182,15 @@ function limparRegua() {
 }
 
 // ── Múltiplos Talhões ─────────────────────────────────────────────────────────
-function arquivarTalhaoAtual() {
+function arquivarTalhaoAtual(identidade) {
+  // v5.91: identidade opcional ({uid, cor}) — usado por toggleAjustarVertices pra re-travar um
+  // talhão que ele mesmo destravou (ver comentário lá) com a MESMA identidade de antes, em vez de
+  // ganhar um uid/cor novos como se fosse um talhão recém-criado. Toda chamada normal (botão
+  // "Travar Talhão", travarTodosMulti etc.) continua sem esse argumento — comportamento inalterado.
+  _origemAjusteRapido = null; // qualquer travamento (manual ou automático) consome esse atalho
   const idx = talhoesArquivados.length; // índice 0-based
-  const cor = CORES_TALHAO[idx % CORES_TALHAO.length];
-  const uid = nextTalhaoUid++;
+  const cor = identidade ? identidade.cor : CORES_TALHAO[idx % CORES_TALHAO.length];
+  const uid = identidade ? identidade.uid : nextTalhaoUid++;
   const capturedLayer = polyLayer; // captura antes de nullar
 
   // Bloqueia: remove marcadores de edição, reestiliza contorno com cor do talhão
@@ -14363,6 +14396,7 @@ function limparPoligono() {
   // v5.88: sem contorno ativo não há o que ajustar — volta o botão "Ajustar Vértices" pro rótulo
   // de sempre (senão ficava preso em "Concluir Ajuste" na próxima vez que um contorno aparecesse).
   _ajustandoVertices = false;
+  _origemAjusteRapido = null; // v5.91: contorno ativo sumiu por outro caminho — não há mais o que re-travar sozinho depois
   _limparMidpointMarkers(); // v5.90
   const btnAjustar = $('btnAjustarVertices'); if(btnAjustar) btnAjustar.innerHTML = '&#9999; Ajustar V&eacute;rtices';
 }
@@ -15211,11 +15245,50 @@ function _clipLinhaForaDoCarreador(coordsLngLat, carreadorBuf) {
     try { return !turf.booleanPointInPolygon(turf.point([p.lng, p.lat]), carreadorBuf); }
     catch(e) { return true; }
   });
+  let bufBound = null;
+  try { bufBound = turf.polygonToLine(carreadorBuf); } catch(e) {}
+  // v5.91: pedido do usuário — exportou pra DXF e, no AutoCAD, as linhas de plantio cortadas pelo
+  // carreador não encostavam na borda dele (folga visível ao dar zoom; "nem no app tbm consigo"
+  // ver elas se tocando). Causa: a ponta de cada pedaço ficava na ÚLTIMA AMOSTRA antes de cruzar
+  // pro lado de dentro do buffer — a reamostragem é a cada ~0,5m, então a ponta podia ficar até
+  // ~0,5m antes da borda real (comportamento documentado acima como "imperceptível na escala do
+  // mapa", mas nada imperceptível em zoom de CAD). Fix: acha o ponto EXATO de cruzamento entre o
+  // miniseguimento (2 amostras vizinhas, uma dentro/uma fora) e a borda do buffer — só refina a
+  // PONTA de cada pedaço; a classificação dentro/fora de cada amostra (o que resolvia os casos de
+  // ponta arredondada do turf.lineSplit global, ver comentário grande acima) continua igual.
+  const pontoCruzamento = (iA, iB) => {
+    if(!bufBound) return sample[iB];
+    try {
+      const a = sample[iA], b = sample[iB];
+      const seg = turf.lineString([[a.lng,a.lat],[b.lng,b.lat]]);
+      const ix = turf.lineIntersect(seg, bufBound);
+      if(!ix.features.length) return sample[iB];
+      let melhor = ix.features[0].geometry.coordinates, melhorD = Infinity;
+      ix.features.forEach(f => {
+        const c = {lat:f.geometry.coordinates[1], lng:f.geometry.coordinates[0]};
+        const d = haversineM(c, b);
+        if(d < melhorD) { melhorD = d; melhor = f.geometry.coordinates; }
+      });
+      return {lng: melhor[0], lat: melhor[1]};
+    } catch(e) { return sample[iB]; }
+  };
   const pedacos = [];
   let atual = [];
   for(let i = 0; i < sample.length; i++) {
-    if(fora[i]) atual.push([sample[i].lng, sample[i].lat]);
-    else { if(atual.length >= 2) pedacos.push(atual); atual = []; }
+    if(fora[i]) {
+      if(atual.length === 0 && i > 0 && !fora[i-1]) {
+        const p = pontoCruzamento(i-1, i);
+        atual.push([p.lng, p.lat]);
+      }
+      atual.push([sample[i].lng, sample[i].lat]);
+    } else {
+      if(atual.length >= 2) {
+        const p = pontoCruzamento(i, i-1);
+        atual[atual.length - 1] = [p.lng, p.lat];
+        pedacos.push(atual);
+      }
+      atual = [];
+    }
   }
   if(atual.length >= 2) pedacos.push(atual);
   return pedacos;
