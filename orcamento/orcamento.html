@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.17 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.18 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -272,6 +272,7 @@ tr.item-row.inativo{opacity:.4}
   <div class="card">
     <div class="ct"><div class="ct-l">Lista de Materiais (BOM) — <span id="bomCount">0</span> itens</div>
       <button class="btn btn-blue" onclick="abrirModalConsolidado()">📋 Relatório Consolidado</button>
+      <button class="btn btn-out" id="btnDivergencias" style="display:none" onclick="gerarRelatorioDivergencias()">📊 Relatório de Divergências (vs. Planilha Importada)</button>
     </div>
     <div class="tbl-wrap">
       <table id="tabelaBOM"><thead><tr>
@@ -451,6 +452,23 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.18 (2026-10-27): novo "📊 Relatório de Divergências" (botão na aba
+//   Conjuntos/BOM, só aparece em orçamentos importados de Excel): compara a
+//   lista de peças REAL da planilha importada (coluna "QTD." já resolvida das
+//   abas Conj.Irri.Projeto-Got01/02/Recalque, juntada por fornecedor+código —
+//   capturada na hora da importação, nunca usada no cálculo) com o BOM que o
+//   app gerou pelas regras atuais, linha a linha: Qtd. Planilha x Qtd. App x
+//   Diferença x Status (Igual / Quantidade diferente / Só na Planilha / Só no
+//   App). Abre numa aba nova com botões para "Gerar PDF" (impressão) e
+//   "Exportar Excel" (.xlsx de verdade, via SheetJS, carregado na própria aba do
+//   relatório). É o jeito direto de achar onde as regras do app ainda divergem
+//   de um orçamento real e ir evoluindo a partir disso.
+//   CUIDADO (achado durante o teste): o HTML desse relatório embute uma tag de
+//   script (CDN do SheetJS) dentro de uma string JS — sem escapar a barra da
+//   tag de fechamento, o PARSER DE HTML do navegador fecha o script de
+//   verdade do app bem ali no meio do arquivo, quebrando tudo depois dela.
+//   Corrigido escrevendo a barra como "<\/" (igual já era feito pro
+//   fechamento do próprio bloco de script aninhado).
 // v1.17 (2026-10-27): novo "📥 Importar Orçamento Antigo (Excel)" na tela de
 //   Orçamentos — lê um .xlsm/.xlsx de orçamento real (igual aos já fechados) e
 //   importa SÓ a aba "Dados de Entrada" (cliente, área, vazões, todos os
@@ -698,7 +716,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.17';
+const APP_VERSION='v1.18';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -1122,6 +1140,25 @@ function normalizarOpcaoImport(valor,opcoes){
   const achada=opcoes.find(o=>String(o).trim().toLowerCase()===alvo);
   return achada?{valor:achada,bateu:true}:{valor,bateu:false};
 }
+// Extrai a lista de peças JÁ RESOLVIDA (coluna I "QTD.", igual usado pra montar
+// conjuntos.js) de uma aba Conj.Irri.* do Excel importado — vira a "lista real da
+// planilha" usada só pra comparação no Relatório de Divergências, nunca pra
+// alimentar o cálculo do app.
+function extrairBOMHistoricoSheet(sheet){
+  const itens=[];
+  if(!sheet||!sheet['!ref'])return itens;
+  const range=XLSX.utils.decode_range(sheet['!ref']);
+  for(let r=range.s.r;r<=range.e.r;r++){
+    const fornecedor=sheet[XLSX.utils.encode_cell({r,c:1})]?.v; // coluna B
+    if(fornecedor!=='Bolsa Irriga'&&fornecedor!=='Netafim')continue;
+    const qtd=sheet[XLSX.utils.encode_cell({r,c:8})]?.v; // coluna I = QTD.
+    if(typeof qtd!=='number'||!qtd)continue;
+    const codigo=sheet[XLSX.utils.encode_cell({r,c:2})]?.v; // coluna C
+    const descricao=sheet[XLSX.utils.encode_cell({r,c:4})]?.v; // coluna E
+    itens.push({fornecedor,codigo:String(codigo??''),descricao:descricao!=null?String(descricao):'',qtd});
+  }
+  return itens;
+}
 function importarOrcamentoExcel(file){
   if(!file)return;
   if(typeof XLSX==='undefined'){alert('Biblioteca de leitura de Excel não carregou (precisa de internet na primeira vez). Tente de novo.');return;}
@@ -1175,12 +1212,21 @@ function importarOrcamentoExcel(file){
         };
       }
 
-      atual={id:uid(),criadoEm:new Date().toISOString(),dadosEntrada,bom:[],adutora01,adutora02,recalque,referenciaHistorica};
+      // Lista de peças real da planilha (só para o Relatório de Divergências —
+      // nunca entra no cálculo do app). Junta as 3 abas de BOM resolvido, se existirem.
+      const bomHistorico=[];
+      [['Conj.Irri.Projeto - Got 01'],['Conj.Irri.Projeto - Got 02'],['Conj.Irri.Recalque']].forEach(([nome])=>{
+        const n=wb.SheetNames.find(x=>x.trim().toLowerCase()===nome.toLowerCase());
+        if(n)bomHistorico.push(...extrairBOMHistoricoSheet(wb.Sheets[n]));
+      });
+
+      atual={id:uid(),criadoEm:new Date().toISOString(),dadosEntrada,bom:[],adutora01,adutora02,recalque,referenciaHistorica,bomHistorico};
       orcamentos.push(atual);
       salvarOrcamentos();
       abrirOrcamento(atual.id);
       alert(`Importado de "${file.name}": ${nImportados} campos da aba "Dados de Entrada".`
         +(referenciaHistorica?`\n\nValor real na planilha (referência, não usado no cálculo): ${fmtR(referenciaHistorica.vendaTotal)}.`:'\n\n(Não encontrei a aba "Margens" pra referência de valor real.)')
+        +(bomHistorico.length?`\n\nLista de peças real da planilha capturada (${bomHistorico.length} linhas) — depois de carregar o modelo no BOM, use "📊 Relatório de Divergências" pra comparar.`:'\n\n(Não encontrei nenhuma aba de BOM resolvido — Relatório de Divergências não vai ficar disponível.)')
         +`\n\nO resto (BOM, moto-bomba, margem, proposta) é gerado pelas regras ATUAIS do sistema — confira os dados importados, calcule a Adutora/Recalque e clique em "Carregar Modelo".`
         +(avisos.length?`\n\nAtenção:\n`+avisos.join('\n'):''));
     }catch(err){
@@ -2344,6 +2390,7 @@ function toggleExpandirCategoria(catIdx){
 function renderBOM(){
   $('catTotalCount').textContent=(CATALOGO_PRECOS.bolsa_irriga.length+CATALOGO_PRECOS.netafim.length).toLocaleString('pt-BR');
   $('bomCount').textContent=atual.bom.length;
+  $('btnDivergencias').style.display=(atual.bomHistorico&&atual.bomHistorico.length)?'inline-block':'none';
   const f=fatorMargem(atual.dadosEntrada);
   const porCategoria={};
   atual.bom.forEach(it=>{
@@ -2597,6 +2644,92 @@ function exportarConsolidadoCSV(){
   a.href=url;a.download=`relatorio-consolidado-${(atual.dadosEntrada.cliente||'orcamento').replace(/[^a-z0-9]+/gi,'-')}.csv`;
   document.body.appendChild(a);a.click();document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+// ── Relatório de Divergências (lista de peças: planilha importada x BOM gerado) ──
+// Só disponível em orçamentos importados de Excel (atual.bomHistorico). Junta por
+// fornecedor+código (mesma chave do Relatório Consolidado) a quantidade real que a
+// planilha fechou com a quantidade que o app gerou pelas regras atuais — é o jeito
+// direto de achar onde as regras do app ainda divergem de um orçamento real.
+function calcularComparacaoHistorico(orc){
+  if(!orc.bomHistorico||!orc.bomHistorico.length)return[];
+  const consolApp=calcularConsolidado(orc);
+  const porChave={};
+  consolApp.forEach(it=>{
+    const k=(it.fornecedor||'')+'|'+it.codigo;
+    porChave[k]={fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,qtdApp:it.qtd,qtdHist:0};
+  });
+  orc.bomHistorico.forEach(it=>{
+    const k=(it.fornecedor||'')+'|'+it.codigo;
+    if(!porChave[k])porChave[k]={fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,qtdApp:0,qtdHist:0};
+    porChave[k].qtdHist+=it.qtd;
+    if(!porChave[k].descricao)porChave[k].descricao=it.descricao;
+  });
+  return Object.values(porChave).map(it=>{
+    const diferenca=it.qtdApp-it.qtdHist;
+    let status;
+    if(it.qtdHist===0)status='Só no App (novo)';
+    else if(it.qtdApp===0)status='Só na Planilha (faltando)';
+    else if(Math.abs(diferenca)<0.01)status='Igual';
+    else status='Quantidade diferente';
+    return{...it,diferenca,status};
+  }).sort((a,b)=>{
+    const pa=a.status==='Igual'?1:0,pb=b.status==='Igual'?1:0;
+    if(pa!==pb)return pa-pb; // divergentes primeiro
+    return Math.abs(b.diferenca)-Math.abs(a.diferenca)||a.descricao.localeCompare(b.descricao,'pt-BR');
+  });
+}
+function gerarRelatorioDivergencias(){
+  const comp=calcularComparacaoHistorico(atual);
+  if(!comp.length){alert('Este orçamento não tem lista de peças da planilha importada (só disponível para orçamentos importados de Excel com aba de BOM resolvida).');return;}
+  const nDivergentes=comp.filter(i=>i.status!=='Igual').length;
+  const linhas=comp.map(it=>`<tr class="${it.status!=='Igual'?'linha-diverge':''}">
+    <td><span class="tag ${it.fornecedor==='Netafim'?'tag-nt':'tag-bi'}">${escapeHTML(it.fornecedor)}</span></td>
+    <td>${escapeHTML(it.codigo)}</td><td>${escapeHTML(it.descricao)}</td>
+    <td class="num">${fmtN(it.qtdHist,2)}</td><td class="num">${fmtN(it.qtdApp,2)}</td>
+    <td class="num">${it.diferenca>=0?'+':''}${fmtN(it.diferenca,2)}</td><td>${escapeHTML(it.status)}</td></tr>`).join('');
+  const win=window.open('','_blank');
+  if(!win){alert('Popup bloqueado. Permita pop-ups para este site.');return;}
+  const dadosJSON=JSON.stringify(comp).replace(/</g,'\\u003c'); // evita fechar a tag <script> sem querer
+  const html=`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
+    <title>Relatório de Divergências — ${escapeHTML(atual.dadosEntrada.cliente||'')}</title>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"><\/script>
+    <style>
+      body{font-family:'Segoe UI',system-ui,sans-serif;font-size:12px;color:#1a2535;padding:2rem}
+      h2{color:#1F4E79;font-size:1.3rem;margin-bottom:.2rem}
+      p{color:#666;margin-bottom:1rem}
+      table{width:100%;border-collapse:collapse}
+      td,th{border:1px solid #d0e4f0;padding:.35rem .5rem;font-size:.78rem}
+      th{background:#eef6fc;text-align:left}
+      .num{text-align:right}
+      .tag{display:inline-block;padding:.05rem .4rem;border-radius:8px;font-size:.68rem;font-weight:700}
+      .tag-bi{background:#e3f2fd;color:#0077b6}.tag-nt{background:#fff3e0;color:#e65100}
+      .linha-diverge{background:#fff3e0}
+      .toolbar{margin-bottom:1rem;display:flex;gap:.6rem}
+      button{padding:.55rem 1.1rem;border-radius:6px;border:1px solid #0077b6;background:#0077b6;color:#fff;font-weight:700;cursor:pointer;font-size:.85rem}
+      button.sec{background:#fff;color:#0077b6}
+      @media print{.toolbar{display:none}body{padding:0 1rem}}
+    </style></head><body>
+    <div class="toolbar">
+      <button onclick="window.print()">🖨️ Gerar PDF</button>
+      <button class="sec" onclick="exportarExcel()">⬇ Exportar Excel</button>
+    </div>
+    <h2>Relatório de Divergências — Lista de Peças</h2>
+    <p>${escapeHTML(atual.dadosEntrada.cliente||'—')} &middot; Planilha importada: ${escapeHTML((atual.referenciaHistorica&&atual.referenciaHistorica.arquivoOrigem)||'—')} &middot; ${comp.length} itens únicos &middot; <b>${nDivergentes} com divergência</b></p>
+    <table><thead><tr><th>Fornecedor</th><th>Código</th><th>Descrição</th><th class="num">Qtd. Planilha</th><th class="num">Qtd. App</th><th class="num">Diferença</th><th>Status</th></tr></thead>
+    <tbody>${linhas}</tbody></table>
+    <script>
+      const DADOS=${dadosJSON};
+      function exportarExcel(){
+        const linhas=DADOS.map(it=>({Fornecedor:it.fornecedor,'Código':it.codigo,'Descrição':it.descricao,'Qtd. Planilha':it.qtdHist,'Qtd. App':it.qtdApp,'Diferença':it.diferenca,'Status':it.status}));
+        const ws=XLSX.utils.json_to_sheet(linhas);
+        const wb=XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb,ws,'Divergências');
+        XLSX.writeFile(wb,'relatorio-divergencias.xlsx');
+      }
+    <\/script>
+    </body></html>`;
+  win.document.write(html);win.document.close();
 }
 
 // ── Proposta Comercial ───────────────────────────────────────────────
