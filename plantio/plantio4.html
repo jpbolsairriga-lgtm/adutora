@@ -441,7 +441,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.88 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.89 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -5699,7 +5699,17 @@ function buildTurfPoly() {
 let _ajustandoVertices = false;
 
 function toggleAjustarVertices() {
-  if(polyPts.length < 3 || modo !== 'idle') { setStatus('Desenhe e feche o contorno primeiro.', 'err'); return; }
+  // v5.89: pedido do usuário — "eu fiz um talhão, tirei a seleção e qdo selecionei novamente, não
+  // deu para ajustar os vertices, a opção nao apareceu, tenho que ter a opção de ajustar talhões
+  // ja prontos". A v5.88 só funcionava com o contorno ATIVO (recém-desenhado) — um talhão já
+  // TRAVADO, mesmo selecionado, não tinha polyPts/polyMarkers nenhum (só existe como t.polyPts/
+  // t.polyLayer dentro de talhoesArquivados). Fix: se não há contorno ativo mas há um talhão
+  // travado selecionado, puxa ele pro slot ativo primeiro — mesmo caminho de "Editar Linhas"
+  // (ativarTalhaoParaEdicao) — daí liga o ajuste direto, sem precisar clicar em "Editar Linhas"
+  // à parte. Ver também _atualizarVisibilidadeAjustarVertices (mostra o botão com um talhão só
+  // selecionado, não só com um contorno ativo).
+  if(polyPts.length < 3 && talhaoSelecionadoUid !== null) ativarTalhaoParaEdicao();
+  if(polyPts.length < 3 || modo !== 'idle') { setStatus('Desenhe e feche o contorno, ou selecione um talhão travado, primeiro.', 'err'); return; }
   _ajustandoVertices = !_ajustandoVertices;
   polyMarkers.forEach(m => {
     if(!m.dragging) return;
@@ -5707,11 +5717,24 @@ function toggleAjustarVertices() {
     else { m.dragging.disable(); m.off('dblclick', _onDblClickVerticePoligono); }
   });
   rebuildPoly(); // reaplica o estilo (laranja tracejado em ajuste / azul normal) sem mover nada
+  _atualizarVisibilidadeAjustarVertices();
   const btn = $('btnAjustarVertices');
   if(btn) btn.innerHTML = _ajustandoVertices ? '&#10003; Concluir Ajuste' : '&#9999; Ajustar V&eacute;rtices';
   setStatus(_ajustandoVertices
     ? 'Ajuste de vértices ativo: arraste um vértice pra mover, dê duplo clique pra remover (mínimo 3). Clique em "Concluir Ajuste" quando terminar.'
     : `Ajuste concluído: ${areaHaAtual.toFixed(2)} ha.`, 'ok');
+}
+
+// Mostra "Ajustar Vértices" sempre que há algo pra ajustar: um contorno ativo fechado (mesma
+// condição de "Travar Talhão") OU um único talhão TRAVADO selecionado (ver toggleAjustarVertices —
+// clicar nele nesse caso puxa o talhão pro slot ativo automaticamente). Chamada tanto pelo espelho
+// de #btnTravarTalhao quanto por _sincronizarSelecaoTalhoes (toda vez que a seleção muda).
+function _atualizarVisibilidadeAjustarVertices() {
+  const btn = $('btnAjustarVertices');
+  if(!btn) return;
+  const pode = (polyPts.length >= 3 && modo === 'idle') || talhaoSelecionadoUid !== null;
+  btn.style.display = pode ? 'flex' : 'none';
+  if(!pode && _ajustandoVertices) { _ajustandoVertices = false; btn.innerHTML = '&#9999; Ajustar V&eacute;rtices'; }
 }
 
 function _onDblClickVerticePoligono(e) {
@@ -14744,6 +14767,7 @@ function _sincronizarSelecaoTalhoes() {
   if(n === 1) {
     const uid = [...talhoesMultiSel][0];
     talhaoSelecionadoUid = uid;
+    _atualizarVisibilidadeAjustarVertices();
     const t = talhoesArquivados.find(x => x.uid === uid);
     if(!t) return;
 
@@ -14774,6 +14798,7 @@ function _sincronizarSelecaoTalhoes() {
 
   // 0 ou 2+ selecionados: nenhuma ferramenta de "um talhão só" fica ativa.
   talhaoSelecionadoUid = null;
+  _atualizarVisibilidadeAjustarVertices();
   _limparDivisaoLine();
   $('divCarreadorOps').style.display = 'none';
   if(n === 0) {
@@ -17220,24 +17245,15 @@ function _atualizarDicaRolagem() {
   new MutationObserver(sync).observe(original, {attributes:true, attributeFilter:['style']});
 })();
 
-// v5.88: "Ajustar Vértices" também só faz sentido com um contorno fechado ativo — mesmo truque de
-// espelho das 2 acima. Se o contorno some enquanto o ajuste está ligado (ex.: "Travar Talhão" ou
-// "Novo Projeto"), desliga o modo de ajuste também — sem isso, _ajustandoVertices ficava "true"
-// órfão, e o PRÓXIMO contorno desenhado já nasceria com os vértices arrastáveis sem o usuário ter
-// pedido.
+// v5.88/v5.89: "Ajustar Vértices" aparece com um contorno ativo fechado (mesma condição de
+// "Travar Talhão", daí o espelho via MutationObserver) OU com um talhão travado selecionado (ver
+// _atualizarVisibilidadeAjustarVertices, chamada aqui E em _sincronizarSelecaoTalhoes — selecionar
+// um talhão não toca no style de #btnTravarTalhao, então só esse observer não bastava).
 (function() {
   const original = document.getElementById('btnTravarTalhao');
-  const botao = document.getElementById('btnAjustarVertices');
-  if(!original || !botao) return;
-  const sync = () => {
-    botao.style.display = original.style.display;
-    if(original.style.display === 'none' && typeof _ajustandoVertices !== 'undefined' && _ajustandoVertices) {
-      _ajustandoVertices = false;
-      botao.innerHTML = '&#9999; Ajustar V&eacute;rtices';
-    }
-  };
-  sync();
-  new MutationObserver(sync).observe(original, {attributes:true, attributeFilter:['style']});
+  if(!original || !document.getElementById('btnAjustarVertices')) return;
+  _atualizarVisibilidadeAjustarVertices();
+  new MutationObserver(_atualizarVisibilidadeAjustarVertices).observe(original, {attributes:true, attributeFilter:['style']});
 })();
 
 // ── Seletor de Cor estilo AutoCAD ("Select Color") ─────────────────────────────
