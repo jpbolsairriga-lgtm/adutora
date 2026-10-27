@@ -80,6 +80,8 @@ body{display:flex;flex-direction:column;height:100vh;font-family:'Segoe UI',sans
 .leaflet-container{background:#111;}
 .vertex-marker{width:10px;height:10px;background:#fff;border:2px solid var(--acc);border-radius:50%;cursor:grab;margin:-5px 0 0 -5px;}
 .vertex-marker.guide{border-color:#e65100;}
+.vertex-marker-mid{width:8px;height:8px;background:rgba(255,111,0,.5);border:1.5px solid #ff6f00;border-radius:50%;cursor:copy;margin:-4px 0 0 -4px;}
+.vertex-marker-mid:hover{background:#ff6f00;}
 .guide-line-path{cursor:move;}
 /* Busca */
 .search-item{padding:6px 8px;font-size:11px;color:var(--panel-text);cursor:pointer;border-bottom:1px solid var(--panel-border);line-height:1.4;}
@@ -441,7 +443,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.89 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.90 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -599,7 +601,7 @@ body.layout-lateral #status{grid-area:status;}
         Mesma condição de visibilidade de "Travar Talhão" (espelhada via MutationObserver, igual o
         botão de Carreador Interno acima — ver mais abaixo no script). -->
         <div class="rgroup-body">
-          <button class="rbtn-sm" id="btnAjustarVertices" style="display:none;" onclick="toggleAjustarVertices()" title="Arraste um vértice do contorno atual pra mover; dê duplo clique num vértice pra remover (mínimo 3). Clique de novo aqui quando terminar.">&#9999; Ajustar Vértices</button>
+          <button class="rbtn-sm" id="btnAjustarVertices" style="display:none;" onclick="toggleAjustarVertices()" title="Arraste um vértice do contorno atual pra mover; dê duplo clique num vértice pra remover (mínimo 3); clique numa bolinha laranja no MEIO de uma aresta pra adicionar um vértice novo ali. Clique de novo aqui quando terminar.">&#9999; Ajustar Vértices</button>
         </div>
         <div class="rgroup-title">Ajustar Contorno</div>
       </div>
@@ -5646,6 +5648,9 @@ function rebuildPoly() {
     areaHaAtual = areaHa(polyPts);
     $('iArea').textContent = areaHaAtual.toFixed(2) + ' ha';
   }
+  // v5.90: reposiciona os marcadores de "adicionar vértice" (meio de cada aresta) toda vez que o
+  // contorno muda de forma — ver _criarMidpointMarkers logo abaixo.
+  if(_ajustandoVertices) _criarMidpointMarkers(); else _limparMidpointMarkers();
   buildTurfPoly();
 }
 
@@ -5716,12 +5721,12 @@ function toggleAjustarVertices() {
     if(_ajustandoVertices) { m.dragging.enable(); m.on('dblclick', _onDblClickVerticePoligono); }
     else { m.dragging.disable(); m.off('dblclick', _onDblClickVerticePoligono); }
   });
-  rebuildPoly(); // reaplica o estilo (laranja tracejado em ajuste / azul normal) sem mover nada
+  rebuildPoly(); // reaplica o estilo (laranja tracejado em ajuste / azul normal) e os midpoints, sem mover nada
   _atualizarVisibilidadeAjustarVertices();
   const btn = $('btnAjustarVertices');
   if(btn) btn.innerHTML = _ajustandoVertices ? '&#10003; Concluir Ajuste' : '&#9999; Ajustar V&eacute;rtices';
   setStatus(_ajustandoVertices
-    ? 'Ajuste de vértices ativo: arraste um vértice pra mover, dê duplo clique pra remover (mínimo 3). Clique em "Concluir Ajuste" quando terminar.'
+    ? 'Ajuste de vértices ativo: arraste um vértice pra mover, dê duplo clique pra remover (mínimo 3), ou clique numa bolinha laranja no meio de uma aresta pra adicionar um vértice ali. Clique em "Concluir Ajuste" quando terminar.'
     : `Ajuste concluído: ${areaHaAtual.toFixed(2)} ha.`, 'ok');
 }
 
@@ -5734,7 +5739,7 @@ function _atualizarVisibilidadeAjustarVertices() {
   if(!btn) return;
   const pode = (polyPts.length >= 3 && modo === 'idle') || talhaoSelecionadoUid !== null;
   btn.style.display = pode ? 'flex' : 'none';
-  if(!pode && _ajustandoVertices) { _ajustandoVertices = false; btn.innerHTML = '&#9999; Ajustar V&eacute;rtices'; }
+  if(!pode && _ajustandoVertices) { _ajustandoVertices = false; btn.innerHTML = '&#9999; Ajustar V&eacute;rtices'; _limparMidpointMarkers(); }
 }
 
 function _onDblClickVerticePoligono(e) {
@@ -5750,6 +5755,40 @@ function _removerVerticePoligono(mk) {
   polyMarkers.splice(idx, 1);
   rebuildPoly();
   setStatus(`Vértice removido — ${polyPts.length} restantes (${areaHaAtual.toFixed(2)} ha).`, 'ok');
+}
+
+// v5.90: pedido do usuário — "quero opção de adicionar vertices". Marcadores menores (bolinha
+// laranja translúcida) no MEIO de cada aresta, visíveis só durante o ajuste — clicar num deles vira
+// um vértice de verdade naquele ponto. Prefere isso a deixar o polígono inteiro clicável: clicar em
+// QUALQUER lugar do preenchimento criaria um vértice onde o usuário só queria ver/clicar no mapa,
+// distorcendo o contorno sem querer — os marcadores de meio de aresta deixam claro ONDE clicar.
+let _midpointMarkers = [];
+
+function _limparMidpointMarkers() {
+  _midpointMarkers.forEach(m => m.remove());
+  _midpointMarkers = [];
+}
+
+function _criarMidpointMarkers() {
+  _limparMidpointMarkers();
+  const n = polyPts.length;
+  for(let i = 0; i < n; i++) {
+    const a = polyPts[i], b = polyPts[(i + 1) % n];
+    const meio = { lat: (a.lat + b.lat) / 2, lng: (a.lng + b.lng) / 2 };
+    const mk = L.marker(meio, { icon: mkIcon('vertex-marker-mid'), draggable: false }).addTo(map);
+    mk.on('click', (() => { const destino = i + 1; return () => _adicionarVerticePoligono(destino, meio); })());
+    _midpointMarkers.push(mk);
+  }
+}
+
+function _adicionarVerticePoligono(idx, ll) {
+  const mk = L.marker(ll, { icon: mkIcon('vertex-marker'), draggable: true }).addTo(map);
+  mk.on('drag', updatePolyDisplay);
+  mk.on('dragend', rebuildPoly);
+  mk.on('dblclick', _onDblClickVerticePoligono);
+  polyMarkers.splice(idx, 0, mk);
+  rebuildPoly(); // já recria os midpoints nas posições novas (2 arestas novas no lugar de 1)
+  setStatus(`Vértice adicionado — ${polyPts.length} no total (${areaHaAtual.toFixed(2)} ha).`, 'ok');
 }
 
 // ══ Carreador Interno (v5.81, refeito em v5.83) ════════════════════════════════════════════════
@@ -14324,6 +14363,7 @@ function limparPoligono() {
   // v5.88: sem contorno ativo não há o que ajustar — volta o botão "Ajustar Vértices" pro rótulo
   // de sempre (senão ficava preso em "Concluir Ajuste" na próxima vez que um contorno aparecesse).
   _ajustandoVertices = false;
+  _limparMidpointMarkers(); // v5.90
   const btnAjustar = $('btnAjustarVertices'); if(btnAjustar) btnAjustar.innerHTML = '&#9999; Ajustar V&eacute;rtices';
 }
 
