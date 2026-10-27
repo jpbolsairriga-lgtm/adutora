@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.15 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.16 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -438,6 +438,28 @@ tr.item-row.inativo{opacity:.4}
 <script src="selecao.js"></script>
 <script src="hidraulica-adutora.js"></script>
 <script>
+// v1.16 (2026-10-27): corrige 2 bugs reais reportados pelo usuário. (1) "Novo
+//   orçamento parece puxar de outro salvo": o mapa (markers/polyline/traçado "ao
+//   vivo" do Google Maps) é um estado GLOBAL por aba (adutora01/02/recalque), não
+//   por orçamento — abrir ou criar outro orçamento nunca limpava esse estado, então
+//   o traçado/perfil do orçamento ANTERIOR continuava "vivo" no mapa, e clicar em
+//   "Gerar Perfil de Elevação" sem reimportar gravava esses dados antigos no
+//   orçamento novo. Agora abrirOrcamento() reseta o mapa (remove os markers,
+//   limpa a polyline, zera a referência do mapa) toda vez que troca de orçamento.
+//   (2) "DXF importado mas não considera os tubos": a categoria "ADUTORA -
+//   PROJETO 01/02/RECALQUE" do BOM era um dump FIXO (sempre as mesmas 80+5+40m do
+//   projeto de referência usado na extração original), nunca derivado do cálculo
+//   hidráulico real — ou seja, qualquer traçado/vazão diferentes do projeto de
+//   referência davam quantidade de tubo errada. Agora os tubos vêm de verdade do
+//   resultado calculado (cfg.resultado.segs: comprimento de cada trecho por classe
+//   de PN, no diâmetro nominal único da adutora), 1 item por classe de PN
+//   realmente usada, com a quantidade de barras = ROUNDUP(metros/5,8) — igual à
+//   fórmula real da planilha (BK61:BK86 da aba 'Projeto - Adutora 01'). Catálogo
+//   de 26 combinações diâmetro/PN extraído da planilha e cruzado com a tabela
+//   PIPES já usada no cálculo. (As seleções de Filtragem/Sucção/Automação etc. da
+//   aba Configurações foram conferidas de novo e continuam funcionando — não
+//   identificado problema nelas; o sintoma relatado era mais provavelmente o
+//   mesmo bug dos tubos.)
 // v1.15 (2026-10-24): a tabela "Perfil de Elevação (10 pontos)" nas abas
 //   Adutora/Recalque ficava sempre zerada depois de importar DXF/KML/traçar no
 //   mapa — o cálculo usa o perfil denso (profileData, centenas de amostras), mas
@@ -647,7 +669,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.15';
+const APP_VERSION='v1.16';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -951,6 +973,11 @@ function abrirOrcamento(id){
   ['adutora01','adutora02','recalque'].forEach(k=>{
     atual[k]={...novaConfigAdutora(),...(atual[k]||{})};
   });
+  // o mapa (markers/polyline/traçado "ao vivo") é global por aba, não por
+  // orçamento — sem isso, abrir/criar outro orçamento continuava mostrando o
+  // traçado e os pontos do orçamento ANTERIOR no mapa (e um clique em "Gerar
+  // Perfil de Elevação" gravaria esse traçado velho no orçamento novo).
+  ['adutora01','adutora02','recalque'].forEach(resetMapState);
   ['tabDados','tabAd1','tabAd2','tabRec','tabBOM','tabMargem','tabProposta'].forEach(t=>$(t).classList.remove('tab-disabled'));
   renderDadosEntrada();
   renderAdutoraView('adutora01');
@@ -1193,6 +1220,15 @@ const PARAMS_ADUTORA=[
 // o que é persistido em atual[key].tracePoints/profileData são apenas dados simples (lat/lng, dist/elev).
 const mapState={adutora01:criarMapState(),adutora02:criarMapState(),recalque:criarMapState()};
 function criarMapState(){return{map:null,elevService:null,tracePoints:[],traceMarkers:[],tracePolyline:null,modoDesenho:false,bombaMarker:null};}
+function resetMapState(key){
+  const st=mapState[key];
+  if(st){
+    (st.traceMarkers||[]).forEach(m=>m.setMap(null));
+    if(st.tracePolyline)st.tracePolyline.setMap(null);
+    if(st.bombaMarker)st.bombaMarker.setMap(null);
+  }
+  mapState[key]=criarMapState();
+}
 
 function renderAdutoraView(key){
   const {viewId,titulo,nota}=ADUTORA_TABS[key];
@@ -1821,13 +1857,13 @@ function desenharPerfilElevacaoCanvas(key,samples){
 const CONFIG_SELECAO={
   gotejamento_01:{adutoraKey:'adutora01',tipoSuccaoField:'tipoSuccaoProjeto',filtragemField:'filtragem',bombaAuxField:'bombaAuxSubmersaProjeto',
     succao:'succao_projeto',filtragem:'filtragem',mbSaida:'mbsaida_projeto',bombaAux:'bombaaux_projeto',automacaoMB:'automacao_mb_projeto',
-    labelSuccao:'Sucção Projeto',labelFiltragem:'FILTRAGEM',labelMB:'MB Projeto - Saida',labelBombaAux:'Moto-Bomba',labelAutomacaoMB:'Automação - Projeto'},
+    labelSuccao:'Sucção Projeto',labelFiltragem:'FILTRAGEM',labelMB:'MB Projeto - Saida',labelBombaAux:'Moto-Bomba',labelAutomacaoMB:'Automação - Projeto',labelAdutora:'ADUTORA - PROJETO 01'},
   gotejamento_02:{adutoraKey:'adutora02',tipoSuccaoField:'tipoSuccaoProjeto',filtragemField:'filtragem',bombaAuxField:'bombaAuxSubmersaProjeto',
     succao:'succao_projeto',filtragem:'filtragem',mbSaida:'mbsaida_projeto',bombaAux:'bombaaux_projeto',automacaoMB:'automacao_mb_projeto',
-    labelSuccao:'Sucção Projeto',labelFiltragem:'FILTRAGEM',labelMB:'MB Projeto - Saida',labelBombaAux:'Moto-Bomba',labelAutomacaoMB:'Automação - Projeto'},
+    labelSuccao:'Sucção Projeto',labelFiltragem:'FILTRAGEM',labelMB:'MB Projeto - Saida',labelBombaAux:'Moto-Bomba',labelAutomacaoMB:'Automação - Projeto',labelAdutora:'ADUTORA - PROJETO 02'},
   recalque:{adutoraKey:'recalque',tipoSuccaoField:'recalqueTipoSuccao',filtragemField:null,bombaAuxField:'recalqueBombaAuxSubmersa',
     succao:'succao_recalque',filtragem:null,mbSaida:'mbsaida_recalque',bombaAux:'bombaaux_recalque',automacaoMB:'automacao_mb_recalque',
-    labelSuccao:'Sucção - Recalque',labelFiltragem:null,labelMB:'Saida bomba - Recalque',labelBombaAux:'Moto-Bomba - Recalque',labelAutomacaoMB:'Automação - Recalque'},
+    labelSuccao:'Sucção - Recalque',labelFiltragem:null,labelMB:'Saida bomba - Recalque',labelBombaAux:'Moto-Bomba - Recalque',labelAutomacaoMB:'Automação - Recalque',labelAdutora:'ADUTORA - RECALQUE'},
 };
 function selecionarGrupoPorVazaoTipo(lista,vazao,tipo){
   return (lista||[]).find(g=>vazao>=g.vazaoMin&&vazao<=g.vazaoMax&&(!g.tipo||g.tipo===tipo));
@@ -1844,6 +1880,66 @@ function selecionarGrupoBombaAux(lista,opcao){
 // planilha fazem E=pressão-ok AND H=vazão-ok -> I=1 só se os dois baterem).
 function selecionarGrupoPorPressaoVazao(lista,pressao,vazao){
   return (lista||[]).find(g=>pressao>=g.pressaoMin&&pressao<=g.pressaoMax&&vazao>=g.vazaoMin&&vazao<=g.vazaoMax);
+}
+// Catálogo real de tubos da Adutora (26 combinações diâmetro/PN, igual nas 3 abas
+// Conj.Irri.Projeto-Got01/02/Recalque da planilha) — chave = mesmo formato do
+// label de PIPES em hidraulica-adutora.js (ex. "118/145"), para casar direto com
+// o resultado do cálculo hidráulico sem precisar reconstruir string.
+const TUBOS_ADUTORA={
+  '50,5/60':{fornecedor:'Bolsa Irriga',codigo:'701215',descricao:'TUBO IRRIGA-LF PN 60 PBL 50MM'},
+  '50,5/80':{fornecedor:'Bolsa Irriga',codigo:'701374',descricao:'TUBO IRRIGA-LF PN 80 PBL 50MM'},
+  '75/125':{fornecedor:'Bolsa Irriga',codigo:'801108',descricao:'TB IRRIGA -LF PN 125 PBL 75'},
+  '75/80':{fornecedor:'Bolsa Irriga',codigo:'701848',descricao:'TUBO IRRIGA-LF PN 80 PBL 75MM'},
+  '75/60':{fornecedor:'Bolsa Irriga',codigo:'701876',descricao:'TUBO IRRIGA-LF PN 60 PBL 75MM'},
+  '100/125':{fornecedor:'Bolsa Irriga',codigo:'801296',descricao:'TB IRRIGA LF PN 125 PBL 100'},
+  '100/80':{fornecedor:'Bolsa Irriga',codigo:'701178',descricao:'TUBO IRRIGA-LF PN 80 PBL 100MM'},
+  '100/60':{fornecedor:'Bolsa Irriga',codigo:'701375',descricao:'TUBO IRRIGA-LF PN 60 PBL 100MM'},
+  '101,6/80':{fornecedor:'Bolsa Irriga',codigo:'701178',descricao:'TUBO IRRIGA-LF PN 80 PBL 100MM'},
+  '118/180':{fornecedor:'Bolsa Irriga',codigo:'801518',descricao:'TUBO IRRIGAFORT AP PN180 DN100'},
+  '118/145':{fornecedor:'Bolsa Irriga',codigo:'801519',descricao:'TUBO IRRIGAFORT AP PN145 DN100'},
+  '118/125':{fornecedor:'Bolsa Irriga',codigo:'701180',descricao:'TB IRRIGA -LF PN 125 JEI DEFOFO DN 100'},
+  '118/80':{fornecedor:'Bolsa Irriga',codigo:'701837',descricao:'TB IRRIGA -LF PN 80 JEI DEFOFO DN 100'},
+  '118/60':{fornecedor:'Bolsa Irriga',codigo:'701838',descricao:'TB IRRIGA -LF PN 60 JEI DEFOFO DN 100'},
+  '170/180':{fornecedor:'Bolsa Irriga',codigo:'802126',descricao:'TUBO AGROBIAX AP PN180 DN150'},
+  '170/145':{fornecedor:'Bolsa Irriga',codigo:'901200',descricao:'AMANCO - TUBO AGROBIAX AP PN145 DN150'},
+  '170/125':{fornecedor:'Bolsa Irriga',codigo:'801299',descricao:'TB IRRIGA -LF PN 125 JEI DEFOFO DN 150'},
+  '170/80':{fornecedor:'Bolsa Irriga',codigo:'801297',descricao:'TB IRRIGA -LF PN 80 JEI DEFOFO DN 150'},
+  '170/60':{fornecedor:'Bolsa Irriga',codigo:'801298',descricao:'TB IRRIGA -LF PN 60 JEI DEFOFO DN 150'},
+  '222/180':{fornecedor:'Bolsa Irriga',codigo:'801829',descricao:'AMANCO - TUBO AGROBIAX AP PN180 DN200'},
+  '222/145':{fornecedor:'Bolsa Irriga',codigo:'801828',descricao:'AMANCO - TUBO AGROBIAX AP PN145 DN200'},
+  '222/125':{fornecedor:'Netafim',codigo:'01500-227570',descricao:'TUBO IRRIGA PVC 200 DEFOFO JEI PN125-6M'},
+  '222/80':{fornecedor:'Bolsa Irriga',codigo:'801164',descricao:'TB IRRIGA -LF PN 80 JEI DEFOFO DN 200'},
+  '222/60':{fornecedor:'Bolsa Irriga',codigo:'801163',descricao:'TB IRRIGA -LF PN 60 JEI DEFOFO DN 200'},
+  '274/125':{fornecedor:'Netafim',codigo:'01500-228070',descricao:'TUBO IRRIGA PVC 250 DEFOFO JEI PN125-6M'},
+  '274/80':{fornecedor:'Netafim',codigo:'01500-228060',descricao:'TUBO IRRIGA PVC 250 DEFOFO JEI PN80-6M'},
+  '274/60':{fornecedor:'Netafim',codigo:'01500-228050',descricao:'TUBO IRRIGA PVC 250 DEFOFO JEI PN60-6M'},
+};
+// Gera os itens REAIS de tubo da Adutora a partir do resultado já calculado
+// (cfg.resultado.multi.segs tem o comprimento de cada trecho por classe de PN, no
+// diâmetro nominal único da adutora) — substitui o antigo dump fixo (sempre as
+// mesmas quantidades do projeto de referência, não o que o projeto atual
+// realmente precisa). 1 tubo = 5,8m de barra útil (mesma conta da planilha:
+// BK=ROUNDUP(metros/5,8)).
+function gerarItensTuboAdutora(adCfg){
+  const r=adCfg.resultado;
+  if(!r||!r.segs||!r.nominal)return{itens:[],avisos:['Calcule a aba Adutora/Recalque primeiro (precisa dos trechos e do diâmetro calculados).']};
+  const metrosPorPN={};
+  r.segs.forEach(s=>{metrosPorPN[s.pn]=(metrosPorPN[s.pn]||0)+s.len;});
+  const itens=[],avisos=[];
+  Object.keys(metrosPorPN).forEach(pnStr=>{
+    const pn=parseInt(pnStr,10),metros=metrosPorPN[pnStr];
+    if(metros<=0)return;
+    const pipeRow=PIPES.find(p=>p[1]===r.nominal&&p[4]===pn);
+    const chave=pipeRow?pipeRow[0]:null;
+    const catalogo=chave?TUBOS_ADUTORA[chave]:null;
+    if(!catalogo){
+      avisos.push(`Tubo Ø${r.nominal}mm PN${pn} (${fmtN(metros,0)}m): sem item de catálogo cadastrado para essa combinação — adicione manualmente no BOM.`);
+      return;
+    }
+    itens.push({fornecedor:catalogo.fornecedor,codigo:catalogo.codigo,descricao:catalogo.descricao,
+      qtd:Math.ceil(metros/5.8),categoria:`Tubo Ø${r.nominal}mm PN${pn} (${fmtN(metros,0)}m)`});
+  });
+  return{itens,avisos};
 }
 // Converte texto TUDO EM MAIÚSCULO (como vem de colunas da planilha, ex.: "SUCÇÃO
 // 75MM PLASSON (NEGATIVA)") para uma forma mais legível. Se o texto já tem letras
@@ -1936,6 +2032,18 @@ function carregarModelo(nomeModelo){
     }else{
       avisos.push('Automação Válvula Moto-Bomba: calcule a aba Adutora/Recalque primeiro (precisa da pressão por bomba calculada).');
     }
+
+    // Tubo da Adutora: antes era um dump fixo (sempre as mesmas quantidades do
+    // projeto de referência); agora vem direto do resultado calculado (trechos
+    // por classe de PN x diâmetro nominal), batendo com o traçado/vazão reais
+    // deste projeto (DXF, KML ou manual).
+    const{itens:itensTubo,avisos:avisosTubo}=gerarItensTuboAdutora(adCfg);
+    itensTubo.forEach(it=>{
+      atual.bom.push({id:uid(),categoria:it.categoria,grupo:cfgSel.labelAdutora,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
+        qtd:it.qtd,custoUnit:buscarCusto(it.fornecedor,it.codigo)||0,ativo:true,origem,modelo:nomeModelo});
+      n++;
+    });
+    avisos.push(...avisosTubo);
 
     // Cavaletes (parte 1 — baseada em nº de válvulas): a planilha original multiplica
     // a receita de itens por max(0, nº válvulas − 2), só para a faixa de vazão da
