@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.26 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.27 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -166,10 +166,13 @@ tr.item-row.inativo{opacity:.4}
   orçamentos reais, via o botão "📊 Relatório de Divergências" nos orçamentos importados de Excel) — da sucção à Rede
   Secundária, passando por Adutora, Motor/Quadro de Partida, Cavaletes, Gotejador/Conectores, Rede Chicoteada, Final de
   Linha, Anti-Vácuo, TE/Curva90, Luvas e Derivação/Junção Adutora. Pendente: <b>Micro-Aspersão e Aspersão</b> (sistemas
-  inteiros ainda não decifrados — usam tabelas de dimensionamento próprias, diferentes do Gotejamento) e o BOM comercial da
-  aba <b>Recalque</b> (ainda carrega as quantidades de um projeto de exemplo — o cálculo hidráulico da Recalque já funciona,
-  só o BOM comercial dela que falta portar). Para esses casos, ou pra conferir/corrigir qualquer detalhe, importe um
-  orçamento real parecido em Excel e use o Relatório de Divergências pra comparar item a item.
+  inteiros ainda não decifrados — usam tabelas de dimensionamento próprias, diferentes do Gotejamento). Na aba
+  <b>Recalque</b>: Sucção, Saída Moto-Bomba, Bomba Auxiliar, Motor+Quadro de Partida, Automação da Válvula, Tubo da
+  Adutora-Recalque e Serviços do Projeto já funcionam (mesmo motor de cálculo compartilhado com Gotejamento); Derivação
+  Recalque também já foi portada, mas <b>sem nenhum orçamento real disponível pra conferir numericamente</b> — teste com
+  cuidado. Ainda falta: Ventosa Recalque (ainda carrega quantidade de projeto de exemplo). Para esses casos, ou pra
+  conferir/corrigir qualquer detalhe, importe um orçamento real parecido em Excel e use o Relatório de Divergências pra
+  comparar item a item.
 </div>
 
 <div class="tabs">
@@ -459,6 +462,24 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.27 (2026-10-28): porta Derivação Recalque pra regras dinâmicas — primeira
+//   categoria específica da aba Recalque (confirmei antes que Sucção, MB Saída, Bomba
+//   Auxiliar, Motor+Quadro de Partida, Automação da Válvula, Tubo da Adutora e
+//   Serviços do Projeto JÁ funcionam pra Recalque, porque usam o mesmo motor de
+//   seleção/cálculo compartilhado com Gotejamento — não precisavam de nada novo).
+//   Decifrado na aba real "Derivações - Adutora" (linhas 28-40, bloco "Derivações
+//   Recalque") + Parametros!D319:D326. Mesma ideia da Derivação Adutora (v1.25), mas
+//   mais simples: só 1 Adutora-Recalque (não duas opções compartilhadas) e só o grupo
+//   Curva90 (sem TE) — kit de 1-2 peças por diâmetro, casado com o nominal calculado
+//   da própria Adutora-Recalque.
+//   ATENÇÃO — sem verificação numérica real: nenhum dos 2 orçamentos reais disponíveis
+//   (Anderson Santana, Antonio Gilberto) tem a aba Recalque preenchida, então essa
+//   categoria (e qualquer outra específica de Recalque que eu portar depois) não pôde
+//   ser conferida célula a célula contra um caso real, diferente de TUDO que portei
+//   até agora nesta sessão. Os códigos de produto são os mesmos já conferidos na
+//   Derivação Adutora; a lógica replica a fórmula da aba real linha a linha — mas
+//   recomendo testar com cuidado antes de confiar em produção. Se tiver um orçamento
+//   real com Recalque ativo, importe em Excel e use o Relatório de Divergências.
 // v1.26 (2026-10-28): porta Luvas Principais pra regras dinâmicas — última categoria
 //   da lista original ("Junção Adutora, Anti-Vácuo, Luvas, F.Linha/Av/TE/Curva90").
 //   Decifrado em "Conj.Irri.Projeto" (linhas 2691-2696) + Parametros!D173/E173 (mesmo
@@ -890,7 +911,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.26';
+const APP_VERSION='v1.27';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -2797,6 +2818,33 @@ function gerarItensLuvasPrincipais(nominalAdutora01,nominalAdutora02,area){
   });
   return itens;
 }
+// Derivação Recalque — porta da aba real "Derivações - Adutora" (linhas 28-40) +
+// Parametros!D319:D326. Mesma ideia da Derivação Adutora, mas mais simples: só UMA
+// Adutora-Recalque (não duas opções compartilhadas), e só o grupo "Curva90" (sem TE) —
+// kit de 1-2 peças por diâmetro (Curva90 ou Joelho, + luva de redução pros diâmetros
+// 118/150/170/222mm, qtd=2× a peça principal), casado com o diâmetro nominal calculado
+// da Adutora-Recalque. IMPORTANTE: não há nenhum orçamento real disponível com
+// Recalque preenchido pra conferir essa parte numericamente (ao contrário de todas as
+// outras categorias portadas, que foram testadas célula a célula contra o Antonio
+// Gilberto/Anderson Santana) — os códigos de produto são os mesmos já conferidos na
+// Derivação Adutora, e a lógica replica a fórmula da aba real linha a linha, mas sem
+// garantia numérica de bater com um caso real. Se tiver um orçamento real com Recalque
+// ativo, importe em Excel e use o Relatório de Divergências pra conferir.
+const DERIVACAO_RECALQUE_KITS={
+  50:[{codigo:'801499',descricao:'JOELHO PVC IRR SOLDA 90 50MM DURO',mult:4}],
+  75:[{codigo:'801497',descricao:'JOELHO PVC IRR SOLDA 90 75MM DURO',mult:4}],
+  100:[{codigo:'801496',descricao:'JOELHO PVC IRR SOLDA 90 100MM DURO',mult:4}],
+  118:[{fornecedor:'Netafim',codigo:'701119',descricao:'CURVA 90. SOLDA 110MM PLASSON/FIP',mult:4},{codigo:'701888',descricao:'LUVA PVC REDUCAO 118 X 110',mult:8}],
+  125:[{codigo:'701859',descricao:'CURVA 90. SOLDA 125MM PLASSON/FIP',mult:4}],
+  150:[{fornecedor:'Netafim',codigo:'701329',descricao:'CURVA 90. SOLDA 160 MM PLASSON/FIP',mult:4},{codigo:'801668',descricao:'LUVA DE REDUÇAO PVC 160 X 150',mult:8}],
+  170:[{fornecedor:'Netafim',codigo:'701329',descricao:'CURVA 90. SOLDA 160 MM PLASSON/FIP',mult:4},{codigo:'801347',descricao:'LUVA RED 170 X 160MM SOLD',mult:8}],
+  222:[{fornecedor:'Netafim',codigo:'801009',descricao:'CURVA 90. SOLDA 225 MM PLASSON/FIP',mult:4},{fornecedor:'Netafim',codigo:'01520-103596',descricao:'ADAPTADOR PVC PBS 225 X 222 MM',mult:8}],
+};
+function gerarItensDerivacaoRecalque(nominalRecalque){
+  const nominal=nominalParaDerivacaoAdutora(nominalRecalque);
+  if(nominal==null||!DERIVACAO_RECALQUE_KITS[nominal])return[];
+  return DERIVACAO_RECALQUE_KITS[nominal].map(it=>({fornecedor:it.fornecedor||'Bolsa Irriga',codigo:it.codigo,descricao:it.descricao,qtd:it.mult,grupo:'Derivação Recalque'}));
+}
 // Converte texto TUDO EM MAIÚSCULO (como vem de colunas da planilha, ex.: "SUCÇÃO
 // 75MM PLASSON (NEGATIVA)") para uma forma mais legível. Se o texto já tem letras
 // minúsculas (ex.: descrição de Filtragem), deixa como está.
@@ -2948,6 +2996,15 @@ function carregarModelo(nomeModelo){
       // Luvas Principais — ver fórmulas no comentário de gerarItensLuvasPrincipais.
       const itensLuvasPrinc=gerarItensLuvasPrincipais(atual.adutora01?.resultado?.nominal,atual.adutora02?.resultado?.nominal,d.area);
       itensLuvasPrinc.forEach(it=>{
+        adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
+        n++;
+      });
+    }
+    if(nomeModelo==='recalque'){
+      // Derivação Recalque — ver fórmulas no comentário de gerarItensDerivacaoRecalque.
+      // Sem orçamento real pra conferir numericamente (ver nota no comentário).
+      const itensDerivacaoRec=gerarItensDerivacaoRecalque(adCfg.resultado&&adCfg.resultado.nominal);
+      itensDerivacaoRec.forEach(it=>{
         adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
