@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.19 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.20 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -167,11 +167,14 @@ tr.item-row.inativo{opacity:.4}
   Principal + Quadro de Partida (dimensionado pela potência TOTAL com margem, não dividida pelo nº de bombas — cada bomba é
   redundante, não "rateada"), Automação da Válvula da Moto-Bomba (regulador de pressão certo por pressão×vazão), Cavaletes
   (faixa de vazão da válvula × nº de válvulas + casamento do diâmetro nominal com o manifold), Tubo da Adutora (classe de PN
-  × diâmetro, direto dos trechos calculados) e Serviços do Projeto (Montagem/Mapeamento = área × preço/ha; Abertura de
+  × diâmetro, direto dos trechos calculados), Serviços do Projeto (Montagem/Mapeamento = área × preço/ha; Abertura de
   Valetas = metros de adutora+chicoteada+main × preço/m — preços em Configurações; Frete não tem fórmula, entra zerado para
-  preencher à mão). Ainda carregam as quantidades de um projeto de exemplo (fórmula ainda não portada): Junção Adutora,
-  Anti-Vácuo, Luvas, Rede Chicoteada, Gotejador/Conectores, F.Linha/Av/TE/Curva90 — revise/ajuste manualmente, ou importe um
-  orçamento real parecido em Excel e use o Relatório de Divergências pra comparar/corrigir item a item.
+  preencher à mão) e Gotejador + Tubo de Polietileno + Conectores + Clip p/ Vinhedo (metros de gotejador/conexões calculados
+  por área, espaçamento entre linhas e espaçamento do emissor — só para sistema Gotejamento, Micro-Aspersão/Aspersão ainda
+  não portados). Ainda carregam as quantidades de um projeto de exemplo (fórmula ainda não portada, por depender de um motor
+  de cálculo de rede separado — dimensionamento do submain por velocidade/pressão, ~400 linhas de simulação ponto-a-ponto):
+  Junção Adutora, Anti-Vácuo, Luvas, Rede Chicoteada/Secundária, F.Linha/Av/TE/Curva90 — revise/ajuste manualmente, ou
+  importe um orçamento real parecido em Excel e use o Relatório de Divergências pra comparar/corrigir item a item.
 </div>
 
 <div class="tabs">
@@ -460,6 +463,31 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.20 (2026-10-28): porta Gotejador + Tubo de Polietileno + Conectores +
+//   "CLIP P/VINHEDO" pra regras dinâmicas (antes dump fixo), decifrado via a aba
+//   real "Gotejador e Conectores" e conferido nos 2 orçamentos reais disponíveis:
+//   - Gotejador: metros totais=ROUNDUP((10000/espLinhas)×área×1,03,0); o SKU que
+//     bate com "Gotejador - 1ª/2ª Opção" (Dados de Entrada) entra com
+//     qtd=ROUNDUP(metros/metragem do rolo,0). Bateu exato.
+//   - Tubo Cego (polietileno): ROUNDUP((ROUNDUP(metrosChicoteada/espLinhas×1,03,0)
+//     ×1,5)/500,0). Bateu exato.
+//   - Conectores (Inicial/Final/União — a família muda com o SKU do gotejador,
+//     bitola 16/17mm "dentado" ou 800m "Typhoon"): qtd=ROUNDUP((metrosChicoteada/
+//     espLinhas)×tipoSaidaLateral×1,03,0). Bateu dentro de ~1% (pequena diferença
+//     de arredondamento num dos itens, "Conector União Dentado", ainda não 100%
+//     decifrada).
+//   - CLIP P/ VINHEDO: ROUNDUP(((10000/espLinhas)×área)/espaçamentoEmissor×1,03,0)
+//     — era o maior erro encontrado (chegava a ficar 5-10x abaixo do real). Achei
+//     o divisor errado na primeira tentativa (usei Espaçamento entre Plantas) e
+//     corrigi pra Espaçamento do Emissor depois de testar contra os 2 orçamentos
+//     reais e ver que só um bate com cada campo — ficou exato nos dois.
+//   Pendente, documentado na Nota de Escopo: Rede Chicoteada/Secundária (tubos de
+//   PN40) e tudo que depende dela (Final de Linha, Anti-Vácuo, Av, TE, Curva90,
+//   Luvas) usa um MOTOR DE CÁLCULO SEPARADO na planilha real (dimensionamento do
+//   submain por velocidade/pressão, abas "Submain - Gotejo" + "Rede Chicoteada-
+//   Secundaria", ~400 linhas de simulação ponto-a-ponto) — não é uma fórmula
+//   simples de portar, é construir um motor novo do tamanho do de Adutora. Ainda
+//   não implementado.
 // v1.19 (2026-10-28): usando o Relatório de Divergências contra um orçamento real
 //   (Antonio Gilberto, 271026), achei e corrigi 2 bugs concretos e bem conferidos:
 //   (1) "SERVIÇOS PROJETO" (Montagem/Mapeamento/Abertura de Valetas/Frete) era um
@@ -750,7 +778,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.19';
+const APP_VERSION='v1.20';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -2091,13 +2119,13 @@ function desenharPerfilElevacaoCanvas(key,samples){
 const CONFIG_SELECAO={
   gotejamento_01:{adutoraKey:'adutora01',tipoSuccaoField:'tipoSuccaoProjeto',filtragemField:'filtragem',bombaAuxField:'bombaAuxSubmersaProjeto',
     succao:'succao_projeto',filtragem:'filtragem',mbSaida:'mbsaida_projeto',bombaAux:'bombaaux_projeto',automacaoMB:'automacao_mb_projeto',
-    labelSuccao:'Sucção Projeto',labelFiltragem:'FILTRAGEM',labelMB:'MB Projeto - Saida',labelBombaAux:'Moto-Bomba',labelAutomacaoMB:'Automação - Projeto',labelAdutora:'ADUTORA - PROJETO 01',labelServicos:'SERIVIÇOS PROJETO'},
+    labelSuccao:'Sucção Projeto',labelFiltragem:'FILTRAGEM',labelMB:'MB Projeto - Saida',labelBombaAux:'Moto-Bomba',labelAutomacaoMB:'Automação - Projeto',labelAdutora:'ADUTORA - PROJETO 01',labelServicos:'SERIVIÇOS PROJETO',campoGotejador:'gotejador1'},
   gotejamento_02:{adutoraKey:'adutora02',tipoSuccaoField:'tipoSuccaoProjeto',filtragemField:'filtragem',bombaAuxField:'bombaAuxSubmersaProjeto',
     succao:'succao_projeto',filtragem:'filtragem',mbSaida:'mbsaida_projeto',bombaAux:'bombaaux_projeto',automacaoMB:'automacao_mb_projeto',
-    labelSuccao:'Sucção Projeto',labelFiltragem:'FILTRAGEM',labelMB:'MB Projeto - Saida',labelBombaAux:'Moto-Bomba',labelAutomacaoMB:'Automação - Projeto',labelAdutora:'ADUTORA - PROJETO 02',labelServicos:'SERIVIÇOS PROJETO'},
+    labelSuccao:'Sucção Projeto',labelFiltragem:'FILTRAGEM',labelMB:'MB Projeto - Saida',labelBombaAux:'Moto-Bomba',labelAutomacaoMB:'Automação - Projeto',labelAdutora:'ADUTORA - PROJETO 02',labelServicos:'SERIVIÇOS PROJETO',campoGotejador:'gotejador2'},
   recalque:{adutoraKey:'recalque',tipoSuccaoField:'recalqueTipoSuccao',filtragemField:null,bombaAuxField:'recalqueBombaAuxSubmersa',
     succao:'succao_recalque',filtragem:null,mbSaida:'mbsaida_recalque',bombaAux:'bombaaux_recalque',automacaoMB:'automacao_mb_recalque',
-    labelSuccao:'Sucção - Recalque',labelFiltragem:null,labelMB:'Saida bomba - Recalque',labelBombaAux:'Moto-Bomba - Recalque',labelAutomacaoMB:'Automação - Recalque',labelAdutora:'ADUTORA - RECALQUE',labelServicos:'SERIVIÇOS PROJETO - Recalque'},
+    labelSuccao:'Sucção - Recalque',labelFiltragem:null,labelMB:'Saida bomba - Recalque',labelBombaAux:'Moto-Bomba - Recalque',labelAutomacaoMB:'Automação - Recalque',labelAdutora:'ADUTORA - RECALQUE',labelServicos:'SERIVIÇOS PROJETO - Recalque',campoGotejador:null},
 };
 function selecionarGrupoPorVazaoTipo(lista,vazao,tipo){
   return (lista||[]).find(g=>vazao>=g.vazaoMin&&vazao<=g.vazaoMax&&(!g.tipo||g.tipo===tipo));
@@ -2193,6 +2221,81 @@ function gerarItensServicosProjeto(d,adCfg,ehRecalque){
     {fornecedor:'Bolsa Irriga',codigo:'XXXXXX-19',descricao:'FRETE',qtd:1,custoUnit:0},
   ];
   return itens.filter(it=>it.qtd>0);
+}
+// Gotejador + Tubo de Polietileno (tubo cego) + Conectores — vinham como dump fixo
+// (sempre os mesmos ~20 itens/quantidades de um projeto de referência). Decifrado
+// e conferido em 2 orçamentos reais (Anderson Santana e Antonio Gilberto) a partir
+// das fórmulas reais da aba "Gotejador e Conectores":
+//  • Metros totais de gotejador = ROUNDUP((10000/espLinhas)×área×1,03, 0) — 3% de
+//    folga/perda. O SKU usado é o que bate com "Gotejador - 1ª/2ª Opção" (Dados de
+//    Entrada); quantidade em rolos = ROUNDUP(metros totais / metragem do rolo, 0).
+//  • Cada SKU pertence a uma "família" de conectores (bitola 16/17mm "dentado" ou
+//    bitola do rolo de 800m "Typhoon") — muda só quais conectores entram, a conta é
+//    a mesma pros dois: nº de conexões = ROUNDUP((metrosChicoteada/espLinhas) ×
+//    tipoSaidaLateral × 1,03, 0).
+//  • Tubo Cego (saída da chicoteada até a 1ª planta) = ROUNDUP(((metrosChicoteada/
+//    espLinhas×1,03) × 1,5)/500, 0) rolos de 500m.
+//  • CLIP P/ VINHEDO = ROUNDUP(((10000/espLinhas)×área)/espaçamentoEmissor×1,03, 0)
+//    — 1 clipe por emissor ao longo da linha (o divisor é o Espaçamento do
+//    Emissor, Dados de Entrada D64, NÃO o Espaçamento entre Plantas — testado e
+//    corrigido depois de bater errado num dos 2 orçamentos reais, onde os dois
+//    campos têm valores diferentes). Era o item com a MAIOR divergência
+//    encontrada: o dump fixo tinha ~87 mil, o real passava de 469 mil num
+//    projeto maior.
+const GOTEJADOR_CATALOGO=[
+  {fornecedor:'Bolsa Irriga',codigo:'801363',descricao:'UNIRAM AS 16009 1,0 L/H 0,60M - 500M',rolo:500,familia:'500'},
+  {fornecedor:'Bolsa Irriga',codigo:'801304',descricao:'UNIRAM AS 16009 1,6 L/H 0,60M - 500M',rolo:500,familia:'500'},
+  {fornecedor:'Bolsa Irriga',codigo:'701885',descricao:'UNIRAM AS 16009 2,3 L/H 0,75M - 500M',rolo:500,familia:'500'},
+  {fornecedor:'Bolsa Irriga',codigo:'701266',descricao:'DRIPNET PC AS 16250 0,6L/H 0,60M - 800M',rolo:800,familia:'800'},
+  {fornecedor:'Bolsa Irriga',codigo:'801477',descricao:'DRIPNET PC AS 16250 1,0L/H 0,50M - 800M',rolo:800,familia:'800'},
+  {fornecedor:'Bolsa Irriga',codigo:'701337',descricao:'DRIPNET PC AS 16250 1,0L/H 0,60M - 800M',rolo:800,familia:'800'},
+  {fornecedor:'Bolsa Irriga',codigo:'701230',descricao:'DRIPNET PC AS 16250 1,6L/H 0,60M - 800M',rolo:800,familia:'800'},
+  {fornecedor:'Bolsa Irriga',codigo:'701855',descricao:'DRIPNET PC AS 16250 1,6L/H 0,70M - 800M',rolo:800,familia:'800'},
+  {fornecedor:'Bolsa Irriga',codigo:'701878',descricao:'DRIPNET PC AS 16250 1,6L/H 0,80M - 800M',rolo:800,familia:'800'},
+  {fornecedor:'Netafim',codigo:'17655-004750',descricao:'DRIPNET PC AS 16009 1,6L/H 0,60M - 500M',rolo:500,familia:'500'},
+  {fornecedor:'Bolsa Irriga',codigo:'802999',descricao:'Dripnet PC AS 16009 1,6l/h 0,50m - 500m',rolo:500,familia:'500'},
+];
+const CONECTORES_FAMILIA={
+  '500':[
+    {fornecedor:'Bolsa Irriga',codigo:'701408',descricao:'CONECTOR FINAL 16/17'},
+    {fornecedor:'Bolsa Irriga',codigo:'801984',descricao:'CONECTOR UNIAO DENTADO 16/17 X 16/17MM'},
+  ],
+  '800':[
+    {fornecedor:'Bolsa Irriga',codigo:'801922',descricao:'CONECTOR FINAL TYPHOON COM ANEL AZUL'},
+    {fornecedor:'Bolsa Irriga',codigo:'801925',descricao:'CONECTOR UNIAO TYPHXTYPH C/ ANEL AZUL'},
+    {fornecedor:'Bolsa Irriga',codigo:'901170',descricao:'UNIAO TRANS 14/15MMX16MM C/ANEL LISO P/IRRIG'},
+  ],
+};
+function gerarItensGotejadorConectores(d,campoGotejador){
+  if(d.sistemaIrrigacao!=='Gotejamento')return[]; // Micro-Aspersão/Aspersão usam outra tabela, ainda não portada
+  const area=parseFloat(d.area)||0,espLinhas=parseFloat(d.espacamentoLinhas)||0,espEmissor=parseFloat(d.espacamentoEmissor)||0;
+  const metrosChicoteada=parseFloat(d.metrosChicoteada)||0,tipoSaida=parseFloat(d.tipoSaidaLateral)||0;
+  if(!area||!espLinhas)return[];
+  const itens=[];
+  const nomeGotejador=String(d[campoGotejador]||'').trim();
+  const sku=GOTEJADOR_CATALOGO.find(g=>g.descricao.trim().toLowerCase()===nomeGotejador.toLowerCase());
+  const totalMetrosGotejador=Math.ceil((10000/espLinhas)*area*1.03);
+  if(sku&&totalMetrosGotejador>0){
+    itens.push({fornecedor:sku.fornecedor,codigo:sku.codigo,descricao:sku.descricao,qtd:Math.ceil(totalMetrosGotejador/sku.rolo),grupo:'Gotejador'});
+  }
+  if(metrosChicoteada&&espLinhas){
+    const metrosSaidas=Math.ceil(metrosChicoteada/espLinhas*1.03);
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'701204',descricao:'TUBO CEGO PE 16009 - 500M',qtd:Math.ceil(metrosSaidas*1.5/500),grupo:'Tubo de Polietileno'});
+    if(tipoSaida>0){
+      const nConexoes=Math.ceil(metrosChicoteada/espLinhas*tipoSaida*1.03);
+      itens.push({fornecedor:'Bolsa Irriga',codigo:'701029',descricao:'CONECTOR INICIAL DENTADO C/CHULA 17MM',qtd:nConexoes,grupo:'Conectores'});
+      const familia=sku?sku.familia:'500';
+      (CONECTORES_FAMILIA[familia]||[]).forEach(c=>itens.push({...c,qtd:nConexoes,grupo:'Conectores'}));
+    }
+  }
+  if(espEmissor>0){
+    // confirmado com 2 orçamentos reais: o divisor é o Espaçamento do Emissor
+    // (Dados de Entrada D64), não o Espaçamento entre Plantas — um clipe por
+    // emissor ao longo da linha, não por planta.
+    const nClips=Math.ceil(((10000/espLinhas)*area)/espEmissor*1.03);
+    if(nClips>0)itens.push({fornecedor:'Bolsa Irriga',codigo:'801104',descricao:'CLIP P/ VINHEDO (16MM - 18MM )',qtd:nClips,grupo:'Conectores'});
+  }
+  return itens;
 }
 // Converte texto TUDO EM MAIÚSCULO (como vem de colunas da planilha, ex.: "SUCÇÃO
 // 75MM PLASSON (NEGATIVA)") para uma forma mais legível. Se o texto já tem letras
@@ -2305,6 +2408,16 @@ function carregarModelo(nomeModelo){
       adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,it.custoUnit,cfgSel.labelServicos,origem,nomeModelo);
       n++;
     });
+
+    // Gotejador + Tubo de Polietileno + Conectores — ver fórmulas no comentário de
+    // gerarItensGotejadorConectores.
+    if(cfgSel.campoGotejador){
+      const itensGotConect=gerarItensGotejadorConectores(d,cfgSel.campoGotejador);
+      itensGotConect.forEach(it=>{
+        adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
+        n++;
+      });
+    }
 
     // Cavaletes (parte 1 — baseada em nº de válvulas): a planilha original multiplica
     // a receita de itens por max(0, nº válvulas − 2), só para a faixa de vazão da
