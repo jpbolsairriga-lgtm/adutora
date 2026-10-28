@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.20 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.21 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -169,12 +169,16 @@ tr.item-row.inativo{opacity:.4}
   (faixa de vazão da válvula × nº de válvulas + casamento do diâmetro nominal com o manifold), Tubo da Adutora (classe de PN
   × diâmetro, direto dos trechos calculados), Serviços do Projeto (Montagem/Mapeamento = área × preço/ha; Abertura de
   Valetas = metros de adutora+chicoteada+main × preço/m — preços em Configurações; Frete não tem fórmula, entra zerado para
-  preencher à mão) e Gotejador + Tubo de Polietileno + Conectores + Clip p/ Vinhedo (metros de gotejador/conexões calculados
-  por área, espaçamento entre linhas e espaçamento do emissor — só para sistema Gotejamento, Micro-Aspersão/Aspersão ainda
-  não portados). Ainda carregam as quantidades de um projeto de exemplo (fórmula ainda não portada, por depender de um motor
-  de cálculo de rede separado — dimensionamento do submain por velocidade/pressão, ~400 linhas de simulação ponto-a-ponto):
-  Junção Adutora, Anti-Vácuo, Luvas, Rede Chicoteada/Secundária, F.Linha/Av/TE/Curva90 — revise/ajuste manualmente, ou
-  importe um orçamento real parecido em Excel e use o Relatório de Divergências pra comparar/corrigir item a item.
+  preencher à mão), Gotejador + Tubo de Polietileno + Conectores + Clip p/ Vinhedo (metros de gotejador/conexões calculados
+  por área, espaçamento entre linhas e espaçamento do emissor) e Rede Chicoteada (tubo PN40 que alimenta as linhas de
+  gotejo, simulação ponto-a-ponto por saída com diâmetro telescopando conforme a vazão cai — porta da aba real "Submain -
+  Gotejo" — + adesivo/solução/pano; dentro de ~2-3% dos orçamentos reais, pequenos pontos de corte do "lookup" de diâmetro
+  original não 100% decifrados) — essas três últimas só para sistema Gotejamento, Micro-Aspersão/Aspersão ainda não
+  portados. Ainda carregam as quantidades de um projeto de exemplo (fórmula ainda não portada, por depender de um motor de
+  cálculo de rede separado — dimensionamento do tronco/main por velocidade×vazão mais simples, mas com referências cruzadas
+  internas confusas na planilha original): Junção Adutora, Anti-Vácuo, Luvas, Rede Secundária (tronco "Main"),
+  F.Linha/Av/TE/Curva90 — revise/ajuste manualmente, ou importe um orçamento real parecido em Excel e use o Relatório de
+  Divergências pra comparar/corrigir item a item.
 </div>
 
 <div class="tabs">
@@ -390,6 +394,7 @@ tr.item-row.inativo{opacity:.4}
       <div class="fg"><label>Eficiência da Bomba (%)</label><input type="number" id="cfg_eficienciaPadrao" step="any"></div>
       <div class="fg"><label>Limiar Bomba Dupla — Adutora (mca)</label><input type="number" id="cfg_limiarBombaDuplaAdutora" step="any"></div>
       <div class="fg"><label>Limiar Bomba Dupla — Recalque (mca)</label><input type="number" id="cfg_limiarBombaDuplaRecalque" step="any"></div>
+      <div class="fg"><label>Rede Chicoteada — Coef. Diâmetro Econômico (K)</label><input type="number" id="cfg_redeChicoteadaK" step="any"></div>
     </div>
   </div>
 
@@ -463,6 +468,31 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.21 (2026-10-28): porta Rede Chicoteada (tubo PN40 + adesivo/solução/pano) pra
+//   regras dinâmicas — decifrado da aba real "Submain - Gotejo": simulação ponto-a-ponto
+//   por saída ao longo da chicoteada (até 140 pontos espaçados pelo Espaçamento entre
+//   Linhas), vazão decrescendo a cada saída (vazão da válvula / nº de saídas), diâmetro
+//   "ideal" = K×√(vazão em m³/s) [fórmula de diâmetro econômico, K configurável em
+//   Configurações > Hidráulica, padrão 0,85 — alguns orçamentos reais usam K manual
+//   diferente, ex. 0,75]. O diâmetro comercial de cada trecho (família PN40: 150/125/
+//   100/75/50/35mm, D.I. 144/120/97,6/72,5/48,2/35,7) é o menor nominal ESTRITAMENTE
+//   MAIOR que o diâmetro ideal — decifrado direto da tabela de referência da aba real
+//   (testado nos pontos de corte exatos 125/100/75/50/35mm, os 5 batem 100%). Os metros
+//   de cada diâmetro, somados num orçamento completo, ficam dentro de ~2-3% dos valores
+//   reais (Anderson Santana e Antonio Gilberto) — resta uma pequena inconsistência não
+//   100% decifrada bem perto de alguns pontos de corte específicos no "lookup" manual
+//   da planilha original (a tabela de referência tem uma estrutura recursiva com reset
+//   periódico que não é puramente monotônica, então o MATCH aproximado do Excel nem
+//   sempre segue a regra simples "menor nominal > ideal" à risca — mas o total de
+//   metros bate, só a distribuição entre 2 diâmetros adjacentes varia um pouco).
+//   Consumíveis (Adesivo/Solução/Pano) calculados a partir dos rolos de tubo gerados
+//   (gramas = peso por rolo × nº de rolos, por diâmetro) e da área do projeto.
+//   Pendente, atualizado na Nota de Escopo: "Rede Secundária" (tronco "Main", diâmetro
+//   único por velocidade×vazão — mais simples que a Rede Chicoteada, mas com referências
+//   cruzadas internas confusas entre colunas da planilha original que não compensam
+//   decifrar sem mais orçamentos reais com Metros Main preenchido pra validar) e tudo
+//   que depende dela (Final de Linha, Anti-Vácuo, Av, TE, Curva90, Luvas, Junção
+//   Adutora) — ainda não implementado.
 // v1.20 (2026-10-28): porta Gotejador + Tubo de Polietileno + Conectores +
 //   "CLIP P/VINHEDO" pra regras dinâmicas (antes dump fixo), decifrado via a aba
 //   real "Gotejador e Conectores" e conferido nos 2 orçamentos reais disponíveis:
@@ -778,7 +808,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.20';
+const APP_VERSION='v1.21';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -828,6 +858,7 @@ const CONFIG_GLOBAL_PADRAO={
   limiarBombaDuplaAdutora:80,limiarBombaDuplaRecalque:150,
   precoCVMotoBombaTrif:800,precoCVMotoBombaMono:850,precoCVQuadroPartida:450,
   precoMontagemHa:600,precoMapeamentoHa:75,precoAberturaValetasM:3.5,
+  redeChicoteadaK:0.85,
 };
 let CONFIG_GLOBAL={...CONFIG_GLOBAL_PADRAO};
 function carregarConfigGlobal(){
@@ -2297,6 +2328,72 @@ function gerarItensGotejadorConectores(d,campoGotejador){
   }
   return itens;
 }
+// Rede Chicoteada (tubo PN40 que alimenta as linhas de gotejo) — porta da aba real
+// "Submain - Gotejo": simulação ponto-a-ponto por saída (até 140 pontos espaçados pelo
+// Espaçamento entre Linhas), vazão decrescendo a cada saída (vazão da válvula / nº de
+// saídas), diâmetro "econômico" ideal = K×√(vazão em m³/s) [fórmula clássica, K é um
+// coeficiente ajustável por projeto na planilha — aqui fixo em Configurações], e o
+// diâmetro comercial de cada trecho é o menor da família PN40 (150/125/100/75/50/35,
+// D.I. 144/120/97,6/72,5/48,2/35,7mm) ESTRITAMENTE MAIOR que o diâmetro ideal (decifrado
+// direto da tabela de referência da aba real, testado contra os 2 orçamentos reais nos
+// pontos de corte exatos 125/100/75/50/35mm). Os metros de cada diâmetro ficam dentro de
+// ~2-3% dos valores reais (pequenas inconsistências no "lookup" manual da planilha
+// original perto de alguns pontos de corte — não 100% decifrado, tolerância aceita).
+const REDE_CHICOTEADA_NOMINAL_PARA_DI={150:144,125:120,100:97.6,75:72.5,50:48.2,35:35.7};
+const REDE_CHICOTEADA_NOMINAIS=[35,50,75,100,125,150];
+const REDE_CHICOTEADA_CATALOGO_TUBO={144:['Bolsa Irriga','801161','TUBO IRRIGA- LF PN 40 PBL 150MM'],
+  120:['Bolsa Irriga','701308','TUBO IRRIGA- LF PN 40 PBL 125MM'],97.6:['Bolsa Irriga','701179','TUBO IRRIGA -LF PN 40 PBL 100MM'],
+  72.5:['Bolsa Irriga','701177','TUBO IRRIGA- LF PN 40 PBL 75MM'],48.2:['Bolsa Irriga','701213','TUBO IRRIGA-LF PN 40 PBL 50MM'],
+  35.7:['Bolsa Irriga','701211','TUBO IRRIGA-LF PN 40 PBL 35MM']};
+const REDE_CHICOTEADA_GRAMAS_POR_ROLO={144:40,120:35,97.6:25,72.5:20,48.2:15,35.7:10};
+function rede_pickDI(idealMm){
+  for(const nom of REDE_CHICOTEADA_NOMINAIS)if(nom>idealMm)return REDE_CHICOTEADA_NOMINAL_PARA_DI[nom];
+  return REDE_CHICOTEADA_NOMINAL_PARA_DI[REDE_CHICOTEADA_NOMINAIS[REDE_CHICOTEADA_NOMINAIS.length-1]];
+}
+function simularRedeChicoteada(d){
+  const metrosRede=(parseFloat(d.metrosChicoteada)||0)/(parseFloat(d.numRedesChicoteadas)||1);
+  const espLinhas=parseFloat(d.espacamentoLinhas)||0;
+  const Qtotal=parseFloat(d.vazaoValvula)||0;
+  if(!metrosRede||!espLinhas||!Qtotal)return null;
+  const nSaidas=metrosRede/espLinhas;
+  const QporSaida=Qtotal/nSaidas;
+  const K=CONFIG_GLOBAL.redeChicoteadaK;
+  const buckets={144:0,120:0,97.6:0,72.5:0,48.2:0,35.7:0};
+  let vazao=Qtotal;
+  for(let idx=1;idx<=140;idx++){
+    let H;
+    if(idx===1)H=0.5;
+    else{H=(idx-1)<=nSaidas?espLinhas:0;vazao=Math.max(0,vazao-QporSaida);}
+    const Q_m3s=vazao/3600;
+    const T=K*Math.sqrt(Q_m3s);
+    const S=Math.ceil(T*1000);
+    const DI=rede_pickDI(S);
+    if(!(idx===1&&DI===35.7))buckets[DI]+=H;
+  }
+  return buckets;
+}
+function gerarItensRedeChicoteada(d){
+  if(d.sistemaIrrigacao!=='Gotejamento')return[];
+  const buckets=simularRedeChicoteada(d);
+  if(!buckets)return[];
+  const itens=[],gramasPorDiametro={};
+  for(const DI of Object.keys(buckets).map(Number)){
+    const metros=Math.ceil(buckets[DI]);
+    if(metros<=0)continue;
+    const rolos=Math.ceil(metros/5.8);
+    const[fornecedor,codigo,descricao]=REDE_CHICOTEADA_CATALOGO_TUBO[DI];
+    itens.push({fornecedor,codigo,descricao,qtd:rolos,grupo:'Rede Chicoteada'});
+    gramasPorDiametro[DI]=rolos*REDE_CHICOTEADA_GRAMAS_POR_ROLO[DI];
+  }
+  const gramasTotal=Object.values(gramasPorDiametro).reduce((a,b)=>a+b,0);
+  if(gramasTotal>0){
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'701295',descricao:'ADESIVO PVC INCOLOR FRASCO 850G',qtd:Math.ceil(gramasTotal/850),grupo:'Adesivos/Solução'});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'701291',descricao:'SOLUCAO PREPARADORA FRASCO 1L',qtd:Math.ceil(gramasTotal*1.2/1000),grupo:'Adesivos/Solução'});
+  }
+  const area=parseFloat(d.area)||0;
+  if(area>0)itens.push({fornecedor:'Netafim',codigo:'01542-000760',descricao:'PANO',qtd:Math.ceil(area/20),grupo:'Adesivos/Solução'});
+  return itens;
+}
 // Converte texto TUDO EM MAIÚSCULO (como vem de colunas da planilha, ex.: "SUCÇÃO
 // 75MM PLASSON (NEGATIVA)") para uma forma mais legível. Se o texto já tem letras
 // minúsculas (ex.: descrição de Filtragem), deixa como está.
@@ -2414,6 +2511,13 @@ function carregarModelo(nomeModelo){
     if(cfgSel.campoGotejador){
       const itensGotConect=gerarItensGotejadorConectores(d,cfgSel.campoGotejador);
       itensGotConect.forEach(it=>{
+        adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
+        n++;
+      });
+      // Rede Chicoteada (tubo PN40 + adesivo/solução/pano) — ver fórmulas no comentário
+      // de simularRedeChicoteada/gerarItensRedeChicoteada.
+      const itensRedeChic=gerarItensRedeChicoteada(d);
+      itensRedeChic.forEach(it=>{
         adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
