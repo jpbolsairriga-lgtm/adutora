@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.27 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.28 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -166,13 +166,12 @@ tr.item-row.inativo{opacity:.4}
   orçamentos reais, via o botão "📊 Relatório de Divergências" nos orçamentos importados de Excel) — da sucção à Rede
   Secundária, passando por Adutora, Motor/Quadro de Partida, Cavaletes, Gotejador/Conectores, Rede Chicoteada, Final de
   Linha, Anti-Vácuo, TE/Curva90, Luvas e Derivação/Junção Adutora. Pendente: <b>Micro-Aspersão e Aspersão</b> (sistemas
-  inteiros ainda não decifrados — usam tabelas de dimensionamento próprias, diferentes do Gotejamento). Na aba
-  <b>Recalque</b>: Sucção, Saída Moto-Bomba, Bomba Auxiliar, Motor+Quadro de Partida, Automação da Válvula, Tubo da
-  Adutora-Recalque e Serviços do Projeto já funcionam (mesmo motor de cálculo compartilhado com Gotejamento); Derivação
-  Recalque também já foi portada, mas <b>sem nenhum orçamento real disponível pra conferir numericamente</b> — teste com
-  cuidado. Ainda falta: Ventosa Recalque (ainda carrega quantidade de projeto de exemplo). Para esses casos, ou pra
-  conferir/corrigir qualquer detalhe, importe um orçamento real parecido em Excel e use o Relatório de Divergências pra
-  comparar item a item.
+  inteiros ainda não decifrados — usam tabelas de dimensionamento próprias, diferentes do Gotejamento). A aba
+  <b>Recalque</b> está completa: Sucção, Saída Moto-Bomba, Bomba Auxiliar, Motor+Quadro de Partida, Automação da Válvula,
+  Tubo da Adutora-Recalque, Serviços do Projeto, Derivação Recalque e Ventosa Recalque (1 ventosa a cada 300m de
+  tubulação) — tudo testado contra orçamento real. Só falta Micro-Aspersão/Aspersão como gap conhecido. Pra conferir/
+  corrigir qualquer detalhe específico de um projeto, importe um orçamento real parecido em Excel e use o Relatório de
+  Divergências pra comparar item a item.
 </div>
 
 <div class="tabs">
@@ -462,6 +461,21 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.28 (2026-10-28): o usuário passou um orçamento real com Recalque preenchida
+//   (Fabio Henrique de Barros, 22,4ha) — usei pra conferir a Derivação Recalque (v1.27,
+//   que tinha ido sem verificação numérica) e pra portar a última categoria pendente:
+//   Ventosa Recalque, decifrada na aba real "Recalque - Ventosas". Nº de ventosas = 1 a
+//   cada 300m de Adutora-Recalque (ROUNDDOWN(comprimento/300,0)); o kit de peças (1 dos
+//   4 grupos — 50/75/118/170mm — casado com o diâmetro nominal da Adutora-Recalque) é
+//   multiplicado por esse nº de ventosas.
+//   Testado contra o Fabio Henrique de Barros (comprimento=987m→3 ventosas,
+//   nominal=170mm): bate EXATO nos 8 itens do grupo 170mm. A Derivação Recalque (v1.27)
+//   também bateu exato (Curva90-160mm qtd=4, Luva170x160 qtd=8) — removida a ressalva
+//   de "sem verificação" do comentário.
+//   Com isso, a aba Recalque está completa: Sucção, MB Saída, Bomba Auxiliar,
+//   Motor+Quadro, Automação, Tubo da Adutora, Serviços, Derivação Recalque e Ventosa
+//   Recalque — tudo testado contra orçamento real. Só resta Micro-Aspersão/Aspersão
+//   (sistemas inteiros, fora do escopo investigado até aqui) como gap conhecido.
 // v1.27 (2026-10-28): porta Derivação Recalque pra regras dinâmicas — primeira
 //   categoria específica da aba Recalque (confirmei antes que Sucção, MB Saída, Bomba
 //   Auxiliar, Motor+Quadro de Partida, Automação da Válvula, Tubo da Adutora e
@@ -911,7 +925,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.27';
+const APP_VERSION='v1.28';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -2823,13 +2837,8 @@ function gerarItensLuvasPrincipais(nominalAdutora01,nominalAdutora02,area){
 // Adutora-Recalque (não duas opções compartilhadas), e só o grupo "Curva90" (sem TE) —
 // kit de 1-2 peças por diâmetro (Curva90 ou Joelho, + luva de redução pros diâmetros
 // 118/150/170/222mm, qtd=2× a peça principal), casado com o diâmetro nominal calculado
-// da Adutora-Recalque. IMPORTANTE: não há nenhum orçamento real disponível com
-// Recalque preenchido pra conferir essa parte numericamente (ao contrário de todas as
-// outras categorias portadas, que foram testadas célula a célula contra o Antonio
-// Gilberto/Anderson Santana) — os códigos de produto são os mesmos já conferidos na
-// Derivação Adutora, e a lógica replica a fórmula da aba real linha a linha, mas sem
-// garantia numérica de bater com um caso real. Se tiver um orçamento real com Recalque
-// ativo, importe em Excel e use o Relatório de Divergências pra conferir.
+// da Adutora-Recalque. Testado contra o orçamento real do Fabio Henrique de Barros
+// (nominal Recalque=170mm): bate exato (Curva90-160mm qtd=4, Luva170x160 qtd=8).
 const DERIVACAO_RECALQUE_KITS={
   50:[{codigo:'801499',descricao:'JOELHO PVC IRR SOLDA 90 50MM DURO',mult:4}],
   75:[{codigo:'801497',descricao:'JOELHO PVC IRR SOLDA 90 75MM DURO',mult:4}],
@@ -2844,6 +2853,52 @@ function gerarItensDerivacaoRecalque(nominalRecalque){
   const nominal=nominalParaDerivacaoAdutora(nominalRecalque);
   if(nominal==null||!DERIVACAO_RECALQUE_KITS[nominal])return[];
   return DERIVACAO_RECALQUE_KITS[nominal].map(it=>({fornecedor:it.fornecedor||'Bolsa Irriga',codigo:it.codigo,descricao:it.descricao,qtd:it.mult,grupo:'Derivação Recalque'}));
+}
+// Ventosa Recalque — porta da aba real "Recalque - Ventosas". Nº de ventosas = 1 a
+// cada 300m de Adutora-Recalque (ROUNDDOWN(comprimento/300,0)); o kit de peças (só 1
+// dos 4 grupos abaixo, o que casar com o diâmetro nominal calculado da Adutora-
+// Recalque — mesmo valor que já uso em gerarItensDerivacaoRecalque, via o caminho
+// "P290" na aba real, uma tabela de seleção de motor de recalque reaproveitada só
+// pra extrair esse nominal de novo) é multiplicado por esse nº de ventosas.
+// Testado contra o orçamento real do Fabio Henrique de Barros (comprimento=987m →
+// 3 ventosas; nominal=170mm): bate exato em todos os 8 itens do grupo 170mm (G30=3,
+// G31=3, G32=3, G33=9, G34=1,5, G35=3, G36=6, G37=3 — todos = qtdPorVentosa×3).
+const VENTOSA_RECALQUE_KITS={
+  50:[{codigo:'701207',descricao:'TUBO SOLD NBR 5648 6,00M 32MM',qtdPorVentosa:0.5},
+    {codigo:'901288',descricao:'NAVC VENTOSA 1" BSP PN 10',qtdPorVentosa:1},
+    {codigo:'801101',descricao:"LUVA SOLD MISTA 32MM X 1'",qtdPorVentosa:1},
+    {codigo:'701382',descricao:'JOELHO 90 SOLD 32MM',qtdPorVentosa:2},
+    {codigo:'701249',descricao:'ADAP SOLD CT BOL/ROSC 32MM X 1',qtdPorVentosa:1},
+    {codigo:'701297',descricao:'TE C/ROSCA DER IRRIGA-LF 50 X 1',qtdPorVentosa:1}],
+  75:[{codigo:'701207',descricao:'TUBO SOLD NBR 5648 6,00M 32MM',qtdPorVentosa:0.5},
+    {codigo:'901288',descricao:'NAVC VENTOSA 1" BSP PN 10',qtdPorVentosa:1},
+    {codigo:'801101',descricao:"LUVA SOLD MISTA 32MM X 1'",qtdPorVentosa:1},
+    {codigo:'701382',descricao:'JOELHO 90 SOLD 32MM',qtdPorVentosa:3},
+    {codigo:'701249',descricao:'ADAP SOLD CT BOL/ROSC 32MM X 1',qtdPorVentosa:1},
+    {codigo:'701371',descricao:'BUCHA DE REDUCAO C/ROSCA PVC 50MM X 1" RI',qtdPorVentosa:1},
+    {codigo:'701277',descricao:'BUCHA RED CURTA IRRIG 75 X 50MM',qtdPorVentosa:1},
+    {codigo:'701304',descricao:'TE BSA SOLD IRRIGA-LF 75',qtdPorVentosa:1}],
+  118:[{codigo:'701207',descricao:'TUBO SOLD NBR 5648 6,00M 32MM',qtdPorVentosa:0.5},
+    {codigo:'901288',descricao:'NAVC VENTOSA 1" BSP PN 10',qtdPorVentosa:1},
+    {codigo:'801101',descricao:"LUVA SOLD MISTA 32MM X 1'",qtdPorVentosa:1},
+    {codigo:'701382',descricao:'JOELHO 90 SOLD 32MM',qtdPorVentosa:3},
+    {codigo:'701249',descricao:'ADAP SOLD CT BOL/ROSC 32MM X 1',qtdPorVentosa:1},
+    {codigo:'901031',descricao:'COLAR TOMADA FOFO 100 X 1" RF',qtdPorVentosa:1}],
+  170:[{codigo:'901065',descricao:'NAVC VENTOSA 2" BSP PN 16',qtdPorVentosa:1},
+    {codigo:'701019',descricao:"ADAPTADOR 75(63) 2'' FEMEA",qtdPorVentosa:1},
+    {codigo:'701022',descricao:'LUVA PVC SOLDAVEL 75 MM PLASSOM',qtdPorVentosa:1},
+    {codigo:'701025',descricao:'CURVA 90° SOLDA 75MM PLASSOM',qtdPorVentosa:3},
+    {codigo:'801108',descricao:'TB IRRIGA -LF PN 125 PBL 75',qtdPorVentosa:0.5},
+    {codigo:'701114',descricao:'BUCHA RED. SOLD. 110MX75F PLASSON',qtdPorVentosa:1},
+    {codigo:'801932',descricao:'LUVA DE REDUCAO PVC DEFOFO 170 BOLSA X 160 BOLSA',qtdPorVentosa:2},
+    {codigo:'801177',descricao:'TE PVC SOLDAVEL 160MM PLASSON',qtdPorVentosa:1}],
+};
+function gerarItensVentosaRecalque(nominalRecalque,comprimentoRecalque){
+  const nominal=nominalParaDerivacaoAdutora(nominalRecalque);
+  if(nominal==null||!VENTOSA_RECALQUE_KITS[nominal])return[];
+  const numVentosas=Math.floor((parseFloat(comprimentoRecalque)||0)/300);
+  if(numVentosas<=0)return[];
+  return VENTOSA_RECALQUE_KITS[nominal].map(it=>({fornecedor:'Bolsa Irriga',codigo:it.codigo,descricao:it.descricao,qtd:it.qtdPorVentosa*numVentosas,grupo:'Ventosa Recalque'}));
 }
 // Converte texto TUDO EM MAIÚSCULO (como vem de colunas da planilha, ex.: "SUCÇÃO
 // 75MM PLASSON (NEGATIVA)") para uma forma mais legível. Se o texto já tem letras
@@ -3002,9 +3057,15 @@ function carregarModelo(nomeModelo){
     }
     if(nomeModelo==='recalque'){
       // Derivação Recalque — ver fórmulas no comentário de gerarItensDerivacaoRecalque.
-      // Sem orçamento real pra conferir numericamente (ver nota no comentário).
       const itensDerivacaoRec=gerarItensDerivacaoRecalque(adCfg.resultado&&adCfg.resultado.nominal);
       itensDerivacaoRec.forEach(it=>{
+        adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
+        n++;
+      });
+      // Ventosa Recalque — ver fórmulas no comentário de gerarItensVentosaRecalque.
+      // Testado contra o orçamento real do Fabio Henrique de Barros (bate exato).
+      const itensVentosaRec=gerarItensVentosaRecalque(adCfg.resultado&&adCfg.resultado.nominal,adCfg.comprimento);
+      itensVentosaRec.forEach(it=>{
         adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
