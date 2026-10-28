@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.28 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.29 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -165,13 +165,16 @@ tr.item-row.inativo{opacity:.4}
   <b>Gotejamento</b>, todo o BOM comercial já usa o motor de cálculo real da planilha (conferido linha a linha contra 2
   orçamentos reais, via o botão "📊 Relatório de Divergências" nos orçamentos importados de Excel) — da sucção à Rede
   Secundária, passando por Adutora, Motor/Quadro de Partida, Cavaletes, Gotejador/Conectores, Rede Chicoteada, Final de
-  Linha, Anti-Vácuo, TE/Curva90, Luvas e Derivação/Junção Adutora. Pendente: <b>Micro-Aspersão e Aspersão</b> (sistemas
-  inteiros ainda não decifrados — usam tabelas de dimensionamento próprias, diferentes do Gotejamento). A aba
-  <b>Recalque</b> está completa: Sucção, Saída Moto-Bomba, Bomba Auxiliar, Motor+Quadro de Partida, Automação da Válvula,
-  Tubo da Adutora-Recalque, Serviços do Projeto, Derivação Recalque e Ventosa Recalque (1 ventosa a cada 300m de
-  tubulação) — tudo testado contra orçamento real. Só falta Micro-Aspersão/Aspersão como gap conhecido. Pra conferir/
-  corrigir qualquer detalhe específico de um projeto, importe um orçamento real parecido em Excel e use o Relatório de
-  Divergências pra comparar item a item.
+  Linha, Anti-Vácuo, TE/Curva90, Luvas e Derivação/Junção Adutora — tudo testado linha a linha contra 3 orçamentos reais.
+  <b>Micro-Aspersão e Aspersão</b> também já têm motor de cálculo próprio (Micro-Aspersor/Aspersor, Tubo de Polietileno,
+  Conectores, Rede Chicoteada e — só pra Micro-Aspersão — Final de Linha/Anti-Vácuo/TE/Curva90/Luvas; a planilha real zera
+  essas últimas 4 pra Aspersão), mas <b>sem nenhum orçamento real desses 2 sistemas disponível pra conferir numericamente</b>
+  — teste com cuidado antes de confiar em produção. A "Rede Main" de Aspersão ainda carrega valores de projeto de exemplo
+  (a planilha original usa números fixos não generalizáveis ali). A aba <b>Recalque</b> está completa: Sucção, Saída
+  Moto-Bomba, Bomba Auxiliar, Motor+Quadro de Partida, Automação da Válvula, Tubo da Adutora-Recalque, Serviços do
+  Projeto, Derivação Recalque e Ventosa Recalque — tudo testado contra orçamento real. Pra conferir/corrigir qualquer
+  detalhe específico de um projeto, importe um orçamento real parecido em Excel e use o Relatório de Divergências pra
+  comparar item a item.
 </div>
 
 <div class="tabs">
@@ -461,6 +464,40 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.29 (2026-10-28): porta Micro-Aspersão e Aspersão — últimos 2 sistemas de
+//   irrigação pendentes. Decifrado na aba real "Gotejador e Conectores" (linhas
+//   100-146, blocos separados do de Gotejamento) + "Aspersão" (cascata de diâmetro
+//   da Rede Chicoteada) + "Parametros" (gates que zeram Anti-Vácuo/TE/Curva90 pra
+//   Aspersão especificamente).
+//   - Micro-Aspersor: nº de emissores = ROUNDUP((10000/espLinhas/espaçamento do
+//     emissor)×área×1,03,0) — divide por DOIS espaçamentos (é emissor pontual, não
+//     tubo contínuo); SKU casado com o mesmo campo de texto do Gotejador (a planilha
+//     original reusa esse campo, não tem um próprio pra Micro); +1 estaca de fixação
+//     por emissor. Tubo Cego 300m + Conectores 20mm: mesmas fórmulas do Gotejador,
+//     bitola diferente.
+//   - Aspersor: só existe 1 modelo no catálogo (D-NET 8550), sem seleção de SKU. Nº de
+//     aspersores = ROUNDUP((metrosChicoteada/espaçamento do emissor)×1,03,0); Tubo
+//     Cego usa um "×4" extra (haste mais longa). 1 kit de conectores por aspersor.
+//   - Rede Chicoteada de Micro-Aspersão/Aspersão: reusa a cascata simples e agregada
+//     já construída pra Rede Secundária (diametrosAtivosChicoteadaTotal, agora também
+//     devolve os metros de cada diâmetro, não só a flag de "ativo") — sem a simulação
+//     ponto-a-ponto do Submain-Gotejo (essa só existe pra Gotejamento).
+//   - Final de Linha/Anti-Vácuo/TE/Curva90/Luvas: Micro-Aspersão passa pelo mesmo
+//     caminho que Gotejamento (usando a cascata simples); Aspersão tem essas 4
+//     categorias explicitamente ZERADAS na planilha real (IF(D60="Aspersão",0,...)) —
+//     só Final de Linha continua, com uma fórmula diferente (usa nº de Main em vez de
+//     nº de redes chicoteadas).
+//   ATENÇÃO — sem nenhum orçamento real disponível com Micro-Aspersão ou Aspersão pra
+//   conferir numericamente (os 3 orçamentos reais usados nesta sessão são todos
+//   Gotejamento, e o 1 com Recalque também é Gotejamento). Fórmulas replicadas direto
+//   da aba real célula a célula, mas sem a mesma garantia de tudo que foi testado
+//   contra caso real. Pendente ainda: a "Rede Main" (tronco principal) de Aspersão
+//   usa valores hardcoded de um projeto antigo na aba real (não generalizável) — não
+//   portado, fica como dump de exemplo se o usuário usar Aspersão.
+//   Com isso, os 4 sistemas de irrigação (Gotejamento, Micro-Aspersão, Aspersão) e as
+//   2 abas de bombeamento (Adutora/Recalque) estão todos com motor de cálculo próprio
+//   — Gotejamento e Recalque testados contra orçamento real, Micro-Aspersão/Aspersão
+//   ainda pendentes de um caso real pra validar.
 // v1.28 (2026-10-28): o usuário passou um orçamento real com Recalque preenchida
 //   (Fabio Henrique de Barros, 22,4ha) — usei pra conferir a Derivação Recalque (v1.27,
 //   que tinha ido sem verificação numérica) e pra portar a última categoria pendente:
@@ -925,7 +962,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.28';
+const APP_VERSION='v1.29';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -2415,7 +2452,7 @@ const CONECTORES_FAMILIA={
   ],
 };
 function gerarItensGotejadorConectores(d,campoGotejador){
-  if(d.sistemaIrrigacao!=='Gotejamento')return[]; // Micro-Aspersão/Aspersão usam outra tabela, ainda não portada
+  if(d.sistemaIrrigacao!=='Gotejamento')return[]; // Micro-Aspersão usa gerarItensMicroAspersorConectores; Aspersão usa gerarItensAspersorConectores
   const area=parseFloat(d.area)||0,espLinhas=parseFloat(d.espacamentoLinhas)||0,espEmissor=parseFloat(d.espacamentoEmissor)||0;
   const metrosChicoteada=parseFloat(d.metrosChicoteada)||0,tipoSaida=parseFloat(d.tipoSaidaLateral)||0;
   if(!area||!espLinhas)return[];
@@ -2442,6 +2479,81 @@ function gerarItensGotejadorConectores(d,campoGotejador){
     // emissor ao longo da linha, não por planta.
     const nClips=Math.ceil(((10000/espLinhas)*area)/espEmissor*1.03);
     if(nClips>0)itens.push({fornecedor:'Bolsa Irriga',codigo:'801104',descricao:'CLIP P/ VINHEDO (16MM - 18MM )',qtd:nClips,grupo:'Conectores'});
+  }
+  return itens;
+}
+// Micro-Aspersor + Tubo de Polietileno + Conectores — porta da aba real "Gotejador e
+// Conectores" (linhas 100-124), seção Micro-Aspersão (bloco separado do de
+// Gotejamento, mas com a mesma estrutura de "casar SKU pelo texto escolhido em Dados
+// de Entrada"). SEM orçamento real disponível com Micro-Aspersão pra conferir
+// numericamente (nenhum dos arquivos reais usados nesta sessão é desse sistema) —
+// fórmula replicada direto da aba real, mas sem a mesma garantia de outras categorias.
+//  • Nº de micro-aspersores = ROUNDUP((10000/espLinhas/espaçamento do emissor)×área×
+//    1,03, 0) — divide por DOIS espaçamentos (linhas e emissor), diferente do Gotejador
+//    que só divide por espLinhas, porque o micro-aspersor é um emissor pontual (não
+//    tubo contínuo).
+//  • O SKU que bate com o nome escolhido em "Gotejador - 1ª Opção" (mesmo campo de
+//    texto reusado — Micro-Aspersão não tem um campo de texto próprio na planilha
+//    original) recebe essa quantidade; mais 1 estaca de fixação por micro-aspersor.
+//  • Tubo Cego 300m = ROUNDUP(((10000/espLinhas)×área×1,03)/300, 0).
+//  • Conectores (Inicial/Final/União 20mm): ROUNDUP((metrosChicoteada/espLinhas)×
+//    tipoSaidaLateral×1,03, 0) — mesma fórmula do Gotejador, bitola 20mm em vez de
+//    16/17mm.
+const MICRO_ASPERSOR_CATALOGO=[
+  {fornecedor:'Netafim',codigo:'64000-000835',descricao:'GYRONET 27 L/H LR A.R. 60CM - DENTADO'},
+  {fornecedor:'Netafim',codigo:'64000-001200',descricao:'GYRONET 40 L/H LR A.R. 60CM - DENTADO'},
+  {fornecedor:'Bolsa Irriga',codigo:'801028',descricao:'GYRONET 58 L/H LR A.R. 60CM - DENTADO'},
+  {fornecedor:'Netafim',codigo:'64000-002500',descricao:'GYRONET 70L/H LR A.R. 60CM - DENTADO'},
+  {fornecedor:'Bolsa Irriga',codigo:'801942',descricao:'GYRONET 90L/H LR A.R. 60CM - DENTADO'},
+];
+function gerarItensMicroAspersorConectores(d,campoGotejador){
+  if(d.sistemaIrrigacao!=='Micro-Aspersão')return[];
+  const area=parseFloat(d.area)||0,espLinhas=parseFloat(d.espacamentoLinhas)||0,espEmissor=parseFloat(d.espacamentoEmissor)||0;
+  const metrosChicoteada=parseFloat(d.metrosChicoteada)||0,tipoSaida=parseFloat(d.tipoSaidaLateral)||0;
+  if(!area||!espLinhas||!espEmissor)return[];
+  const itens=[];
+  const nEmissores=Math.ceil((10000/espLinhas/espEmissor)*area*1.03);
+  const nomeEscolhido=String(d[campoGotejador]||'').trim();
+  const sku=MICRO_ASPERSOR_CATALOGO.find(g=>g.descricao.trim().toLowerCase()===nomeEscolhido.toLowerCase());
+  if(sku&&nEmissores>0){
+    itens.push({fornecedor:sku.fornecedor,codigo:sku.codigo,descricao:sku.descricao,qtd:nEmissores,grupo:'Micro-Aspersor'});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'801052',descricao:'ESTACA COM 70 CM MICROTUBO MF CARBOR',qtd:nEmissores,grupo:'Micro-Aspersor'});
+  }
+  const rolosTuboCego=Math.ceil(((10000/espLinhas)*area*1.03)/300);
+  if(rolosTuboCego>0)itens.push({fornecedor:'Bolsa Irriga',codigo:'801624',descricao:'TUBO CEGO PE 20009 - 300M',qtd:rolosTuboCego,grupo:'Tubo de Polietileno'});
+  if(metrosChicoteada&&espLinhas&&tipoSaida>0){
+    const nConexoes=Math.ceil(metrosChicoteada/espLinhas*tipoSaida*1.03);
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'701410',descricao:'CONECTOR INICIAL DENTADO C/CHULA 20MM',qtd:nConexoes,grupo:'Conectores'});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'701409',descricao:'CONECTOR FINAL 20MM',qtd:nConexoes,grupo:'Conectores'});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'701826',descricao:'CONECTOR UNIAO DENTADO 20 X 20MM',qtd:nConexoes+rolosTuboCego,grupo:'Conectores'});
+  }
+  return itens;
+}
+// Aspersor + Tubo de Polietileno + Conectores — porta da aba real "Gotejador e
+// Conectores" (linhas 129-145), seção Aspersão. SEM orçamento real disponível pra
+// conferir numericamente (mesma ressalva do Micro-Aspersão acima). Mais simples que
+// Gotejamento/Micro: só existe 1 modelo de aspersor no catálogo (D-NET 8550), sem
+// seleção de SKU.
+//  • Nº de aspersores = ROUNDUP((metrosChicoteada/espaçamento do emissor)×1,03, 0).
+//  • Tubo Cego 300m = ROUNDUP((((metrosChicoteada/espaçamento do emissor)×4)×1,03)/
+//    300, 0) — note o "×4" (cada aspersor consome ~4x mais tubo cego de conexão do
+//    que um micro-aspersor, por ficar numa haste mais alta/distante da linha).
+//  • Conectores (União/Inicial/Luva/Adaptador): mesma quantidade do nº de aspersores
+//    (1 kit completo por aspersor instalado).
+function gerarItensAspersorConectores(d){
+  if(d.sistemaIrrigacao!=='Aspersão')return[];
+  const metrosChicoteada=parseFloat(d.metrosChicoteada)||0,espEmissor=parseFloat(d.espacamentoEmissor)||0;
+  if(!metrosChicoteada||!espEmissor)return[];
+  const itens=[];
+  const nAspersores=Math.ceil((metrosChicoteada/espEmissor)*1.03);
+  const rolosTuboCego=Math.ceil(((metrosChicoteada/espEmissor*4)*1.03)/300);
+  if(rolosTuboCego>0)itens.push({fornecedor:'Bolsa Irriga',codigo:'801624',descricao:'TUBO CEGO PE 20009 - 300M',qtd:rolosTuboCego,grupo:'Tubo de Polietileno'});
+  if(nAspersores>0){
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'901321',descricao:'D-NET 8550 2,5+1,5 - 580 L/H',qtd:nAspersores,grupo:'Aspersor'});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'701826',descricao:'CONECTOR UNIAO DENTADO 20 X 20MM',qtd:nAspersores,grupo:'Conectores'});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'701410',descricao:'CONECTOR INICIAL DENTADO C/ CHULA 20MM',qtd:nAspersores,grupo:'Conectores'});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'801927',descricao:'LUVA C/ ROSC 1/2"',qtd:nAspersores,grupo:'Conectores'});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'901361',descricao:'ADAPTADOR PVC M BS RM 20 X1/2',qtd:nAspersores,grupo:'Conectores'});
   }
   return itens;
 }
@@ -2539,6 +2651,34 @@ function gerarItensRedeChicoteada(d){
   if(area>0)itens.push({fornecedor:'Netafim',codigo:'01542-000760',descricao:'PANO',qtd:Math.ceil(area/20),grupo:'Adesivos/Solução'});
   return itens;
 }
+// Rede Chicoteada para Micro-Aspersão/Aspersão — porta da aba real "Rede Chicoteada-
+// Secundaria" (mesmo D20:D25 do Gotejamento, mas usando o ramo ELSE da fórmula real:
+// ROUNDUP(I/5,8,0) direto da cascata simples agregada, em vez do O-column vindo da
+// simulação ponto-a-ponto do Submain-Gotejo — Micro-Aspersão/Aspersão não têm essa
+// simulação). Reusa diametrosAtivosChicoteadaTotal (já construída pra Rede Secundária)
+// pegando os "metros" direto (já são o total real, sem precisar reescalar como no
+// Gotejamento). SEM orçamento real disponível pra conferir numericamente.
+function gerarItensRedeChicoteadaSimples(d){
+  if(d.sistemaIrrigacao!=='Micro-Aspersão'&&d.sistemaIrrigacao!=='Aspersão')return[];
+  const{metros}=diametrosAtivosChicoteadaTotal(d);
+  if(!metros||!Object.keys(metros).length)return[];
+  const itens=[],gramasPorDiametro={};
+  for(const DI of Object.keys(metros).map(Number)){
+    const rolos=Math.ceil(metros[DI]/5.8);
+    if(rolos<=0)continue;
+    const[fornecedor,codigo,descricao]=REDE_CHICOTEADA_CATALOGO_TUBO[DI];
+    itens.push({fornecedor,codigo,descricao,qtd:rolos,grupo:'Rede Chicoteada'});
+    gramasPorDiametro[DI]=rolos*REDE_CHICOTEADA_GRAMAS_POR_ROLO[DI];
+  }
+  const gramasTotal=Object.values(gramasPorDiametro).reduce((a,b)=>a+b,0);
+  if(gramasTotal>0){
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'701295',descricao:'ADESIVO PVC INCOLOR FRASCO 850G',qtd:Math.ceil(gramasTotal/850),grupo:'Adesivos/Solução'});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'701291',descricao:'SOLUCAO PREPARADORA FRASCO 1L',qtd:Math.ceil(gramasTotal*1.2/1000),grupo:'Adesivos/Solução'});
+  }
+  const area=parseFloat(d.area)||0;
+  if(area>0)itens.push({fornecedor:'Netafim',codigo:'01542-000760',descricao:'PANO',qtd:Math.ceil(area/20),grupo:'Adesivos/Solução'});
+  return itens;
+}
 // Rede Secundária (tronco "Main") — porta da aba real "Rede Chicoteada-Secundaria",
 // linhas 29-47. NÃO é gated por sistema de irrigação (ao contrário da Rede Chicoteada):
 // 1) acha quais diâmetros "aparecem" em algum ponto da chicoteada inteira, com uma
@@ -2557,13 +2697,18 @@ function gerarItensRedeChicoteada(d){
 // Testado contra os 2 orçamentos reais: Antonio Gilberto (metrosMain=2875) bate exato —
 // 3 diâmetros selecionados (150/125/100mm), 165,23 rolos cada; Anderson Santana
 // (metrosMain=0) corretamente não gera nenhum item.
+// Retorna {ativos, metros} da cascata simples e agregada (vazão decrescendo
+// uniformemente ao longo de TODA a chicoteada, usando o total de saídas do campo
+// inteiro — sem simulação ponto-a-ponto). "metros" = quantos metros de cada diâmetro a
+// cascata precisa no total (usado direto pra gerar a Rede Chicoteada de Micro-
+// Aspersão/Aspersão, que não têm a simulação ponto-a-ponto do Submain-Gotejo).
 function diametrosAtivosChicoteadaTotal(d){
   const Qtotal=parseFloat(d.vazaoValvula)||0;
   const metrosTotal=parseFloat(d.metrosChicoteada)||0;
   const espLinhas=parseFloat(d.espacamentoLinhas)||0;
   const v=parseFloat(d.velocidadeSubmain)||0;
-  const ativos={};
-  if(!Qtotal||!metrosTotal||!espLinhas||!v)return ativos;
+  const ativos={},metros={};
+  if(!Qtotal||!metrosTotal||!espLinhas||!v)return{ativos,metros};
   const nSaidas=metrosTotal/espLinhas;
   const QporSaida=Qtotal/nSaidas;
   const capacidade=di=>3600*Math.PI*(v*Math.pow(di/1000/2,2));
@@ -2576,16 +2721,17 @@ function diametrosAtivosChicoteadaTotal(d){
     const G=F-Fprev;
     const I=(G/QporSaida)*espLinhas;
     ativos[DI]=I>0;
+    metros[DI]=I;
     Fprev=F;
   }
-  return ativos;
+  return{ativos,metros};
 }
 function gerarItensRedeSecundaria(d){
   const metrosMain=parseFloat(d.metrosMain)||0;
   const Qtotal=parseFloat(d.vazaoValvula)||0;
   const vMain=parseFloat(d.velocidadeMain)||0;
   if(!metrosMain||!Qtotal||!vMain)return[];
-  const ativos=diametrosAtivosChicoteadaTotal(d);
+  const{ativos}=diametrosAtivosChicoteadaTotal(d);
   const capacidade=di=>3600*Math.PI*(vMain*Math.pow(di/1000/2,2));
   const limiar=Qtotal/3;
   const selecionados=[];
@@ -2633,8 +2779,11 @@ function fatorAreaVlookup(area){
   return fator;
 }
 function gerarItensFinalDeLinha(d){
-  if(d.sistemaIrrigacao!=='Gotejamento')return[];
-  const numRedes=parseFloat(d.numRedesChicoteadas)||0;
+  // Gotejamento e Micro-Aspersão: qtd = multiplicador × numRedesChicoteadas (D52).
+  // Aspersão (ramo IF real diferente): qtd = numMain (D55) direto — sem orçamento
+  // real disponível pra conferir esse ramo específico.
+  if(d.sistemaIrrigacao!=='Gotejamento'&&d.sistemaIrrigacao!=='Micro-Aspersão'&&d.sistemaIrrigacao!=='Aspersão')return[];
+  const numRedes=d.sistemaIrrigacao==='Aspersão'?(parseFloat(d.numMain)||0):(parseFloat(d.numRedesChicoteadas)||0);
   if(!numRedes)return[];
   return[
     {fornecedor:'Bolsa Irriga',codigo:'801498',descricao:'JOELHO PVC IRR SOLDA 90 35MM DURO',qtd:2*numRedes,grupo:'Final de Linha'},
@@ -2719,8 +2868,12 @@ function gerarItensLuvasSecundarias(ativos,fatorArea){
 // Ponto de entrada único: calcula os multiplicadores (C234/C243/C249 da aba real) a
 // partir dos diâmetros ativos + numRedesChicoteadas, e gera todos os itens acima.
 function gerarItensFinalDeRamal(d){
-  if(d.sistemaIrrigacao!=='Gotejamento')return[];
-  const{ativos}=calcularRolosRedeChicoteada(d);
+  // Confirmado na aba real (Parametros!C226 etc.): Aspersão zera essa categoria
+  // inteira (IF(D60="Aspersão",0,...)); Micro-Aspersão passa pelo mesmo caminho que
+  // Gotejamento, só que usando a cascata simples agregada (sem simulação ponto-a-
+  // ponto) em vez da Submain-Gotejo.
+  if(d.sistemaIrrigacao!=='Gotejamento'&&d.sistemaIrrigacao!=='Micro-Aspersão')return[];
+  const{ativos}=d.sistemaIrrigacao==='Gotejamento'?calcularRolosRedeChicoteada(d):diametrosAtivosChicoteadaTotal(d);
   const numRedes=parseFloat(d.numRedesChicoteadas)||0;
   const diametrosAv=[144,120,97.6,72.5,48.2,35.7].filter(di=>ativos[di]);
   const diametrosTeCurva=[144,120,97.6,72.5,48.2].filter(di=>ativos[di]);
@@ -3015,14 +3168,23 @@ function carregarModelo(nomeModelo){
     // Gotejador + Tubo de Polietileno + Conectores — ver fórmulas no comentário de
     // gerarItensGotejadorConectores.
     if(cfgSel.campoGotejador){
-      const itensGotConect=gerarItensGotejadorConectores(d,cfgSel.campoGotejador);
-      itensGotConect.forEach(it=>{
+      // Gotejador (Gotejamento) / Micro-Aspersor (Micro-Aspersão) / Aspersor
+      // (Aspersão) + Tubo de Polietileno + Conectores — cada função já checa
+      // d.sistemaIrrigacao e só gera itens pro sistema certo.
+      const itensEmissor=[
+        ...gerarItensGotejadorConectores(d,cfgSel.campoGotejador),
+        ...gerarItensMicroAspersorConectores(d,cfgSel.campoGotejador),
+        ...gerarItensAspersorConectores(d),
+      ];
+      itensEmissor.forEach(it=>{
         adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
-      // Rede Chicoteada (tubo PN40 + adesivo/solução/pano) — ver fórmulas no comentário
-      // de simularRedeChicoteada/gerarItensRedeChicoteada.
-      const itensRedeChic=gerarItensRedeChicoteada(d);
+      // Rede Chicoteada (tubo PN40 + adesivo/solução/pano) — Gotejamento usa a
+      // simulação ponto-a-ponto (Submain-Gotejo); Micro-Aspersão/Aspersão usam a
+      // cascata simples agregada. Ver comentários de gerarItensRedeChicoteada e
+      // gerarItensRedeChicoteadaSimples.
+      const itensRedeChic=[...gerarItensRedeChicoteada(d),...gerarItensRedeChicoteadaSimples(d)];
       itensRedeChic.forEach(it=>{
         adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
