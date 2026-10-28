@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.21 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.22 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -468,6 +468,21 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.22 (2026-10-28): corrige bug GRAVE na Rede Chicoteada (v1.21): a quantidade de
+//   tubo estava sendo calculada a partir dos metros de UM header representativo da
+//   simulação da aba "Submain - Gotejo" (cujo comprimento já é metrosChicoteada/
+//   numRedesChicoteadas), sem nunca reaplicar o fator numRedesChicoteadas de volta —
+//   subestimando a quantidade real em até ~20x num dos orçamentos reais (Antonio
+//   Gilberto, numRedesChicoteadas=20). A aba real NÃO usa os metros do header sozinho:
+//   ela usa a PROPORÇÃO de cada diâmetro nesse header (M/M9 na aba "Rede Chicoteada-
+//   Secundaria") e aplica essa proporção sobre o metrosChicoteada TOTAL (sem dividir
+//   por numRedesChicoteadas) pra achar os rolos — corrigido em
+//   gerarItensRedeChicoteada. Reconferido contra os 2 orçamentos reais: Antonio
+//   Gilberto bate exato em 3 dos 5 diâmetros (125/75/35mm) e fica a ~8% nos outros 2
+//   (total de rolos quase idêntico, só redistribuído entre diâmetros vizinhos — mesma
+//   imprecisão de "lookup" já documentada na v1.21); Anderson Santana bate exato ou
+//   muito próximo nos 3 diâmetros que ele usa. Bug encontrado numa segunda revisão a
+//   pedido do usuário, antes de qualquer orçamento real ter sido gerado com a v1.21.
 // v1.21 (2026-10-28): porta Rede Chicoteada (tubo PN40 + adesivo/solução/pano) pra
 //   regras dinâmicas — decifrado da aba real "Submain - Gotejo": simulação ponto-a-ponto
 //   por saída ao longo da chicoteada (até 140 pontos espaçados pelo Espaçamento entre
@@ -808,7 +823,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.21';
+const APP_VERSION='v1.22';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -2376,11 +2391,25 @@ function gerarItensRedeChicoteada(d){
   if(d.sistemaIrrigacao!=='Gotejamento')return[];
   const buckets=simularRedeChicoteada(d);
   if(!buckets)return[];
+  // A simulação acima roda sobre UM header representativo (comprimento =
+  // metrosChicoteada/numRedesChicoteadas), já que todos os headers são idênticos. A
+  // aba real NÃO usa os metros desse header diretamente: ela pega a PROPORÇÃO de cada
+  // diâmetro nesse header (M/M9, aba "Rede Chicoteada-Secundaria") e aplica essa
+  // proporção sobre o metrosChicoteada TOTAL (B3='Dados de Entrada'!D51, sem dividir
+  // por numRedesChicoteadas) pra achar os rolos de cada diâmetro — conferido exato
+  // contra os 2 orçamentos reais (Anderson Santana e Antonio Gilberto) depois de
+  // corrigir esse ponto: a 1ª versão (v1.21) tinha usado os metros do header sozinho,
+  // subestimando a quantidade em até ~20x (um por numRedesChicoteadas).
+  const metrosM={};
+  for(const DI of Object.keys(buckets).map(Number))metrosM[DI]=Math.ceil(buckets[DI]);
+  const totalM=Object.values(metrosM).reduce((a,b)=>a+b,0);
+  const metrosChicoteadaTotal=parseFloat(d.metrosChicoteada)||0;
   const itens=[],gramasPorDiametro={};
-  for(const DI of Object.keys(buckets).map(Number)){
-    const metros=Math.ceil(buckets[DI]);
-    if(metros<=0)continue;
-    const rolos=Math.ceil(metros/5.8);
+  if(totalM>0)for(const DI of Object.keys(metrosM).map(Number)){
+    if(metrosM[DI]<=0)continue;
+    const fracao=metrosM[DI]/totalM;
+    const rolos=Math.ceil((metrosChicoteadaTotal*fracao)/5.8);
+    if(rolos<=0)continue;
     const[fornecedor,codigo,descricao]=REDE_CHICOTEADA_CATALOGO_TUBO[DI];
     itens.push({fornecedor,codigo,descricao,qtd:rolos,grupo:'Rede Chicoteada'});
     gramasPorDiametro[DI]=rolos*REDE_CHICOTEADA_GRAMAS_POR_ROLO[DI];
