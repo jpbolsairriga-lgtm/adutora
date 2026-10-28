@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.24 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.25 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -177,11 +177,12 @@ tr.item-row.inativo{opacity:.4}
   capacidade pra pelo menos 1/3 da vazão da válvula e divide os metros de Main em partes iguais entre eles — essa, ao
   contrário das outras duas, vale pra qualquer sistema de irrigação), Final de Linha, Anti-Vácuo (6 variantes), Reduções de
   TE e Curva90 (5 variantes cada) e Luvas Secundárias (todas dependem de quais diâmetros a Rede Chicoteada ativa + nº de
-  redes chicoteadas — testado contra orçamento real, todos os multiplicadores batem exato). Ainda carregam as quantidades
-  de um projeto de exemplo (fórmula ainda não portada): Junção Adutora/Derivação Adutora (depende de uma aba separada,
-  "Derivações - Adutora", ainda não investigada) e Luvas Principais (casamento do diâmetro da Adutora com uma tabela de
-  luvas, mecanismo de matching ainda não decifrado, baixo impacto financeiro) — revise/ajuste manualmente, ou importe um
-  orçamento real parecido em Excel e use o Relatório de Divergências pra comparar/corrigir item a item.
+  redes chicoteadas) e Derivação Adutora/Junção Adutora (kit de conexão onde a chicoteada se liga na Adutora principal,
+  casado com o diâmetro nominal calculado da Adutora 01/02 — 8 diâmetros possíveis, 50 a 222mm) — todas testadas contra
+  orçamento real, multiplicadores batem exato. Só falta "Luvas Principais" (casamento do diâmetro da Adutora com uma
+  tabela de luvas simples — mecanismo de matching ainda não decifrado, baixo impacto financeiro) — se precisar, revise/
+  ajuste manualmente, ou importe um orçamento real parecido em Excel e use o Relatório de Divergências pra comparar item
+  a item.
 </div>
 
 <div class="tabs">
@@ -471,6 +472,25 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.25 (2026-10-28): porta Derivação Adutora/Junção Adutora pra regras dinâmicas —
+//   decifrado na aba real "Derivações - Adutora" (24 itens, 8 diâmetros) + "Parametros"
+//   linhas 104-119. É o kit de conexão (TE ou Curva90 + eventual luva de redução, às
+//   vezes +1 tubo-stub de transição métrico→DN) no ponto onde a chicoteada se liga na
+//   Adutora principal — casado com o diâmetro NOMINAL que a Adutora de verdade
+//   calculou (resultado.nominal do motor de hidraulica-adutora.js), não com a Rede
+//   Chicoteada. Usa Adutora 01 E Adutora 02 juntas (infra compartilhada, mesmo padrão
+//   do Motor/Quadro) — cada uma que "casar" com um dos 8 diâmetros (50/75/100/118/125/
+//   150/170/222mm) soma na mesma linha do BOM, com multiplicadores fixos ×2 (grupo TE)
+//   e ×4 (grupo Curva90), replicados exatamente como a aba real — incluindo 2
+//   assimetrias genuínas nela mesma (a TE de 100mm e a 2ª luva da Curva90 de 170mm só
+//   contam a Adutora 01, não a 02 — conferido célula a célula, não é erro meu).
+//   Testado contra o orçamento real do Antonio Gilberto (nominal Adutora01=170mm):
+//   bate EXATO nos 5 itens do grupo 170mm (TE160=2, Luva170x160=6, Curva160=4,
+//   Luva170x160=8, Tubo-stub=4).
+//   Com isso, as 6 categorias da lista original (Junção Adutora, Anti-Vácuo, Luvas,
+//   F.Linha/Av/TE/Curva90) ficam todas portadas. Resta só "Luvas Principais"
+//   (casamento do diâmetro da Adutora com uma tabela de luvas simples — mecanismo
+//   ainda não decifrado, baixo impacto financeiro) como gap conhecido.
 // v1.24 (2026-10-28): porta Final de Linha, Anti-Vácuo (6 variantes), Reduções de TE e
 //   Curva90 (5 variantes cada) e Luvas Secundárias pra regras dinâmicas — decifrado na
 //   aba real "Parametros" (linhas 193-249) + "Conj.Irri.Projeto" (códigos reais dos
@@ -867,7 +887,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.24';
+const APP_VERSION='v1.25';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -2677,6 +2697,66 @@ function gerarItensFinalDeRamal(d){
     ...gerarItensLuvasSecundarias(ativos,fatorArea),
   ];
 }
+// Derivação Adutora (Junção Adutora) — porta da aba real "Derivações - Adutora" (24
+// itens, 8 diâmetros) + "Parametros" linhas 104-119. É o kit de conexão (TE ou Curva90
+// + eventual luva de redução) no ponto onde a chicoteada se liga na Adutora principal,
+// casado com o DIÂMETRO NOMINAL que a Adutora de verdade calculou (não com a Rede
+// Chicoteada) — usa Adutora 01 E Adutora 02 (infra compartilhada, mesmo padrão do
+// Motor/Quadro: cada combinação que casar soma na mesma linha do BOM). Cada diâmetro
+// tem até 2 "grupos" de peças (um lado "TE", outro lado "Curva90") com multiplicadores
+// fixos ×2 (TE) e ×4 (Curva90) — replicados exatamente como a aba real, incluindo 2
+// assimetrias genuínas nela (100mm-TE e a 2ª luva do 170mm-Curva90 só contam a Adutora
+// 01, não a 02 — confirmado olhando a fórmula real célula a célula, não é erro meu).
+// 118mm e 170mm precisam de mais um "tubo-stub" curto (transição de padrão métrico pra
+// DN de solda) cuja quantidade é a soma das 2 luvas do próprio grupo.
+const DERIVACAO_ADUTORA_KITS={
+  50:{te:[{codigo:'701288',descricao:'TE BSA SOLD IRRIRGA-LF 50',mult:1}],curva:[{codigo:'801499',descricao:'JOELHO PVC IRR SOLDA 90 50MM DURO',mult:1}]},
+  75:{te:[{codigo:'701304',descricao:'TE BSA SOLD IRRIGA-LF 75',mult:1}],curva:[{codigo:'801497',descricao:'JOELHO PVC IRR SOLDA 90 75MM DURO',mult:1}]},
+  100:{te:[{codigo:'701286',descricao:'TE BSA SOLD IRRIGA-LF 100',mult:1,soAdutora01:true}],curva:[{codigo:'801496',descricao:'JOELHO PVC IRR SOLDA 90 100MM DURO',mult:1}]},
+  118:{te:[{fornecedor:'Netafim',codigo:'701312',descricao:'TE PVC SOLDAVEL 110MM PLASSON/FIP',mult:1},{codigo:'701888',descricao:'LUVA PVC REDUCAO 118 X 110',mult:3}],
+    curva:[{fornecedor:'Netafim',codigo:'701119',descricao:'CURVA 90. SOLDA 110MM PLASSON/FIP',mult:1},{codigo:'701888',descricao:'LUVA PVC REDUCAO 118 X 110',mult:2}],
+    tuboStub:{codigo:'701254',descricao:'TUBO PVC PBA 110 CL 10 - 5,6M'}},
+  125:{te:[{codigo:'801047',descricao:'TE PVC SOLDAVEL 125MM PLASSON/FIP',mult:1}],curva:[{codigo:'701859',descricao:'CURVA 90. SOLDA 125MM PLASSON/FIP',mult:1}]},
+  150:{te:[{codigo:'801177',descricao:'TE PVC SOLDAVEL 160MM PLASSON/FIP',mult:1},{codigo:'801668',descricao:'LUVA DE REDUÇAO PVC 160 X 150',mult:3}],
+    curva:[{codigo:'701329',descricao:'CURVA 90. SOLDA 160 MM PLASSON/FIP',mult:1},{codigo:'801668',descricao:'LUVA DE REDUÇAO PVC 160 X 150',mult:2}]},
+  170:{te:[{codigo:'801177',descricao:'TE PVC SOLDAVEL 160MM PLASSON/FIP',mult:1},{codigo:'801347',descricao:'LUVA RED 170 X 160MM SOLD',mult:3}],
+    curva:[{codigo:'701329',descricao:'CURVA 90. SOLDA 160 MM PLASSON/FIP',mult:1},{codigo:'801347',descricao:'LUVA RED 170 X 160MM SOLD',mult:2,soAdutora01:true}],
+    tuboStub:{codigo:'701338',descricao:'TUBO PVC PBA 160 CL 10 - 5,6M'}},
+  222:{te:[{codigo:'801008',descricao:'TE PVC SOLDAVEL 225MM PLASSON/FIP',mult:1},{fornecedor:'Netafim',codigo:'01520-103596',descricao:'ADAPTADOR PVC PBS 225 X 222 MM',mult:3}],
+    curva:[{codigo:'801009',descricao:'CURVA 90. SOLDA 225 MM PLASSON/FIP',mult:1},{fornecedor:'Netafim',codigo:'01520-103596',descricao:'ADAPTADOR PVC PBS 225 X 222 MM',mult:2}]},
+};
+function nominalParaDerivacaoAdutora(nominal){
+  const candidatos=[50,75,100,118,125,150,170,222];
+  if(Math.abs(nominal-50.5)<0.01)return 50;
+  if(Math.abs(nominal-101.6)<0.01)return 100;
+  return candidatos.includes(nominal)?nominal:null;
+}
+function gerarItensDerivacaoAdutora(nominalAdutora01,nominalAdutora02){
+  const itens=[];
+  for(const diam of Object.keys(DERIVACAO_ADUTORA_KITS).map(Number)){
+    const matchD=nominalParaDerivacaoAdutora(nominalAdutora01)===diam?1:0;
+    const matchJ=nominalParaDerivacaoAdutora(nominalAdutora02)===diam?1:0;
+    const kit=DERIVACAO_ADUTORA_KITS[diam];
+    let somaTe=0,somaCurva=0;
+    kit.te.forEach(it=>{
+      const m=it.soAdutora01?matchD:(matchD+matchJ);
+      const qtd=it.mult*2*m;
+      somaTe+=qtd;
+      if(qtd>0)itens.push({fornecedor:it.fornecedor||'Bolsa Irriga',codigo:it.codigo,descricao:it.descricao,qtd,grupo:'Derivação Adutora'});
+    });
+    kit.curva.forEach(it=>{
+      const m=it.soAdutora01?matchD:(matchD+matchJ);
+      const qtd=it.mult*4*m;
+      somaCurva+=qtd;
+      if(qtd>0)itens.push({fornecedor:it.fornecedor||'Bolsa Irriga',codigo:it.codigo,descricao:it.descricao,qtd,grupo:'Derivação Adutora'});
+    });
+    if(kit.tuboStub){
+      const qtdStub=(somaTe+somaCurva)*0.2;
+      if(qtdStub>0)itens.push({fornecedor:'Bolsa Irriga',codigo:kit.tuboStub.codigo,descricao:kit.tuboStub.descricao,qtd:qtdStub,grupo:'Derivação Adutora'});
+    }
+  }
+  return itens;
+}
 // Converte texto TUDO EM MAIÚSCULO (como vem de colunas da planilha, ex.: "SUCÇÃO
 // 75MM PLASSON (NEGATIVA)") para uma forma mais legível. Se o texto já tem letras
 // minúsculas (ex.: descrição de Filtragem), deixa como está.
@@ -2815,6 +2895,13 @@ function carregarModelo(nomeModelo){
       // fórmulas no comentário de gerarItensFinalDeRamal.
       const itensFinalRamal=[...gerarItensFinalDeLinha(d),...gerarItensFinalDeRamal(d)];
       itensFinalRamal.forEach(it=>{
+        adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
+        n++;
+      });
+      // Derivação Adutora (Junção Adutora) — ver fórmulas no comentário de
+      // gerarItensDerivacaoAdutora. Usa Adutora 01 e 02 (infra compartilhada).
+      const itensDerivacao=gerarItensDerivacaoAdutora(atual.adutora01?.resultado?.nominal,atual.adutora02?.resultado?.nominal);
+      itensDerivacao.forEach(it=>{
         adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
