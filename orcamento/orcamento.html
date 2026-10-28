@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.25 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.26 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -161,28 +161,15 @@ tr.item-row.inativo{opacity:.4}
   (Google Elevation API) e calculam diâmetro, classe de pressão (PN) e motor sugerido — mesmo motor e mesma mecânica de
   mapa do <a href="../adutora/adutora-avancada.html" target="_blank">Cálculo Avançado de Adutora</a> (a chave API do Google
   é compartilhada entre as duas ferramentas). O golpe de aríete/transiente ainda fica fora — use o
-  <a href="../transiente-moc/" target="_blank">Cálculo de Transiente</a> separadamente, se precisar. Já usam o motor de
-  seleção/cálculo real da planilha (conferido linha a linha contra orçamentos reais, via o botão "📊 Relatório de
-  Divergências" nos orçamentos importados de Excel): Sucção, Filtragem, Saída Moto-Bomba, Bomba Auxiliar, Moto-Bomba
-  Principal + Quadro de Partida (dimensionado pela potência TOTAL com margem, não dividida pelo nº de bombas — cada bomba é
-  redundante, não "rateada"), Automação da Válvula da Moto-Bomba (regulador de pressão certo por pressão×vazão), Cavaletes
-  (faixa de vazão da válvula × nº de válvulas + casamento do diâmetro nominal com o manifold), Tubo da Adutora (classe de PN
-  × diâmetro, direto dos trechos calculados), Serviços do Projeto (Montagem/Mapeamento = área × preço/ha; Abertura de
-  Valetas = metros de adutora+chicoteada+main × preço/m — preços em Configurações; Frete não tem fórmula, entra zerado para
-  preencher à mão), Gotejador + Tubo de Polietileno + Conectores + Clip p/ Vinhedo (metros de gotejador/conexões calculados
-  por área, espaçamento entre linhas e espaçamento do emissor — só pra sistema Gotejamento, Micro-Aspersão/Aspersão ainda
-  não portados), Rede Chicoteada (tubo PN40 que alimenta as linhas de gotejo, simulação ponto-a-ponto por saída com diâmetro
-  telescopando conforme a vazão cai — porta da aba real "Submain - Gotejo" — + adesivo/solução/pano; dentro de ~2-3% dos
-  orçamentos reais, mesma limitação de sistema que o Gotejador), Rede Secundária (tronco "Main": seleciona os diâmetros com
-  capacidade pra pelo menos 1/3 da vazão da válvula e divide os metros de Main em partes iguais entre eles — essa, ao
-  contrário das outras duas, vale pra qualquer sistema de irrigação), Final de Linha, Anti-Vácuo (6 variantes), Reduções de
-  TE e Curva90 (5 variantes cada) e Luvas Secundárias (todas dependem de quais diâmetros a Rede Chicoteada ativa + nº de
-  redes chicoteadas) e Derivação Adutora/Junção Adutora (kit de conexão onde a chicoteada se liga na Adutora principal,
-  casado com o diâmetro nominal calculado da Adutora 01/02 — 8 diâmetros possíveis, 50 a 222mm) — todas testadas contra
-  orçamento real, multiplicadores batem exato. Só falta "Luvas Principais" (casamento do diâmetro da Adutora com uma
-  tabela de luvas simples — mecanismo de matching ainda não decifrado, baixo impacto financeiro) — se precisar, revise/
-  ajuste manualmente, ou importe um orçamento real parecido em Excel e use o Relatório de Divergências pra comparar item
-  a item.
+  <a href="../transiente-moc/" target="_blank">Cálculo de Transiente</a> separadamente, se precisar. Para sistema
+  <b>Gotejamento</b>, todo o BOM comercial já usa o motor de cálculo real da planilha (conferido linha a linha contra 2
+  orçamentos reais, via o botão "📊 Relatório de Divergências" nos orçamentos importados de Excel) — da sucção à Rede
+  Secundária, passando por Adutora, Motor/Quadro de Partida, Cavaletes, Gotejador/Conectores, Rede Chicoteada, Final de
+  Linha, Anti-Vácuo, TE/Curva90, Luvas e Derivação/Junção Adutora. Pendente: <b>Micro-Aspersão e Aspersão</b> (sistemas
+  inteiros ainda não decifrados — usam tabelas de dimensionamento próprias, diferentes do Gotejamento) e o BOM comercial da
+  aba <b>Recalque</b> (ainda carrega as quantidades de um projeto de exemplo — o cálculo hidráulico da Recalque já funciona,
+  só o BOM comercial dela que falta portar). Para esses casos, ou pra conferir/corrigir qualquer detalhe, importe um
+  orçamento real parecido em Excel e use o Relatório de Divergências pra comparar item a item.
 </div>
 
 <div class="tabs">
@@ -472,6 +459,22 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.26 (2026-10-28): porta Luvas Principais pra regras dinâmicas — última categoria
+//   da lista original ("Junção Adutora, Anti-Vácuo, Luvas, F.Linha/Av/TE/Curva90").
+//   Decifrado em "Conj.Irri.Projeto" (linhas 2691-2696) + Parametros!D173/E173 (mesmo
+//   nominal calculado da Adutora 01/02 já usado em gerarItensDerivacaoAdutora — a aba
+//   real chega nele por um caminho mais complicado, INDEX/MATCH num texto livre pra
+//   Adutora 01 + referência direta a outra célula pra Adutora 02; uso o nominal já
+//   calculado pelo motor hidráulico direto, é o mesmo valor). 1 luva "de correr" por
+//   diâmetro que casar com a Adutora 01 OU 02 (candidatos 50/75/118/170/222/274mm —
+//   lista diferente da Derivação Adutora, sem 100/125/150 e com 274 a mais),
+//   multiplicado pelo Fator de Área (mesmo da Luvas Secundárias). Replica uma
+//   assimetria genuína da aba real: o candidato 274mm checa a Adutora 02 contra
+//   222mm, não 274mm (bug da planilha original, conferido célula a célula).
+//   Testado contra o orçamento real do Antonio Gilberto (nominal Adutora01=170mm,
+//   Fator de Área=2,5): bate exato (qtd=3 na luva DN150, zero nas outras 5).
+//   Com isso, a lista original de categorias pendentes ("Junção Adutora, Anti-Vácuo,
+//   Luvas, F.Linha/Av/TE/Curva90") está 100% portada.
 // v1.25 (2026-10-28): porta Derivação Adutora/Junção Adutora pra regras dinâmicas —
 //   decifrado na aba real "Derivações - Adutora" (24 itens, 8 diâmetros) + "Parametros"
 //   linhas 104-119. É o kit de conexão (TE ou Curva90 + eventual luva de redução, às
@@ -887,7 +890,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.25';
+const APP_VERSION='v1.26';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -2757,6 +2760,43 @@ function gerarItensDerivacaoAdutora(nominalAdutora01,nominalAdutora02){
   }
   return itens;
 }
+// Luvas Principais — porta da aba real "Conj.Irri.Projeto" (linhas 2691-2696) +
+// Parametros!D173/E173 (mesmo nominal calculado da Adutora 01/02 que já uso em
+// gerarItensDerivacaoAdutora, só que a aba real chega nele por um caminho mais
+// complicado — INDEX/MATCH num texto livre "Classe máx. da tubulação" pra Adutora 01,
+// e uma referência direta a outra célula pra Adutora 02; uso o nominal já calculado
+// pelo motor hidráulico direto, é o mesmo valor). 1 luva "de correr" por diâmetro que
+// casar com a Adutora 01 OU 02 — candidatos 50/75/118/170/222/274mm (lista diferente
+// da Derivação Adutora: sem 100/125/150, com 274 a mais) — multiplicado pelo Fator de
+// Área (mesmo da Luvas Secundárias) e arredondado pra cima. Replica uma assimetria
+// genuína da aba real: a checagem da Adutora 02 no candidato 274mm compara contra
+// 222mm, não 274mm (bug da planilha original, conferido célula a célula). Testado
+// contra o orçamento real do Antonio Gilberto (nominal Adutora01=170mm, Fator de
+// Área=2,5): bate exato (qtd=3 na luva DN150, zero nas outras 5).
+const LUVA_PRINCIPAL_CANDIDATOS=[
+  {nominal:50,codigo:'701894',descricao:'LUVA DE CORRER IRRIGA-LF PN 80 50'},
+  {nominal:75,codigo:'801136',descricao:'LUVA DE CORRER IRRIGA-LF PN 80 75'},
+  {nominal:118,codigo:'701247',descricao:'LUVA DE CORRER PVC JEI DN100 DEFOFO'},
+  {nominal:170,codigo:'801208',descricao:'LUVA DE CORRER PVC JEI DN150 DEFOFO'},
+  {nominal:222,codigo:'701404',descricao:'LUVA DE CORRER PVC JEI DN200 DEFOFO'},
+  {nominal:274,codigo:'802291',descricao:'LUVA DE CORRER PVC JEI DN250 DEFOFO',nominalAdutora02Checado:222},
+];
+function nominalCasaCandidato(nominal,candidato){
+  if(Math.abs((parseFloat(nominal)||0)-50.5)<0.01)return candidato===50;
+  return nominal===candidato;
+}
+function gerarItensLuvasPrincipais(nominalAdutora01,nominalAdutora02,area){
+  const fatorArea=fatorAreaVlookup(parseFloat(area)||0);
+  if(fatorArea<=0)return[];
+  const itens=[];
+  LUVA_PRINCIPAL_CANDIDATOS.forEach(c=>{
+    const matchD=nominalCasaCandidato(nominalAdutora01,c.nominal)?1:0;
+    const matchJ=nominalCasaCandidato(nominalAdutora02,c.nominalAdutora02Checado??c.nominal)?1:0;
+    const qtd=Math.ceil(fatorArea*(matchD+matchJ));
+    if(qtd>0)itens.push({fornecedor:'Bolsa Irriga',codigo:c.codigo,descricao:c.descricao,qtd,grupo:'Luvas Principais'});
+  });
+  return itens;
+}
 // Converte texto TUDO EM MAIÚSCULO (como vem de colunas da planilha, ex.: "SUCÇÃO
 // 75MM PLASSON (NEGATIVA)") para uma forma mais legível. Se o texto já tem letras
 // minúsculas (ex.: descrição de Filtragem), deixa como está.
@@ -2902,6 +2942,12 @@ function carregarModelo(nomeModelo){
       // gerarItensDerivacaoAdutora. Usa Adutora 01 e 02 (infra compartilhada).
       const itensDerivacao=gerarItensDerivacaoAdutora(atual.adutora01?.resultado?.nominal,atual.adutora02?.resultado?.nominal);
       itensDerivacao.forEach(it=>{
+        adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
+        n++;
+      });
+      // Luvas Principais — ver fórmulas no comentário de gerarItensLuvasPrincipais.
+      const itensLuvasPrinc=gerarItensLuvasPrincipais(atual.adutora01?.resultado?.nominal,atual.adutora02?.resultado?.nominal,d.area);
+      itensLuvasPrinc.forEach(it=>{
         adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
