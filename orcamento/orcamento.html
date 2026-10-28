@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.23 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.24 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -173,11 +173,15 @@ tr.item-row.inativo{opacity:.4}
   por área, espaçamento entre linhas e espaçamento do emissor — só pra sistema Gotejamento, Micro-Aspersão/Aspersão ainda
   não portados), Rede Chicoteada (tubo PN40 que alimenta as linhas de gotejo, simulação ponto-a-ponto por saída com diâmetro
   telescopando conforme a vazão cai — porta da aba real "Submain - Gotejo" — + adesivo/solução/pano; dentro de ~2-3% dos
-  orçamentos reais, mesma limitação de sistema que o Gotejador) e Rede Secundária (tronco "Main": seleciona os diâmetros com
+  orçamentos reais, mesma limitação de sistema que o Gotejador), Rede Secundária (tronco "Main": seleciona os diâmetros com
   capacidade pra pelo menos 1/3 da vazão da válvula e divide os metros de Main em partes iguais entre eles — essa, ao
-  contrário das outras duas, vale pra qualquer sistema de irrigação). Ainda carregam as quantidades de um projeto de exemplo
-  (fórmula ainda não portada): Junção Adutora, Anti-Vácuo, Luvas, F.Linha/Av/TE/Curva90 — revise/ajuste manualmente, ou
-  importe um orçamento real parecido em Excel e use o Relatório de Divergências pra comparar/corrigir item a item.
+  contrário das outras duas, vale pra qualquer sistema de irrigação), Final de Linha, Anti-Vácuo (6 variantes), Reduções de
+  TE e Curva90 (5 variantes cada) e Luvas Secundárias (todas dependem de quais diâmetros a Rede Chicoteada ativa + nº de
+  redes chicoteadas — testado contra orçamento real, todos os multiplicadores batem exato). Ainda carregam as quantidades
+  de um projeto de exemplo (fórmula ainda não portada): Junção Adutora/Derivação Adutora (depende de uma aba separada,
+  "Derivações - Adutora", ainda não investigada) e Luvas Principais (casamento do diâmetro da Adutora com uma tabela de
+  luvas, mecanismo de matching ainda não decifrado, baixo impacto financeiro) — revise/ajuste manualmente, ou importe um
+  orçamento real parecido em Excel e use o Relatório de Divergências pra comparar/corrigir item a item.
 </div>
 
 <div class="tabs">
@@ -467,6 +471,32 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.24 (2026-10-28): porta Final de Linha, Anti-Vácuo (6 variantes), Reduções de TE e
+//   Curva90 (5 variantes cada) e Luvas Secundárias pra regras dinâmicas — decifrado na
+//   aba real "Parametros" (linhas 193-249) + "Conj.Irri.Projeto" (códigos reais dos
+//   kits). Todas dependem do mesmo sinal "diâmetro ativo na Rede Chicoteada" (os rolos
+//   calculados em gerarItensRedeChicoteada, flag =rolos>1 igual a aba real) e de
+//   numRedesChicoteadas:
+//   - Final de Linha 35mm: sempre 1 kit por rede chicoteada, independe de diâmetros
+//     ativos (é sempre o fim de linha, sempre 35mm).
+//   - Anti-Vácuo: 1 kit por diâmetro ativo (150/125/100/75/50mm com colar+válvula 1";
+//     35mm com TE+bucha+válvula 1/2", kit diferente), multiplicado por
+//     ROUNDUP(numRedesChicoteadas/nºdiâmetrosAtivos,0).
+//   - TE/Curva90: cadeia de reduções-padrão (150→125→100→75→50→35, sem variante 35mm)
+//     + a peça do diâmetro ativo, multiplicado por ROUNDUP((numRedesChicoteadas×2/3)/
+//     nºAtivos,0) [TE] e ROUNDUP((numRedesChicoteadas×1/3)/nºAtivos,0) [Curva90] — a
+//     empresa assume ~2/3 dos ramais com TE e ~1/3 com Curva90 (critério fixo,
+//     confirmado com o usuário, não calculado a partir de nenhum campo).
+//   - Luvas Secundárias: 1 luva de solda por diâmetro ativo (+ 1 "de correr" pros
+//     diâmetros 50mm+), multiplicado pelo Fator de Área (VLOOKUP aproximado da área do
+//     projeto numa tabela de faixas 1-100ha → fator 1 a 6).
+//   Testado contra o orçamento real do Antonio Gilberto: TODOS os multiplicadores
+//   batem exato (C234=4, C243=4, C249=2, Fator de Área=2,5) e todas as flags de
+//   diâmetro ativo batem exato (125/100/75/50/35mm ativos, 150mm não).
+//   Pendente: "Junção Adutora"/"Derivação Adutora" (depende de uma aba separada,
+//   "Derivações - Adutora", ainda não investigada) e "Luvas Principais" (casamento do
+//   diâmetro da Adutora com uma tabela de luvas — mecanismo de matching ainda não
+//   100% decifrado, baixo impacto financeiro).
 // v1.23 (2026-10-28): porta Rede Secundária (tronco "Main") pra regras dinâmicas —
 //   decifrado junto com o usuário (confirmou 2 pontos-chave que eu tinha marcado como
 //   dúvida: o divisor "/3" é um critério de projeto fixo e intencional, não vem de
@@ -837,7 +867,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.23';
+const APP_VERSION='v1.24';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -2401,11 +2431,31 @@ function simularRedeChicoteada(d){
   }
   return buckets;
 }
+// Calcula os rolos de cada diâmetro da Rede Chicoteada (mesma conta usada pelo BOM de
+// tubos) + a flag "ativo" (aba real: Q3:Q8 = SE(O>1,1,0) — só conta como diâmetro
+// "ativo" quando precisa de MAIS DE 1 rolo, não qualquer uso). Esse flag "ativo" é o
+// mesmo sinal que a aba real usa (Parametros!E212:E217, via 'Rede Chicoteada-
+// Secundaria'!G31:G36) pra decidir Anti-Vácuo/TE/Curva90/Luvas Secundárias — reúso
+// aqui em vez de duplicar a simulação.
+function calcularRolosRedeChicoteada(d){
+  const buckets=simularRedeChicoteada(d);
+  const rolos={144:0,120:0,97.6:0,72.5:0,48.2:0,35.7:0},ativos={144:false,120:false,97.6:false,72.5:false,48.2:false,35.7:false};
+  if(!buckets)return{rolos,ativos};
+  const metrosM={};
+  for(const DI of Object.keys(buckets).map(Number))metrosM[DI]=Math.ceil(buckets[DI]);
+  const totalM=Object.values(metrosM).reduce((a,b)=>a+b,0);
+  const metrosChicoteadaTotal=parseFloat(d.metrosChicoteada)||0;
+  if(totalM>0)for(const DI of Object.keys(metrosM).map(Number)){
+    if(metrosM[DI]<=0)continue;
+    const fracao=metrosM[DI]/totalM;
+    rolos[DI]=Math.ceil((metrosChicoteadaTotal*fracao)/5.8);
+    ativos[DI]=rolos[DI]>1;
+  }
+  return{rolos,ativos};
+}
 function gerarItensRedeChicoteada(d){
   if(d.sistemaIrrigacao!=='Gotejamento')return[];
-  const buckets=simularRedeChicoteada(d);
-  if(!buckets)return[];
-  // A simulação acima roda sobre UM header representativo (comprimento =
+  // A simulação roda sobre UM header representativo (comprimento =
   // metrosChicoteada/numRedesChicoteadas), já que todos os headers são idênticos. A
   // aba real NÃO usa os metros desse header diretamente: ela pega a PROPORÇÃO de cada
   // diâmetro nesse header (M/M9, aba "Rede Chicoteada-Secundaria") e aplica essa
@@ -2414,19 +2464,13 @@ function gerarItensRedeChicoteada(d){
   // contra os 2 orçamentos reais (Anderson Santana e Antonio Gilberto) depois de
   // corrigir esse ponto: a 1ª versão (v1.21) tinha usado os metros do header sozinho,
   // subestimando a quantidade em até ~20x (um por numRedesChicoteadas).
-  const metrosM={};
-  for(const DI of Object.keys(buckets).map(Number))metrosM[DI]=Math.ceil(buckets[DI]);
-  const totalM=Object.values(metrosM).reduce((a,b)=>a+b,0);
-  const metrosChicoteadaTotal=parseFloat(d.metrosChicoteada)||0;
+  const{rolos}=calcularRolosRedeChicoteada(d);
   const itens=[],gramasPorDiametro={};
-  if(totalM>0)for(const DI of Object.keys(metrosM).map(Number)){
-    if(metrosM[DI]<=0)continue;
-    const fracao=metrosM[DI]/totalM;
-    const rolos=Math.ceil((metrosChicoteadaTotal*fracao)/5.8);
-    if(rolos<=0)continue;
+  for(const DI of Object.keys(rolos).map(Number)){
+    if(rolos[DI]<=0)continue;
     const[fornecedor,codigo,descricao]=REDE_CHICOTEADA_CATALOGO_TUBO[DI];
-    itens.push({fornecedor,codigo,descricao,qtd:rolos,grupo:'Rede Chicoteada'});
-    gramasPorDiametro[DI]=rolos*REDE_CHICOTEADA_GRAMAS_POR_ROLO[DI];
+    itens.push({fornecedor,codigo,descricao,qtd:rolos[DI],grupo:'Rede Chicoteada'});
+    gramasPorDiametro[DI]=rolos[DI]*REDE_CHICOTEADA_GRAMAS_POR_ROLO[DI];
   }
   const gramasTotal=Object.values(gramasPorDiametro).reduce((a,b)=>a+b,0);
   if(gramasTotal>0){
@@ -2499,6 +2543,139 @@ function gerarItensRedeSecundaria(d){
     const[fornecedor,codigo,descricao]=REDE_CHICOTEADA_CATALOGO_TUBO[DI];
     return{fornecedor,codigo,descricao,qtd:rolosPorDiametro,grupo:'Rede Secundaria'};
   });
+}
+// Final de Ramal/Anti-Vácuo/Reduções de TE e Curva90/Luvas Secundárias — porta da aba
+// real "Parametros" (linhas 193-249) + "Conj.Irri.Projeto". Todas dependem do mesmo
+// sinal "diâmetro ativo na Rede Chicoteada" (calcularRolosRedeChicoteada().ativos) e de
+// numRedesChicoteadas (nº de headers idênticos no projeto):
+//  • Final de Linha 35mm: SEMPRE 1 kit (joelho×2 + registro esfera) por rede
+//    chicoteada — é o fim de linha, sempre no menor diâmetro, independe de quais
+//    diâmetros estão ativos.
+//  • Anti-Vácuo (150/125/100/75/50mm com colar+válvula 1"; 35mm com TE+bucha+válvula
+//    1/2", kit diferente): 1 kit por diâmetro ATIVO, multiplicado por
+//    ROUNDUP(numRedesChicoteadas/nº de diâmetros ativos, 0) — ou seja, divide as
+//    "pontas" de rede igualmente entre os diâmetros que de fato aparecem no projeto.
+//  • Reduções de TE e de Curva90 (150/125/100/75/50mm, SEM variante 35mm — não existe
+//    "reduzir para dentro do já-menor"): cadeia de reduções-padrão (150→125→100→75→
+//    50→35) + a peça (TE ou Curva90) do diâmetro ativo, multiplicado por
+//    ROUNDUP((numRedesChicoteadas×2/3)/nºAtivos,0) pra TE e ROUNDUP((numRedesChicoteadas
+//    ×1/3)/nºAtivos,0) pra Curva90 — a empresa assume ~2/3 dos ramais emendam com TE e
+//    ~1/3 com Curva90 (confirmado como critério fixo, não calculado).
+//  • Luvas Secundárias: 1 luva de solda por diâmetro ativo (+ 1 luva "de correr" pros
+//    diâmetros 50mm+), multiplicado pelo "Fator de Área" (VLOOKUP aproximado de
+//    Dados de Entrada!área numa tabela de faixas 1-100ha → fator 1 a 6 — mais área,
+//    mais pontos de emenda esperados por rede).
+// Testado contra os 2 orçamentos reais via os diâmetros ativos já conferidos em
+// gerarItensRedeChicoteada (v1.22).
+const DI_PARA_NOMINAL_PN40={144:150,120:125,97.6:100,72.5:75,48.2:50,35.7:35};
+function fatorAreaVlookup(area){
+  const tabela=[[1,1],[15,1],[20,1.5],[30,2],[40,2.5],[50,3],[60,4],[70,5],[80,5.5],[90,5.5],[100,6]];
+  let fator=tabela[0][1];
+  for(const[lim,f]of tabela){if(area>=lim)fator=f;}
+  return fator;
+}
+function gerarItensFinalDeLinha(d){
+  if(d.sistemaIrrigacao!=='Gotejamento')return[];
+  const numRedes=parseFloat(d.numRedesChicoteadas)||0;
+  if(!numRedes)return[];
+  return[
+    {fornecedor:'Bolsa Irriga',codigo:'801498',descricao:'JOELHO PVC IRR SOLDA 90 35MM DURO',qtd:2*numRedes,grupo:'Final de Linha'},
+    {fornecedor:'Bolsa Irriga',codigo:'701282',descricao:'REGISTRO ESFERA VS SOLD IRRIGA DN35',qtd:1*numRedes,grupo:'Final de Linha'},
+  ];
+}
+const AV_COLAR_POR_DI={144:['801341','COLAR DE TOMADA 150MM X 1" P/ IRRIG'],120:['801182',"COLAR DE TOMADA 125MM X 1'' P IRRIGACAO"],
+  97.6:['701785',"COLAR DE TOMADA 100MM X 1'' P IRRIGACAO"],72.5:['901144',"COLAR DE TOMADA 75 X 1''"],48.2:['701784',"COLAR DE TOMADA 50MM X 1'' P IRRIGACAO"]};
+function gerarItensAntiVacuo(ativos,multiplicador){
+  if(multiplicador<=0)return[];
+  const itens=[];
+  for(const DI of[144,120,97.6,72.5,48.2]){
+    if(!ativos[DI])continue;
+    const[codigoColar,descColar]=AV_COLAR_POR_DI[DI];
+    const g='Anti-Vácuo';
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'901015',descricao:'ADAPTADOR PVC M BS RM 32X1"',qtd:multiplicador,grupo:g});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:codigoColar,descricao:descColar,qtd:multiplicador,grupo:g});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'701292',descricao:'FITA VEDA ROSC 18MM X 50M',qtd:multiplicador,grupo:g});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'701382',descricao:'JOELHO 90 SOLD 32MM',qtd:2*multiplicador,grupo:g});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'801101',descricao:"LUVA SOLD MISTA 32MM X 1'",qtd:multiplicador,grupo:g});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'701397',descricao:'VALVULA VENTOSA  DUPLA FUNÇAO 1" P/IRRIG',qtd:multiplicador,grupo:g});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'701207',descricao:'TUBO SOLD NBR 5648 6,00M 32MM',qtd:0.2*multiplicador,grupo:g});
+  }
+  if(ativos[35.7]){
+    const g='Anti-Vácuo';
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'701010',descricao:"BERMAD VALVULA ANTIVACUO 1/2''",qtd:multiplicador,grupo:g});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'801686',descricao:'TE C/ROSCA DER IRRIGA-LF 35 X 1',qtd:multiplicador,grupo:g});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'701221',descricao:'BUCHA RED C/ROSCA 1 X 1/2',qtd:multiplicador,grupo:g});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'801101',descricao:"LUVA SOLD MISTA 32MM X 1'",qtd:multiplicador,grupo:g});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'901015',descricao:'ADAPTADOR PVC M BS RM 32X1"',qtd:multiplicador,grupo:g});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'701382',descricao:'JOELHO 90 SOLD 32MM',qtd:2*multiplicador,grupo:g});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'701207',descricao:'TUBO SOLD NBR 5648 6,00M 32MM',qtd:0.2*multiplicador,grupo:g});
+  }
+  return itens;
+}
+const REDUCAO_CHAIN_POR_NOMINAL={
+  150:{codigo:'701275',descricao:'RED BSA SOLD IRRIGA-LF PN80 150X125MM'},
+  125:{codigo:'801326',descricao:'RED BSA SOLD IRRIGA-LF PN80 125X100MM'},
+  100:{codigo:'701290',descricao:'REDUCAO BSA SD IRRIGA-LF 100X75'},
+  75:{codigo:'701289',descricao:'REDUCAO BSA SD IRRIGA-LF 75X50'},
+  50:{codigo:'701271',descricao:'REDUCAO BSA SD IRRIGA-LF 50X35'},
+};
+const REDUCAO_ORDEM_NOMINAL=[150,125,100,75,50];
+function cadeiaReducoesRamal(nominalInicial){
+  const idx=REDUCAO_ORDEM_NOMINAL.indexOf(nominalInicial);
+  return REDUCAO_ORDEM_NOMINAL.slice(idx).map(n=>REDUCAO_CHAIN_POR_NOMINAL[n]);
+}
+const TE_CORPO_POR_NOMINAL={150:{codigo:'701896',descricao:'TE BSA SOLD IRRIGA - LF PN80 150MM'},125:{codigo:'701985',descricao:'TE BSA SOLD IRRIGA - LF PN80 125MM'},
+  100:{codigo:'701286',descricao:'TE BSA SOLD IRRIGA-LF 100'},75:{codigo:'701304',descricao:'TE BSA SOLD IRRIGA-LF 75'},50:{codigo:'701288',descricao:'TE BSA SOLD IRRIRGA-LF 50'}};
+const CURVA90_CORPO_POR_NOMINAL={150:{codigo:'701893',descricao:'CURVA 90 PB SD IRRIGA-LF PN80 150MM'},125:{codigo:'701307',descricao:'CURVA 90 PB SD IRRIGA-LF PN80 125MM'},
+  100:{codigo:'801496',descricao:'JOELHO PVC IRR SOLDA 90 100MM DURO'},75:{codigo:'801497',descricao:'JOELHO PVC IRR SOLDA 90 75MM DURO'},50:{codigo:'801499',descricao:'JOELHO PVC IRR SOLDA 90 50MM DURO'}};
+function gerarItensReducaoRamal(corpoMap,grupo,ativos,multiplicador){
+  if(multiplicador<=0)return[];
+  const itens=[];
+  for(const DI of[144,120,97.6,72.5,48.2]){
+    if(!ativos[DI])continue;
+    const nominal=DI_PARA_NOMINAL_PN40[DI];
+    cadeiaReducoesRamal(nominal).forEach(r=>itens.push({fornecedor:'Bolsa Irriga',codigo:r.codigo,descricao:r.descricao,qtd:multiplicador,grupo}));
+    const corpo=corpoMap[nominal];
+    itens.push({fornecedor:'Bolsa Irriga',codigo:corpo.codigo,descricao:corpo.descricao,qtd:multiplicador,grupo});
+  }
+  return itens;
+}
+const LUVA_SOLDA_POR_DI={144:['701845','LUVA SOLD IRRIGA-LF PN 80 150MM'],120:['701267','LUVA SOLD IRRIGA-LF PN 80 125MM'],
+  97.6:['701303','LUVA SOLD.IRRIGA-LF 100'],72.5:['701302','LUVA SOLD.IRRIGA-LF 75'],48.2:['701285','LUVA SOLD.IRRIGA-LF 50'],35.7:['701265','LUVA SOLD.IRRIGA-LF 35']};
+const LUVA_CORRER_POR_DI={144:['801441','LUVA CORRER IRRIGA-LF PN 80 150MM'],120:['801138','LUVA DE CORRER IRRIGA-LF PN 80 125MM'],
+  97.6:['701846','LUVA DE CORRER IRRIGA-LF PN125 100'],72.5:['801136','LUVA DE CORRER IRRIGA-LF PN 80 75'],48.2:['701894','LUVA DE CORRER IRRIGA-LF PN 80 50']};
+function gerarItensLuvasSecundarias(ativos,fatorArea){
+  if(fatorArea<=0)return[];
+  const itens=[];
+  for(const DI of Object.keys(ativos).map(Number)){
+    if(!ativos[DI])continue;
+    const[codSolda,descSolda]=LUVA_SOLDA_POR_DI[DI];
+    itens.push({fornecedor:'Bolsa Irriga',codigo:codSolda,descricao:descSolda,qtd:fatorArea,grupo:'Luvas Secundarias'});
+    if(LUVA_CORRER_POR_DI[DI]){
+      const[codCorrer,descCorrer]=LUVA_CORRER_POR_DI[DI];
+      itens.push({fornecedor:'Bolsa Irriga',codigo:codCorrer,descricao:descCorrer,qtd:fatorArea,grupo:'Luvas Secundarias'});
+    }
+  }
+  return itens;
+}
+// Ponto de entrada único: calcula os multiplicadores (C234/C243/C249 da aba real) a
+// partir dos diâmetros ativos + numRedesChicoteadas, e gera todos os itens acima.
+function gerarItensFinalDeRamal(d){
+  if(d.sistemaIrrigacao!=='Gotejamento')return[];
+  const{ativos}=calcularRolosRedeChicoteada(d);
+  const numRedes=parseFloat(d.numRedesChicoteadas)||0;
+  const diametrosAv=[144,120,97.6,72.5,48.2,35.7].filter(di=>ativos[di]);
+  const diametrosTeCurva=[144,120,97.6,72.5,48.2].filter(di=>ativos[di]);
+  const multAv=diametrosAv.length?Math.ceil(numRedes/diametrosAv.length):0;
+  const multTe=diametrosTeCurva.length?Math.ceil((numRedes/3*2)/diametrosTeCurva.length):0;
+  const multCurva=diametrosTeCurva.length?Math.ceil((numRedes/3*1)/diametrosTeCurva.length):0;
+  const fatorArea=fatorAreaVlookup(parseFloat(d.area)||0);
+  return[
+    ...gerarItensAntiVacuo(ativos,multAv),
+    ...gerarItensReducaoRamal(TE_CORPO_POR_NOMINAL,'TE',ativos,multTe),
+    ...gerarItensReducaoRamal(CURVA90_CORPO_POR_NOMINAL,'Curva90',ativos,multCurva),
+    ...gerarItensLuvasSecundarias(ativos,fatorArea),
+  ];
 }
 // Converte texto TUDO EM MAIÚSCULO (como vem de colunas da planilha, ex.: "SUCÇÃO
 // 75MM PLASSON (NEGATIVA)") para uma forma mais legível. Se o texto já tem letras
@@ -2631,6 +2808,13 @@ function carregarModelo(nomeModelo){
       // gerarItensRedeSecundaria. Não é restrita a sistemaIrrigacao="Gotejamento".
       const itensRedeSec=gerarItensRedeSecundaria(d);
       itensRedeSec.forEach(it=>{
+        adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
+        n++;
+      });
+      // Final de Linha, Anti-Vácuo, Reduções de TE/Curva90 e Luvas Secundárias — ver
+      // fórmulas no comentário de gerarItensFinalDeRamal.
+      const itensFinalRamal=[...gerarItensFinalDeLinha(d),...gerarItensFinalDeRamal(d)];
+      itensFinalRamal.forEach(it=>{
         adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
