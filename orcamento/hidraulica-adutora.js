@@ -111,7 +111,15 @@ function calcularAdutoraSimples(cfg){
 // Seleção do Moto-Bomba principal + Quadro de Partida (motor 'MB+CH Partida' da planilha,
 // validado contra orçamento real: Moto-Bomba Trifásico = R$800/cv, Monofásico = R$850/cv,
 // Quadro de Partida = R$450/cv nas duas fases; margem de segurança sobre o CV calculado:
-// ≤2cv → +20%, ≤20cv → +15%, >20cv → +10%; CV arredondado para cima ao catálogo padrão).
+// ≤2cv → +20%, ≤20cv → +15%, >20cv → +10%; CV arredondado para cima ao catálogo padrão.
+// IMPORTANTE (conferido contra 2 orçamentos reais, aba 'MB+CH Partida'): o CV do
+// catálogo NÃO é dividido pelo nº de bombas — cada bomba é dimensionada pra
+// potência TOTAL calculada (com margem), não pela potência "dividida" entre elas
+// (é redundância: se numBombas=2, instala 2 motores do MESMO tamanho, cada um já
+// capaz de rodar o sistema sozinho, não 2 motores menores somando a potência).
+// Ex. real: Pcv=35,66 (raw, sem dividir por numBombas=2) × margem 1,1 = 39,23 →
+// próximo da tabela = 40cv — bate exato com "CV Real"/"Código" da planilha
+// (antes dividíamos por numBombas antes de arredondar, o que dava 20cv, errado).
 // precos opcional: {trif,mono,quadro} — vem da aba "Configurações" do orçamento; se omitido,
 // usa os valores padrão acima (compatibilidade com chamadas antigas).
 function calcularMotorEQuadroPartida(Pcv,numBombas,fase,precos){
@@ -119,8 +127,7 @@ function calcularMotorEQuadroPartida(Pcv,numBombas,fase,precos){
   const p={trif:800,mono:850,quadro:450,...(precos||{})};
   const margem=Pcv<=2?1.2:Pcv<=20?1.15:1.1;
   const cvComMargem=Pcv*margem;
-  const cvPorBomba=cvComMargem/numBombas;
-  const cvCatalogo=nextMotorCV(cvPorBomba);
+  const cvCatalogo=nextMotorCV(cvComMargem);
   const trifasico=fase!=='monofásica';
   const custoMotoBomba=cvCatalogo*(trifasico?p.trif:p.mono);
   const custoQuadroPartida=cvCatalogo*p.quadro;

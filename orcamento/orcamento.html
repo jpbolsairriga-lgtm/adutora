@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.18 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.19 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -161,19 +161,17 @@ tr.item-row.inativo{opacity:.4}
   (Google Elevation API) e calculam diâmetro, classe de pressão (PN) e motor sugerido — mesmo motor e mesma mecânica de
   mapa do <a href="../adutora/adutora-avancada.html" target="_blank">Cálculo Avançado de Adutora</a> (a chave API do Google
   é compartilhada entre as duas ferramentas). O golpe de aríete/transiente ainda fica fora — use o
-  <a href="../transiente-moc/" target="_blank">Cálculo de Transiente</a> separadamente, se precisar. Sucção, Filtragem, Saída
-  Moto-Bomba, Bomba Auxiliar e Moto-Bomba Principal/Quadro de Partida já usam o motor de seleção/dimensionamento real da
-  planilha, com os parâmetros hidráulicos (pressão residual, perdas, folga, eficiência da bomba) alinhados aos padrões reais
-  da empresa e validados contra um orçamento real. A pressão total calculada ainda pode ficar ~10% abaixo da planilha antiga
-  (metodologia de perda de carga um pouco diferente) — ajuste "Perdas localizadas" se precisar aproximar mais, e confira o
-  CV sugerido antes de fechar a proposta. Cavaletes já usa a seleção real completa (faixa de vazão da válvula × nº de
-  válvulas + casamento do diâmetro nominal da adutora com o manifold do cavalete). Junção Adutora, Anti-Vácuo, Luvas, Rede
-  Chicoteada, Automação e Gotejador/Conectores ainda carregam as quantidades de um projeto de exemplo (já usando a
-  quantidade real/filtrada daquele projeto, não a receita bruta — mas não é uma fórmula que se adapta ao seu projeto) —
-  revise/ajuste manualmente. Validado contra um orçamento real: margem bateu quase exata (40,3% vs 40,33%); valor absoluto
-  ficou ~1,7% abaixo. O que resta não é mais um bug conhecido: o diâmetro da adutora usado pelo casamento com o cavalete,
-  naquele orçamento real, foi digitado manualmente pelo engenheiro (célula fixa, não fórmula) substituindo o resultado
-  automático — o app calcula certo pela fórmula original, só não reproduz esse ajuste manual pontual daquele projeto.
+  <a href="../transiente-moc/" target="_blank">Cálculo de Transiente</a> separadamente, se precisar. Já usam o motor de
+  seleção/cálculo real da planilha (conferido linha a linha contra orçamentos reais, via o botão "📊 Relatório de
+  Divergências" nos orçamentos importados de Excel): Sucção, Filtragem, Saída Moto-Bomba, Bomba Auxiliar, Moto-Bomba
+  Principal + Quadro de Partida (dimensionado pela potência TOTAL com margem, não dividida pelo nº de bombas — cada bomba é
+  redundante, não "rateada"), Automação da Válvula da Moto-Bomba (regulador de pressão certo por pressão×vazão), Cavaletes
+  (faixa de vazão da válvula × nº de válvulas + casamento do diâmetro nominal com o manifold), Tubo da Adutora (classe de PN
+  × diâmetro, direto dos trechos calculados) e Serviços do Projeto (Montagem/Mapeamento = área × preço/ha; Abertura de
+  Valetas = metros de adutora+chicoteada+main × preço/m — preços em Configurações; Frete não tem fórmula, entra zerado para
+  preencher à mão). Ainda carregam as quantidades de um projeto de exemplo (fórmula ainda não portada): Junção Adutora,
+  Anti-Vácuo, Luvas, Rede Chicoteada, Gotejador/Conectores, F.Linha/Av/TE/Curva90 — revise/ajuste manualmente, ou importe um
+  orçamento real parecido em Excel e use o Relatório de Divergências pra comparar/corrigir item a item.
 </div>
 
 <div class="tabs">
@@ -402,6 +400,16 @@ tr.item-row.inativo{opacity:.4}
     </div>
   </div>
 
+  <div class="card">
+    <div class="ct">Serviços do Projeto (Montagem, Mapeamento, Abertura de Valetas)</div>
+    <p style="font-size:.8rem;color:var(--mu);margin-bottom:.6rem">Preços por unidade, aplicados automaticamente ao carregar o modelo. Quantidade: Montagem e Mapeamento = área do projeto (ha); Abertura de Valetas = comprimento da Adutora + Metros Chicoteada + Metros Main. Frete não tem fórmula (varia por distância/transportadora) — entra no BOM com preço zerado, para o usuário preencher manualmente a cada orçamento.</p>
+    <div class="g4">
+      <div class="fg"><label>Montagem (R$/ha)</label><input type="number" id="cfg_precoMontagemHa" step="any"></div>
+      <div class="fg"><label>Mapeamento (R$/ha)</label><input type="number" id="cfg_precoMapeamentoHa" step="any"></div>
+      <div class="fg"><label>Abertura de Valetas (R$/m)</label><input type="number" id="cfg_precoAberturaValetasM" step="any"></div>
+    </div>
+  </div>
+
   <div style="display:flex;gap:.6rem;margin-top:.5rem">
     <button class="btn btn-green" onclick="salvarConfig()">💾 Salvar Configurações</button>
     <button class="btn btn-red" onclick="restaurarConfigPadrao()">↺ Restaurar Padrões de Fábrica</button>
@@ -452,6 +460,32 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.19 (2026-10-28): usando o Relatório de Divergências contra um orçamento real
+//   (Antonio Gilberto, 271026), achei e corrigi 2 bugs concretos e bem conferidos:
+//   (1) "SERVIÇOS PROJETO" (Montagem/Mapeamento/Abertura de Valetas/Frete) era um
+//   dump fixo (sempre a mesma quantidade/preço do projeto de referência usado na
+//   extração — inclusive Montagem às vezes aparecia com preço 0, dependendo de
+//   qual placeholder tinha sido capturado) — igual o já corrigido bug dos tubos.
+//   Conferido em 2 orçamentos reais (Anderson Santana E Antonio Gilberto): Montagem
+//   e Mapeamento = área do projeto (ha) × preço/ha (R$600/ha e R$75/ha,
+//   configuráveis em Configurações); Abertura de Valetas = (comprimento da Adutora
+//   + Metros Chicoteada + Metros Main) × preço/m (R$3,50/m, configurável) — bateu
+//   exato nos dois casos. Frete não tem fórmula (varia por transportadora/
+//   distância): entra no BOM com preço zerado de propósito, pro usuário preencher
+//   à mão a cada orçamento. (2) Moto-Bomba + Quadro de Partida: o CV do catálogo
+//   estava sendo dividido pelo nº de bombas antes de arredondar pro catálogo — a
+//   planilha real NÃO divide (cada bomba é dimensionada pra potência TOTAL
+//   calculada, não pela potência "rateada" entre elas — é redundância: 2 bombas do
+//   MESMO tamanho, cada uma capaz de rodar o sistema sozinha). Exemplo real
+//   conferido: Pcv=35,66cv, 2 bombas — version antiga calculava 20cv (dividindo por
+//   2 antes de arredondar, errado); a correta é 40cv (arredondando o Pcv cheio com
+//   margem, batendo exato com "CV Real" da planilha real).
+//   Ficou pendente (gap grande, não é bug novo — já documentado antes): várias
+//   categorias (Rede Chicoteada, Gotejador/emissores, Conectores, Luvas, F.Linha,
+//   Av, TE, Curva90, CLIP p/vinhedo etc.) ainda são dump fixo do projeto de
+//   referência, não fórmulas dinâmicas — para "ficar idêntico" de verdade a
+//   qualquer orçamento real ainda falta portar essas fórmulas uma a uma, o mesmo
+//   trabalho de arqueologia já feito aqui.
 // v1.18 (2026-10-27): novo "📊 Relatório de Divergências" (botão na aba
 //   Conjuntos/BOM, só aparece em orçamentos importados de Excel): compara a
 //   lista de peças REAL da planilha importada (coluna "QTD." já resolvida das
@@ -716,7 +750,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.18';
+const APP_VERSION='v1.19';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -765,6 +799,7 @@ const CONFIG_GLOBAL_PADRAO={
   pResPadrao:30,filtroPadrao:10,perdasPadrao:6,folgaPadrao:10,margemProjetoPadrao:10,eficienciaPadrao:53,
   limiarBombaDuplaAdutora:80,limiarBombaDuplaRecalque:150,
   precoCVMotoBombaTrif:800,precoCVMotoBombaMono:850,precoCVQuadroPartida:450,
+  precoMontagemHa:600,precoMapeamentoHa:75,precoAberturaValetasM:3.5,
 };
 let CONFIG_GLOBAL={...CONFIG_GLOBAL_PADRAO};
 function carregarConfigGlobal(){
@@ -2056,13 +2091,13 @@ function desenharPerfilElevacaoCanvas(key,samples){
 const CONFIG_SELECAO={
   gotejamento_01:{adutoraKey:'adutora01',tipoSuccaoField:'tipoSuccaoProjeto',filtragemField:'filtragem',bombaAuxField:'bombaAuxSubmersaProjeto',
     succao:'succao_projeto',filtragem:'filtragem',mbSaida:'mbsaida_projeto',bombaAux:'bombaaux_projeto',automacaoMB:'automacao_mb_projeto',
-    labelSuccao:'Sucção Projeto',labelFiltragem:'FILTRAGEM',labelMB:'MB Projeto - Saida',labelBombaAux:'Moto-Bomba',labelAutomacaoMB:'Automação - Projeto',labelAdutora:'ADUTORA - PROJETO 01'},
+    labelSuccao:'Sucção Projeto',labelFiltragem:'FILTRAGEM',labelMB:'MB Projeto - Saida',labelBombaAux:'Moto-Bomba',labelAutomacaoMB:'Automação - Projeto',labelAdutora:'ADUTORA - PROJETO 01',labelServicos:'SERIVIÇOS PROJETO'},
   gotejamento_02:{adutoraKey:'adutora02',tipoSuccaoField:'tipoSuccaoProjeto',filtragemField:'filtragem',bombaAuxField:'bombaAuxSubmersaProjeto',
     succao:'succao_projeto',filtragem:'filtragem',mbSaida:'mbsaida_projeto',bombaAux:'bombaaux_projeto',automacaoMB:'automacao_mb_projeto',
-    labelSuccao:'Sucção Projeto',labelFiltragem:'FILTRAGEM',labelMB:'MB Projeto - Saida',labelBombaAux:'Moto-Bomba',labelAutomacaoMB:'Automação - Projeto',labelAdutora:'ADUTORA - PROJETO 02'},
+    labelSuccao:'Sucção Projeto',labelFiltragem:'FILTRAGEM',labelMB:'MB Projeto - Saida',labelBombaAux:'Moto-Bomba',labelAutomacaoMB:'Automação - Projeto',labelAdutora:'ADUTORA - PROJETO 02',labelServicos:'SERIVIÇOS PROJETO'},
   recalque:{adutoraKey:'recalque',tipoSuccaoField:'recalqueTipoSuccao',filtragemField:null,bombaAuxField:'recalqueBombaAuxSubmersa',
     succao:'succao_recalque',filtragem:null,mbSaida:'mbsaida_recalque',bombaAux:'bombaaux_recalque',automacaoMB:'automacao_mb_recalque',
-    labelSuccao:'Sucção - Recalque',labelFiltragem:null,labelMB:'Saida bomba - Recalque',labelBombaAux:'Moto-Bomba - Recalque',labelAutomacaoMB:'Automação - Recalque',labelAdutora:'ADUTORA - RECALQUE'},
+    labelSuccao:'Sucção - Recalque',labelFiltragem:null,labelMB:'Saida bomba - Recalque',labelBombaAux:'Moto-Bomba - Recalque',labelAutomacaoMB:'Automação - Recalque',labelAdutora:'ADUTORA - RECALQUE',labelServicos:'SERIVIÇOS PROJETO - Recalque'},
 };
 function selecionarGrupoPorVazaoTipo(lista,vazao,tipo){
   return (lista||[]).find(g=>vazao>=g.vazaoMin&&vazao<=g.vazaoMax&&(!g.tipo||g.tipo===tipo));
@@ -2139,6 +2174,25 @@ function gerarItensTuboAdutora(adCfg){
       qtd:Math.ceil(metros/5.8),categoria:`Tubo Ø${r.nominal}mm PN${pn} (${fmtN(metros,0)}m)`});
   });
   return{itens,avisos};
+}
+// Serviços do Projeto (Montagem/Mapeamento/Abertura de Valetas/Frete) — eram um
+// dump fixo (sempre a mesma quantidade/preço do projeto de referência usado na
+// extração), igual o antigo bug dos tubos. Conferido em 2 orçamentos reais
+// (Anderson Santana e Antonio Gilberto): Montagem e Mapeamento = área do projeto
+// (ha) × preço/ha; Abertura de Valetas = (comprimento da Adutora + Metros
+// Chicoteada + Metros Main) × preço/m — bateu exato nos dois casos. Frete não tem
+// fórmula (varia por transportadora/distância): entra com preço zerado, de
+// propósito, para o usuário preencher à mão a cada orçamento.
+function gerarItensServicosProjeto(d,adCfg,ehRecalque){
+  const area=parseFloat(d.area)||0;
+  const metrosValetas=(adCfg.comprimento||0)+(ehRecalque?0:(parseFloat(d.metrosChicoteada)||0)+(parseFloat(d.metrosMain)||0));
+  const itens=[
+    {fornecedor:'Bolsa Irriga',codigo:'XXXXXX-17',descricao:'MONTAGEM',qtd:area,custoUnit:CONFIG_GLOBAL.precoMontagemHa},
+    {fornecedor:'Bolsa Irriga',codigo:'XXXXXX-20',descricao:'MAPEAMENTO',qtd:area,custoUnit:CONFIG_GLOBAL.precoMapeamentoHa},
+    {fornecedor:'Bolsa Irriga',codigo:'XXXXXX-18',descricao:'ABERTURA DE VALETAS',qtd:metrosValetas,custoUnit:CONFIG_GLOBAL.precoAberturaValetasM},
+    {fornecedor:'Bolsa Irriga',codigo:'XXXXXX-19',descricao:'FRETE',qtd:1,custoUnit:0},
+  ];
+  return itens.filter(it=>it.qtd>0);
 }
 // Converte texto TUDO EM MAIÚSCULO (como vem de colunas da planilha, ex.: "SUCÇÃO
 // 75MM PLASSON (NEGATIVA)") para uma forma mais legível. Se o texto já tem letras
@@ -2243,6 +2297,14 @@ function carregarModelo(nomeModelo){
       n++;
     });
     avisos.push(...avisosTubo);
+
+    // Serviços do Projeto (Montagem/Mapeamento/Abertura de Valetas/Frete) — ver
+    // fórmulas no comentário de gerarItensServicosProjeto.
+    const itensServicos=gerarItensServicosProjeto(d,adCfg,nomeModelo==='recalque');
+    itensServicos.forEach(it=>{
+      adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,it.custoUnit,cfgSel.labelServicos,origem,nomeModelo);
+      n++;
+    });
 
     // Cavaletes (parte 1 — baseada em nº de válvulas): a planilha original multiplica
     // a receita de itens por max(0, nº válvulas − 2), só para a faixa de vazão da
