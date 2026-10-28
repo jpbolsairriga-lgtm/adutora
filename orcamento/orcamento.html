@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.29 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.30 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -464,6 +464,19 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.30 (2026-10-28): importação de Excel agora também traz o perfil de elevação
+//   manual (tabela "Distancia"/"Cota" de 10 pontos, dentro da própria aba "Dados de
+//   Entrada", colunas G/H/I) — Adutora 01 (linhas 25-34), Adutora 02 (linhas 42-51) e
+//   Recalque (linhas 79-88). Antes só comprimento e vazão eram importados; a cota
+//   (que já estava na planilha, levantada pelo calculista real) ficava de fora,
+//   obrigando a retraçar no mapa/DXF ou digitar a mão. Com a cota, o comprimento e a
+//   vazão juntos, a Adutora 01/02/Recalque já são calculadas automaticamente na hora
+//   da importação (silencioso, sem alertar se algum dos 3 ficar vazio — ex. Adutora 02
+//   sem uso). Só sobrescreve o perfil zerado-padrão se achar pelo menos uma cota
+//   diferente de zero (não "zera" o perfil em arquivos antigos sem essa tabela).
+//   Testado com o orçamento real do Fabio Henrique de Barros: cotas de Adutora 01 e
+//   Recalque batem exato (10 pontos cada), e os 2 cálculos saem prontos sem precisar
+//   visitar as abas manualmente.
 // v1.29 (2026-10-28): porta Micro-Aspersão e Aspersão — últimos 2 sistemas de
 //   irrigação pendentes. Decifrado na aba real "Gotejador e Conectores" (linhas
 //   100-146, blocos separados do de Gotejamento) + "Aspersão" (cascata de diâmetro
@@ -962,7 +975,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.29';
+const APP_VERSION='v1.30';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -1446,6 +1459,27 @@ function importarOrcamentoExcel(file){
         nImportados++;
       });
 
+      // Perfil de elevação manual (tabela "Distancia"/"Cota" de 10 pontos, dentro da
+      // própria aba "Dados de Entrada", colunas G/H/I) — Adutora 01 (linhas 25-34),
+      // Adutora 02 (linhas 42-51), Recalque (linhas 79-88). Com isso o usuário não
+      // precisa retraçar no mapa/DXF nem digitar a mão: comprimento, vazão E cota já
+      // vêm todos da planilha importada, batendo com o perfil que o calculista real já
+      // tinha levantado. Só sobrescreve o perfil zerado-padrão se achar pelo menos uma
+      // cota diferente de zero (evita "zerar" o perfil em arquivos antigos sem essa
+      // tabela preenchida).
+      let cotasImportadas=0;
+      const importarCotas=(linhaInicial,destino)=>{
+        const cotas=[];
+        for(let i=0;i<10;i++){
+          const cel=sheet['I'+(linhaInicial+i)];
+          cotas.push(typeof cel?.v==='number'?cel.v:0);
+        }
+        if(cotas.some(c=>c>0)){destinos[destino].cotas=cotas;cotasImportadas++;}
+      };
+      importarCotas(25,'adutora01');
+      importarCotas(42,'adutora02');
+      importarCotas(79,'recalque');
+
       // Referência histórica (só leitura, pra comparar com o que o app calcular) —
       // vem da aba "Margens" (Valor do Projeto/Recalque/Total + Margem Bruta), se existir.
       let referenciaHistorica=null;
@@ -1472,10 +1506,16 @@ function importarOrcamentoExcel(file){
       orcamentos.push(atual);
       salvarOrcamentos();
       abrirOrcamento(atual.id);
-      alert(`Importado de "${file.name}": ${nImportados} campos da aba "Dados de Entrada".`
+      // Com comprimento + vazão + cotas já importados, já dá pra calcular a
+      // Adutora/Recalque na hora (silencioso=true: não mostra alerta se faltar
+      // algum, ex. Adutora 02 vazia).
+      ['adutora01','adutora02','recalque'].forEach(key=>calcularAdutoraTab(key,true));
+      alert(`Importado de "${file.name}": ${nImportados} campos da aba "Dados de Entrada"`
+        +(cotasImportadas?` + perfil de elevação (${cotasImportadas} tabela(s) de 10 pontos — Adutora/Recalque já calculados automaticamente).`:'.')
         +(referenciaHistorica?`\n\nValor real na planilha (referência, não usado no cálculo): ${fmtR(referenciaHistorica.vendaTotal)}.`:'\n\n(Não encontrei a aba "Margens" pra referência de valor real.)')
         +(bomHistorico.length?`\n\nLista de peças real da planilha capturada (${bomHistorico.length} linhas) — depois de carregar o modelo no BOM, use "📊 Relatório de Divergências" pra comparar.`:'\n\n(Não encontrei nenhuma aba de BOM resolvido — Relatório de Divergências não vai ficar disponível.)')
-        +`\n\nO resto (BOM, moto-bomba, margem, proposta) é gerado pelas regras ATUAIS do sistema — confira os dados importados, calcule a Adutora/Recalque e clique em "Carregar Modelo".`
+        +`\n\nO resto (BOM, moto-bomba, margem, proposta) é gerado pelas regras ATUAIS do sistema — confira os dados importados`
+        +(cotasImportadas?'':', calcule a Adutora/Recalque')+` e clique em "Carregar Modelo".`
         +(avisos.length?`\n\nAtenção:\n`+avisos.join('\n'):''));
     }catch(err){
       alert('Erro ao importar o Excel: '+err.message);
