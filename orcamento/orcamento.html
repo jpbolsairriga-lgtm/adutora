@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.30 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.31 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -464,6 +464,12 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.31 (2026-10-28): corrige bug reportado pelo usuário — recalcular a Adutora/
+//   Recalque e clicar "Carregar Modelo" de novo estava DUPLICANDO tudo (Moto-Bomba,
+//   Quadro de Partida, Sucção, Rede Chicoteada etc. somavam em vez de substituir),
+//   porque carregarModelo() nunca removia os itens desse mesmo modelo antes de gerar
+//   de novo. Agora limpa primeiro (atual.bom=atual.bom.filter(it=>it.modelo!==
+//   nomeModelo)) — recalcular e carregar de novo agora SUBSTITUI corretamente.
 // v1.30 (2026-10-28): importação de Excel agora também traz o perfil de elevação
 //   manual (tabela "Distancia"/"Cota" de 10 pontos, dentro da própria aba "Dados de
 //   Entrada", colunas G/H/I) — Adutora 01 (linhas 25-34), Adutora 02 (linhas 42-51) e
@@ -975,7 +981,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.30';
+const APP_VERSION='v1.31';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -3121,6 +3127,11 @@ function carregarModelo(nomeModelo){
   // (gotejamento_01/gotejamento_02/recalque) — usado só pelo Relatório Consolidado,
   // para o usuário poder excluir ex. os itens do gotejamento_02 quando o projeto só
   // usa 1 opção de gotejo + recalque.
+  // Remove PRIMEIRO qualquer item desse mesmo modelo já carregado antes de gerar de
+  // novo — sem isso, recalcular a Adutora/Recalque e clicar "Carregar Modelo" outra
+  // vez duplicava tudo (Moto-Bomba, Quadro de Partida, Sucção etc. ficavam somando em
+  // vez de substituir).
+  atual.bom=atual.bom.filter(it=>it.modelo!==nomeModelo);
   const origem=nomeModelo==='recalque'?'recalque':'projeto';
   let n=0;
   Object.keys(modeloConj).forEach(categoria=>{
