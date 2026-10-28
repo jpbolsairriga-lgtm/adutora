@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.32 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.33 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -464,6 +464,14 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.33 (2026-10-28): corrige categoria genérica demais em "Final de Ramal" — TE e
+//   Curva90 caíam numa categoria só por tipo ("TE"/"Curva90"), juntando todos os
+//   diâmetros; a planilha real tem 1 categoria POR diâmetro: "RAMAL COM TE 100/75/50
+//   X REDUÇÃO TUBO 35MM" e "RAMAL COM CURVA 90°x100/75/50MM X REDUÇÃO TUBO 35MM"
+//   (visto no print do usuário comparando com a aba real). gerarItensReducaoRamal()
+//   agora gera esse categoria por diâmetro; carregarModelo() usa it.categoria quando
+//   existe (fallback pra it.grupo nos itens sem essa granularidade, como Final de
+//   Linha/Anti-Vácuo/Luvas Secundárias).
 // v1.32 (2026-10-28): corrige 3 bugs de divergência de materiais reportados pelo
 //   usuário, usando o arquivo real "Miguel Angelo Pimenta - 25,88ha" + a lista de
 //   peças exportada ("relatorio-divergencias") pra achar e validar cada um:
@@ -1019,7 +1027,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.32';
+const APP_VERSION='v1.33';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -2918,15 +2926,20 @@ const TE_CORPO_POR_NOMINAL={150:{codigo:'701896',descricao:'TE BSA SOLD IRRIGA -
   100:{codigo:'701286',descricao:'TE BSA SOLD IRRIGA-LF 100'},75:{codigo:'701304',descricao:'TE BSA SOLD IRRIGA-LF 75'},50:{codigo:'701288',descricao:'TE BSA SOLD IRRIRGA-LF 50'}};
 const CURVA90_CORPO_POR_NOMINAL={150:{codigo:'701893',descricao:'CURVA 90 PB SD IRRIGA-LF PN80 150MM'},125:{codigo:'701307',descricao:'CURVA 90 PB SD IRRIGA-LF PN80 125MM'},
   100:{codigo:'801496',descricao:'JOELHO PVC IRR SOLDA 90 100MM DURO'},75:{codigo:'801497',descricao:'JOELHO PVC IRR SOLDA 90 75MM DURO'},50:{codigo:'801499',descricao:'JOELHO PVC IRR SOLDA 90 50MM DURO'}};
+// Categoria por diâmetro (confirmado na planilha real — cada tamanho de TE/Curva90
+// vira sua PRÓPRIA categoria, não uma categoria "TE"/"Curva90" genérica juntando
+// todos os diâmetros): "RAMAL COM TE 100 X REDUÇÃO TUBO 35MM", "RAMAL COM CURVA
+// 90°x100MM X REDUÇÃO TUBO 35MM", etc.
 function gerarItensReducaoRamal(corpoMap,grupo,ativos,multiplicador){
   if(multiplicador<=0)return[];
   const itens=[];
   for(const DI of[144,120,97.6,72.5,48.2]){
     if(!ativos[DI])continue;
     const nominal=DI_PARA_NOMINAL_PN40[DI];
-    cadeiaReducoesRamal(nominal).forEach(r=>itens.push({fornecedor:'Bolsa Irriga',codigo:r.codigo,descricao:r.descricao,qtd:multiplicador,grupo}));
+    const categoria=grupo==='TE'?`RAMAL COM TE ${nominal} X REDUÇÃO TUBO 35MM`:`RAMAL COM CURVA 90°x${nominal}MM X REDUÇÃO TUBO 35MM`;
+    cadeiaReducoesRamal(nominal).forEach(r=>itens.push({fornecedor:'Bolsa Irriga',codigo:r.codigo,descricao:r.descricao,qtd:multiplicador,grupo,categoria}));
     const corpo=corpoMap[nominal];
-    itens.push({fornecedor:'Bolsa Irriga',codigo:corpo.codigo,descricao:corpo.descricao,qtd:multiplicador,grupo});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:corpo.codigo,descricao:corpo.descricao,qtd:multiplicador,grupo,categoria});
   }
   return itens;
 }
@@ -3313,7 +3326,7 @@ function carregarModelo(nomeModelo){
       // fórmulas no comentário de gerarItensFinalDeRamal.
       const itensFinalRamal=[...gerarItensFinalDeLinha(d),...gerarItensFinalDeRamal(d)];
       itensFinalRamal.forEach(it=>{
-        adicionarItemCustoFixo(it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
+        adicionarItemCustoFixo(it.categoria||it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
       // Derivação Adutora (Junção Adutora) — ver fórmulas no comentário de
