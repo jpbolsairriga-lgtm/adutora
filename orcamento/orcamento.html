@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.31 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.32 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -387,7 +387,7 @@ tr.item-row.inativo{opacity:.4}
       <div class="fg"><label>Perdas Localizadas (mca)</label><input type="number" id="cfg_perdasPadrao" step="any"></div>
       <div class="fg"><label>Folga de Vazão (%)</label><input type="number" id="cfg_folgaPadrao" step="any"></div>
       <div class="fg"><label>Margem de Projeto (%)</label><input type="number" id="cfg_margemProjetoPadrao" step="any"></div>
-      <div class="fg"><label>Eficiência da Bomba (%)</label><input type="number" id="cfg_eficienciaPadrao" step="any"></div>
+      <div class="fg"><label>Eficiência da Bomba (%)</label><input type="number" id="cfg_eficienciaPadrao" step="any"><div style="font-size:11px;color:var(--muted);margin-top:2px">Conferido em orçamentos reais: ~63-68% pra vazão total acima de 15m³/h, ~53% pra vazão menor. Ajuste por projeto na aba de Adutora/Recalque se tiver a curva real da bomba selecionada.</div></div>
       <div class="fg"><label>Limiar Bomba Dupla — Adutora (mca)</label><input type="number" id="cfg_limiarBombaDuplaAdutora" step="any"></div>
       <div class="fg"><label>Limiar Bomba Dupla — Recalque (mca)</label><input type="number" id="cfg_limiarBombaDuplaRecalque" step="any"></div>
       <div class="fg"><label>Rede Chicoteada — Coef. Diâmetro Econômico (K)</label><input type="number" id="cfg_redeChicoteadaK" step="any"></div>
@@ -396,9 +396,9 @@ tr.item-row.inativo{opacity:.4}
 
   <div class="card">
     <div class="ct">Moto-Bomba + Quadro de Partida — Preço por CV</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px">O Moto-Bomba principal/Quadro de Partida é sempre Trifásico, igual à planilha real (confirmado em 2 orçamentos reais — a tabela de códigos usada nunca tem opção Monofásico pra esse item, mesmo com energia Monofásica nos Dados de Entrada).</div>
     <div class="g4">
       <div class="fg"><label>Moto-Bomba Trifásico (R$/cv)</label><input type="number" id="cfg_precoCVMotoBombaTrif" step="any" onchange="renderConfigPreview()"></div>
-      <div class="fg"><label>Moto-Bomba Monofásico (R$/cv)</label><input type="number" id="cfg_precoCVMotoBombaMono" step="any" onchange="renderConfigPreview()"></div>
       <div class="fg"><label>Quadro de Partida (R$/cv)</label><input type="number" id="cfg_precoCVQuadroPartida" step="any" onchange="renderConfigPreview()"></div>
       <div class="tile"><div class="tl">Preview — 10cv Trifásico + Quadro</div><div class="tv" id="cfgPreviewMotor">—</div></div>
     </div>
@@ -464,6 +464,44 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.32 (2026-10-28): corrige 3 bugs de divergência de materiais reportados pelo
+//   usuário, usando o arquivo real "Miguel Angelo Pimenta - 25,88ha" + a lista de
+//   peças exportada ("relatorio-divergencias") pra achar e validar cada um:
+//   1) Adutora do Projeto estava sendo "detalhada por tubos" (1 categoria por trecho
+//      de PN/diâmetro) em vez de 1 categoria SÓ (igual a aba real "ADUTORA - PROJETO
+//      01/02/RECALQUE") — gerarItensTuboAdutora() não gera mais "categoria" por
+//      trecho; carregarModelo() usa cfgSel.labelAdutora pra todos os tubos. O MESMO
+//      bug (categoria = descrição do item em vez do nome fixo do conjunto) também
+//      afetava Moto-Bomba, Quadro de Partida, Serviços do Projeto, Rede
+//      Secundária/Chicoteada, Final de Linha/Ramal, Derivação Adutora/Recalque,
+//      Ventosa Recalque, Luvas Principais e Gotejador/Conectores — todos corrigidos
+//      do mesmo jeito (categoria = nome do conjunto, não a descrição do item).
+//   2) Moto-Bomba/Quadro de Partida calculava CV errado perto do limiar de 80mca:
+//      a) o CV com margem NÃO estava sendo dividido pelo nº de bombas antes de
+//      arredondar pro catálogo — fórmula real extraída via openpyxl da aba
+//      'MB+CH Partida': J5='Projeto - Adutora 01'!CQ4/K3(nºBombas), só DEPOIS
+//      CEILING.MATH e VLOOKUP no catálogo. A v1.19 achou (por coincidência, usando
+//      só o caso do Antonio Gilberto) que NÃO dividia — mas o valor da planilha que
+//      parecia "bater sem dividir" já ERA o valor dividido por numBombas=2 (71,31÷2=
+//      35,66→40cv — e por acaso dividir OU não dividir caem no mesmo balde de
+//      catálogo nesse caso específico). O caso novo prova a divisão: CQ4=31,92÷2=
+//      15,96→20cv (real) — sem dividir dava 40cv (exatamente "2 bombas de 40 ao
+//      invés de 2 de 20", o sintoma reportado). b) o Moto-Bomba/Quadro principal
+//      SEMPRE usa Trifásico na planilha real (a tabela de códigos usada nunca tem
+//      opção Monofásico pra esse item, mesmo com energiaRede="monofásica" nos Dados
+//      de Entrada) — removido o parâmetro fase/preço Monofásico (nunca usado de
+//      verdade). c) Gotejador 1ª/2ª Opção compartilham a MESMA estação de
+//      bombeamento física — a planilha usa o MAIOR CV-por-bomba entre Adutora 01 e
+//      Adutora 02 (fórmula real: J13=IF(J5>J9,J5,J9)), não necessariamente a adutora
+//      do próprio modelo sendo carregado — por isso o item Moto-Bomba/Quadro sai
+//      IGUAL (duplicado) nas 2 listas de conjunto Got01/Got02, como no BOM real.
+//   3) Eficiência padrão da bomba (usada no cálculo do CV) estava em 53% — valor que
+//      a planilha real só usa pra vazão total < 15m³/h; pra vazão maior (os 2 casos
+//      reais conferidos) ela usa 63-68%. Default ajustado pra 65% (ainda editável
+//      por projeto na aba de Adutora/Recalque). Com essa correção + a divisão por
+//      nºBombas, os 2 orçamentos reais batem EXATO: Antonio Gilberto → 40cv Trif x2
+//      bombas x2 modelos = 4 (igual à planilha); Miguel Angelo → 20cv Trif x2x2=4
+//      (igual à planilha, antes o app dava 50cv Monofásico x2, bem errado).
 // v1.31 (2026-10-28): corrige bug reportado pelo usuário — recalcular a Adutora/
 //   Recalque e clicar "Carregar Modelo" de novo estava DUPLICANDO tudo (Moto-Bomba,
 //   Quadro de Partida, Sucção, Rede Chicoteada etc. somavam em vez de substituir),
@@ -981,7 +1019,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.31';
+const APP_VERSION='v1.32';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -1027,9 +1065,9 @@ function buscarCusto(fornecedor,codigo){const p=mapaFornecedor(fornecedor).get(S
 const CONFIG_GLOBAL_PADRAO={
   fatorMargemSP:1.52,fatorMargemOutros:1.676,
   impostoSimples:3,impostoICMS:7,
-  pResPadrao:30,filtroPadrao:10,perdasPadrao:6,folgaPadrao:10,margemProjetoPadrao:10,eficienciaPadrao:53,
+  pResPadrao:30,filtroPadrao:10,perdasPadrao:6,folgaPadrao:10,margemProjetoPadrao:10,eficienciaPadrao:65,
   limiarBombaDuplaAdutora:80,limiarBombaDuplaRecalque:150,
-  precoCVMotoBombaTrif:800,precoCVMotoBombaMono:850,precoCVQuadroPartida:450,
+  precoCVMotoBombaTrif:800,precoCVQuadroPartida:450,
   precoMontagemHa:600,precoMapeamentoHa:75,precoAberturaValetasM:3.5,
   redeChicoteadaK:0.85,
 };
@@ -2429,8 +2467,7 @@ function gerarItensTuboAdutora(adCfg){
       avisos.push(`Tubo Ø${r.nominal}mm PN${pn} (${fmtN(metros,0)}m): sem item de catálogo cadastrado para essa combinação — adicione manualmente no BOM.`);
       return;
     }
-    itens.push({fornecedor:catalogo.fornecedor,codigo:catalogo.codigo,descricao:catalogo.descricao,
-      qtd:Math.ceil(metros/5.8),categoria:`Tubo Ø${r.nominal}mm PN${pn} (${fmtN(metros,0)}m)`});
+    itens.push({fornecedor:catalogo.fornecedor,codigo:catalogo.codigo,descricao:catalogo.descricao,qtd:Math.ceil(metros/5.8)});
   });
   return{itens,avisos};
 }
@@ -3169,13 +3206,35 @@ function carregarModelo(nomeModelo){
     if(grupoBombaAux&&grupoBombaAux.itens.length)n+=adicionarItensSelecionados(grupoBombaAux.opcao,grupoBombaAux.itens,cfgSel.labelBombaAux,origem,nomeModelo);
 
     // Moto-Bomba principal + Quadro de Partida (motor 'MB+CH Partida' da planilha):
-    // dimensionado pelo CV calculado na aba Adutora/Recalque (Pcv), não por um dropdown.
-    const Pcv=adCfg.resultado&&adCfg.resultado.Pcv;
+    // dimensionado pelo CV calculado na aba Adutora/Recalque (Pcv) — não por um dropdown.
+    // IMPORTANTE (conferido contra 2 orçamentos reais): a planilha usa o MAIOR entre
+    // Adutora 01 e Adutora 02 (fórmula real: J13=IF(J5>J9,J5,J9), comparando o CV JÁ
+    // dividido por bomba de cada uma) — Gotejador 1ª/2ª Opção compartilham a MESMA
+    // estação de bombeamento física, então o item Moto-Bomba/Quadro de Partida sai
+    // igual nas 2 listas de conjunto, dimensionado por quem pedir mais, não
+    // necessariamente pela adutora do próprio modelo sendo carregado agora. O Recalque
+    // tem motor próprio (bomba de recalque), não entra nessa comparação.
+    let Pcv,numBombasMotor;
+    if(nomeModelo==='recalque'){
+      Pcv=adCfg.resultado&&adCfg.resultado.Pcv;
+      numBombasMotor=numBombas;
+    }else{
+      const candidatos=[atual.adutora01,atual.adutora02].map(a=>{
+        const r=a&&a.resultado;
+        if(!r||!r.Pcv)return null;
+        const nb=r.numBombas||1;
+        const margemCand=r.Pcv<=2?1.2:r.Pcv<=20?1.15:1.1;
+        return{Pcv:r.Pcv,numBombas:nb,cvPorBomba:(r.Pcv*margemCand)/nb};
+      }).filter(Boolean);
+      const melhor=candidatos.sort((a,b)=>b.cvPorBomba-a.cvPorBomba)[0];
+      Pcv=melhor&&melhor.Pcv;
+      numBombasMotor=melhor&&melhor.numBombas;
+    }
     if(Pcv){
-      const motor=calcularMotorEQuadroPartida(Pcv,numBombas,d.energiaRede,{trif:CONFIG_GLOBAL.precoCVMotoBombaTrif,mono:CONFIG_GLOBAL.precoCVMotoBombaMono,quadro:CONFIG_GLOBAL.precoCVQuadroPartida});
+      const motor=calcularMotorEQuadroPartida(Pcv,numBombasMotor,{trif:CONFIG_GLOBAL.precoCVMotoBombaTrif,quadro:CONFIG_GLOBAL.precoCVQuadroPartida});
       if(motor){
-        adicionarItemCustoFixo(motor.motoBomba.descricao,'Bolsa Irriga',motor.motoBomba.codigo,motor.motoBomba.descricao,motor.motoBomba.qtd,motor.motoBomba.custo,'Moto-Bomba',origem,nomeModelo);
-        adicionarItemCustoFixo(motor.quadroPartida.descricao,'Bolsa Irriga',motor.quadroPartida.codigo,motor.quadroPartida.descricao,motor.quadroPartida.qtd,motor.quadroPartida.custo,'Quadro de Partida',origem,nomeModelo);
+        adicionarItemCustoFixo('Moto-Bomba','Bolsa Irriga',motor.motoBomba.codigo,motor.motoBomba.descricao,motor.motoBomba.qtd,motor.motoBomba.custo,'Moto-Bomba',origem,nomeModelo);
+        adicionarItemCustoFixo('Quadro de Partida','Bolsa Irriga',motor.quadroPartida.codigo,motor.quadroPartida.descricao,motor.quadroPartida.qtd,motor.quadroPartida.custo,'Quadro de Partida',origem,nomeModelo);
         n+=2;
       }
     }else{
@@ -3199,10 +3258,13 @@ function carregarModelo(nomeModelo){
     // Tubo da Adutora: antes era um dump fixo (sempre as mesmas quantidades do
     // projeto de referência); agora vem direto do resultado calculado (trechos
     // por classe de PN x diâmetro nominal), batendo com o traçado/vazão reais
-    // deste projeto (DXF, KML ou manual).
+    // deste projeto (DXF, KML ou manual). categoria = cfgSel.labelAdutora (uma
+    // categoria SÓ, igual a aba real "ADUTORA - PROJETO 01/02/RECALQUE" — antes cada
+    // trecho de PN/diâmetro virava uma categoria própria, "detalhando por tubos" na
+    // tela de Conjuntos em vez de agrupar tudo numa categoria só, igual a planilha).
     const{itens:itensTubo,avisos:avisosTubo}=gerarItensTuboAdutora(adCfg);
     itensTubo.forEach(it=>{
-      atual.bom.push({id:uid(),categoria:it.categoria,grupo:cfgSel.labelAdutora,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
+      atual.bom.push({id:uid(),categoria:cfgSel.labelAdutora,grupo:cfgSel.labelAdutora,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
         qtd:it.qtd,custoUnit:buscarCusto(it.fornecedor,it.codigo)||0,ativo:true,origem,modelo:nomeModelo});
       n++;
     });
@@ -3212,7 +3274,7 @@ function carregarModelo(nomeModelo){
     // fórmulas no comentário de gerarItensServicosProjeto.
     const itensServicos=gerarItensServicosProjeto(d,adCfg,nomeModelo==='recalque');
     itensServicos.forEach(it=>{
-      adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,it.custoUnit,cfgSel.labelServicos,origem,nomeModelo);
+      adicionarItemCustoFixo(cfgSel.labelServicos,it.fornecedor,it.codigo,it.descricao,it.qtd,it.custoUnit,cfgSel.labelServicos,origem,nomeModelo);
       n++;
     });
 
@@ -3228,7 +3290,7 @@ function carregarModelo(nomeModelo){
         ...gerarItensAspersorConectores(d),
       ];
       itensEmissor.forEach(it=>{
-        adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
+        adicionarItemCustoFixo(it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
       // Rede Chicoteada (tubo PN40 + adesivo/solução/pano) — Gotejamento usa a
@@ -3237,34 +3299,34 @@ function carregarModelo(nomeModelo){
       // gerarItensRedeChicoteadaSimples.
       const itensRedeChic=[...gerarItensRedeChicoteada(d),...gerarItensRedeChicoteadaSimples(d)];
       itensRedeChic.forEach(it=>{
-        adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
+        adicionarItemCustoFixo(it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
       // Rede Secundária (tronco Main) — ver fórmulas no comentário de
       // gerarItensRedeSecundaria. Não é restrita a sistemaIrrigacao="Gotejamento".
       const itensRedeSec=gerarItensRedeSecundaria(d);
       itensRedeSec.forEach(it=>{
-        adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
+        adicionarItemCustoFixo(it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
       // Final de Linha, Anti-Vácuo, Reduções de TE/Curva90 e Luvas Secundárias — ver
       // fórmulas no comentário de gerarItensFinalDeRamal.
       const itensFinalRamal=[...gerarItensFinalDeLinha(d),...gerarItensFinalDeRamal(d)];
       itensFinalRamal.forEach(it=>{
-        adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
+        adicionarItemCustoFixo(it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
       // Derivação Adutora (Junção Adutora) — ver fórmulas no comentário de
       // gerarItensDerivacaoAdutora. Usa Adutora 01 e 02 (infra compartilhada).
       const itensDerivacao=gerarItensDerivacaoAdutora(atual.adutora01?.resultado?.nominal,atual.adutora02?.resultado?.nominal);
       itensDerivacao.forEach(it=>{
-        adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
+        adicionarItemCustoFixo(it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
       // Luvas Principais — ver fórmulas no comentário de gerarItensLuvasPrincipais.
       const itensLuvasPrinc=gerarItensLuvasPrincipais(atual.adutora01?.resultado?.nominal,atual.adutora02?.resultado?.nominal,d.area);
       itensLuvasPrinc.forEach(it=>{
-        adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
+        adicionarItemCustoFixo(it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
     }
@@ -3272,14 +3334,14 @@ function carregarModelo(nomeModelo){
       // Derivação Recalque — ver fórmulas no comentário de gerarItensDerivacaoRecalque.
       const itensDerivacaoRec=gerarItensDerivacaoRecalque(adCfg.resultado&&adCfg.resultado.nominal);
       itensDerivacaoRec.forEach(it=>{
-        adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
+        adicionarItemCustoFixo(it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
       // Ventosa Recalque — ver fórmulas no comentário de gerarItensVentosaRecalque.
       // Testado contra o orçamento real do Fabio Henrique de Barros (bate exato).
       const itensVentosaRec=gerarItensVentosaRecalque(adCfg.resultado&&adCfg.resultado.nominal,adCfg.comprimento);
       itensVentosaRec.forEach(it=>{
-        adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
+        adicionarItemCustoFixo(it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
     }

@@ -109,27 +109,37 @@ function calcularAdutoraSimples(cfg){
 }
 
 // Seleção do Moto-Bomba principal + Quadro de Partida (motor 'MB+CH Partida' da planilha,
-// validado contra orçamento real: Moto-Bomba Trifásico = R$800/cv, Monofásico = R$850/cv,
-// Quadro de Partida = R$450/cv nas duas fases; margem de segurança sobre o CV calculado:
-// ≤2cv → +20%, ≤20cv → +15%, >20cv → +10%; CV arredondado para cima ao catálogo padrão.
-// IMPORTANTE (conferido contra 2 orçamentos reais, aba 'MB+CH Partida'): o CV do
-// catálogo NÃO é dividido pelo nº de bombas — cada bomba é dimensionada pra
-// potência TOTAL calculada (com margem), não pela potência "dividida" entre elas
-// (é redundância: se numBombas=2, instala 2 motores do MESMO tamanho, cada um já
-// capaz de rodar o sistema sozinho, não 2 motores menores somando a potência).
-// Ex. real: Pcv=35,66 (raw, sem dividir por numBombas=2) × margem 1,1 = 39,23 →
-// próximo da tabela = 40cv — bate exato com "CV Real"/"Código" da planilha
-// (antes dividíamos por numBombas antes de arredondar, o que dava 20cv, errado).
-// precos opcional: {trif,mono,quadro} — vem da aba "Configurações" do orçamento; se omitido,
+// validado contra 2 orçamentos reais, aba 'MB+CH Partida' — fórmulas exatas extraídas
+// via openpyxl: Moto-Bomba Trifásico = R$800/cv, Quadro de Partida = R$450/cv; margem
+// de segurança sobre o CV calculado (CQ4 da aba 'Projeto - Adutora 01/02'): ≤2cv → +20%,
+// ≤20cv → +15%, >20cv → +10%.
+// CORRIGIDO (v1.32): o CV COM margem É dividido pelo nº de bombas ANTES de arredondar
+// pro catálogo — fórmula real: J5 = CQ4/K3(nºBombas), depois CEILING.MATH(J5,1,1) e só
+// então VLOOKUP numa tabela 0→125cv (idêntica ao nextMotorCV: arredonda pro próximo
+// tamanho comercial). A versão anterior (v1.19) NÃO dividia, por uma falsa verificação:
+// no caso usado pra validar (Antonio Gilberto), CQ4=71,31 ÷ 2 = 35,66 → 40cv — e por
+// coincidência dividir OU não dividir batiam no mesmo balde do catálogo (71,31 sem
+// dividir também cairia perto de 75, mas o valor que a planilha mostrava já era o
+// dividido, 35,66, lido por engano como se fosse o valor "sem dividir"). Caso novo
+// (Miguel Angelo) prova a divisão: CQ4=31,92 ÷ 2 bombas = 15,96 → 20cv (real) — sem
+// dividir daria 40cv (errado, era exatamente o sintoma que o usuário reportou: "2 bombas
+// de 40 ao invés de 2 de 20").
+// Fase: a planilha real NUNCA usa monofásico pro Moto-Bomba/Quadro principal — a tabela
+// de códigos usada pelas fórmulas (E33:F48 e E5:F20 da aba 'MB+CH Partida') só tem
+// entradas "...CVMB-TRIF"/"...CVCP-TRIF", em AMBOS os orçamentos reais (mesmo com
+// energiaRede="monofásica" nos Dados de Entrada do projeto) — então aqui é sempre
+// trifásico, independente do campo energiaRede (que não alimenta essa fórmula na
+// planilha original).
+// precos opcional: {trif,quadro} — vem da aba "Configurações" do orçamento; se omitido,
 // usa os valores padrão acima (compatibilidade com chamadas antigas).
-function calcularMotorEQuadroPartida(Pcv,numBombas,fase,precos){
+function calcularMotorEQuadroPartida(Pcv,numBombas,precos){
   if(!Pcv||!numBombas)return null;
-  const p={trif:800,mono:850,quadro:450,...(precos||{})};
+  const p={trif:800,quadro:450,...(precos||{})};
   const margem=Pcv<=2?1.2:Pcv<=20?1.15:1.1;
-  const cvComMargem=Pcv*margem;
-  const cvCatalogo=nextMotorCV(cvComMargem);
-  const trifasico=fase!=='monofásica';
-  const custoMotoBomba=cvCatalogo*(trifasico?p.trif:p.mono);
+  const cvComMargem=(Pcv*margem)/numBombas;
+  const cvCatalogo=nextMotorCV(Math.ceil(cvComMargem));
+  const trifasico=true;
+  const custoMotoBomba=cvCatalogo*p.trif;
   const custoQuadroPartida=cvCatalogo*p.quadro;
   const cvFmt=String(cvCatalogo).replace('.',',');
   const faseTag=trifasico?'TRIF':'MONO';
