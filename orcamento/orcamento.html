@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.22 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.23 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -170,15 +170,14 @@ tr.item-row.inativo{opacity:.4}
   × diâmetro, direto dos trechos calculados), Serviços do Projeto (Montagem/Mapeamento = área × preço/ha; Abertura de
   Valetas = metros de adutora+chicoteada+main × preço/m — preços em Configurações; Frete não tem fórmula, entra zerado para
   preencher à mão), Gotejador + Tubo de Polietileno + Conectores + Clip p/ Vinhedo (metros de gotejador/conexões calculados
-  por área, espaçamento entre linhas e espaçamento do emissor) e Rede Chicoteada (tubo PN40 que alimenta as linhas de
-  gotejo, simulação ponto-a-ponto por saída com diâmetro telescopando conforme a vazão cai — porta da aba real "Submain -
-  Gotejo" — + adesivo/solução/pano; dentro de ~2-3% dos orçamentos reais, pequenos pontos de corte do "lookup" de diâmetro
-  original não 100% decifrados) — essas três últimas só para sistema Gotejamento, Micro-Aspersão/Aspersão ainda não
-  portados. Ainda carregam as quantidades de um projeto de exemplo (fórmula ainda não portada, por depender de um motor de
-  cálculo de rede separado — dimensionamento do tronco/main por velocidade×vazão mais simples, mas com referências cruzadas
-  internas confusas na planilha original): Junção Adutora, Anti-Vácuo, Luvas, Rede Secundária (tronco "Main"),
-  F.Linha/Av/TE/Curva90 — revise/ajuste manualmente, ou importe um orçamento real parecido em Excel e use o Relatório de
-  Divergências pra comparar/corrigir item a item.
+  por área, espaçamento entre linhas e espaçamento do emissor — só pra sistema Gotejamento, Micro-Aspersão/Aspersão ainda
+  não portados), Rede Chicoteada (tubo PN40 que alimenta as linhas de gotejo, simulação ponto-a-ponto por saída com diâmetro
+  telescopando conforme a vazão cai — porta da aba real "Submain - Gotejo" — + adesivo/solução/pano; dentro de ~2-3% dos
+  orçamentos reais, mesma limitação de sistema que o Gotejador) e Rede Secundária (tronco "Main": seleciona os diâmetros com
+  capacidade pra pelo menos 1/3 da vazão da válvula e divide os metros de Main em partes iguais entre eles — essa, ao
+  contrário das outras duas, vale pra qualquer sistema de irrigação). Ainda carregam as quantidades de um projeto de exemplo
+  (fórmula ainda não portada): Junção Adutora, Anti-Vácuo, Luvas, F.Linha/Av/TE/Curva90 — revise/ajuste manualmente, ou
+  importe um orçamento real parecido em Excel e use o Relatório de Divergências pra comparar/corrigir item a item.
 </div>
 
 <div class="tabs">
@@ -468,6 +467,21 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.23 (2026-10-28): porta Rede Secundária (tronco "Main") pra regras dinâmicas —
+//   decifrado junto com o usuário (confirmou 2 pontos-chave que eu tinha marcado como
+//   dúvida: o divisor "/3" é um critério de projeto fixo e intencional, não vem de
+//   nenhum campo; e a cascata K11:K16 realmente alimenta a seleção, eu só não tinha
+//   mostrado as fórmulas certas na explicação anterior). Diferente da Rede Chicoteada,
+//   NÃO é restrita a sistemaIrrigacao="Gotejamento" — se aplica a qualquer sistema.
+//   Lógica: 1) roda uma cascata simples agregada (vazão decrescendo uniformemente a
+//   cada saída, usando o total de saídas do campo inteiro, SEM dividir por
+//   numRedesChicoteadas, na Velocidade do Submain) pra achar quais diâmetros "aparecem"
+//   em algum ponto da chicoteada; 2) entre esses, seleciona os que, na Velocidade do
+//   Main, têm capacidade pra carregar pelo menos 1/3 da vazão da válvula; 3) distribui
+//   os metros de Main em partes iguais (fracionárias, sem arredondar — igual à aba
+//   real) entre os diâmetros selecionados. Testado contra os 2 orçamentos reais: Antonio
+//   Gilberto (metrosMain=2875) bate EXATO — 3 diâmetros (150/125/100mm), 165,23 rolos
+//   cada; Anderson Santana (metrosMain=0) corretamente não gera nenhum item.
 // v1.22 (2026-10-28): corrige bug GRAVE na Rede Chicoteada (v1.21): a quantidade de
 //   tubo estava sendo calculada a partir dos metros de UM header representativo da
 //   simulação da aba "Submain - Gotejo" (cujo comprimento já é metrosChicoteada/
@@ -823,7 +837,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.22';
+const APP_VERSION='v1.23';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -2423,6 +2437,69 @@ function gerarItensRedeChicoteada(d){
   if(area>0)itens.push({fornecedor:'Netafim',codigo:'01542-000760',descricao:'PANO',qtd:Math.ceil(area/20),grupo:'Adesivos/Solução'});
   return itens;
 }
+// Rede Secundária (tronco "Main") — porta da aba real "Rede Chicoteada-Secundaria",
+// linhas 29-47. NÃO é gated por sistema de irrigação (ao contrário da Rede Chicoteada):
+// 1) acha quais diâmetros "aparecem" em algum ponto da chicoteada inteira, com uma
+//    cascata simples e agregada (SEM simulação ponto-a-ponto como a do Submain: vazão
+//    decrescendo uniformemente a cada saída, usando o total de saídas do campo inteiro
+//    — metrosChicoteada/espacamentoLinhas, SEM dividir por numRedesChicoteadas — e a
+//    Velocidade do Submain, campo 'velocidadeSubmain');
+// 2) entre esses, seleciona os diâmetros cuja capacidade na Velocidade do Main (campo
+//    'velocidadeMain') é suficiente pra carregar pelo menos 1/3 da vazão da válvula —
+//    confirmado com o usuário: o "/3" é um critério de projeto fixo, intencional, não
+//    deriva de nenhum campo (nº de Main etc.);
+// 3) distribui os metros de Main (campo 'metrosMain') em partes IGUAIS (fracionárias,
+//    sem arredondar — igual à aba real) entre os diâmetros selecionados. A planilha não
+//    simula onde cada transição de diâmetro acontece dentro do tronco Main; assume
+//    partes iguais como aproximação de custo.
+// Testado contra os 2 orçamentos reais: Antonio Gilberto (metrosMain=2875) bate exato —
+// 3 diâmetros selecionados (150/125/100mm), 165,23 rolos cada; Anderson Santana
+// (metrosMain=0) corretamente não gera nenhum item.
+function diametrosAtivosChicoteadaTotal(d){
+  const Qtotal=parseFloat(d.vazaoValvula)||0;
+  const metrosTotal=parseFloat(d.metrosChicoteada)||0;
+  const espLinhas=parseFloat(d.espacamentoLinhas)||0;
+  const v=parseFloat(d.velocidadeSubmain)||0;
+  const ativos={};
+  if(!Qtotal||!metrosTotal||!espLinhas||!v)return ativos;
+  const nSaidas=metrosTotal/espLinhas;
+  const QporSaida=Qtotal/nSaidas;
+  const capacidade=di=>3600*Math.PI*(v*Math.pow(di/1000/2,2));
+  const ordemDesc=[...REDE_CHICOTEADA_NOMINAIS].reverse().map(n=>REDE_CHICOTEADA_NOMINAL_PARA_DI[n]);
+  let Fprev=0;
+  for(let idx=0;idx<ordemDesc.length;idx++){
+    const DI=ordemDesc[idx],DInext=ordemDesc[idx+1];
+    const capNext=DInext!==undefined?capacidade(DInext):0;
+    const F=Math.max(Qtotal-capNext,0);
+    const G=F-Fprev;
+    const I=(G/QporSaida)*espLinhas;
+    ativos[DI]=I>0;
+    Fprev=F;
+  }
+  return ativos;
+}
+function gerarItensRedeSecundaria(d){
+  const metrosMain=parseFloat(d.metrosMain)||0;
+  const Qtotal=parseFloat(d.vazaoValvula)||0;
+  const vMain=parseFloat(d.velocidadeMain)||0;
+  if(!metrosMain||!Qtotal||!vMain)return[];
+  const ativos=diametrosAtivosChicoteadaTotal(d);
+  const capacidade=di=>3600*Math.PI*(vMain*Math.pow(di/1000/2,2));
+  const limiar=Qtotal/3;
+  const selecionados=[];
+  for(const nom of REDE_CHICOTEADA_NOMINAIS){
+    const DI=REDE_CHICOTEADA_NOMINAL_PARA_DI[nom];
+    const H=limiar<capacidade(DI)?0:1;
+    const K=ativos[DI]?1:0;
+    if(K-H>0)selecionados.push(DI);
+  }
+  if(!selecionados.length)return[];
+  const rolosPorDiametro=(metrosMain/5.8)/selecionados.length;
+  return selecionados.map(DI=>{
+    const[fornecedor,codigo,descricao]=REDE_CHICOTEADA_CATALOGO_TUBO[DI];
+    return{fornecedor,codigo,descricao,qtd:rolosPorDiametro,grupo:'Rede Secundaria'};
+  });
+}
 // Converte texto TUDO EM MAIÚSCULO (como vem de colunas da planilha, ex.: "SUCÇÃO
 // 75MM PLASSON (NEGATIVA)") para uma forma mais legível. Se o texto já tem letras
 // minúsculas (ex.: descrição de Filtragem), deixa como está.
@@ -2547,6 +2624,13 @@ function carregarModelo(nomeModelo){
       // de simularRedeChicoteada/gerarItensRedeChicoteada.
       const itensRedeChic=gerarItensRedeChicoteada(d);
       itensRedeChic.forEach(it=>{
+        adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
+        n++;
+      });
+      // Rede Secundária (tronco Main) — ver fórmulas no comentário de
+      // gerarItensRedeSecundaria. Não é restrita a sistemaIrrigacao="Gotejamento".
+      const itensRedeSec=gerarItensRedeSecundaria(d);
+      itensRedeSec.forEach(it=>{
         adicionarItemCustoFixo(it.descricao,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
