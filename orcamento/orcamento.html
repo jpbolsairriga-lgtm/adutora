@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.38 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.39 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -464,6 +464,23 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.39 (2026-10-29): NOVO gerarItensSaidaCavalete() — categoria "Saída Cavalete"
+//   (kit de conexões PVC na saída de cada cavalete: luva, joelho, TE, redução), porta
+//   da aba real 'Saida Cavaletes' (tabela de kits por faixa de diâmetro "A mm x B mm").
+//   Achada rastreando célula a célula de onde vinham 6 itens que o app gerava bem
+//   abaixo do real (ex. 801496 "JOELHO PVC IRR SOLDA 90 100MM" estava 16 unidades
+//   abaixo). Confirmado EXATO pra faixa "90mm x 100mm" (Miguel Angelo Pimenta): qty =
+//   (qtd por item do kit) × nºValvulas, somando Adutora 01 e 02 quando as duas caem na
+//   mesma faixa (mesmo padrão do Relé Hidráulico). A categoria "Saida Cavalete"
+//   removida em v1.38 (achava que era duplicata/lixo) na verdade também tinha ESSE
+//   kit certo escondido junto com os 5 itens errados — removendo tudo "jogou o bebê
+//   junto com a água do banho"; agora o kit certo volta, calculado de verdade.
+//   LIMITAÇÃO: a faixa "A" (90mm) é escolhida pela vazão da Adutora (32-68 m³/h,
+//   confirmado); a faixa "B" (100mm) viria de uma 2ª tabela cruzada (vazão da Rede
+//   Chicoteada) não replicada — sempre assume B=100mm (o caso confirmado/mais comum).
+//   Resultado (Miguel Angelo Pimenta): 801496/701290/701286/701562/801864 foram de
+//   bem abaixo do real pra EXATOS. Divergentes 67->62; soma de unidades divergindo de
+//   categorias já dinâmicas 272->216.
 // v1.38 (2026-10-29): limpeza geral da base de dados estática (conjuntos.js), pedido
 //   explícito do usuário ("ajuste tudo") depois da auditoria estático-vs-dinâmico:
 //   1) Categoria inteira "Saida Cavalete" (5 itens) removida dos 2 modelos — eram
@@ -1110,7 +1127,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.38';
+const APP_VERSION='v1.39';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -2616,6 +2633,34 @@ const AUTOMACAO_PROJETO_OPERACOES=[ // Fonte 3: multiplicador sobre nºOperacoes
   {codigo:'701186',descricao:'CONECTOR JOELHO TEFEN 8X1/8"M',mult:1},
   {codigo:'701196',descricao:'CONECTOR UNIAO TEFEN 8 X 8',mult:1},
 ];
+// "Saída Cavalete" — porta da aba real 'Saida Cavaletes' (tabela de kits por faixa de
+// diâmetro "A mm x B mm"), achada rastreando célula a célula de onde vinham 6 itens
+// que o app gerava a menos (ex. 801496 "JOELHO PVC IRR SOLDA 90 100MM" estava 16
+// unidades abaixo do real). Confirmada EXATA pra faixa "90mm x 100mm" (Miguel Angelo
+// Pimenta): qty de cada item = (qtd por válvula) × nºValvulas da Adutora, somando
+// Adutora 01 e Adutora 02 quando as duas caem na mesma faixa (mesmo padrão do Relé
+// Hidráulico — kit compartilhado entre Gotejador 1ª/2ª Opção). A faixa "A" (90mm) é
+// escolhida pela vazão da Adutora, faixa 32-68 m³/h (confirmado: planilha real usa um
+// range de 4 faixas pela vazão: <9, 9-32, 32-68, 68-106 → provavelmente 50/75/90/110mm).
+// LIMITAÇÃO: a faixa "B" (100mm) depende de uma 2ª tabela cruzada (vazão da Rede
+// Chicoteada) que não foi replicada — sempre usa B=100mm (confirmado/mais comum), então
+// projetos que precisem de B=125/150mm não batem exato aqui.
+const SAIDA_CAVALETE_90X100=[
+  {codigo:'701562',descricao:'LUVA PVC REDUCAO 100 X 90',qtdPorValvula:1},
+  {codigo:'801496',descricao:'JOELHO PVC IRR SOLDA 90 100MM DURO',qtdPorValvula:2},
+  {codigo:'701286',descricao:'TE BSA SOLD IRRIGA-LF 100',qtdPorValvula:1},
+  {codigo:'701303',descricao:'LUVA SOLD.IRRIGA-LF 100',qtdPorValvula:1},
+  {codigo:'701290',descricao:'REDUCAO BSA SD IRRIGA-LF 100X75',qtdPorValvula:1},
+  {codigo:'801864',descricao:'JOELHO 90 SOLDAVEL DN75MM AZUL',qtdPorValvula:1},
+];
+function faixaVazaoAdutoraCombina90mm(vazao){return vazao>32&&vazao<=68;}
+function gerarItensSaidaCavalete(vazaoAdutora01,nv01,vazaoAdutora02,nv02){
+  let mult=0;
+  if(faixaVazaoAdutoraCombina90mm(vazaoAdutora01))mult+=parseFloat(nv01)||0;
+  if(faixaVazaoAdutoraCombina90mm(vazaoAdutora02))mult+=parseFloat(nv02)||0;
+  if(mult<=0)return[];
+  return SAIDA_CAVALETE_90X100.map(it=>({fornecedor:'Bolsa Irriga',codigo:it.codigo,descricao:it.descricao,qtd:it.qtdPorValvula*mult,grupo:'Saida Cavalete'}));
+}
 function gerarItensAutomacaoProjeto(d,cotasAdutora01,nv01,nv02){
   const porCodigo={};
   const add=(codigo,descricao,qtd)=>{
@@ -3499,6 +3544,12 @@ function carregarModelo(nomeModelo){
       // sempre a partir da Adutora 01 (ver comentário de gerarItensAutomacaoProjeto),
       // não da adutora do modelo sendo carregado.
       gerarItensAutomacaoProjeto(d,atual.adutora01&&atual.adutora01.cotas,d.numValvulasAdutora01,d.numValvulasAdutora02).forEach(it=>{
+        adicionarItemCustoFixo(it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
+        n++;
+      });
+      // Saída Cavalete — mesmo padrão (sempre Adutora 01 e 02, não a do modelo sendo
+      // carregado). Ver comentário de gerarItensSaidaCavalete.
+      gerarItensSaidaCavalete(atual.adutora01&&atual.adutora01.vazao,d.numValvulasAdutora01,atual.adutora02&&atual.adutora02.vazao,d.numValvulasAdutora02).forEach(it=>{
         adicionarItemCustoFixo(it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
