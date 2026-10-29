@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.35 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.36 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -464,6 +464,22 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.36 (2026-10-29): corrige a base de dados (não cálculo) pra 2 lacunas achadas na
+//   continuação da investigação de divergências (Miguel Angelo Pimenta):
+//   1) O kit "MB-ES-S90-VH3-M3-SSP" (mbsaida_projeto, vazão 28,1-45/2 bombas — o que
+//      esse projeto usa) estava faltando 4 itens de parafusaria/arruela que a aba
+//      real tem pra esse mesmo tier (ARRUELA LISA AC, 2x PARAFUSO SX AC, PORCA SX AC)
+//      — a extração original não capturou essas linhas. Adicionados em selecao.js
+//      (confirmado: ARRUELA foi de 96→288, bem perto do real=304; PORCA 48→144,
+//      real=152; PARAFUSO 16→104, real=112 — os ~8-16 que sobraram são de uma 3ª
+//      fonte ainda não achada). Os outros 10 tiers de mbsaida_projeto provavelmente
+//      têm a mesma lacuna, mas não verificados (sem orçamento real que os ative).
+//   2) NOVO: Relé Hidráulico Super Galit Inbar (901320) — antes era um item de qtd
+//      FIXA (8) copiado direto do projeto de referência (dump estático em
+//      conjuntos.js), removido e substituído por cálculo real (gerarItensRele
+//      Hidraulico): depende da amplitude do perfil de elevação da Adutora 01 (cota
+//      máx-mín) + nº de válvulas + automacaoCavalete="Piloto + Galit" (bate com
+//      "GALIT" no nome do produto). Bateu EXATO no caso real (32, antes dava 8).
 // v1.35 (2026-10-29): continuação da investigação de divergências do orçamento real
 //   de Miguel Angelo Pimenta (25,88ha), com o Relatório de Divergências já comparando
 //   só com Got 01 (v1.34):
@@ -1059,7 +1075,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.35';
+const APP_VERSION='v1.36';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -2516,6 +2532,29 @@ function gerarItensTuboAdutora(adCfg){
   });
   return{itens,avisos};
 }
+// Relé Hidráulico (901320) — porta de 2 fontes reais da aba 'Conj.Irri.Projeto - Got
+// 01' (categorias "Automação - Projeto" e "CAVALETES"), sempre referenciando a
+// Adutora 01 (não a do modelo sendo carregado — mesmo padrão do Moto-Bomba: Gotejador
+// 1ª/2ª Opção compartilham a mesma automação física). Parte A (Automação-Projeto) só
+// entra se a amplitude do perfil de elevação (cota máxima - cota mínima do perfil de
+// 10 pontos da Adutora 01) for >=26m — qty = nºValvulas01 × ROUNDUP((amplitude-25)/25,0).
+// Parte B (Cavaletes) = nºValvulas01+nºValvulas02, só se automacaoCavalete="Piloto +
+// Galit" (bate com o nome do produto, "GALIT"). As duas exigem automacao="Pneumatico".
+// Confirmado via orçamento real (Miguel Angelo Pimenta): Parte A=24, Parte B=8,
+// total=32 — bate exato. LIMITAÇÃO: Parte A só calcula quando o perfil de elevação de
+// 10 pontos (cotas manuais) está preenchido — se a Adutora 01 foi traçada no mapa
+// (perfil real ponto-a-ponto), fica 0 (não implementado para esse caso).
+function gerarItensReleHidraulico(d,cotasAdutora01,nv01,nv02){
+  if(d.automacao!=='Pneumatico')return[];
+  let qtd=0;
+  if(cotasAdutora01&&cotasAdutora01.length){
+    const amplitude=Math.max(...cotasAdutora01)-Math.min(...cotasAdutora01);
+    if(amplitude>=26)qtd+=nv01*Math.ceil((amplitude-25)/25);
+  }
+  if(d.automacaoCavalete==='Piloto + Galit')qtd+=nv01+nv02;
+  if(qtd<=0)return[];
+  return[{fornecedor:'Bolsa Irriga',codigo:'901320',descricao:'RELE HIDRAULICO SUPER GALIT INBAR 3-VIAS 0-20M',qtd,grupo:'Automação - Projeto'}];
+}
 // Automação Pneumática (tubulação PE 8mm + conectores TEFEN) — porta da aba real
 // "Projeto - Adutora 01/02" (BG87:BK89), 3 itens que SEMPRE faziam parte da categoria
 // "ADUTORA - PROJETO 01/02" mas estavam totalmente ausentes do app. Fórmulas reais
@@ -3369,6 +3408,12 @@ function carregarModelo(nomeModelo){
       gerarItensAutomacaoPneumatica(d,adCfg,numValvulasAdCfg).forEach(it=>{
         atual.bom.push({id:uid(),categoria:cfgSel.labelAdutora,grupo:cfgSel.labelAdutora,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
           qtd:it.qtd,custoUnit:buscarCusto(it.fornecedor,it.codigo)||0,ativo:true,origem,modelo:nomeModelo});
+        n++;
+      });
+      // Relé Hidráulico — sempre a partir da Adutora 01 (ver comentário de
+      // gerarItensReleHidraulico), não da adutora do modelo sendo carregado.
+      gerarItensReleHidraulico(d,atual.adutora01&&atual.adutora01.cotas,d.numValvulasAdutora01,d.numValvulasAdutora02).forEach(it=>{
+        adicionarItemCustoFixo(it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
     }
