@@ -136,6 +136,16 @@ details.card[open] summary .chev{transform:rotate(180deg)}
 .short .attsub{color:var(--err)}
 @keyframes chg{from{background:#FFF3C4}to{background:transparent}}
 #detTbl tr.chg td{animation:chg 1.2s ease-out}
+.cbrec{border:1px solid var(--ok);background:var(--ok-soft);border-radius:8px;padding:10px 12px;font-size:.84rem;margin-bottom:12px;line-height:1.5}
+.cbrec.none{border-color:var(--warn);background:var(--warn-soft)}
+#cbTbl td{white-space:nowrap;padding:8px 6px;vertical-align:top}
+#cbTbl .cmp{font-weight:650}
+#cbTbl .cmp small{display:block;font-weight:500}
+.fx{color:var(--err);font-weight:600}
+#cbTbl tr.g1 td{background:#F7FAFD}
+#cbTbl tr.gs td{border-top:2px solid var(--line)}
+.star{color:#D99A00;margin-left:4px}
+.kx{display:inline-block;font-size:.7rem;font-weight:800;padding:0 5px;border-radius:4px;background:#FFF0D6;color:var(--warn)}
 .okc{color:var(--ok)}.errc{color:var(--err)}
 .tbl tbody tr.short td{background:#FFFBFA}
 .tbl tbody tr.short.sel td{background:var(--err-soft)}
@@ -306,6 +316,19 @@ details.card[open] summary .chev{transform:rotate(180deg)}
         <div class="legend"><span><i style="background:var(--ok)"></i>Atende a demanda</span><span><i style="background:var(--err)"></i>Não atende</span><span><i style="background:var(--ink);width:2px"></i>Lâmina demandada</span><span>Lâmina máx. = Ta × (ciclo ÷ setores) × Ef ÷ TR</span></div>
       </div>
 
+      <div class="card" id="cbCard">
+        <h2>Lâmina × Casa de Bomba<span class="right no-print" id="cbSrc"></span></h2>
+        <div class="altinfo">Cada número de setores pede uma vazão por setor, e a vazão define o conjunto de componentes da Casa de Bomba (sucção, cavalete e saída de bombas). Dentro de um mesmo conjunto, menos setores = mais lâmina com o mesmo equipamento.</div>
+        <div class="cbrec" id="cbRec"></div>
+        <div class="tblwrap full">
+          <table class="tbl" id="cbTbl">
+            <thead><tr><th>Setores</th><th class="num">Vazão/setor</th><th class="num">Lâmina líq. máx.</th><th>Sucção <small>manifold</small></th><th>Cavalete <small>manifold · válv.</small></th><th>Saída de bombas <small>manifold · válv.</small></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="legend"><span><b class="star">★</b> Mais lâmina com o mesmo conjunto</span><span><span class="kx">2×</span> vazão dividida entre bombas em paralelo (sucção e saída são por bomba)</span><span>Faixas e componentes do app Casa de Bomba</span></div>
+      </div>
+
       <div class="card">
         <h2>Resultados detalhados</h2>
         <table class="tbl"><tbody id="detTbl"></tbody></table>
@@ -439,11 +462,16 @@ details.card[open] summary .chev{transform:rotate(180deg)}
 
     // simulação: 3 setores abaixo e 3 acima do adotado — lâmina máxima que cabe no ciclo
     const ref = Math.max(1, N), ini = Math.max(1, ref - 3);
-    r.alts = [];
-    for (let i = ini; i <= ini + 6; i++) {
+    const sim = i => {
       const As = A / i, Tt = i * Top, Tsm = Tc / i, LBm = Ta * Tsm, LLm = LBm * ef / F;
-      r.alts.push({n:i, As, Qs:As * r.qHa, Tt, folga:Tc - Tt, oc:Tt / Tc, Tsm, LBm, LLm, at:LLm / LL, ok:LLm >= LL - 1e-9});
-    }
+      return {n:i, As, Qs:As * r.qHa, Tt, folga:Tc - Tt, oc:Tt / Tc, Tsm, LBm, LLm, at:LLm / LL, ok:LLm >= LL - 1e-9};
+    };
+    r.alts = [];
+    for (let i = ini; i <= ini + 6; i++) r.alts.push(sim(i));
+    // comparativo com a Casa de Bomba: faixa mais larga (±5) para enxergar as trocas de conjunto
+    const ini2 = Math.max(1, ref - 5);
+    r.cbAlts = [];
+    for (let i = ini2; i <= ini2 + 10; i++) r.cbAlts.push(sim(i));
     return r;
   }
 
@@ -470,7 +498,7 @@ details.card[open] summary .chev{transform:rotate(180deg)}
     if (!r.valid) {
       ['kLb','kTa','kTop','kN','kQ','kOc'].forEach(id => set(id, '—'));
       ['kLbS','kTaS','kTopS','kNS','kQS','kOcS','tlInfo'].forEach(id => set(id, ''));
-      set('tl',''); set('axis',''); $('altTbl').tBodies[0].innerHTML = ''; set('altInfo',''); set('detTbl',''); set('memo','');
+      set('tl',''); set('axis',''); $('altTbl').tBodies[0].innerHTML = ''; set('altInfo',''); $('cbTbl').tBodies[0].innerHTML = ''; set('cbRec',''); set('detTbl',''); set('memo','');
       renderPrint(r); return;
     }
     const ok = r.N >= 1;
@@ -519,6 +547,7 @@ details.card[open] summary .chev{transform:rotate(180deg)}
         <td class="att"><div class="attw"><div class="lbar"><i style="width:${a.LLm/lsc*100}%"></i><s style="left:${r.LL/lsc*100}%"></s></div><span class="pct ${a.ok?'okc':'errc'}">${fmt(a.at*100,0)}%</span></div>
           <div class="attsub">${a.ok ? `folga ${hm(a.folga)}` : `faltam ${fmt(r.LL - a.LLm)} mm/dia`}</div></td>
       </tr>`).join('');
+    renderCB(r);
     set('altInfo', `Demanda: <b>${fmt(r.LL)} mm/dia</b> líquida · Ta ${fmt(r.Ta,3)} mm/h · ciclo ${hm(r.Tc)} · Ef. ${fmt(r.ef*100,0)}%`);
 
     // detalhes
@@ -581,6 +610,72 @@ details.card[open] summary .chev{transform:rotate(180deg)}
     set('memo', m);
 
     renderPrint(r);
+  }
+
+  /* ---------- Casa de Bomba (dados do app ../tabelas/tabelas.html) ---------- */
+  // cópia de segurança das tabelas; abrindo pelo site, os dados são lidos do próprio app Casa de Bomba
+  let CB = {
+    SUCCAO:[{"min":5,"max":19,"manifold":"75mm","retencao":"3\"","crivo":"3\""},{"min":19,"max":28,"manifold":"90mm","retencao":"3\"","crivo":"3\""},{"min":28,"max":44,"manifold":"110mm","retencao":"4\"","crivo":"4\""},{"min":44,"max":92,"manifold":"160mm","retencao":"6\"","crivo":"6\""},{"min":92,"max":183,"manifold":"225mm","retencao":"8\"","crivo":"8\""}],
+    CAVALETES:[{"min":5,"max":32,"manifold":"75mm","valv":"75-2"},{"min":32,"max":41,"manifold":"90mm","valv":"75-3"},{"min":41,"max":68,"manifold":"90mm","valv":"96-90"},{"min":68,"max":106,"manifold":"110mm","valv":"96-110"},{"min":106,"max":205,"manifold":"160mm","valv":"96-160"}],
+    SAIDA_BOMBAS:[{"min":10,"max":28,"manifold":"75mm","valv":"44-2","filtro":"2x20","adutora":"75mm/100 defofo"},{"min":28,"max":40,"manifold":"90mm","valv":"47-3","filtro":"2x24","adutora":"100 defofo"},{"min":40,"max":45,"manifold":"90mm","valv":"47-3","filtro":"3x24","adutora":"100/150 defofo"},{"min":45,"max":60,"manifold":"110mm","valv":"47-4","filtro":"3x24","adutora":"150 defofo"},{"min":60,"max":90,"manifold":"110mm","valv":"47-4","filtro":"4x24","adutora":"150 defofo"},{"min":90,"max":140,"manifold":"160mm","valv":"47-6","filtro":"3x36","adutora":"150/200 defofo"}]
+  };
+  let cbFonte = 'cópia local';
+  async function loadCB(){
+    try {
+      const html = await (await fetch('../tabelas/tabelas.html', {cache:'no-cache'})).text();
+      const get = k => { const m = html.match(new RegExp('const\\s+' + k + '\\s*=\\s*(\\[.*?\\]);')); return m ? JSON.parse(m[1]) : null; };
+      const d = {SUCCAO:get('SUCCAO'), CAVALETES:get('CAVALETES'), SAIDA_BOMBAS:get('SAIDA_BOMBAS')};
+      if (d.SUCCAO && d.CAVALETES && d.SAIDA_BOMBAS) { CB = d; cbFonte = 'app Casa de Bomba'; render(); }
+    } catch (e) {}
+  }
+  const cbFind = (t, v) => { const i = t.findIndex(x => v >= x.min && v <= x.max); return i < 0 ? null : {i, row:t[i], k:1}; };
+  // sucção e saída são por bomba: acima do teto das tabelas, divide a vazão entre bombas em paralelo (até 4),
+  // com o mesmo nº de bombas para as duas
+  const cbPumps = v => {
+    for (let k = 1; k <= 4; k++) {
+      const s = cbFind(CB.SUCCAO, v / k), b = cbFind(CB.SAIDA_BOMBAS, v / k);
+      if (s && b) return {s:{...s, k}, b:{...b, k}};
+    }
+    return {s:cbFind(CB.SUCCAO, v), b:cbFind(CB.SAIDA_BOMBAS, v)};
+  };
+  const kx = o => o.k > 1 ? `<span class="kx">${o.k}×</span> ` : '';
+
+  function renderCB(r){
+    set('cbSrc', `dados: ${cbFonte} · toque numa linha para adotar`);
+    const rows = r.cbAlts.map(a => {
+      const {s, b} = cbPumps(a.Qs), c = cbFind(CB.CAVALETES, a.Qs);
+      return {...a, s, c, b, key:[s ? s.i + 'k' + s.k : 'x', c?.i ?? 'x', b ? b.i + 'k' + b.k : 'x'].join('-'), full:!!(s && c && b)};
+    });
+    // dentro de cada conjunto, o menor nº de setores que atende dá a maior lâmina com o mesmo equipamento
+    const best = {};
+    rows.forEach(x => { if (x.ok && x.full && !(x.key in best)) best[x.key] = x.n; });
+    // recomendação: o menor conjunto que atende (maior nº de setores que atende) e, nele, a maior lâmina
+    const okRows = rows.filter(x => x.ok && x.full);
+    const rec = okRows.length ? rows.find(x => x.n === best[okRows[okRows.length - 1].key]) : null;
+
+    const fx = '<span class="fx">fora da faixa</span>';
+    const rng = o => `<small>${o.row.min}–${o.row.max} m³/h${o.k > 1 ? ' por bomba' : ''}</small>`;
+    let g = 0, last = null;
+    $('cbTbl').tBodies[0].innerHTML = rows.map(x => {
+      const nova = x.key !== last; if (nova && last !== null) g ^= 1; last = x.key;
+      return `<tr class="pick${x.n===r.N?' sel':''}${x.ok?'':' short'}${g?' g1':''}${nova?' gs':''}" data-n="${x.n}">
+        <td>${x.n}${x.n===r.N?'<span class="tag ad">adotado</span>':''}${best[x.key]===x.n?'<span class="star" title="Maior lâmina com este conjunto">★</span>':''}</td>
+        <td class="num">${fmt(x.Qs,1)} <small>m³/h</small></td>
+        <td class="num"><b class="${x.ok?'okc':'errc'}">${fmt(x.LLm)}</b> <small>mm/dia · ${fmt(x.at*100,0)}%</small></td>
+        <td class="cmp">${x.s ? `${kx(x.s)}${x.s.row.manifold}${rng(x.s)}` : fx}</td>
+        <td class="cmp">${x.c ? `${x.c.row.manifold} · ${esc(x.c.row.valv)}${rng(x.c)}` : fx}</td>
+        <td class="cmp" title="${x.b ? `${x.b.row.min}–${x.b.row.max} m³/h por bomba` : ''}">${x.b ? `${kx(x.b)}${x.b.row.manifold} · ${esc(x.b.row.valv)}<small>filtro ${esc(x.b.row.filtro)}</small><small>${esc(x.b.row.adutora)}</small>` : fx}</td>
+      </tr>`;
+    }).join('');
+
+    const cur = rows.find(x => x.n === r.N);
+    $('cbRec').className = 'cbrec' + (rec ? '' : ' none');
+    set('cbRec', rec
+      ? `<b>Mais proveitosa: ${rec.n} setores</b> — lâmina líquida máx. <b>${fmt(rec.LLm)} mm/dia</b> (${fmt(rec.at*100,0)}% da demanda), ${fmt(rec.Qs,1)} m³/h por setor, com o menor conjunto que atende a demanda: sucção ${rec.s.k > 1 ? rec.s.k + '× ' : ''}${rec.s.row.manifold}, cavalete ${esc(rec.c.row.valv)}, saída ${rec.b.k > 1 ? rec.b.k + '× ' : ''}${rec.b.row.manifold} / filtro ${esc(rec.b.row.filtro)}${rec.b.k > 1 ? ` (${rec.b.k} bombas em paralelo)` : ''}.`
+        + (cur && cur.n !== rec.n ? (cur.key === rec.key
+            ? ` O adotado (${cur.n}) usa o mesmo conjunto, com ${fmt(rec.LLm - cur.LLm)} mm/dia a menos.`
+            : ` O adotado (${cur.n}) usa outro conjunto${cur.ok ? '' : ' e não atende a demanda'}.`) : '')
+      : 'Nenhuma opção desta faixa atende a demanda com componentes dentro das tabelas da Casa de Bomba.');
   }
 
   function inputRows(){
@@ -683,6 +778,12 @@ details.card[open] summary .chev{transform:rotate(180deg)}
       S.nAdot = (n === r.Nmax) ? '' : String(n); $('nAdot').value = S.nAdot;
       render(); save(); toast(`${n} setor(es) adotado(s)`);
     });
+    $('cbTbl').addEventListener('click', e => {
+      const tr = e.target.closest('tr[data-n]'); if (!tr) return;
+      const n = +tr.dataset.n, r = calc(S);
+      S.nAdot = (n === r.Nmax) ? '' : String(n); $('nAdot').value = S.nAdot;
+      render(); save(); toast(`${n} setor(es) adotado(s)`);
+    });
     $('btnCsv').addEventListener('click', exportCSV);
     $('btnPrint').addEventListener('click', () => { $('memoCard').open = true; window.print(); });
     $('btnLink').addEventListener('click', copyLink);
@@ -694,6 +795,7 @@ details.card[open] summary .chev{transform:rotate(180deg)}
     });
     if (S.cliente || S.fazenda) $('projCard').open = true;
     render();
+    loadCB();
   }
   init();
 })();
