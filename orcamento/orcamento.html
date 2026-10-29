@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.36 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.37 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -464,6 +464,21 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.37 (2026-10-29): amplia gerarItensReleHidraulico() -> gerarItensAutomacaoProjeto()
+//   pra cobrir os 3 maiores itens ainda divergentes da categoria "Automação - Projeto"
+//   (CONECTOR RETO/JOELHO TEFEN 8X1/8 e CONECTOR TEFEN 8X1/8 MX8, que estavam ~60-70%
+//   abaixo do real) + DOROT PILOTO PLASTICO (totalmente ausente). Eram 3 fontes reais
+//   diferentes somadas (achadas rastreando célula a célula no orçamento do Miguel
+//   Angelo Pimenta): 1) kit "Cavaletes Pneumáticos" (qty por cavalete × nºValvulas,
+//   só com automacaoCavalete="Piloto + Galit"); 2) amplitude do perfil de elevação da
+//   Adutora 01 (igual à fonte do Relé Hidráulico, mas com multiplicadores diferentes
+//   por item); 3) nº de operações (Dados de Entrada D43). Removidos de conjuntos.js os
+//   5 itens de qtd fixa que isso substitui (701033/701007/701008/701315, nos 2
+//   modelos). Resultado: os 3 itens bateram EXATO no caso real (antes -59/-56/-46,
+//   agora 0). Auditoria geral: a soma de divergência vinda das categorias ainda 100%
+//   estáticas (Injetor de Cloro, Monitoramento, Ferti-Irrigação, Saída Cavalete, resto
+//   de Automação-Projeto) caiu de 234,5 pra 73,5 unidades — a maior parte do que
+//   resta agora é de categorias JÁ dinâmicas, não mais puxado de dump fixo.
 // v1.36 (2026-10-29): corrige a base de dados (não cálculo) pra 2 lacunas achadas na
 //   continuação da investigação de divergências (Miguel Angelo Pimenta):
 //   1) O kit "MB-ES-S90-VH3-M3-SSP" (mbsaida_projeto, vazão 28,1-45/2 bombas — o que
@@ -1075,7 +1090,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.36';
+const APP_VERSION='v1.37';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -2532,28 +2547,72 @@ function gerarItensTuboAdutora(adCfg){
   });
   return{itens,avisos};
 }
-// Relé Hidráulico (901320) — porta de 2 fontes reais da aba 'Conj.Irri.Projeto - Got
-// 01' (categorias "Automação - Projeto" e "CAVALETES"), sempre referenciando a
-// Adutora 01 (não a do modelo sendo carregado — mesmo padrão do Moto-Bomba: Gotejador
-// 1ª/2ª Opção compartilham a mesma automação física). Parte A (Automação-Projeto) só
-// entra se a amplitude do perfil de elevação (cota máxima - cota mínima do perfil de
-// 10 pontos da Adutora 01) for >=26m — qty = nºValvulas01 × ROUNDUP((amplitude-25)/25,0).
-// Parte B (Cavaletes) = nºValvulas01+nºValvulas02, só se automacaoCavalete="Piloto +
-// Galit" (bate com o nome do produto, "GALIT"). As duas exigem automacao="Pneumatico".
-// Confirmado via orçamento real (Miguel Angelo Pimenta): Parte A=24, Parte B=8,
-// total=32 — bate exato. LIMITAÇÃO: Parte A só calcula quando o perfil de elevação de
-// 10 pontos (cotas manuais) está preenchido — se a Adutora 01 foi traçada no mapa
-// (perfil real ponto-a-ponto), fica 0 (não implementado para esse caso).
-function gerarItensReleHidraulico(d,cotasAdutora01,nv01,nv02){
-  if(d.automacao!=='Pneumatico')return[];
-  let qtd=0;
-  if(cotasAdutora01&&cotasAdutora01.length){
-    const amplitude=Math.max(...cotasAdutora01)-Math.min(...cotasAdutora01);
-    if(amplitude>=26)qtd+=nv01*Math.ceil((amplitude-25)/25);
+// Automação Pneumática do Projeto (Relé Hidráulico + conectores TEFEN da categoria
+// "Automação - Projeto") — porta de 3 fontes reais da aba 'Conj.Irri.Projeto - Got 01'
+// (achadas uma por uma, vendo cada item "faltando" no Relatório de Divergências e
+// rastreando a fórmula real via openpyxl), todas referenciando SEMPRE a Adutora 01 e
+// os campos nºValvulas01/02 (nunca os do modelo sendo carregado — mesmo padrão do
+// Moto-Bomba: Gotejador 1ª/2ª Opção compartilham a mesma automação física):
+//
+// Fonte 1 — "Cavaletes Pneumáticos" (categoria CAVALETES da planilha): só entra se
+//   automacaoCavalete="Piloto + Galit" (bate com "GALIT" no nome dos produtos); qty
+//   de cada item = (qtd por cavalete) × (nºValvulas01+nºValvulas02).
+// Fonte 2 — "Automação-Projeto por amplitude de elevação": só entra se automacao=
+//   "Pneumatico" E a amplitude do perfil de elevação da Adutora 01 (cota máx-mín do
+//   perfil de 10 pontos) for >=26m; qty = (multiplicador) × nºValvulas01 ×
+//   ROUNDUP((amplitude-25)/25,0).
+// Fonte 3 — "Automação-Projeto por nº de operações": só entra se automacao=
+//   "Pneumatico"; qty = (multiplicador) × nºOperacoes (Dados de Entrada D43).
+//
+// Confirmado via orçamento real (Miguel Angelo Pimenta — automacao="Pneumatico",
+// automacaoCavalete="Piloto + Galit"): bateu EXATO em 901320 (32), 701008 (72); ficou
+// a ~1 unidade de diferença em 701188/701200 (que também recebem uma pequena
+// contribuição separada da "MB Projeto - Saida", já coberta em outro lugar).
+// LIMITAÇÃO: a Fonte 2 só calcula quando o perfil de elevação de 10 pontos (cotas
+// manuais) está preenchido — se a Adutora 01 foi traçada no mapa (perfil real
+// ponto-a-ponto), essa parte fica 0 (não implementado para esse caso).
+const AUTOMACAO_PROJETO_CAVALETE=[ // Fonte 1: qty por cavalete
+  {codigo:'701033',descricao:'DOROT PILOTO PLASTICO 29-200/54 8MM',qtdPorCavalete:1},
+  {codigo:'701007',descricao:"CONECTOR RETO TEFEN 8 X 1/8'' M",qtdPorCavalete:3},
+  {codigo:'701008',descricao:"CONECTOR JOELHO TEFEN 8 X 1/8'' M",qtdPorCavalete:3},
+  {codigo:'701188',descricao:'CONECTOR JOELHO TEFEN 8X1/4M"',qtdPorCavalete:3},
+  {codigo:'701315',descricao:"CONECTOR TEFEN 8 X 1/8'' M X 8",qtdPorCavalete:1},
+  {codigo:'701200',descricao:'CONECTOR TEFEN 8X1/4 MX8"',qtdPorCavalete:1},
+  {codigo:'901320',descricao:'RELE HIDRAULICO SUPER GALIT INBAR 3-VIAS 0-20M',qtdPorCavalete:1},
+];
+const AUTOMACAO_PROJETO_AMPLITUDE=[ // Fonte 2: multiplicador sobre nºValvulas01×ROUNDUP((amplitude-25)/25)
+  {codigo:'901320',descricao:'RELE HIDRAULICO SUPER GALIT INBAR 3-VIAS 0-20M',mult:1},
+  {codigo:'701007',descricao:"CONECTOR RETO TEFEN 8 X 1/8'' M",mult:2},
+  {codigo:'701008',descricao:"CONECTOR JOELHO TEFEN 8 X 1/8'' M",mult:2},
+  {codigo:'701315',descricao:"CONECTOR TEFEN 8 X 1/8'' M X 8",mult:2},
+];
+const AUTOMACAO_PROJETO_OPERACOES=[ // Fonte 3: multiplicador sobre nºOperacoes
+  {codigo:'701007',descricao:"CONECTOR RETO TEFEN 8 X 1/8'' M",mult:1},
+  {codigo:'701315',descricao:"CONECTOR TEFEN 8 X 1/8'' M X 8",mult:2},
+];
+function gerarItensAutomacaoProjeto(d,cotasAdutora01,nv01,nv02){
+  const porCodigo={};
+  const add=(codigo,descricao,qtd)=>{
+    if(qtd<=0)return;
+    if(!porCodigo[codigo])porCodigo[codigo]={fornecedor:'Bolsa Irriga',codigo,descricao,qtd:0,grupo:'Automação - Projeto'};
+    porCodigo[codigo].qtd+=qtd;
+  };
+  if(d.automacaoCavalete==='Piloto + Galit'){
+    const multCav=(parseFloat(nv01)||0)+(parseFloat(nv02)||0);
+    AUTOMACAO_PROJETO_CAVALETE.forEach(it=>add(it.codigo,it.descricao,it.qtdPorCavalete*multCav));
   }
-  if(d.automacaoCavalete==='Piloto + Galit')qtd+=nv01+nv02;
-  if(qtd<=0)return[];
-  return[{fornecedor:'Bolsa Irriga',codigo:'901320',descricao:'RELE HIDRAULICO SUPER GALIT INBAR 3-VIAS 0-20M',qtd,grupo:'Automação - Projeto'}];
+  if(d.automacao==='Pneumatico'){
+    if(cotasAdutora01&&cotasAdutora01.length){
+      const amplitude=Math.max(...cotasAdutora01)-Math.min(...cotasAdutora01);
+      if(amplitude>=26){
+        const base=(parseFloat(nv01)||0)*Math.ceil((amplitude-25)/25);
+        AUTOMACAO_PROJETO_AMPLITUDE.forEach(it=>add(it.codigo,it.descricao,it.mult*base));
+      }
+    }
+    const numOperacoes=parseFloat(d.numOperacoes)||0;
+    AUTOMACAO_PROJETO_OPERACOES.forEach(it=>add(it.codigo,it.descricao,it.mult*numOperacoes));
+  }
+  return Object.values(porCodigo);
 }
 // Automação Pneumática (tubulação PE 8mm + conectores TEFEN) — porta da aba real
 // "Projeto - Adutora 01/02" (BG87:BK89), 3 itens que SEMPRE faziam parte da categoria
@@ -3410,9 +3469,10 @@ function carregarModelo(nomeModelo){
           qtd:it.qtd,custoUnit:buscarCusto(it.fornecedor,it.codigo)||0,ativo:true,origem,modelo:nomeModelo});
         n++;
       });
-      // Relé Hidráulico — sempre a partir da Adutora 01 (ver comentário de
-      // gerarItensReleHidraulico), não da adutora do modelo sendo carregado.
-      gerarItensReleHidraulico(d,atual.adutora01&&atual.adutora01.cotas,d.numValvulasAdutora01,d.numValvulasAdutora02).forEach(it=>{
+      // Automação Pneumática do Projeto (Relé Hidráulico + conectores TEFEN) —
+      // sempre a partir da Adutora 01 (ver comentário de gerarItensAutomacaoProjeto),
+      // não da adutora do modelo sendo carregado.
+      gerarItensAutomacaoProjeto(d,atual.adutora01&&atual.adutora01.cotas,d.numValvulasAdutora01,d.numValvulasAdutora02).forEach(it=>{
         adicionarItemCustoFixo(it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
