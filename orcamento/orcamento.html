@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.42 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.43 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -464,6 +464,28 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.43 (2026-10-29): corrige 2 bugs no Relatório de Divergências por categoria
+//   (v1.42), achados pelo usuário com um exemplo real (ARRUELA da categoria
+//   "Conjunto de Filtragem com 2x24..." aparecendo "Só no App" mesmo com as
+//   quantidades batendo 32=32 nos dois lados):
+//   1) extrairBOMHistoricoSheet() só lia a coluna M (Categoria) de cada linha, que
+//      em categorias com várias faixas/variantes (Filtragem, Sucção, MB-Saida,
+//      Cavaletes, Saida Cavalete) tem só o nome GENÉRICO ("FILTRAGEM") — o nome
+//      ESPECÍFICO da faixa ("Conjunto de Filtragem com 2x24 Netafim x Manifold 90
+//      mm...") está numa linha de "título de seção" ACIMA do bloco (padrão B=
+//      "Fornecedor", C="codigo", E=título), não na coluna M. Agora rastreia essas
+//      linhas de título e usa o título como categoria quando existir (cai pra coluna
+//      M em categorias sem título específico — detecta isso ignorando títulos que
+//      começam com "Descrição", que são só um rótulo de coluna genérico).
+//   2) calcularComparacaoHistorico(): a chave de comparação não normalizava
+//      maiúsculas/minúsculas — "Sucção 110\" Com Mangote 4\"" (app) e "SUCÇÃO 110\"
+//      COM MANGOTE 4\"" (planilha, tudo maiúsculo) são a MESMA categoria, mas viravam
+//      "Só no App" + "Só na Planilha" em categorias "diferentes" só por causa da
+//      capitalização. Chave agora usa a categoria normalizada (minúsculo+trim); o
+//      relatório continua mostrando o texto original.
+//   Resultado (Miguel Angelo Pimenta): itens que antes apareciam errado como
+//   "Só no App"/"Só na Planilha" (mas na real batiam exato) agora aparecem "Igual"
+//   de verdade — divergentes (na visão por categoria) caíram de 330 pra 278.
 // v1.42 (2026-10-29): Relatório de Divergências agora compara e agrupa POR CATEGORIA
 //   (pedido do usuário) — antes somava cada código numa cesta só pro orçamento
 //   inteiro, escondendo em QUAL categoria a divergência realmente estava (sempre
@@ -1160,7 +1182,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.42';
+const APP_VERSION='v1.43';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -1594,16 +1616,41 @@ function extrairBOMHistoricoSheet(sheet){
   const itens=[];
   if(!sheet||!sheet['!ref'])return itens;
   const range=XLSX.utils.decode_range(sheet['!ref']);
+  // A planilha real tem um "título de seção" específico (linha com B="Fornecedor",
+  // C="codigo", E=nome do kit, ex. "Conjunto de Filtragem com 2x24 Netafim x Manifold
+  // 90 mm - Plasson + Saida Retrolavagem") logo ACIMA de cada bloco de itens — mas a
+  // coluna M (Categoria) de cada linha de dado só tem o nome genérico ("FILTRAGEM").
+  // Achado via Relatório de Divergências por categoria: comparar só pela coluna M
+  // escondia a quantidade real (ficava tudo "Só no App", porque a comparação não
+  // achava a linha equivalente do lado da planilha). Agora rastreia o título de seção
+  // mais recente e usa ele como categoria quando existir — cai pra coluna M só se
+  // nenhum título de seção foi visto ainda (bem no início da aba).
+  let categoriaSecao=null;
   for(let r=range.s.r;r<=range.e.r;r++){
-    const fornecedor=sheet[XLSX.utils.encode_cell({r,c:1})]?.v; // coluna B
+    const colB=sheet[XLSX.utils.encode_cell({r,c:1})]?.v;
+    const colC=sheet[XLSX.utils.encode_cell({r,c:2})]?.v;
+    if(colB==='Fornecedor'&&colC==='codigo'){
+      const titulo=sheet[XLSX.utils.encode_cell({r,c:4})]?.v; // coluna E
+      // Em blocos "simples" (1 categoria só, sem variantes por faixa) o título é só
+      // um rótulo de coluna genérico ("Descrição Rede Chicoteada", "Descrição
+      // Adesivo/Solução/Pano") — nesse caso a coluna M já tem o nome certo e mais
+      // curto; só troca pelo título quando ele NÃO for esse rótulo genérico (ou seja,
+      // quando for um nome de kit/faixa de verdade, tipo "Conjunto de Filtragem com
+      // 2x24..." ou "Saida Cavalete 90 mm x 100 mm").
+      const t=titulo!=null?String(titulo).trim():'';
+      categoriaSecao=(t&&!/^descri[çc][aã]o\b/i.test(t))?t:null;
+      continue;
+    }
+    const fornecedor=colB; // coluna B
     if(fornecedor!=='Bolsa Irriga'&&fornecedor!=='Netafim')continue;
     const qtd=sheet[XLSX.utils.encode_cell({r,c:8})]?.v; // coluna I = QTD.
     if(typeof qtd!=='number'||!qtd)continue;
-    const codigo=sheet[XLSX.utils.encode_cell({r,c:2})]?.v; // coluna C
+    const codigo=colC; // coluna C
     const descricao=sheet[XLSX.utils.encode_cell({r,c:4})]?.v; // coluna E
-    const categoria=sheet[XLSX.utils.encode_cell({r,c:12})]?.v; // coluna M = Categoria
+    const categoriaM=sheet[XLSX.utils.encode_cell({r,c:12})]?.v; // coluna M = Categoria
+    const categoria=categoriaSecao||(categoriaM!=null?String(categoriaM):null);
     itens.push({fornecedor,codigo:String(codigo??''),descricao:descricao!=null?String(descricao):'',qtd,
-      categoria:categoria!=null?String(categoria):'(sem categoria)'});
+      categoria:categoria||'(sem categoria)'});
   }
   return itens;
 }
@@ -4118,15 +4165,22 @@ function exportarConsolidadoCSV(){
 function calcularComparacaoHistorico(orc){
   if(!orc.bomHistorico||!orc.bomHistorico.length)return[];
   const porChave={};
+  // Chave usa a categoria NORMALIZADA (minúsculo+trim) — achado real: o app e a
+  // planilha às vezes escrevem a MESMA categoria com capitalização diferente (ex.
+  // "Sucção 110\" Com Mangote 4\"" no app vs "SUCÇÃO 110\" COM MANGOTE 4\"" na
+  // planilha), o que sem normalizar virava "Só no App" + "Só na Planilha" em
+  // categorias "diferentes" pro mesmo item, por pura diferença de maiúscula. A
+  // categoria MOSTRADA no relatório é a primeira vista (prioriza a do app).
+  const normCat=c=>(c||'(sem categoria)').trim().toLowerCase();
   orc.bom.filter(i=>i.ativo).forEach(it=>{
     const categoria=it.categoria||'(sem categoria)';
-    const k=categoria+'\u0001'+(it.fornecedor||'')+'\u0001'+it.codigo;
+    const k=normCat(categoria)+'\u0001'+(it.fornecedor||'')+'\u0001'+it.codigo;
     if(!porChave[k])porChave[k]={categoria,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,qtdApp:0,qtdHist:0,descricoesHist:new Set()};
     porChave[k].qtdApp+=it.qtd;
   });
   orc.bomHistorico.forEach(it=>{
     const categoria=it.categoria||'(sem categoria)';
-    const k=categoria+'\u0001'+(it.fornecedor||'')+'\u0001'+it.codigo;
+    const k=normCat(categoria)+'\u0001'+(it.fornecedor||'')+'\u0001'+it.codigo;
     if(!porChave[k])porChave[k]={categoria,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,qtdApp:0,qtdHist:0,descricoesHist:new Set()};
     porChave[k].qtdHist+=it.qtd;
     if(!porChave[k].descricao)porChave[k].descricao=it.descricao;
