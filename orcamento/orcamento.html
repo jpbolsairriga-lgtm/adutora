@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.37 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.38 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -464,6 +464,26 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.38 (2026-10-29): limpeza geral da base de dados estática (conjuntos.js), pedido
+//   explícito do usuário ("ajuste tudo") depois da auditoria estático-vs-dinâmico:
+//   1) Categoria inteira "Saida Cavalete" (5 itens) removida dos 2 modelos — eram
+//      DUPLICATAS de itens já gerados corretamente por outro lugar (REDUCAO/TE/CURVA
+//      75X50, já cobertos por gerarItensReducaoRamal desde v1.33) ou itens que o
+//      orçamento real confirmado simplesmente não usa (qtd real = 0 nas 2 válvulas
+//      conferidas) — a categoria só causava contagem a mais, nunca a menos.
+//   2) gerarItensAutomacaoProjeto() ganhou mais 5 itens na "Fonte 3" (nºOperacoes):
+//      GALIT MAD TAKIN-RELE HIDR, SOLENOIDE 24VAC, ADAPTADOR BASE SOLENOIDE,
+//      CONECTOR JOELHO TEFEN 8X1/8"M, CONECTOR UNIAO TEFEN 8X8 — mesma fórmula já
+//      usada pros outros itens dessa fonte (qty=nºOperacoes), removidos os
+//      equivalentes de qtd fixa em conjuntos.js.
+//   3) Removido também 801901 (COLAR DE TOMADA) de "Moitoramento" — real=0 confirmado,
+//      sem fórmula positiva achada (mesmo caso de "Saida Cavalete").
+//   Resultado (Miguel Angelo Pimenta): itens divergentes 75->67; soma de unidades
+//   divergindo de categorias AINDA estáticas 73,5->31 (87% de redução desde o início
+//   dessa rodada de auditoria, que começou em 234,5). O que resta agora é, em sua
+//   maioria, precisão de fórmula em categorias JÁ dinâmicas (272 unidades em 58
+//   itens) — um tipo de investigação diferente (catálogo incompleto, caso de borda
+//   de fórmula), não mais "dump fixo escondido".
 // v1.37 (2026-10-29): amplia gerarItensReleHidraulico() -> gerarItensAutomacaoProjeto()
 //   pra cobrir os 3 maiores itens ainda divergentes da categoria "Automação - Projeto"
 //   (CONECTOR RETO/JOELHO TEFEN 8X1/8 e CONECTOR TEFEN 8X1/8 MX8, que estavam ~60-70%
@@ -1090,7 +1110,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.37';
+const APP_VERSION='v1.38';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -2566,8 +2586,9 @@ function gerarItensTuboAdutora(adCfg){
 //
 // Confirmado via orçamento real (Miguel Angelo Pimenta — automacao="Pneumatico",
 // automacaoCavalete="Piloto + Galit"): bateu EXATO em 901320 (32), 701008 (72); ficou
-// a ~1 unidade de diferença em 701188/701200 (que também recebem uma pequena
-// contribuição separada da "MB Projeto - Saida", já coberta em outro lugar).
+// a ~1-2 unidades de diferença em alguns itens (701188/701200/701196, que também
+// recebem uma pequena contribuição separada de outras categorias, já cobertas em
+// outro lugar) — resíduo pequeno, não perseguido até o fim.
 // LIMITAÇÃO: a Fonte 2 só calcula quando o perfil de elevação de 10 pontos (cotas
 // manuais) está preenchido — se a Adutora 01 foi traçada no mapa (perfil real
 // ponto-a-ponto), essa parte fica 0 (não implementado para esse caso).
@@ -2589,6 +2610,11 @@ const AUTOMACAO_PROJETO_AMPLITUDE=[ // Fonte 2: multiplicador sobre nºValvulas0
 const AUTOMACAO_PROJETO_OPERACOES=[ // Fonte 3: multiplicador sobre nºOperacoes
   {codigo:'701007',descricao:"CONECTOR RETO TEFEN 8 X 1/8'' M",mult:1},
   {codigo:'701315',descricao:"CONECTOR TEFEN 8 X 1/8'' M X 8",mult:2},
+  {codigo:'701100',descricao:'GALIT MAD TAKIN - RELE HIDR',mult:1},
+  {codigo:'805074',descricao:'SOLENOIDE 24 VAC NC 3V 2F C BASE',mult:1},
+  {codigo:'805075',descricao:'ADAPTADOR PARA BASE SOLENOIDE',mult:1},
+  {codigo:'701186',descricao:'CONECTOR JOELHO TEFEN 8X1/8"M',mult:1},
+  {codigo:'701196',descricao:'CONECTOR UNIAO TEFEN 8 X 8',mult:1},
 ];
 function gerarItensAutomacaoProjeto(d,cotasAdutora01,nv01,nv02){
   const porCodigo={};
