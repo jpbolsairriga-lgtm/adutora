@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.41 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.42 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -464,6 +464,19 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.42 (2026-10-29): Relatório de Divergências agora compara e agrupa POR CATEGORIA
+//   (pedido do usuário) — antes somava cada código numa cesta só pro orçamento
+//   inteiro, escondendo em QUAL categoria a divergência realmente estava (sempre
+//   precisava de um script à parte pra achar isso). Chave da comparação agora é
+//   categoria+fornecedor+código, igual à coluna "Categoria" da aba real e ao
+//   agrupamento da tela "Conjuntos (BOM)" — o relatório mostra um cabeçalho por
+//   categoria (com contagem de divergências) e as linhas de itens dentro dela, na
+//   mesma ordem que a tela de Conjuntos usa. extrairBOMHistoricoSheet() passou a ler
+//   a coluna M (Categoria) além de B/C/E/I.
+//   Já usando essa visão nova, achado e corrigido: "Anti-Vácuo" tinha o MESMO bug de
+//   categoria genérica já corrigido em v1.33 pro TE/Curva90 (categoria única juntando
+//   todos os diâmetros, em vez de 1 categoria por diâmetro: "Av 100mm x 1"", "Av 75mm
+//   x 1"", "Av 50mm x 1"", "Av 35mm x 1/2""). Corrigido do mesmo jeito.
 // v1.41 (2026-10-29): mais 2 acertos pequenos, continuando a lista de itens menores:
 //   1) gerarItensLuvasSecundarias(): faltava ROUNDUP — fórmula real é
 //      I=ROUNDUP(F×Parametros!$C$195,0), meu código usava o fatorArea "cru" (ex. 1,5
@@ -1147,7 +1160,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.41';
+const APP_VERSION='v1.42';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -1588,7 +1601,9 @@ function extrairBOMHistoricoSheet(sheet){
     if(typeof qtd!=='number'||!qtd)continue;
     const codigo=sheet[XLSX.utils.encode_cell({r,c:2})]?.v; // coluna C
     const descricao=sheet[XLSX.utils.encode_cell({r,c:4})]?.v; // coluna E
-    itens.push({fornecedor,codigo:String(codigo??''),descricao:descricao!=null?String(descricao):'',qtd});
+    const categoria=sheet[XLSX.utils.encode_cell({r,c:12})]?.v; // coluna M = Categoria
+    itens.push({fornecedor,codigo:String(codigo??''),descricao:descricao!=null?String(descricao):'',qtd,
+      categoria:categoria!=null?String(categoria):'(sem categoria)'});
   }
   return itens;
 }
@@ -3150,13 +3165,19 @@ function gerarItensFinalDeLinha(d){
 }
 const AV_COLAR_POR_DI={144:['801341','COLAR DE TOMADA 150MM X 1" P/ IRRIG'],120:['801182',"COLAR DE TOMADA 125MM X 1'' P IRRIGACAO"],
   97.6:['701785',"COLAR DE TOMADA 100MM X 1'' P IRRIGACAO"],72.5:['901144',"COLAR DE TOMADA 75 X 1''"],48.2:['701784',"COLAR DE TOMADA 50MM X 1'' P IRRIGACAO"]};
+// Categoria por diâmetro (confirmado comparando com a aba real via Relatório de
+// Divergências agrupado por categoria, v1.42): "Av 100mm x 1"", "Av 75mm x 1"", "Av
+// 50mm x 1"" (diâmetros com VALVULA VENTOSA DUPLA FUNÇÃO 1") e "Av 35mm x 1/2""
+// (diâmetro 35mm, usa a BERMAD 1/2" em vez da ventosa 1") — mesmo tipo de bug já
+// corrigido em gerarItensReducaoRamal (v1.33): categoria genérica "Anti-Vácuo"
+// juntava todos os diâmetros, a real tem 1 categoria por diâmetro.
 function gerarItensAntiVacuo(ativos,multiplicador){
   if(multiplicador<=0)return[];
   const itens=[];
   for(const DI of[144,120,97.6,72.5,48.2]){
     if(!ativos[DI])continue;
     const[codigoColar,descColar]=AV_COLAR_POR_DI[DI];
-    const g='Anti-Vácuo';
+    const g=`Av ${DI_PARA_NOMINAL_PN40[DI]}mm x 1"`;
     itens.push({fornecedor:'Bolsa Irriga',codigo:'901015',descricao:'ADAPTADOR PVC M BS RM 32X1"',qtd:multiplicador,grupo:g});
     itens.push({fornecedor:'Bolsa Irriga',codigo:codigoColar,descricao:descColar,qtd:multiplicador,grupo:g});
     itens.push({fornecedor:'Bolsa Irriga',codigo:'701292',descricao:'FITA VEDA ROSC 18MM X 50M',qtd:multiplicador,grupo:g});
@@ -3166,7 +3187,7 @@ function gerarItensAntiVacuo(ativos,multiplicador){
     itens.push({fornecedor:'Bolsa Irriga',codigo:'701207',descricao:'TUBO SOLD NBR 5648 6,00M 32MM',qtd:0.2*multiplicador,grupo:g});
   }
   if(ativos[35.7]){
-    const g='Anti-Vácuo';
+    const g='Av 35mm x 1/2"';
     itens.push({fornecedor:'Bolsa Irriga',codigo:'701010',descricao:"BERMAD VALVULA ANTIVACUO 1/2''",qtd:multiplicador,grupo:g});
     itens.push({fornecedor:'Bolsa Irriga',codigo:'801686',descricao:'TE C/ROSCA DER IRRIGA-LF 35 X 1',qtd:multiplicador,grupo:g});
     itens.push({fornecedor:'Bolsa Irriga',codigo:'701221',descricao:'BUCHA RED C/ROSCA 1 X 1/2',qtd:multiplicador,grupo:g});
@@ -4083,17 +4104,30 @@ function exportarConsolidadoCSV(){
 // (que é o que de fato se compra), e juntar as descrições diferentes encontradas
 // num "descricaoAlt" pra mostrar no relatório quando houver mais de uma — assim o
 // usuário vê a ambiguidade em vez dela ficar escondida atrás de uma soma única.
+// v1.42: comparação por CATEGORIA (pedido do usuário) — antes somava cada código em
+// uma cesta só pro orçamento inteiro, escondendo EM QUAL categoria a divergência
+// realmente estava (precisava sempre caçar manualmente com um script à parte). Agora
+// a chave é categoria+fornecedor+código, igual à coluna "Categoria" da aba real
+// 'Conj.Irri.Projeto - Got 01' e igual ao agrupamento da tela "Conjuntos (BOM)" do
+// app — assim dá pra abrir o relatório e achar direto qual categoria tem o problema,
+// sem precisar script. categoria usada é a do APP quando o item existe no app
+// (ativo.bom[].categoria); cai pra categoria da PLANILHA quando só existe lá — se as
+// duas usarem nomes diferentes pro mesmo item, isso aparece como "Só no App" numa
+// categoria + "Só na Planilha" noutra, o que é uma pista útil (nome de categoria
+// batendo errado), não um bug do relatório.
 function calcularComparacaoHistorico(orc){
   if(!orc.bomHistorico||!orc.bomHistorico.length)return[];
-  const consolApp=calcularConsolidado(orc);
   const porChave={};
-  consolApp.forEach(it=>{
-    const k=(it.fornecedor||'')+'|'+it.codigo;
-    porChave[k]={fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,qtdApp:it.qtd,qtdHist:0,descricoesHist:new Set()};
+  orc.bom.filter(i=>i.ativo).forEach(it=>{
+    const categoria=it.categoria||'(sem categoria)';
+    const k=categoria+'\u0001'+(it.fornecedor||'')+'\u0001'+it.codigo;
+    if(!porChave[k])porChave[k]={categoria,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,qtdApp:0,qtdHist:0,descricoesHist:new Set()};
+    porChave[k].qtdApp+=it.qtd;
   });
   orc.bomHistorico.forEach(it=>{
-    const k=(it.fornecedor||'')+'|'+it.codigo;
-    if(!porChave[k])porChave[k]={fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,qtdApp:0,qtdHist:0,descricoesHist:new Set()};
+    const categoria=it.categoria||'(sem categoria)';
+    const k=categoria+'\u0001'+(it.fornecedor||'')+'\u0001'+it.codigo;
+    if(!porChave[k])porChave[k]={categoria,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,qtdApp:0,qtdHist:0,descricoesHist:new Set()};
     porChave[k].qtdHist+=it.qtd;
     if(!porChave[k].descricao)porChave[k].descricao=it.descricao;
     if(it.descricao)porChave[k].descricoesHist.add(it.descricao.trim());
@@ -4112,6 +4146,7 @@ function calcularComparacaoHistorico(orc){
     const{descricoesHist,...rest}=it;
     return{...rest,diferenca,status,descricaoAlt};
   }).sort((a,b)=>{
+    if(a.categoria!==b.categoria)return a.categoria.localeCompare(b.categoria,'pt-BR');
     const pa=a.status==='Igual'?1:0,pb=b.status==='Igual'?1:0;
     if(pa!==pb)return pa-pb; // divergentes primeiro
     return Math.abs(b.diferenca)-Math.abs(a.diferenca)||a.descricao.localeCompare(b.descricao,'pt-BR');
@@ -4121,11 +4156,27 @@ function gerarRelatorioDivergencias(){
   const comp=calcularComparacaoHistorico(atual);
   if(!comp.length){alert('Este orçamento não tem lista de peças da planilha importada (só disponível para orçamentos importados de Excel com aba de BOM resolvida).');return;}
   const nDivergentes=comp.filter(i=>i.status!=='Igual').length;
-  const linhas=comp.map(it=>`<tr class="${it.status!=='Igual'?'linha-diverge':''}">
-    <td><span class="tag ${it.fornecedor==='Netafim'?'tag-nt':'tag-bi'}">${escapeHTML(it.fornecedor)}</span></td>
-    <td>${escapeHTML(it.codigo)}</td><td>${escapeHTML(it.descricao)}${it.descricaoAlt?`<br><span style="font-size:11px;color:#888" title="Esse código também aparece com esse(s) texto(s) na planilha real">⚠ também: ${escapeHTML(it.descricaoAlt)}</span>`:''}</td>
-    <td class="num">${fmtN(it.qtdHist,2)}</td><td class="num">${fmtN(it.qtdApp,2)}</td>
-    <td class="num">${it.diferenca>=0?'+':''}${fmtN(it.diferenca,2)}</td><td>${escapeHTML(it.status)}</td></tr>`).join('');
+  // Agrupado por categoria (pedido do usuário) — igual à coluna "Categoria" da aba
+  // real e ao agrupamento da tela "Conjuntos (BOM)", pra achar direto qual categoria
+  // tem o problema em vez de caçar numa lista achatada.
+  const categorias=[];
+  const porCategoria={};
+  comp.forEach(it=>{
+    if(!porCategoria[it.categoria]){porCategoria[it.categoria]=[];categorias.push(it.categoria);}
+    porCategoria[it.categoria].push(it);
+  });
+  const nCategoriasComDivergencia=categorias.filter(c=>porCategoria[c].some(i=>i.status!=='Igual')).length;
+  const linhas=categorias.map(cat=>{
+    const itensCat=porCategoria[cat];
+    const nDivCat=itensCat.filter(i=>i.status!=='Igual').length;
+    const header=`<tr class="linha-categoria"><td colspan="7"><b>${escapeHTML(cat)}</b> — ${itensCat.length} ${itensCat.length===1?'item':'itens'}${nDivCat?`, <span style="color:#c0392b">${nDivCat} com divergência</span>`:' — tudo igual ✓'}</td></tr>`;
+    const linhasItens=itensCat.map(it=>`<tr class="${it.status!=='Igual'?'linha-diverge':''}">
+      <td><span class="tag ${it.fornecedor==='Netafim'?'tag-nt':'tag-bi'}">${escapeHTML(it.fornecedor)}</span></td>
+      <td>${escapeHTML(it.codigo)}</td><td>${escapeHTML(it.descricao)}${it.descricaoAlt?`<br><span style="font-size:11px;color:#888" title="Esse código também aparece com esse(s) texto(s) na planilha real">⚠ também: ${escapeHTML(it.descricaoAlt)}</span>`:''}</td>
+      <td class="num">${fmtN(it.qtdHist,2)}</td><td class="num">${fmtN(it.qtdApp,2)}</td>
+      <td class="num">${it.diferenca>=0?'+':''}${fmtN(it.diferenca,2)}</td><td>${escapeHTML(it.status)}</td></tr>`).join('');
+    return header+linhasItens;
+  }).join('');
   const win=window.open('','_blank');
   if(!win){alert('Popup bloqueado. Permita pop-ups para este site.');return;}
   const dadosJSON=JSON.stringify(comp).replace(/</g,'\\u003c'); // evita fechar a tag <script> sem querer
@@ -4143,6 +4194,7 @@ function gerarRelatorioDivergencias(){
       .tag{display:inline-block;padding:.05rem .4rem;border-radius:8px;font-size:.68rem;font-weight:700}
       .tag-bi{background:#e3f2fd;color:#0077b6}.tag-nt{background:#fff3e0;color:#e65100}
       .linha-diverge{background:#fff3e0}
+      .linha-categoria td{background:#1F4E79;color:#fff;font-size:.82rem;padding:.5rem .6rem}
       .toolbar{margin-bottom:1rem;display:flex;gap:.6rem}
       button{padding:.55rem 1.1rem;border-radius:6px;border:1px solid #0077b6;background:#0077b6;color:#fff;font-weight:700;cursor:pointer;font-size:.85rem}
       button.sec{background:#fff;color:#0077b6}
@@ -4153,13 +4205,13 @@ function gerarRelatorioDivergencias(){
       <button class="sec" onclick="exportarExcel()">⬇ Exportar Excel</button>
     </div>
     <h2>Relatório de Divergências — Lista de Peças</h2>
-    <p>${escapeHTML(atual.dadosEntrada.cliente||'—')} &middot; Planilha importada: ${escapeHTML((atual.referenciaHistorica&&atual.referenciaHistorica.arquivoOrigem)||'—')} &middot; ${comp.length} itens únicos &middot; <b>${nDivergentes} com divergência</b></p>
+    <p>${escapeHTML(atual.dadosEntrada.cliente||'—')} &middot; Planilha importada: ${escapeHTML((atual.referenciaHistorica&&atual.referenciaHistorica.arquivoOrigem)||'—')} &middot; ${categorias.length} categorias (${nCategoriasComDivergencia} com divergência) &middot; ${comp.length} itens únicos &middot; <b>${nDivergentes} com divergência</b></p>
     <table><thead><tr><th>Fornecedor</th><th>Código</th><th>Descrição</th><th class="num">Qtd. Planilha</th><th class="num">Qtd. App</th><th class="num">Diferença</th><th>Status</th></tr></thead>
     <tbody>${linhas}</tbody></table>
     <script>
       const DADOS=${dadosJSON};
       function exportarExcel(){
-        const linhas=DADOS.map(it=>({Fornecedor:it.fornecedor,'Código':it.codigo,'Descrição':it.descricao,'Qtd. Planilha':it.qtdHist,'Qtd. App':it.qtdApp,'Diferença':it.diferenca,'Status':it.status}));
+        const linhas=DADOS.map(it=>({'Categoria':it.categoria,Fornecedor:it.fornecedor,'Código':it.codigo,'Descrição':it.descricao,'Qtd. Planilha':it.qtdHist,'Qtd. App':it.qtdApp,'Diferença':it.diferenca,'Status':it.status}));
         const ws=XLSX.utils.json_to_sheet(linhas);
         const wb=XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb,ws,'Divergências');
