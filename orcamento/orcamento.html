@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.40 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.41 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -464,6 +464,15 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.41 (2026-10-29): mais 2 acertos pequenos, continuando a lista de itens menores:
+//   1) gerarItensLuvasSecundarias(): faltava ROUNDUP — fórmula real é
+//      I=ROUNDUP(F×Parametros!$C$195,0), meu código usava o fatorArea "cru" (ex. 1,5
+//      em vez de arredondar pra 2). Afetava 6 itens ao mesmo tempo (todas as luvas de
+//      solda/correr da Rede Secundária), cada um 0,5 unidade abaixo do real.
+//   2) conjuntos.js: removido 801901 (COLAR DE TOMADA SIMPLES) do kit estático
+//      "Injetro de Cloro" — real=0 confirmado (igual aos outros casos de item com qtd
+//      fixa errada já limpos antes).
+//   Resultado (Miguel Angelo Pimenta): divergentes 62->54.
 // v1.40 (2026-10-29): corrige bug real de duplicação na seleção de Cavaletes (achado
 //   via orçamento real, Miguel Angelo Pimenta): cada faixa de vazão de válvula tem 2
 //   variantes de cavalete na base (ex. "CV-SP-MF90-VH3-AV1/2xAV1" e "...-VA1xAV1" —
@@ -1138,7 +1147,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.40';
+const APP_VERSION='v1.41';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -3207,14 +3216,19 @@ const LUVA_CORRER_POR_DI={144:['801441','LUVA CORRER IRRIGA-LF PN 80 150MM'],120
   97.6:['701846','LUVA DE CORRER IRRIGA-LF PN125 100'],72.5:['801136','LUVA DE CORRER IRRIGA-LF PN 80 75'],48.2:['701894','LUVA DE CORRER IRRIGA-LF PN 80 50']};
 function gerarItensLuvasSecundarias(ativos,fatorArea){
   if(fatorArea<=0)return[];
+  // Fórmula real (aba 'Conj.Irri.Projeto - Got 01'): I=ROUNDUP(F×Parametros!$C$195,0)
+  // — arredonda pra cima, não usa o fatorArea "cru" (ex. 1,5 vira 2). Achado via
+  // orçamento real (Miguel Angelo Pimenta): todo item dessa categoria estava 0,5
+  // abaixo do real (1,5 em vez de 2) por faltar esse arredondamento.
+  const qtd=Math.ceil(fatorArea);
   const itens=[];
   for(const DI of Object.keys(ativos).map(Number)){
     if(!ativos[DI])continue;
     const[codSolda,descSolda]=LUVA_SOLDA_POR_DI[DI];
-    itens.push({fornecedor:'Bolsa Irriga',codigo:codSolda,descricao:descSolda,qtd:fatorArea,grupo:'Luvas Secundarias'});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:codSolda,descricao:descSolda,qtd,grupo:'Luvas Secundarias'});
     if(LUVA_CORRER_POR_DI[DI]){
       const[codCorrer,descCorrer]=LUVA_CORRER_POR_DI[DI];
-      itens.push({fornecedor:'Bolsa Irriga',codigo:codCorrer,descricao:descCorrer,qtd:fatorArea,grupo:'Luvas Secundarias'});
+      itens.push({fornecedor:'Bolsa Irriga',codigo:codCorrer,descricao:descCorrer,qtd,grupo:'Luvas Secundarias'});
     }
   }
   return itens;
