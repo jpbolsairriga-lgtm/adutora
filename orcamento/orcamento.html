@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.34 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.35 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -464,6 +464,31 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.35 (2026-10-29): continuação da investigação de divergências do orçamento real
+//   de Miguel Angelo Pimenta (25,88ha), com o Relatório de Divergências já comparando
+//   só com Got 01 (v1.34):
+//   1) NOVO: Automação Pneumática (PE 8mm + conectores TEFEN) — essa categoria estava
+//      100% ausente do app. Fórmula real extraída via openpyxl da aba 'Projeto -
+//      Adutora 01/02' (BG87:BK89): metros de tubo = comprimento×(nºValvulas+1)×1,03;
+//      PE 8MM-500 (rolo) = ROUNDUP(metros/500,0); CONECTOR UNIAO TEFEN 8X8 = mesma qtd
+//      de rolos; CONECTOR TE 8X8X8 = nºValvulas+2. Reduziu de "0 (faltando)" pra bem
+//      perto do real (ex. PE 8mm: 18 vs 20 real) — resíduo pequeno (2-5 unid.) de uma
+//      2ª fonte pneumática não identificada ainda (ver gerarItensAutomacaoPneumatica).
+//   2) CONECTOR UNIAO TYPHXTYPH C/ANEL AZUL (801925, família 800 do Gotejador) e
+//      CONECTOR UNIAO DENTADO 16/17 (801984, família 500): não usam a mesma qtd dos
+//      outros conectores (por Nº de conexões/saída) — são conectores de EMENDA entre
+//      ROLOS de gotejador, então a qtd é ligada ao Nº DE ROLOS usados, não ao Nº de
+//      conexões (fórmula real confirmada via openpyxl: antes dava 965 qtd errada,
+//      real era 110 — agora dá 102, bem mais perto).
+//   3) Relatório de Divergências: achado que a planilha real às vezes reusa o MESMO
+//      código pra produtos diferentes ou pro mesmo produto com texto formatado
+//      diferente em blocos distintos (ex. código 701468 = "ARRUELA FG 5/8"" num
+//      lugar, "ARRUELA LISA AC 5/8 ZB""/"ARRUELA DE PRESSÃO FG 5/8"" em outros).
+//      Comparar por código+descrição "perdia" mais do que ganhava (texto igual virava
+//      "faltando"+"sobrando" só por formatação). Mantido comparar por código (que é o
+//      que se compra de fato) — mas agora, quando o código tem mais de 1 descrição na
+//      planilha real, o relatório mostra as outras também ("⚠ também: ...") em vez de
+//      esconder a ambiguidade atrás de uma soma única.
 // v1.34 (2026-10-29): Relatório de Divergências agora compara só com a 1ª Opção de
 //   Gotejador ("Conj.Irri.Projeto - Got 01") — antes a lista de peças real capturada
 //   na importação juntava Got 01 + Got 02, o que inflava a comparação com "divergência"
@@ -1034,7 +1059,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.34';
+const APP_VERSION='v1.35';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -2491,6 +2516,30 @@ function gerarItensTuboAdutora(adCfg){
   });
   return{itens,avisos};
 }
+// Automação Pneumática (tubulação PE 8mm + conectores TEFEN) — porta da aba real
+// "Projeto - Adutora 01/02" (BG87:BK89), 3 itens que SEMPRE faziam parte da categoria
+// "ADUTORA - PROJETO 01/02" mas estavam totalmente ausentes do app. Fórmulas reais
+// (confirmadas via openpyxl no orçamento do Miguel Angelo Pimenta — automacaoProjeto=
+// "Sim"): metros de tubo PE 8mm = comprimento × (nºValvulas+1) × 1,03; PE 8MM-500 (rolo
+// de 500m) = ROUNDUP(metros/500,0); CONECTOR UNIAO TEFEN 8X8 = mesma qtd de rolos;
+// CONECTOR TE 8X8X8 = nºValvulas+2. Resíduo conhecido (não investigado até o fim): no
+// caso real conferido, a qtd final tinha mais 2-9 unidades vindas de outra fonte não
+// identificada (provavelmente um 2º circuito pneumático, de automação de válvula em vez
+// de automação da moto-bomba) — essa função cobre a fonte PRINCIPAL/maior, não 100%.
+function gerarItensAutomacaoPneumatica(d,adCfg,numValvulas){
+  if(d.automacaoProjeto!=='Sim')return[];
+  const comprimento=adCfg?.comprimento||0;
+  const nv=parseFloat(numValvulas)||0;
+  if(!comprimento)return[];
+  const metrosTubo=comprimento*(nv+1)*1.03;
+  const qtdRolosPE8mm=Math.ceil(metrosTubo/500);
+  if(qtdRolosPE8mm<=0)return[];
+  return[
+    {fornecedor:'Bolsa Irriga',codigo:'701042',descricao:'PE 8 MM - 500M',qtd:qtdRolosPE8mm,grupo:'Automação Pneumática'},
+    {fornecedor:'Bolsa Irriga',codigo:'701196',descricao:'CONECTOR UNIAO TEFEN 8 X 8',qtd:qtdRolosPE8mm,grupo:'Automação Pneumática'},
+    {fornecedor:'Bolsa Irriga',codigo:'801369',descricao:'CONECTOR TE 8X8X8',qtd:nv+2,grupo:'Automação Pneumática'},
+  ];
+}
 // Serviços do Projeto (Montagem/Mapeamento/Abertura de Valetas/Frete) — eram um
 // dump fixo (sempre a mesma quantidade/preço do projeto de referência usado na
 // extração), igual o antigo bug dos tubos. Conferido em 2 orçamentos reais
@@ -2563,17 +2612,34 @@ function gerarItensGotejadorConectores(d,campoGotejador){
   const nomeGotejador=String(d[campoGotejador]||'').trim();
   const sku=GOTEJADOR_CATALOGO.find(g=>g.descricao.trim().toLowerCase()===nomeGotejador.toLowerCase());
   const totalMetrosGotejador=Math.ceil((10000/espLinhas)*area*1.03);
+  let qtdRolosGotejador=0;
   if(sku&&totalMetrosGotejador>0){
-    itens.push({fornecedor:sku.fornecedor,codigo:sku.codigo,descricao:sku.descricao,qtd:Math.ceil(totalMetrosGotejador/sku.rolo),grupo:'Gotejador'});
+    qtdRolosGotejador=Math.ceil(totalMetrosGotejador/sku.rolo);
+    itens.push({fornecedor:sku.fornecedor,codigo:sku.codigo,descricao:sku.descricao,qtd:qtdRolosGotejador,grupo:'Gotejador'});
   }
   if(metrosChicoteada&&espLinhas){
     const metrosSaidas=Math.ceil(metrosChicoteada/espLinhas*1.03);
     itens.push({fornecedor:'Bolsa Irriga',codigo:'701204',descricao:'TUBO CEGO PE 16009 - 500M',qtd:Math.ceil(metrosSaidas*1.5/500),grupo:'Tubo de Polietileno'});
     if(tipoSaida>0){
-      const nConexoes=Math.ceil(metrosChicoteada/espLinhas*tipoSaida*1.03);
+      const nConexoesRaw=metrosChicoteada/espLinhas*tipoSaida;
+      const nConexoes=Math.ceil(nConexoesRaw*1.03);
       itens.push({fornecedor:'Bolsa Irriga',codigo:'701029',descricao:'CONECTOR INICIAL DENTADO C/CHULA 17MM',qtd:nConexoes,grupo:'Conectores'});
       const familia=sku?sku.familia:'500';
-      (CONECTORES_FAMILIA[familia]||[]).forEach(c=>itens.push({...c,qtd:nConexoes,grupo:'Conectores'}));
+      // Conector União (801925 na família 800, 801984 na família 500): NÃO usa a
+      // mesma qtd dos demais conectores (que é por Nº de saídas/conexões) — é um
+      // conector de EMENDA entre rolos de gotejador, então a qtd é ligada ao Nº DE
+      // ROLOS usados (I9 da aba real = SUM(F9:F19), soma dos rolos de todos os SKUs
+      // de gotejador), não ao Nº de conexões. Confirmado via fórmula real extraída
+      // do template: 800 → ROUNDUP(I9*1.03,0); 500 → ROUNDUP(D6/D3*D4+I9*1.03,0)
+      // (soma com o Nº de conexões, sem o próprio ×1.03 nesse termo). Achado
+      // comparando com orçamento real (Miguel Angelo Pimenta): a qtd anterior
+      // (igual aos outros conectores) dava 965, o real era 110.
+      (CONECTORES_FAMILIA[familia]||[]).forEach(c=>{
+        let qtd=nConexoes;
+        if(c.codigo==='801925')qtd=Math.ceil(qtdRolosGotejador*1.03);
+        else if(c.codigo==='801984')qtd=Math.ceil(nConexoesRaw+qtdRolosGotejador*1.03);
+        itens.push({...c,qtd,grupo:'Conectores'});
+      });
     }
   }
   if(espEmissor>0){
@@ -3295,6 +3361,18 @@ function carregarModelo(nomeModelo){
     });
     avisos.push(...avisosTubo);
 
+    // Automação Pneumática (PE 8mm + conectores TEFEN) — mesma categoria da Adutora
+    // (ver comentário de gerarItensAutomacaoPneumatica). Só verificado pra Projeto
+    // (Adutora 01/02); Recalque fica de fora por falta de fórmula real conferida.
+    if(cfgSel.adutoraKey!=='recalque'){
+      const numValvulasAdCfg=cfgSel.adutoraKey==='adutora02'?d.numValvulasAdutora02:d.numValvulasAdutora01;
+      gerarItensAutomacaoPneumatica(d,adCfg,numValvulasAdCfg).forEach(it=>{
+        atual.bom.push({id:uid(),categoria:cfgSel.labelAdutora,grupo:cfgSel.labelAdutora,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
+          qtd:it.qtd,custoUnit:buscarCusto(it.fornecedor,it.codigo)||0,ativo:true,origem,modelo:nomeModelo});
+        n++;
+      });
+    }
+
     // Serviços do Projeto (Montagem/Mapeamento/Abertura de Valetas/Frete) — ver
     // fórmulas no comentário de gerarItensServicosProjeto.
     const itensServicos=gerarItensServicosProjeto(d,adCfg,nomeModelo==='recalque');
@@ -3778,19 +3856,31 @@ function exportarConsolidadoCSV(){
 // fornecedor+código (mesma chave do Relatório Consolidado) a quantidade real que a
 // planilha fechou com a quantidade que o app gerou pelas regras atuais — é o jeito
 // direto de achar onde as regras do app ainda divergem de um orçamento real.
+// Achado real: a planilha às vezes reusa o MESMO código pra produtos levemente
+// diferentes ou com o texto formatado diferente em blocos distintos (ex. código 701468
+// aparece como "ARRUELA FG 5/8"", "ARRUELA LISA AC 5/8 ZB"", "ARRUELA DE PRESSÃO FG
+// 5/8""; "CONECTOR JOELHO TEFEN 8 X 1/8'' M" vs "CONECTOR JOELHO TEFEN 8X1/8M\""- o
+// mesmo conector, só com espaçamento/aspas diferentes). Testei comparar por
+// código+descrição (pra não somar produtos diferentes na mesma cesta), mas isso
+// "perdia" mais do que ganhava: textos iguais na prática viravam "faltando" +
+// "sobrando" em pares, por causa só da formatação. Decisão: comparar por CÓDIGO
+// (que é o que de fato se compra), e juntar as descrições diferentes encontradas
+// num "descricaoAlt" pra mostrar no relatório quando houver mais de uma — assim o
+// usuário vê a ambiguidade em vez dela ficar escondida atrás de uma soma única.
 function calcularComparacaoHistorico(orc){
   if(!orc.bomHistorico||!orc.bomHistorico.length)return[];
   const consolApp=calcularConsolidado(orc);
   const porChave={};
   consolApp.forEach(it=>{
     const k=(it.fornecedor||'')+'|'+it.codigo;
-    porChave[k]={fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,qtdApp:it.qtd,qtdHist:0};
+    porChave[k]={fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,qtdApp:it.qtd,qtdHist:0,descricoesHist:new Set()};
   });
   orc.bomHistorico.forEach(it=>{
     const k=(it.fornecedor||'')+'|'+it.codigo;
-    if(!porChave[k])porChave[k]={fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,qtdApp:0,qtdHist:0};
+    if(!porChave[k])porChave[k]={fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,qtdApp:0,qtdHist:0,descricoesHist:new Set()};
     porChave[k].qtdHist+=it.qtd;
     if(!porChave[k].descricao)porChave[k].descricao=it.descricao;
+    if(it.descricao)porChave[k].descricoesHist.add(it.descricao.trim());
   });
   return Object.values(porChave).map(it=>{
     const diferenca=it.qtdApp-it.qtdHist;
@@ -3799,7 +3889,12 @@ function calcularComparacaoHistorico(orc){
     else if(it.qtdApp===0)status='Só na Planilha (faltando)';
     else if(Math.abs(diferenca)<0.01)status='Igual';
     else status='Quantidade diferente';
-    return{...it,diferenca,status};
+    // Quando o mesmo código aparece com mais de 1 texto na planilha real, mostra os
+    // outros textos achados (ambiguidade de dado na fonte, não erro do app).
+    const outras=[...it.descricoesHist].filter(d=>d.trim().toLowerCase()!==(it.descricao||'').trim().toLowerCase());
+    const descricaoAlt=outras.length?outras.join(' | '):null;
+    const{descricoesHist,...rest}=it;
+    return{...rest,diferenca,status,descricaoAlt};
   }).sort((a,b)=>{
     const pa=a.status==='Igual'?1:0,pb=b.status==='Igual'?1:0;
     if(pa!==pb)return pa-pb; // divergentes primeiro
@@ -3812,7 +3907,7 @@ function gerarRelatorioDivergencias(){
   const nDivergentes=comp.filter(i=>i.status!=='Igual').length;
   const linhas=comp.map(it=>`<tr class="${it.status!=='Igual'?'linha-diverge':''}">
     <td><span class="tag ${it.fornecedor==='Netafim'?'tag-nt':'tag-bi'}">${escapeHTML(it.fornecedor)}</span></td>
-    <td>${escapeHTML(it.codigo)}</td><td>${escapeHTML(it.descricao)}</td>
+    <td>${escapeHTML(it.codigo)}</td><td>${escapeHTML(it.descricao)}${it.descricaoAlt?`<br><span style="font-size:11px;color:#888" title="Esse código também aparece com esse(s) texto(s) na planilha real">⚠ também: ${escapeHTML(it.descricaoAlt)}</span>`:''}</td>
     <td class="num">${fmtN(it.qtdHist,2)}</td><td class="num">${fmtN(it.qtdApp,2)}</td>
     <td class="num">${it.diferenca>=0?'+':''}${fmtN(it.diferenca,2)}</td><td>${escapeHTML(it.status)}</td></tr>`).join('');
   const win=window.open('','_blank');
