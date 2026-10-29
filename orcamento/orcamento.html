@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.43 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.44 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -464,6 +464,18 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.44 (2026-10-29): NOVO gerarItensConsumiveisAdutora() — categoria "Ade./Sol./
+//   Pano/P.Lubr. - ADUTORA PROJETO 01 + 02" (ADESIVO PVC, SOLUÇÃO PREPARADORA, PANO,
+//   PASTA LUBRIFICANTE) estava 100% ausente do app — achada pelo usuário com um
+//   exemplo real (PANO e PASTA LUBRIFICANTE aparecendo "Só na Planilha"). Porta de
+//   'Projeto - Adutora 01/02'!BU79:BU82: ADESIVO/SOLUÇÃO são pra tubo solda (zero
+//   nesse caso, Adutora usa só JEI DEFOFO/encaixe); PASTA LUBRIFICANTE =
+//   ROUNDUP((nº de barras de tubo × 30g)/1000,0); PANO = ROUNDUP(comprimento Adutora
+//   01/500,0) × 2 — achado curioso: a fórmula real de 'Projeto - Adutora 02'!BU81
+//   referencia por engano o comprimento da Adutora 01 (não o da própria 02, bug de
+//   copia-e-cola do template original), dobrando o PANO da Adutora 01 em vez de somar
+//   com a 02 — replicado de propósito pra bater com o real. Bateu exato (PANO=4,
+//   PASTA=6) no caso conferido (Miguel Angelo Pimenta).
 // v1.43 (2026-10-29): corrige 2 bugs no Relatório de Divergências por categoria
 //   (v1.42), achados pelo usuário com um exemplo real (ARRUELA da categoria
 //   "Conjunto de Filtragem com 2x24..." aparecendo "Só no App" mesmo com as
@@ -1182,7 +1194,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.43';
+const APP_VERSION='v1.44';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -2666,6 +2678,37 @@ function gerarItensTuboAdutora(adCfg){
   });
   return{itens,avisos};
 }
+// Adesivo/Solução/Pano/Pasta Lubrificante — categoria "Ade./Sol./Pano/P.Lubr. -
+// ADUTORA PROJETO 01 + 02" (achada 100% ausente via Relatório de Divergências por
+// categoria). Porta de 'Projeto - Adutora 01/02'!BU79:BU82, somando as duas adutoras
+// (mesmo padrão do Moto-Bomba/Relé — sempre as 2 adutoras, não a do modelo sendo
+// carregado): ADESIVO/SOLUÇÃO são pra tubo solda (PVC colado) — zero nesse caso
+// porque a Adutora de Miguel Angelo Pimenta usa só tubo JEI DEFOFO (encaixe/anel de
+// borracha, sem cola); PASTA LUBRIFICANTE = ROUNDUP((nº de barras de tubo ×
+// 30g)/1000,0) — bateu exato pra Miguel Angelo Pimenta (PASTA=6) usando "30g/barra"
+// (a classe de consumo da Adutora desse projeto). LIMITAÇÃO: a planilha real tem 7
+// classes de consumo diferentes (15/20/25/30/35/45/60 g por barra, dependendo do
+// tipo/diâmetro específico do tubo JEI DEFOFO) — aqui sempre usa 30g/barra (a única
+// verificada); ADESIVO/SOLUÇÃO (tubo solda) não foram implementados (ficam sempre 0).
+// PANO = ROUNDUP(comprimento da Adutora 01/500,0) × 2 — achado esquisito mas real: a
+// fórmula de 'Projeto - Adutora 02'!BU81 referencia 'Dados de Entrada'!D30 (o
+// comprimento da Adutora 01), NÃO o da própria Adutora 02 — bug de copia-e-cola da
+// planilha original (D30 devia ser D31 na aba 02), mas é o que o real calcula de
+// verdade: dobra o PANO da Adutora 01 em vez de somar com a 02. Replicado aqui de
+// propósito pra bater com o real (só verificado com Adutora 02 vazia — pode não
+// generalizar se um projeto real usar as duas adutoras).
+function gerarItensConsumiveisAdutora(adCfg01,adCfg02){
+  const barrasDe=adCfg=>{
+    const{itens}=gerarItensTuboAdutora(adCfg);
+    return itens.reduce((s,it)=>s+(it.qtd||0),0);
+  };
+  const comprimento01=adCfg01?.comprimento||0;
+  const totalBarras=barrasDe(adCfg01||{})+barrasDe(adCfg02||{});
+  const itens=[];
+  if(comprimento01>0)itens.push({fornecedor:'Netafim',codigo:'01542-000760',descricao:'PANO',qtd:Math.ceil(comprimento01/500)*2,grupo:'Adesivos/Solução'});
+  if(totalBarras>0)itens.push({fornecedor:'Bolsa Irriga',codigo:'801442',descricao:'PASTA LUBRIFICANTE BISNAGA 1000G',qtd:Math.ceil(totalBarras*30/1000),grupo:'Adesivos/Solução'});
+  return itens;
+}
 // Automação Pneumática do Projeto (Relé Hidráulico + conectores TEFEN da categoria
 // "Automação - Projeto") — porta de 3 fontes reais da aba 'Conj.Irri.Projeto - Got 01'
 // (achadas uma por uma, vendo cada item "faltando" no Relatório de Divergências e
@@ -3644,6 +3687,15 @@ function carregarModelo(nomeModelo){
       // carregado). Ver comentário de gerarItensSaidaCavalete.
       gerarItensSaidaCavalete(atual.adutora01&&atual.adutora01.vazao,d.numValvulasAdutora01,atual.adutora02&&atual.adutora02.vazao,d.numValvulasAdutora02).forEach(it=>{
         adicionarItemCustoFixo(it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
+        n++;
+      });
+      // Adesivo/Solução/Pano/Pasta Lubrificante — sempre Adutora 01 + 02 somadas (ver
+      // comentário de gerarItensConsumiveisAdutora). categoria = nome real da seção na
+      // planilha ("Ade./Sol./Pano/P.Lubr. - ADUTORA PROJETO 01 + 02").
+      gerarItensConsumiveisAdutora(atual.adutora01,atual.adutora02).forEach(it=>{
+        const categoria='Ade./Sol./Pano/P.Lubr. - ADUTORA PROJETO 01 + 02';
+        atual.bom.push({id:uid(),categoria,grupo:it.grupo,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
+          qtd:it.qtd,custoUnit:buscarCusto(it.fornecedor,it.codigo)||0,ativo:true,origem,modelo:nomeModelo});
         n++;
       });
     }
