@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.39 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.40 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -464,6 +464,17 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.40 (2026-10-29): corrige bug real de duplicação na seleção de Cavaletes (achado
+//   via orçamento real, Miguel Angelo Pimenta): cada faixa de vazão de válvula tem 2
+//   variantes de cavalete na base (ex. "CV-SP-MF90-VH3-AV1/2xAV1" e "...-VA1xAV1" —
+//   provavelmente tipos diferentes de válvula), e o código usava .filter() somando as
+//   2 variantes ao mesmo tempo, em vez de escolher 1 — dobrava itens genéricos como
+//   "CURVA 90 SOLDA 90MM PLASSON/FIP", "BUCHA RED 90X75", "TE PVC SOLDAVEL 90MM"
+//   (apareciam ~2x o valor real). Trocado pra .find() (só a 1ª variante da faixa) —
+//   ainda não achei a regra exata de qual das 2 a planilha real escolhe (resíduo
+//   pequeno continua existindo pra alguns desses itens), mas somar as 2 estava
+//   definitivamente errado. Resultado (Miguel Angelo Pimenta): soma de unidades
+//   divergindo de categorias já dinâmicas 216->187.
 // v1.39 (2026-10-29): NOVO gerarItensSaidaCavalete() — categoria "Saída Cavalete"
 //   (kit de conexões PVC na saída de cada cavalete: luva, joelho, TE, redução), porta
 //   da aba real 'Saida Cavaletes' (tabela de kits por faixa de diâmetro "A mm x B mm").
@@ -1127,7 +1138,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.39';
+const APP_VERSION='v1.40';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -3634,11 +3645,20 @@ function carregarModelo(nomeModelo){
     // Cavaletes (parte 1 — baseada em nº de válvulas): a planilha original multiplica
     // a receita de itens por max(0, nº válvulas − 2), só para a faixa de vazão da
     // válvula que corresponde.
+    // BUG corrigido (achado via orçamento real, Miguel Angelo Pimenta): cada faixa de
+    // vazão tem 2 variantes de cavalete (ex. "CV-SP-MF90-VH3-AV1/2xAV1" e "...-VA1xAV1"
+    // — provavelmente tipos diferentes de válvula no cavalete), e o código usava
+    // .filter() somando as 2 ao mesmo tempo (dobrava a quantidade de itens genéricos
+    // como "CURVA 90 SOLDA 90MM", "BUCHA RED 90X75" etc. — real tinha só 1 variante
+    // ativa). Trocado pra pegar só a primeira variante da faixa — ainda não sei a
+    // regra exata de qual das 2 a planilha real escolhe (não achei o campo que
+    // distingue), mas somar as 2 estava comprovadamente errado (2x a mais).
     let gruposCavalete=[];
     if(nomeModelo.startsWith('gotejamento')){
       const vazaoValvula=d.vazaoValvula||0;
       const multCavalete=Math.max(0,(d.numValvulasAdutora01||0)-2)+Math.max(0,(d.numValvulasAdutora02||0)-2);
-      gruposCavalete=(SELECAO_ATUAL.cavaletes_valvula||[]).filter(g=>vazaoValvula>=g.vazaoMin&&vazaoValvula<=g.vazaoMax);
+      const grupoCavaleteUnico=(SELECAO_ATUAL.cavaletes_valvula||[]).find(g=>vazaoValvula>=g.vazaoMin&&vazaoValvula<=g.vazaoMax);
+      gruposCavalete=grupoCavaleteUnico?[grupoCavaleteUnico]:[];
       if(gruposCavalete.length&&multCavalete>0){
         gruposCavalete.forEach(g=>{
           g.itens.forEach(it=>{
