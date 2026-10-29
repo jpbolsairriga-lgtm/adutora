@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.44 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.45 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -464,6 +464,15 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.45 (2026-10-29): corrige regressão que o próprio v1.42/v1.43 causou no
+//   Anti-Vácuo: a categoria "Av {nominal}mm x 1"" (formato da coluna M, usado desde
+//   v1.42) parecia certa, mas quando v1.43 passou a extrair o TÍTULO DE SEÇÃO da
+//   planilha (mais específico que a coluna M em categorias tipo Filtragem), o
+//   Anti-Vácuo tem um título de seção DIFERENTE: "ANTI-VACUO 1" X TUBULAÇÃO
+//   {nominal}MM" — aí o app (usando o nome da coluna M) parou de bater com o
+//   relatório (usando o nome do título de seção), mesmo as quantidades batendo 100%.
+//   Achado pelo usuário vendo TUDO "Só na Planilha" nessa categoria. Corrigido
+//   gerarItensAntiVacuo() pra usar o mesmo formato do título de seção.
 // v1.44 (2026-10-29): NOVO gerarItensConsumiveisAdutora() — categoria "Ade./Sol./
 //   Pano/P.Lubr. - ADUTORA PROJETO 01 + 02" (ADESIVO PVC, SOLUÇÃO PREPARADORA, PANO,
 //   PASTA LUBRIFICANTE) estava 100% ausente do app — achada pelo usuário com um
@@ -1194,7 +1203,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.44';
+const APP_VERSION='v1.45';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -3261,13 +3270,19 @@ const AV_COLAR_POR_DI={144:['801341','COLAR DE TOMADA 150MM X 1" P/ IRRIG'],120:
 // (diâmetro 35mm, usa a BERMAD 1/2" em vez da ventosa 1") — mesmo tipo de bug já
 // corrigido em gerarItensReducaoRamal (v1.33): categoria genérica "Anti-Vácuo"
 // juntava todos os diâmetros, a real tem 1 categoria por diâmetro.
+// IMPORTANTE (v1.45): a categoria usa o formato do TÍTULO DE SEÇÃO real ("ANTI-VACUO
+// 1" X TUBULAÇÃO 100MM"), não o da coluna M da planilha ("Av 100mm x 1"") — são o
+// MESMO bloco com 2 nomes diferentes na fonte (igual o caso de Filtragem), mas desde
+// v1.43 o Relatório de Divergências extrai o título de seção quando existe, então o
+// app precisa usar o MESMO nome pra bater. Achado pelo usuário vendo o relatório com
+// tudo "Só na Planilha" nessa categoria mesmo com os itens corretos no app.
 function gerarItensAntiVacuo(ativos,multiplicador){
   if(multiplicador<=0)return[];
   const itens=[];
   for(const DI of[144,120,97.6,72.5,48.2]){
     if(!ativos[DI])continue;
     const[codigoColar,descColar]=AV_COLAR_POR_DI[DI];
-    const g=`Av ${DI_PARA_NOMINAL_PN40[DI]}mm x 1"`;
+    const g=`ANTI-VACUO 1" X TUBULAÇÃO ${DI_PARA_NOMINAL_PN40[DI]}MM`;
     itens.push({fornecedor:'Bolsa Irriga',codigo:'901015',descricao:'ADAPTADOR PVC M BS RM 32X1"',qtd:multiplicador,grupo:g});
     itens.push({fornecedor:'Bolsa Irriga',codigo:codigoColar,descricao:descColar,qtd:multiplicador,grupo:g});
     itens.push({fornecedor:'Bolsa Irriga',codigo:'701292',descricao:'FITA VEDA ROSC 18MM X 50M',qtd:multiplicador,grupo:g});
@@ -3277,7 +3292,7 @@ function gerarItensAntiVacuo(ativos,multiplicador){
     itens.push({fornecedor:'Bolsa Irriga',codigo:'701207',descricao:'TUBO SOLD NBR 5648 6,00M 32MM',qtd:0.2*multiplicador,grupo:g});
   }
   if(ativos[35.7]){
-    const g='Av 35mm x 1/2"';
+    const g='ANTI-VACUO 1/2" X TUBULAÇÃO 35MM';
     itens.push({fornecedor:'Bolsa Irriga',codigo:'701010',descricao:"BERMAD VALVULA ANTIVACUO 1/2''",qtd:multiplicador,grupo:g});
     itens.push({fornecedor:'Bolsa Irriga',codigo:'801686',descricao:'TE C/ROSCA DER IRRIGA-LF 35 X 1',qtd:multiplicador,grupo:g});
     itens.push({fornecedor:'Bolsa Irriga',codigo:'701221',descricao:'BUCHA RED C/ROSCA 1 X 1/2',qtd:multiplicador,grupo:g});
