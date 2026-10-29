@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.46 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.47 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -464,6 +464,36 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.47 (2026-10-29): CAVALETES dividido em 2 categorias reais (pedido do usuário,
+//   com print da aba "Conjuntos (BOM)" mostrando os 2 kits "CV-SP-MF90-VH3-AV1/2xAV1"
+//   e "...-VA1xAV1" lado a lado):
+//   1) Arqueologia na aba Parametros (linhas 125-160) achou a fórmula real: as 2
+//      variantes de cavalete por faixa de vazão NÃO são alternativas (antiga seleção
+//      por .find() pegava só 1) — elas COEXISTEM, cada uma com seu multiplicador:
+//      "...-AV1/2xAV1" (Antivácuo) = max(0,nValvulas−2) por adutora (= multCavalete
+//      antigo); "...-VA1xAV1"/"...-VA2xAV1" (Ventosa cinética) = min(nValvulas,2) por
+//      adutora — cobre só as 2 primeiras válvulas, o resto cai na variante Antivácuo.
+//      Confirmado célula a célula contra Parametros!I143/I146 do real (Miguel Angelo
+//      Pimenta): G143=6,H143=0,G146=2,H146=0 bate exato com os 2 blocos de BOM.
+//   2) calcularComparacaoHistorico() ganhou a MESMA fragmentação por código que
+//      extrairBOMHistoricoSheet() já tinha pro lado da planilha, agora também do lado
+//      do app: quando o app gera o mesmo código sob 2+ categorias específicas
+//      diferentes dentro do mesmo grupo (ex. CAVALETES — itens como BUCHA RED/
+//      CURVA90/ADAPTADOR são compartilhados entre as 2 variantes), usa a categoria
+//      genérica do grupo pro comparativo em vez da específica — senão vira falso
+//      "Só no App"+"Só na Planilha" comparando pedaço de um lado com soma do outro.
+//      Resultado: 18 dos 20 itens de CAVALETES, que estavam TODOS divergentes, agora
+//      batem "Igual" (os 2 residuais restantes vêm de um bloco real ainda não
+//      implementado, "SD-PIG-MF110", off por só 1 unidade).
+//   3) Renomeado categoria de "Saída Adutora x Cavalete (118x90)" -> título real
+//      "SD-ADT 118MM x CAV.MF90", e "Saida Cavalete" -> "Saida Cavalete 90 mm x
+//      100 mm" (bate com o título real da seção). Corrige também o typo "Injetro de
+//      Cloro" -> "Injetor de Cloro Ventury" em conjuntos.js (gotejamento_01/02).
+//   LIMITAÇÃO conhecida: "CONJUNTO LEITOR DE PRESSÃO" (real) vs "Moitoramento" (app,
+//   nome e itens diferentes) ainda não investigado — parece ser um kit real diferente,
+//   não só um typo; "Automação das Válvulas de Saída de Bomba" (categoria 100% vazia
+//   no app) depende de um seletor novo (dropdown de tipo de piloto/regulador de
+//   pressão) ainda não existente em Dados de Entrada — não implementado nesta versão.
 // v1.46 (2026-10-29): mais correções de categoria achadas pelo usuário vendo
 //   "Automação - Projeto" com a planilha toda zerada:
 //   1) gerarItensAutomacaoProjeto(): a Fonte 1 (kit por cavalete) tem categoria real
@@ -1229,7 +1259,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.46';
+const APP_VERSION='v1.47';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -2845,7 +2875,7 @@ function gerarItensSaidaCavalete(vazaoAdutora01,nv01,vazaoAdutora02,nv02){
   if(faixaVazaoAdutoraCombina90mm(vazaoAdutora01))mult+=parseFloat(nv01)||0;
   if(faixaVazaoAdutoraCombina90mm(vazaoAdutora02))mult+=parseFloat(nv02)||0;
   if(mult<=0)return[];
-  return SAIDA_CAVALETE_90X100.map(it=>({fornecedor:'Bolsa Irriga',codigo:it.codigo,descricao:it.descricao,qtd:it.qtdPorValvula*mult,grupo:'Saida Cavalete'}));
+  return SAIDA_CAVALETE_90X100.map(it=>({fornecedor:'Bolsa Irriga',codigo:it.codigo,descricao:it.descricao,qtd:it.qtdPorValvula*mult,grupo:'Saida Cavalete 90 mm x 100 mm'}));
 }
 // IMPORTANTE (v1.46): a categoria usada por item é a categoria REAL da fonte, não uma
 // única "Automação - Projeto" pra tudo — achado pelo usuário vendo o Relatório de
@@ -3857,35 +3887,44 @@ function carregarModelo(nomeModelo){
       });
     }
 
-    // Cavaletes (parte 1 — baseada em nº de válvulas): a planilha original multiplica
-    // a receita de itens por max(0, nº válvulas − 2), só para a faixa de vazão da
-    // válvula que corresponde.
-    // BUG corrigido (achado via orçamento real, Miguel Angelo Pimenta): cada faixa de
-    // vazão tem 2 variantes de cavalete (ex. "CV-SP-MF90-VH3-AV1/2xAV1" e "...-VA1xAV1"
-    // — provavelmente tipos diferentes de válvula no cavalete), e o código usava
-    // .filter() somando as 2 ao mesmo tempo (dobrava a quantidade de itens genéricos
-    // como "CURVA 90 SOLDA 90MM", "BUCHA RED 90X75" etc. — real tinha só 1 variante
-    // ativa). Trocado pra pegar só a primeira variante da faixa — ainda não sei a
-    // regra exata de qual das 2 a planilha real escolhe (não achei o campo que
-    // distingue), mas somar as 2 estava comprovadamente errado (2x a mais).
+    // Cavaletes (parte 1 — baseada em nº de válvulas): CORRIGIDO v1.47 via arqueologia
+    // na aba Parametros (linhas 125-160) do real (Miguel Angelo Pimenta). Cada faixa de
+    // vazão tem 2 variantes de cavalete QUE COEXISTEM SIMULTANEAMENTE (não são
+    // alternativas — são 2 categorias reais e distintas na planilha, cada uma com seu
+    // próprio multiplicador):
+    //  - "...-AV1/2xAV1" (Antivácuo): Parametros!I143=G143+H143, onde G143/H143 =
+    //    max(0, nValvulas−2) por adutora — EXATAMENTE o multCavalete antigo.
+    //  - "...-VA1xAV1"/"...-VA2xAV1" (Ventosa cinética): Parametros!I146=G146+H146,
+    //    onde G146/H146 = min(nValvulas,2) por adutora (IF(n<3,n,2)) — cobre só as
+    //    2 primeiras válvulas de cada adutora, o resto vai pra variante Antivácuo.
+    // Confirmado célula a célula contra o real (G143=6,H143=0,G146=2,H146=0 com
+    // nValvulasAdutora01=8, nValvulasAdutora02=0 — bate exato c/ os 2 blocos de BOM).
+    // As 2 variantes são distinguidas pelo sufixo do label (após o último '-'):
+    // "AV..." = variante Antivácuo (multAV), "VA..." = variante Ventosa (multVA).
     let gruposCavalete=[];
     if(nomeModelo.startsWith('gotejamento')){
       const vazaoValvula=d.vazaoValvula||0;
-      const multCavalete=Math.max(0,(d.numValvulasAdutora01||0)-2)+Math.max(0,(d.numValvulasAdutora02||0)-2);
-      const grupoCavaleteUnico=(SELECAO_ATUAL.cavaletes_valvula||[]).find(g=>vazaoValvula>=g.vazaoMin&&vazaoValvula<=g.vazaoMax);
-      gruposCavalete=grupoCavaleteUnico?[grupoCavaleteUnico]:[];
-      if(gruposCavalete.length&&multCavalete>0){
+      const n1=d.numValvulasAdutora01||0,n2=d.numValvulasAdutora02||0;
+      const multAV=Math.max(0,n1-2)+Math.max(0,n2-2);
+      const multVA=Math.min(n1,2)+Math.min(n2,2);
+      gruposCavalete=(SELECAO_ATUAL.cavaletes_valvula||[]).filter(g=>vazaoValvula>=g.vazaoMin&&vazaoValvula<=g.vazaoMax);
+      if(gruposCavalete.length){
         gruposCavalete.forEach(g=>{
-          g.itens.forEach(it=>{
-            atual.bom.push({id:uid(),categoria:g.label,grupo:'CAVALETES',fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
-              qtd:it.qtd*multCavalete,custoUnit:buscarCusto(it.fornecedor,it.codigo)||it.preco||0,ativo:true,origem,modelo:nomeModelo});
-            n++;
-          });
+          const ultimoSeg=g.label.split('-').pop();
+          const mult=ultimoSeg.startsWith('VA')?multVA:multAV;
+          if(mult>0){
+            g.itens.forEach(it=>{
+              atual.bom.push({id:uid(),categoria:g.label,grupo:'CAVALETES',fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
+                qtd:it.qtd*mult,custoUnit:buscarCusto(it.fornecedor,it.codigo)||it.preco||0,ativo:true,origem,modelo:nomeModelo});
+              n++;
+            });
+          }
         });
-      }else if(!gruposCavalete.length){
+        if(multAV<=0&&multVA<=0){
+          avisos.push(`Cavaletes: nº de válvulas (Adutora 01/02) resultou em 0 (precisa ser > 0 para gerar itens de cavalete). Confira "Número de Válvulas" em Dados de Entrada.`);
+        }
+      }else{
         avisos.push(`Cavaletes: nenhuma faixa de vazão de válvula compatível (vazão válvula=${vazaoValvula}). Confira o campo "Vazão Válvula" em Dados de Entrada.`);
-      }else if(multCavalete<=0){
-        avisos.push(`Cavaletes: nº de válvulas (Adutora 01/02) resultou em 0 (precisa ser > 2 para gerar itens extras de cavalete). Confira "Número de Válvulas" em Dados de Entrada.`);
       }
     }
 
@@ -3902,8 +3941,12 @@ function carregarModelo(nomeModelo){
         const chave=`${nominalAdutora}x${manifoldDiametro}`;
         const grupoManifold=(SELECAO_ATUAL.cavaletes_manifold||[]).find(g=>g.chave===chave);
         if(grupoManifold){
+          // categoria = título real da seção na planilha, confirmado via arqueologia
+          // (ex. "SD-ADT 118MM x CAV.MF90"), não o nome descritivo antigo — necessário
+          // pro comparativo com a planilha bater exato.
+          const categoriaReal=`SD-ADT ${nominalAdutora}MM x CAV.MF${manifoldDiametro}`;
           grupoManifold.itens.forEach(it=>{
-            atual.bom.push({id:uid(),categoria:`Saída Adutora x Cavalete (${chave})`,grupo:'CAVALETES',fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
+            atual.bom.push({id:uid(),categoria:categoriaReal,grupo:'CAVALETES',fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
               qtd:it.qtd*nValvulas01,custoUnit:buscarCusto(it.fornecedor,it.codigo)||it.preco||0,ativo:true,origem,modelo:nomeModelo});
             n++;
           });
@@ -3976,7 +4019,7 @@ function escapeHTML(s){
 // Ordem real das categorias, igual à aba "Margem x Venda - Got 01/02" da planilha original
 // (não alfabética) — usada em BOM, Margem x Venda e Proposta Comercial.
 const ORDEM_CATEGORIAS=[
-  'Sucção Projeto','Moto-Bomba','Quadro de Partida','MB Projeto - Saida','Injetro de Cloro',
+  'Sucção Projeto','Moto-Bomba','Quadro de Partida','MB Projeto - Saida','Injetor de Cloro Ventury',
   'Automação - Projeto','Moitoramento','FILTRAGEM','Fertikit','Ferti-Irrigação',
   'ADUTORA - PROJETO 01','ADUTORA - PROJETO 02','Adesivos/Solução','Junção Adutora','Derivação Adutora',
   'CAVALETES','Saida Cavalete','Rede Chicoteada','Rede Secundaria',
@@ -4305,8 +4348,25 @@ function calcularComparacaoHistorico(orc){
   // categorias "diferentes" pro mesmo item, por pura diferença de maiúscula. A
   // categoria MOSTRADA no relatório é a primeira vista (prioriza a do app).
   const normCat=c=>(c||'(sem categoria)').trim().toLowerCase();
-  orc.bom.filter(i=>i.ativo).forEach(it=>{
-    const categoria=it.categoria||'(sem categoria)';
+  // Mesma lógica de fragmentação de extrairBOMHistoricoSheet() aplicada ao lado do
+  // app: quando o PRÓPRIO app gera o mesmo código sob 2+ categorias específicas
+  // diferentes dentro do mesmo grupo (ex. CAVALETES: "CV-SP-MF90-VH3-AV1/2xAV1" +
+  // "...-VA1xAV1" dividem itens como BUCHA RED/CURVA90/ADAPTADOR, que na planilha real
+  // também viram pedaços somados sob a categoria genérica "CAVALETES"), usa o grupo
+  // genérico pra comparar em vez da categoria específica do kit — senão vira falso
+  // "Só no App"+"Só na Planilha" comparando pedaço de um lado com soma do outro.
+  const itensAtivos=orc.bom.filter(i=>i.ativo);
+  const categoriasPorChaveCodigo={};
+  itensAtivos.forEach(it=>{
+    if(!it.grupo||!it.categoria)return;
+    const chave=it.grupo+'\u0001'+(it.fornecedor||'')+'\u0001'+it.codigo;
+    if(!categoriasPorChaveCodigo[chave])categoriasPorChaveCodigo[chave]=new Set();
+    categoriasPorChaveCodigo[chave].add(it.categoria);
+  });
+  itensAtivos.forEach(it=>{
+    const chave=it.grupo+'\u0001'+(it.fornecedor||'')+'\u0001'+it.codigo;
+    const fragmentado=it.grupo&&categoriasPorChaveCodigo[chave]&&categoriasPorChaveCodigo[chave].size>1;
+    const categoria=fragmentado?it.grupo:(it.categoria||'(sem categoria)');
     const k=normCat(categoria)+'\u0001'+(it.fornecedor||'')+'\u0001'+it.codigo;
     if(!porChave[k])porChave[k]={categoria,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,qtdApp:0,qtdHist:0,descricoesHist:new Set()};
     porChave[k].qtdApp+=it.qtd;
