@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.33 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.34 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -464,6 +464,13 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.34 (2026-10-29): Relatório de Divergências agora compara só com a 1ª Opção de
+//   Gotejador ("Conj.Irri.Projeto - Got 01") — antes a lista de peças real capturada
+//   na importação juntava Got 01 + Got 02, o que inflava a comparação com "divergência"
+//   artificial (item em dobro, já que as 2 opções compartilham a mesma infraestrutura)
+//   e dificultava achar divergência de verdade. Pedido do usuário: pra comparar, carregue
+//   só "Gotejamento — Projeto 01" no BOM (não carregue a 2ª Opção também). Só vale pra
+//   orçamentos importados DEPOIS dessa versão — reimporte o arquivo se precisar.
 // v1.33 (2026-10-28): corrige categoria genérica demais em "Final de Ramal" — TE e
 //   Curva90 caíam numa categoria só por tipo ("TE"/"Curva90"), juntando todos os
 //   diâmetros; a planilha real tem 1 categoria POR diâmetro: "RAMAL COM TE 100/75/50
@@ -1027,7 +1034,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.33';
+const APP_VERSION='v1.34';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -1547,9 +1554,14 @@ function importarOrcamentoExcel(file){
       }
 
       // Lista de peças real da planilha (só para o Relatório de Divergências —
-      // nunca entra no cálculo do app). Junta as 3 abas de BOM resolvido, se existirem.
+      // nunca entra no cálculo do app). Só "Got 01" (1ª Opção de Gotejador) + Recalque
+      // — "Got 02" (2ª Opção) fica de fora de propósito: juntar as 2 opções de
+      // gotejador deixava o relatório cheio de "divergência" artificial (item
+      // duplicado pq a infra é compartilhada entre as 2 opções), dificultando achar
+      // divergência de verdade. Pra comparar, carregue só "Gotejamento 1ª Opção" no
+      // app (não carregue a 2ª Opção também).
       const bomHistorico=[];
-      [['Conj.Irri.Projeto - Got 01'],['Conj.Irri.Projeto - Got 02'],['Conj.Irri.Recalque']].forEach(([nome])=>{
+      [['Conj.Irri.Projeto - Got 01'],['Conj.Irri.Recalque']].forEach(([nome])=>{
         const n=wb.SheetNames.find(x=>x.trim().toLowerCase()===nome.toLowerCase());
         if(n)bomHistorico.push(...extrairBOMHistoricoSheet(wb.Sheets[n]));
       });
