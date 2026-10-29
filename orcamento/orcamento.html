@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.48 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.49 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -464,6 +464,38 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.49 (2026-10-29): reescrita completa de gerarItensAutomacaoProjeto() — usuário
+//   reportou que "Automação - Projeto" ainda tinha muitas divergências após v1.48
+//   (screenshot batia byte-a-byte com o estado ANTES do v1.46, incluindo o resíduo de
+//   701194). Investigando achei 2 problemas reais, não cosméticos desta vez:
+//   1) DUPLICAÇÃO: conjuntos.js ainda tinha uma categoria "Automação - Projeto"
+//      estática (fixa, copiada do orçamento de referência original) com 13/12 itens
+//      — CONTROL RAIN BIRD, MODULO LNK WIFI, CONECTOR TE 8X8X8, AQUATIV REGUA,
+//      CANALETA PLASTICA, COMPRESSOR, CHAVE PDWB02, LUVA 1/4, CONECTOR RETO TEFEN
+//      8X1/4, Suporte p/ Regua de Aquantiv — coexistindo com o gerador dinâmico desde
+//      o v1.37, dobrando esses itens no BOM. O próprio changelog do conjuntos.js (v3)
+//      já avisava "ainda restam... não verificados". Removida a categoria inteira
+//      (agora 100% coberta dinamicamente).
+//   2) FONTE 2 ("Regua Aceletadora - Adutora 01", linhas 1031-1048 da aba real):
+//      achada originalmente com o nome errado (achava que vinha de
+//      'Projeto-Adutora01'!BG87:BK89, que na real são outros itens já cobertos por
+//      gerarItensAutomacaoPneumatica()) — reconfirmada linha a linha, é uma fonte real
+//      válida. Ganhou os itens que faltavam (701015/801461/701194, com fórmula própria
+//      ROUNDUP(nºValvulas01/6,0) em vez do mult linear) e o nome certo.
+//   3) FONTE 3 ("Controladores e Solenoides - Descrição - Projeto", linhas 1003-1029):
+//      ganhou 8 itens que faltavam 100% (RAIN BIRD, MODULO LNK WIFI, MODULO EXPANSÃO,
+//      CANALETA PLASTICA, COMPRESSOR, CHAVE PDWB02, LUVA 1/4, CONECTOR TE 8X8X8) — a
+//      maioria "qty fixa = 1" quando automacao="Pneumatico" (simplificação: controlador
+//      sempre "CONTROL RAIN BIRD", única opção vista em orçamentos reais).
+//   4) add() interno de gerarItensAutomacaoProjeto agora detecta quando o MESMO código
+//      recebe de 2 fontes com categoria específica diferente (ex. Regua Aceletadora +
+//      Controladores, ambos tocam 701007/701315/701015) e cai pro grupo genérico — sem
+//      isso, o merge interno ficava com a categoria de quem chamava add() primeiro,
+//      resultando em "Só no App" (soma certa) + "Só na Planilha" (do lado certo) em vez
+//      de "Igual".
+//   RESULTADO: zero divergências nas categorias Automação-Projeto, Regua Aceletadora,
+//   Controladores e Solenoides, PR.DOROT.29/200+GALIT e Automação das Válvulas de
+//   Saída de Bomba (confirmado via auditoria completa, não só os itens já conhecidos).
 // v1.48 (2026-10-29): "Automação das Válvulas de Saída de Bomba" — essa categoria
 //   aparecia 100% vazia (5 itens, 5 divergentes, tudo "Só na Planilha") mas investigando
 //   achei que o SELETOR JÁ EXISTIA no código (automacao_mb_projeto/_recalque em
@@ -1277,7 +1309,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.48';
+const APP_VERSION='v1.49';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -2831,24 +2863,34 @@ function gerarItensConsumiveisAdutora(adCfg01,adCfg02){
 // os campos nºValvulas01/02 (nunca os do modelo sendo carregado — mesmo padrão do
 // Moto-Bomba: Gotejador 1ª/2ª Opção compartilham a mesma automação física):
 //
-// Fonte 1 — "Cavaletes Pneumáticos" (categoria CAVALETES da planilha): só entra se
-//   automacaoCavalete="Piloto + Galit" (bate com "GALIT" no nome dos produtos); qty
-//   de cada item = (qtd por cavalete) × (nºValvulas01+nºValvulas02).
-// Fonte 2 — "Automação-Projeto por amplitude de elevação": só entra se automacao=
-//   "Pneumatico" E a amplitude do perfil de elevação da Adutora 01 (cota máx-mín do
-//   perfil de 10 pontos) for >=26m; qty = (multiplicador) × nºValvulas01 ×
-//   ROUNDUP((amplitude-25)/25,0).
-// Fonte 3 — "Automação-Projeto por nº de operações": só entra se automacao=
-//   "Pneumatico"; qty = (multiplicador) × nºOperacoes (Dados de Entrada D43).
+// Fonte 1 — título real "PR.DOROT.29/200+GALIT" (M-column = CAVALETES): só entra se
+//   automacaoCavalete="Piloto + Galit"; qty de cada item = (qtd por cavalete) ×
+//   (nºValvulas01+nºValvulas02).
+// Fonte 2 — título real "Regua Aceletadora - Adutora 01" (linhas 1031-1048 da aba
+//   real): só entra se automacaoCavalete="Piloto + Galit" E automacao="Pneumatico" E a
+//   amplitude do perfil de elevação da Adutora 01 (cota máx-mín do perfil de 10
+//   pontos) for >=26m; qty = (Qtd.Conj) × ROUNDUP((amplitude-25)/25,0) — Qtd.Conj é
+//   nºValvulas01×mult pra maioria dos itens, mas 701015/801461 usam
+//   ROUNDUP(nºValvulas01/6,0) em vez disso (fórmula própria, não linear).
+// Fonte 3 — título real "Controladores e Solenoides - Descrição - Projeto" (linhas
+//   1003-1029): só entra se automacao="Pneumatico". Maioria dos itens = multiplicador
+//   × nºOperacoes (Dados de Entrada D43); alguns têm fórmula própria (MODULO EXPANSÃO,
+//   AQUATIV/CONECTOR TE 8X8X8 via fórmula "em degraus" não-linear); e um grupo de
+//   itens "fixos" (qty=1, ver AUTOMACAO_PROJETO_FIXOS) que, até v1.48, estava 100%
+//   ausente do app (CONTROL RAIN BIRD, MODULO LNK WIFI, CANALETA PLASTICA, COMPRESSOR,
+//   CHAVE PDWB02, LUVA 1/4, CONECTOR RETO TEFEN 8X1/4).
 //
-// Confirmado via orçamento real (Miguel Angelo Pimenta — automacao="Pneumatico",
-// automacaoCavalete="Piloto + Galit"): bateu EXATO em 901320 (32), 701008 (72); ficou
-// a ~1-2 unidades de diferença em alguns itens (701188/701200/701196, que também
-// recebem uma pequena contribuição separada de outras categorias, já cobertas em
-// outro lugar) — resíduo pequeno, não perseguido até o fim.
+// v1.49: reconfirmado linha a linha contra o real (Miguel Angelo Pimenta) — a Fonte 2
+// "amplitude" NÃO era espúria como achei numa 1ª passada (cheguei a cogitar removê-la
+// por achar que vinha de uma célula errada); o problema era só a categoria genérica
+// "Automação - Projeto" escondendo o título real certo. Com os títulos certos +os
+// itens que faltavam (RAIN BIRD, CANALETA, COMPRESSOR etc.), a maior parte da
+// categoria virou "Igual" — ver changelog da versão pra lista completa.
 // LIMITAÇÃO: a Fonte 2 só calcula quando o perfil de elevação de 10 pontos (cotas
 // manuais) está preenchido — se a Adutora 01 foi traçada no mapa (perfil real
-// ponto-a-ponto), essa parte fica 0 (não implementado para esse caso).
+// ponto-a-ponto), essa parte fica 0 (não implementado para esse caso). O controlador é
+// sempre assumido "CONTROL RAIN BIRD" (sem campo de seleção de marca em Dados de
+// Entrada ainda).
 const AUTOMACAO_PROJETO_CAVALETE=[ // Fonte 1: qty por cavalete
   {codigo:'701033',descricao:'DOROT PILOTO PLASTICO 29-200/54 8MM',qtdPorCavalete:1},
   {codigo:'701007',descricao:"CONECTOR RETO TEFEN 8 X 1/8'' M",qtdPorCavalete:3},
@@ -2858,13 +2900,30 @@ const AUTOMACAO_PROJETO_CAVALETE=[ // Fonte 1: qty por cavalete
   {codigo:'701200',descricao:'CONECTOR TEFEN 8X1/4 MX8"',qtdPorCavalete:1},
   {codigo:'901320',descricao:'RELE HIDRAULICO SUPER GALIT INBAR 3-VIAS 0-20M',qtdPorCavalete:1},
 ];
+// Fonte 2 — título real "Regua Aceletadora - Adutora 01" (achado via arqueologia
+// célula-a-célula, linhas 1031-1048 da aba real — o comentário antigo que atribuía
+// essa fonte a 'Projeto - Adutora 01'!BG87:BK89 estava ERRADO: essas células são, na
+// verdade, a tubulação PE8mm/conectores já cobertos por gerarItensAutomacaoPneumatica()).
+// Fórmula real confirmada: qty = (Qtd.Conj) × ROUNDUP((amplitude-25)/25,0), onde
+// Qtd.Conj de cada item é nºValvulas01 × multiplicador (mult abaixo) — ativa só quando
+// automacaoCavalete="Piloto + Galit" (gate Parametros!H67) E automacao="Pneumatico".
 const AUTOMACAO_PROJETO_AMPLITUDE=[ // Fonte 2: multiplicador sobre nºValvulas01×ROUNDUP((amplitude-25)/25)
   {codigo:'901320',descricao:'RELE HIDRAULICO SUPER GALIT INBAR 3-VIAS 0-20M',mult:1},
   {codigo:'701007',descricao:"CONECTOR RETO TEFEN 8 X 1/8'' M",mult:2},
   {codigo:'701008',descricao:"CONECTOR JOELHO TEFEN 8 X 1/8'' M",mult:2},
   {codigo:'701315',descricao:"CONECTOR TEFEN 8 X 1/8'' M X 8",mult:2},
 ];
-const AUTOMACAO_PROJETO_OPERACOES=[ // Fonte 3: multiplicador sobre nºOperacoes
+// Fonte 3 — título real "Controladores e Solenoides - Descrição - Projeto" (linhas
+// 1003-1029). Dois grupos de fórmula: (a) proporcional a nºOperações (mult×numOp,
+// como antes) e (b) itens "fixos" (qty=1 sempre que automacao=Pneumatico, achados
+// nesta sessão — antes 100% ausentes do app: CONTROL RAIN BIRD, MODULO LNK WIFI,
+// CANALETA PLASTICA, COMPRESSOR, CHAVE PDWB02, LUVA 1/4, CONECTOR RETO TEFEN 8X1/4 —
+// mais MODULO EXPANSÃO/AQUATIV REGUA/CONECTOR TE 8X8X8, que têm fórmula própria não
+// linear em numOp). Simplificação assumida (sem campo correspondente em Dados de
+// Entrada): controlador sempre "CONTROL RAIN BIRD" (única opção ativa nos orçamentos
+// reais conferidos) e condição extra "'Dados de Entrada'!D25>1" (linhas
+// COMPRESSOR/FILTRO/CHAVE) sempre verdadeira.
+const AUTOMACAO_PROJETO_OPERACOES=[ // mult sobre nºOperações
   {codigo:'701007',descricao:"CONECTOR RETO TEFEN 8 X 1/8'' M",mult:1},
   {codigo:'701315',descricao:"CONECTOR TEFEN 8 X 1/8'' M X 8",mult:2},
   {codigo:'701100',descricao:'GALIT MAD TAKIN - RELE HIDR',mult:1},
@@ -2872,6 +2931,15 @@ const AUTOMACAO_PROJETO_OPERACOES=[ // Fonte 3: multiplicador sobre nºOperacoes
   {codigo:'805075',descricao:'ADAPTADOR PARA BASE SOLENOIDE',mult:1},
   {codigo:'701186',descricao:'CONECTOR JOELHO TEFEN 8X1/8"M',mult:1},
   {codigo:'701196',descricao:'CONECTOR UNIAO TEFEN 8 X 8',mult:1},
+];
+const AUTOMACAO_PROJETO_FIXOS=[ // itens fixos (qty=1 quando automacao=Pneumatico)
+  {codigo:'802255',descricao:'CONTROL RAIN BIRD ESP-4ME3 230V PARA WIFI'},
+  {codigo:'802217',descricao:'MODULO LNK WIFI P/ CONTROLADOR'},
+  {codigo:'803035',descricao:'COMPRESSOR AR EST PIST CSL 10 BRAVO 100L TRIF 220/380'},
+  {codigo:'801193',descricao:'CHAVE PDWB02 2 CV N 220/60 HZ'},
+  {codigo:'701274',descricao:'LUVA 1/4 ROSCAVEL"'},
+  {codigo:'701194',descricao:'CONECTOR RETO TEFEN 8 X 1/4 M"'},
+  {codigo:'',descricao:'FILTRO DE AR + REGULADOR PRESSÃO PARA COMPRESSOR'},
 ];
 // "Saída Cavalete" — porta da aba real 'Saida Cavaletes' (tabela de kits por faixa de
 // diâmetro "A mm x B mm"), achada rastreando célula a célula de onde vinham 6 itens
@@ -2916,10 +2984,18 @@ function gerarItensAutomacaoProjeto(d,cotasAdutora01,nv01,nv02){
   // agora é o título real da seção ("PR.DOROT.29/200+GALIT", confirmado via
   // arqueologia), não o nome genérico do grupo — senão o comparativo mostrava "Só no
   // App"+"Só na Planilha" pro mesmo item mesmo as quantidades já batendo exato.
-  const add=(codigo,descricao,qtd,grupo,categoria)=>{
+  // Se o MESMO código recebe de 2 fontes (ex. Regua Aceletadora + Controladores e
+  // Solenoides) com categorias ESPECÍFICAS diferentes, cai pro grupo genérico — mesma
+  // regra de fragmentação usada em extrairBOMHistoricoSheet() pro lado real, senão o
+  // merge aqui dentro ficava com a categoria de quem chamou add() primeiro, e o
+  // comparativo via "Só no App" (com a soma certa) + "Só na Planilha" (do lado certo)
+  // em vez de "Igual".
+  const add=(codigo,descricao,qtd,grupo,categoria,fornecedor)=>{
     if(qtd<=0)return;
     const k=grupo+'\u0001'+codigo;
-    if(!porChave[k])porChave[k]={fornecedor:'Bolsa Irriga',codigo,descricao,qtd:0,grupo,categoria:categoria||grupo};
+    const catFinal=categoria||grupo;
+    if(!porChave[k])porChave[k]={fornecedor:fornecedor||'Bolsa Irriga',codigo,descricao,qtd:0,grupo,categoria:catFinal};
+    else if(porChave[k].categoria!==catFinal)porChave[k].categoria=grupo;
     porChave[k].qtd+=qtd;
   };
   if(d.automacaoCavalete==='Piloto + Galit'){
@@ -2927,15 +3003,38 @@ function gerarItensAutomacaoProjeto(d,cotasAdutora01,nv01,nv02){
     AUTOMACAO_PROJETO_CAVALETE.forEach(it=>add(it.codigo,it.descricao,it.qtdPorCavalete*multCav,'CAVALETES','PR.DOROT.29/200+GALIT'));
   }
   if(d.automacao==='Pneumatico'){
-    if(cotasAdutora01&&cotasAdutora01.length){
+    if(d.automacaoCavalete==='Piloto + Galit'&&cotasAdutora01&&cotasAdutora01.length){
       const amplitude=Math.max(...cotasAdutora01)-Math.min(...cotasAdutora01);
       if(amplitude>=26){
-        const base=(parseFloat(nv01)||0)*Math.ceil((amplitude-25)/25);
-        AUTOMACAO_PROJETO_AMPLITUDE.forEach(it=>add(it.codigo,it.descricao,it.mult*base,'Automação - Projeto'));
+        const fator=Math.ceil((amplitude-25)/25);
+        const nv=parseFloat(nv01)||0;
+        const CAT='Regua Aceletadora - Adutora 01';
+        AUTOMACAO_PROJETO_AMPLITUDE.forEach(it=>add(it.codigo,it.descricao,it.mult*nv*fator,'Automação - Projeto',CAT));
+        // 701015/801461 usam ROUNDUP(nv01/6,0) em vez do mult linear acima (fórmula
+        // própria confirmada nas linhas 1035/1047 da aba real).
+        const fAquativReg=Math.ceil(nv/6);
+        add('701015','AQUATIV - REGUA P/ 6 SOLENOIDES',fAquativReg*fator,'Automação - Projeto',CAT);
+        add('801461','Suporte para Regua de Aquantiv',fAquativReg*fator,'Automação - Projeto',CAT);
+        add('701194','CONECTOR RETO TEFEN 8 X 1/4 M"',2*fator,'Automação - Projeto',CAT);
+        // Sem código no real (linha 1048) — fica na categoria genérica de propósito
+        // (ver comentário de AUTOMACAO_PROJETO_FIXOS).
+        add('','REGULADOR DE PRESSÃO PNEUMATICO COM MANOMETRO DE 1/4',1*fator,'Automação - Projeto');
       }
     }
     const numOperacoes=parseFloat(d.numOperacoes)||0;
-    AUTOMACAO_PROJETO_OPERACOES.forEach(it=>add(it.codigo,it.descricao,it.mult*numOperacoes,'Automação - Projeto'));
+    const CAT3='Controladores e Solenoides - Descrição - Projeto';
+    AUTOMACAO_PROJETO_OPERACOES.forEach(it=>add(it.codigo,it.descricao,it.mult*numOperacoes,'Automação - Projeto',CAT3));
+    // Itens com fórmula própria não-linear (linhas 1010/1019/1020/1023 da aba real).
+    const modExpansao=numOperacoes<4?0:Math.ceil((numOperacoes-4)/4);
+    add('802256','MODULO EXPANSÃO 6 SETORES ESP-ME',modExpansao,'Automação - Projeto',CAT3);
+    const fAquativCtrl=numOperacoes<=0?0:(numOperacoes<=6?1:(numOperacoes<=12?2:3));
+    add('701015','AQUATIV - REGUA P/ 6 SOLENOIDES',fAquativCtrl,'Automação - Projeto',CAT3);
+    add('801369','CONECTOR TE 8X8X8',fAquativCtrl*2,'Automação - Projeto',CAT3);
+    add('01542-000282','CANALETA PLASTICA 50 X 50',2,'Automação - Projeto',CAT3,'Netafim');
+    // Sem código no real (linha 1029) — mesma lógica da 701015/801461 da Regua
+    // Aceletadora, mas essa ocorrência específica não tem código cadastrado.
+    add('','Suporte para Regua de Aquantiv',fAquativCtrl,'Automação - Projeto');
+    AUTOMACAO_PROJETO_FIXOS.forEach(it=>add(it.codigo,it.descricao,1,'Automação - Projeto',it.codigo?CAT3:undefined));
   }
   return Object.values(porChave);
 }
