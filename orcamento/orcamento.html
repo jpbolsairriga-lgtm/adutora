@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.45 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.46 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -464,6 +464,32 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.46 (2026-10-29): mais correções de categoria achadas pelo usuário vendo
+//   "Automação - Projeto" com a planilha toda zerada:
+//   1) gerarItensAutomacaoProjeto(): a Fonte 1 (kit por cavalete) tem categoria real
+//      "CAVALETES", não "Automação - Projeto" — juntar as 2 fontes numa categoria só
+//      impedia o relatório de casar, mesmo as quantidades somadas batendo certo.
+//      Agora cada fonte usa sua categoria real.
+//   2) extrairBOMHistoricoSheet(): detecta quando um MESMO item (fornecedor+código)
+//      recebe de 2+ títulos de seção diferentes sob o mesmo valor de M — sinal de
+//      "pedaços de fórmula somados" (não variante alternativa) — nesse caso usa a
+//      coluna M em vez do título. Por código específico (não o valor de M inteiro —
+//      tentei isso primeiro e quebrou CAVALETES, que hospeda tanto kits de variante
+//      única quanto fórmulas fragmentadas sob o mesmo M).
+//   3) Renomeado grupo/categoria de 3 geradores pra bater com o título real: Gotejador
+//      -> "GOTEJADORES"; Tubo de Polietileno/Conectores (inclui o CLIP) ->
+//      "TUBOS DE POLIETILENO E CONECTORES - Gotejamento"; Final de Linha ->
+//      "FINAL DE LINHA DE 35MM". Corrige também o typo "SERIVIÇOS" -> "SERVIÇOS" em
+//      "SERVIÇOS PROJETO" (usado desde o início do sistema).
+//   LIMITAÇÃO conhecida: a categoria "CAVALETES" ainda tem alguns itens não batendo
+//   (hospeda muitos kits/fórmulas diferentes sob o mesmo valor de M, difícil de
+//   separar 100% sem mais investigação) — não é regressão, era assim antes também.
+//   Sobre "Margem x Venda" nunca mudar de valor: investigado e NÃO é bug — o card
+//   "Valor Real" é uma referência fixa da planilha importada (por design, nunca muda)
+//   e o "Diferença vs. App" JÁ recalcula certo a cada "Carregar Modelo" (confirmado
+//   testando) — o valor ficou parecido porque o total em R$ já estava bem próximo do
+//   real mesmo antes dessas correções de categoria (eram principalmente acertos de
+//   quantidade por item, que se cancelam parcialmente no total em R$).
 // v1.45 (2026-10-29): corrige regressão que o próprio v1.42/v1.43 causou no
 //   Anti-Vácuo: a categoria "Av {nominal}mm x 1"" (formato da coluna M, usado desde
 //   v1.42) parecia certa, mas quando v1.43 passou a extrair o TÍTULO DE SEÇÃO da
@@ -1203,7 +1229,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.45';
+const APP_VERSION='v1.46';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -1641,23 +1667,27 @@ function extrairBOMHistoricoSheet(sheet){
   // C="codigo", E=nome do kit, ex. "Conjunto de Filtragem com 2x24 Netafim x Manifold
   // 90 mm - Plasson + Saida Retrolavagem") logo ACIMA de cada bloco de itens — mas a
   // coluna M (Categoria) de cada linha de dado só tem o nome genérico ("FILTRAGEM").
-  // Achado via Relatório de Divergências por categoria: comparar só pela coluna M
-  // escondia a quantidade real (ficava tudo "Só no App", porque a comparação não
-  // achava a linha equivalente do lado da planilha). Agora rastreia o título de seção
-  // mais recente e usa ele como categoria quando existir — cai pra coluna M só se
-  // nenhum título de seção foi visto ainda (bem no início da aba).
+  // Em categorias "de variante única" (Filtragem/Sucção/MB-Saida/Cavaletes/Saida
+  // Cavalete/Anti-Vácuo), SÓ 1 desses títulos fica ativo por projeto — aí o título é
+  // mais específico e correto que a coluna M. MAS em "Automação - Projeto" a
+  // realidade é outra: o MESMO item (ex. RELE HIDRAULICO) é a SOMA de vários blocos
+  // com títulos BEM diferentes ("Regua Aceletadora - Adutora 01", "PR.DOROT.29/200+
+  // GALIT", "Controladores e Solenoides..."), todos ativos AO MESMO TEMPO — são
+  // pedaços de uma fórmula somados, não variantes alternativas. Usar o título nesse
+  // caso fragmenta um item só em vários pedaços que não batem com o app (que soma
+  // tudo, igual a coluna M já fazia). Por isso detecta esse padrão (2+ títulos
+  // DIFERENTES contribuindo pro MESMO fornecedor+código sob a MESMA coluna M) e usa
+  // a coluna M nesses casos, só usando o título quando ele é a ÚNICA fonte daquele
+  // código dentro daquele valor de M.
   let categoriaSecao=null;
+  const brutos=[];
   for(let r=range.s.r;r<=range.e.r;r++){
     const colB=sheet[XLSX.utils.encode_cell({r,c:1})]?.v;
     const colC=sheet[XLSX.utils.encode_cell({r,c:2})]?.v;
     if(colB==='Fornecedor'&&colC==='codigo'){
       const titulo=sheet[XLSX.utils.encode_cell({r,c:4})]?.v; // coluna E
-      // Em blocos "simples" (1 categoria só, sem variantes por faixa) o título é só
-      // um rótulo de coluna genérico ("Descrição Rede Chicoteada", "Descrição
-      // Adesivo/Solução/Pano") — nesse caso a coluna M já tem o nome certo e mais
-      // curto; só troca pelo título quando ele NÃO for esse rótulo genérico (ou seja,
-      // quando for um nome de kit/faixa de verdade, tipo "Conjunto de Filtragem com
-      // 2x24..." ou "Saida Cavalete 90 mm x 100 mm").
+      // Título genérico demais pra ser categoria ("Descrição Rede Chicoteada" etc.)
+      // — nesse caso a coluna M já tem o nome certo e mais curto.
       const t=titulo!=null?String(titulo).trim():'';
       categoriaSecao=(t&&!/^descri[çc][aã]o\b/i.test(t))?t:null;
       continue;
@@ -1669,10 +1699,32 @@ function extrairBOMHistoricoSheet(sheet){
     const codigo=colC; // coluna C
     const descricao=sheet[XLSX.utils.encode_cell({r,c:4})]?.v; // coluna E
     const categoriaM=sheet[XLSX.utils.encode_cell({r,c:12})]?.v; // coluna M = Categoria
-    const categoria=categoriaSecao||(categoriaM!=null?String(categoriaM):null);
-    itens.push({fornecedor,codigo:String(codigo??''),descricao:descricao!=null?String(descricao):'',qtd,
-      categoria:categoria||'(sem categoria)'});
+    brutos.push({fornecedor,codigo:String(codigo??''),descricao:descricao!=null?String(descricao):'',qtd,
+      titulo:categoriaSecao,categoriaM:categoriaM!=null?String(categoriaM):null});
   }
+  // Detecta, por (M, fornecedor, código), se 2+ títulos diferentes contribuem pro
+  // MESMO item — sinal de que ali os "títulos" são pedaços de fórmula somados (não
+  // variantes alternativas tipo Filtragem/Sucção/Saida Cavalete, onde só 1 título
+  // fica ativo por vez). Importante: isso é por CÓDIGO, não pelo valor de M inteiro —
+  // tentar generalizar "M inteiro fragmentado" quebrou categorias como CAVALETES, que
+  // hospeda VÁRIOS kits diferentes (alguns fragmentados tipo Automação-Projeto,
+  // outros de variante única tipo Saida Cavalete/CV-SP-MFxx) sob o MESMO valor de M —
+  // marcar o M inteiro como fragmentado destruía os matches dos kits de variante
+  // única. Por código é mais conservador (não pega 100% dos casos de fragmentação
+  // tipo Automação-Projeto) mas não regride os já corretos.
+  const titulosPorChaveCodigo={};
+  brutos.forEach(it=>{
+    if(!it.titulo||!it.categoriaM)return;
+    const chave=it.categoriaM+'\u0001'+it.fornecedor+'\u0001'+it.codigo;
+    if(!titulosPorChaveCodigo[chave])titulosPorChaveCodigo[chave]=new Set();
+    titulosPorChaveCodigo[chave].add(it.titulo);
+  });
+  brutos.forEach(it=>{
+    const chave=it.categoriaM+'\u0001'+it.fornecedor+'\u0001'+it.codigo;
+    const fragmentado=it.categoriaM&&titulosPorChaveCodigo[chave]&&titulosPorChaveCodigo[chave].size>1;
+    const categoria=fragmentado?it.categoriaM:(it.titulo||it.categoriaM);
+    itens.push({fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,qtd:it.qtd,categoria:categoria||'(sem categoria)'});
+  });
   return itens;
 }
 function importarOrcamentoExcel(file){
@@ -2604,13 +2656,13 @@ function desenharPerfilElevacaoCanvas(key,samples){
 const CONFIG_SELECAO={
   gotejamento_01:{adutoraKey:'adutora01',tipoSuccaoField:'tipoSuccaoProjeto',filtragemField:'filtragem',bombaAuxField:'bombaAuxSubmersaProjeto',
     succao:'succao_projeto',filtragem:'filtragem',mbSaida:'mbsaida_projeto',bombaAux:'bombaaux_projeto',automacaoMB:'automacao_mb_projeto',
-    labelSuccao:'Sucção Projeto',labelFiltragem:'FILTRAGEM',labelMB:'MB Projeto - Saida',labelBombaAux:'Moto-Bomba',labelAutomacaoMB:'Automação - Projeto',labelAdutora:'ADUTORA - PROJETO 01',labelServicos:'SERIVIÇOS PROJETO',campoGotejador:'gotejador1'},
+    labelSuccao:'Sucção Projeto',labelFiltragem:'FILTRAGEM',labelMB:'MB Projeto - Saida',labelBombaAux:'Moto-Bomba',labelAutomacaoMB:'Automação - Projeto',labelAdutora:'ADUTORA - PROJETO 01',labelServicos:'SERVIÇOS PROJETO',campoGotejador:'gotejador1'},
   gotejamento_02:{adutoraKey:'adutora02',tipoSuccaoField:'tipoSuccaoProjeto',filtragemField:'filtragem',bombaAuxField:'bombaAuxSubmersaProjeto',
     succao:'succao_projeto',filtragem:'filtragem',mbSaida:'mbsaida_projeto',bombaAux:'bombaaux_projeto',automacaoMB:'automacao_mb_projeto',
-    labelSuccao:'Sucção Projeto',labelFiltragem:'FILTRAGEM',labelMB:'MB Projeto - Saida',labelBombaAux:'Moto-Bomba',labelAutomacaoMB:'Automação - Projeto',labelAdutora:'ADUTORA - PROJETO 02',labelServicos:'SERIVIÇOS PROJETO',campoGotejador:'gotejador2'},
+    labelSuccao:'Sucção Projeto',labelFiltragem:'FILTRAGEM',labelMB:'MB Projeto - Saida',labelBombaAux:'Moto-Bomba',labelAutomacaoMB:'Automação - Projeto',labelAdutora:'ADUTORA - PROJETO 02',labelServicos:'SERVIÇOS PROJETO',campoGotejador:'gotejador2'},
   recalque:{adutoraKey:'recalque',tipoSuccaoField:'recalqueTipoSuccao',filtragemField:null,bombaAuxField:'recalqueBombaAuxSubmersa',
     succao:'succao_recalque',filtragem:null,mbSaida:'mbsaida_recalque',bombaAux:'bombaaux_recalque',automacaoMB:'automacao_mb_recalque',
-    labelSuccao:'Sucção - Recalque',labelFiltragem:null,labelMB:'Saida bomba - Recalque',labelBombaAux:'Moto-Bomba - Recalque',labelAutomacaoMB:'Automação - Recalque',labelAdutora:'ADUTORA - RECALQUE',labelServicos:'SERIVIÇOS PROJETO - Recalque',campoGotejador:null},
+    labelSuccao:'Sucção - Recalque',labelFiltragem:null,labelMB:'Saida bomba - Recalque',labelBombaAux:'Moto-Bomba - Recalque',labelAutomacaoMB:'Automação - Recalque',labelAdutora:'ADUTORA - RECALQUE',labelServicos:'SERVIÇOS PROJETO - Recalque',campoGotejador:null},
 };
 function selecionarGrupoPorVazaoTipo(lista,vazao,tipo){
   return (lista||[]).find(g=>vazao>=g.vazaoMin&&vazao<=g.vazaoMax&&(!g.tipo||g.tipo===tipo));
@@ -2795,29 +2847,38 @@ function gerarItensSaidaCavalete(vazaoAdutora01,nv01,vazaoAdutora02,nv02){
   if(mult<=0)return[];
   return SAIDA_CAVALETE_90X100.map(it=>({fornecedor:'Bolsa Irriga',codigo:it.codigo,descricao:it.descricao,qtd:it.qtdPorValvula*mult,grupo:'Saida Cavalete'}));
 }
+// IMPORTANTE (v1.46): a categoria usada por item é a categoria REAL da fonte, não uma
+// única "Automação - Projeto" pra tudo — achado pelo usuário vendo o Relatório de
+// Divergências agrupado: a Fonte 1 (kit por cavalete) vem da categoria real
+// "CAVALETES" (confirmado: M-column da aba real = 'CAVALETES' pras linhas desse
+// bloco "PR.DOROT.29/200+GALIT"), as Fontes 2/3 vêm de "Automação - Projeto" de
+// verdade. Usar "Automação - Projeto" pra tudo juntava fontes de categorias
+// DIFERENTES da planilha real numa cesta só, impedindo o Relatório por categoria de
+// casar (mesmo as quantidades totais batendo certo).
 function gerarItensAutomacaoProjeto(d,cotasAdutora01,nv01,nv02){
-  const porCodigo={};
-  const add=(codigo,descricao,qtd)=>{
+  const porChave={};
+  const add=(codigo,descricao,qtd,grupo)=>{
     if(qtd<=0)return;
-    if(!porCodigo[codigo])porCodigo[codigo]={fornecedor:'Bolsa Irriga',codigo,descricao,qtd:0,grupo:'Automação - Projeto'};
-    porCodigo[codigo].qtd+=qtd;
+    const k=grupo+'\u0001'+codigo;
+    if(!porChave[k])porChave[k]={fornecedor:'Bolsa Irriga',codigo,descricao,qtd:0,grupo};
+    porChave[k].qtd+=qtd;
   };
   if(d.automacaoCavalete==='Piloto + Galit'){
     const multCav=(parseFloat(nv01)||0)+(parseFloat(nv02)||0);
-    AUTOMACAO_PROJETO_CAVALETE.forEach(it=>add(it.codigo,it.descricao,it.qtdPorCavalete*multCav));
+    AUTOMACAO_PROJETO_CAVALETE.forEach(it=>add(it.codigo,it.descricao,it.qtdPorCavalete*multCav,'CAVALETES'));
   }
   if(d.automacao==='Pneumatico'){
     if(cotasAdutora01&&cotasAdutora01.length){
       const amplitude=Math.max(...cotasAdutora01)-Math.min(...cotasAdutora01);
       if(amplitude>=26){
         const base=(parseFloat(nv01)||0)*Math.ceil((amplitude-25)/25);
-        AUTOMACAO_PROJETO_AMPLITUDE.forEach(it=>add(it.codigo,it.descricao,it.mult*base));
+        AUTOMACAO_PROJETO_AMPLITUDE.forEach(it=>add(it.codigo,it.descricao,it.mult*base,'Automação - Projeto'));
       }
     }
     const numOperacoes=parseFloat(d.numOperacoes)||0;
-    AUTOMACAO_PROJETO_OPERACOES.forEach(it=>add(it.codigo,it.descricao,it.mult*numOperacoes));
+    AUTOMACAO_PROJETO_OPERACOES.forEach(it=>add(it.codigo,it.descricao,it.mult*numOperacoes,'Automação - Projeto'));
   }
-  return Object.values(porCodigo);
+  return Object.values(porChave);
 }
 // Automação Pneumática (tubulação PE 8mm + conectores TEFEN) — porta da aba real
 // "Projeto - Adutora 01/02" (BG87:BK89), 3 itens que SEMPRE faziam parte da categoria
@@ -2918,15 +2979,20 @@ function gerarItensGotejadorConectores(d,campoGotejador){
   let qtdRolosGotejador=0;
   if(sku&&totalMetrosGotejador>0){
     qtdRolosGotejador=Math.ceil(totalMetrosGotejador/sku.rolo);
-    itens.push({fornecedor:sku.fornecedor,codigo:sku.codigo,descricao:sku.descricao,qtd:qtdRolosGotejador,grupo:'Gotejador'});
+    itens.push({fornecedor:sku.fornecedor,codigo:sku.codigo,descricao:sku.descricao,qtd:qtdRolosGotejador,grupo:'GOTEJADORES'});
   }
+  // Categoria real (achada vendo o CLIP/801104 aparecer "Só no App" mesmo com a qtd
+  // batendo): a aba real agrupa Tubo de Polietileno + Conectores + CLIP numa única
+  // categoria "TUBOS DE POLIETILENO E CONECTORES - Gotejamento", não 2 categorias
+  // separadas "Tubo de Polietileno"/"Conectores" como o app usava.
+  const gCat='TUBOS DE POLIETILENO E CONECTORES - Gotejamento';
   if(metrosChicoteada&&espLinhas){
     const metrosSaidas=Math.ceil(metrosChicoteada/espLinhas*1.03);
-    itens.push({fornecedor:'Bolsa Irriga',codigo:'701204',descricao:'TUBO CEGO PE 16009 - 500M',qtd:Math.ceil(metrosSaidas*1.5/500),grupo:'Tubo de Polietileno'});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'701204',descricao:'TUBO CEGO PE 16009 - 500M',qtd:Math.ceil(metrosSaidas*1.5/500),grupo:gCat});
     if(tipoSaida>0){
       const nConexoesRaw=metrosChicoteada/espLinhas*tipoSaida;
       const nConexoes=Math.ceil(nConexoesRaw*1.03);
-      itens.push({fornecedor:'Bolsa Irriga',codigo:'701029',descricao:'CONECTOR INICIAL DENTADO C/CHULA 17MM',qtd:nConexoes,grupo:'Conectores'});
+      itens.push({fornecedor:'Bolsa Irriga',codigo:'701029',descricao:'CONECTOR INICIAL DENTADO C/CHULA 17MM',qtd:nConexoes,grupo:gCat});
       const familia=sku?sku.familia:'500';
       // Conector União (801925 na família 800, 801984 na família 500): NÃO usa a
       // mesma qtd dos demais conectores (que é por Nº de saídas/conexões) — é um
@@ -2941,7 +3007,7 @@ function gerarItensGotejadorConectores(d,campoGotejador){
         let qtd=nConexoes;
         if(c.codigo==='801925')qtd=Math.ceil(qtdRolosGotejador*1.03);
         else if(c.codigo==='801984')qtd=Math.ceil(nConexoesRaw+qtdRolosGotejador*1.03);
-        itens.push({...c,qtd,grupo:'Conectores'});
+        itens.push({...c,qtd,grupo:gCat});
       });
     }
   }
@@ -2950,7 +3016,7 @@ function gerarItensGotejadorConectores(d,campoGotejador){
     // (Dados de Entrada D64), não o Espaçamento entre Plantas — um clipe por
     // emissor ao longo da linha, não por planta.
     const nClips=Math.ceil(((10000/espLinhas)*area)/espEmissor*1.03);
-    if(nClips>0)itens.push({fornecedor:'Bolsa Irriga',codigo:'801104',descricao:'CLIP P/ VINHEDO (16MM - 18MM )',qtd:nClips,grupo:'Conectores'});
+    if(nClips>0)itens.push({fornecedor:'Bolsa Irriga',codigo:'801104',descricao:'CLIP P/ VINHEDO (16MM - 18MM )',qtd:nClips,grupo:gCat});
   }
   return itens;
 }
@@ -3258,8 +3324,8 @@ function gerarItensFinalDeLinha(d){
   const numRedes=d.sistemaIrrigacao==='Aspersão'?(parseFloat(d.numMain)||0):(parseFloat(d.numRedesChicoteadas)||0);
   if(!numRedes)return[];
   return[
-    {fornecedor:'Bolsa Irriga',codigo:'801498',descricao:'JOELHO PVC IRR SOLDA 90 35MM DURO',qtd:2*numRedes,grupo:'Final de Linha'},
-    {fornecedor:'Bolsa Irriga',codigo:'701282',descricao:'REGISTRO ESFERA VS SOLD IRRIGA DN35',qtd:1*numRedes,grupo:'Final de Linha'},
+    {fornecedor:'Bolsa Irriga',codigo:'801498',descricao:'JOELHO PVC IRR SOLDA 90 35MM DURO',qtd:2*numRedes,grupo:'FINAL DE LINHA DE 35MM'},
+    {fornecedor:'Bolsa Irriga',codigo:'701282',descricao:'REGISTRO ESFERA VS SOLD IRRIGA DN35',qtd:1*numRedes,grupo:'FINAL DE LINHA DE 35MM'},
   ];
 }
 const AV_COLAR_POR_DI={144:['801341','COLAR DE TOMADA 150MM X 1" P/ IRRIG'],120:['801182',"COLAR DE TOMADA 125MM X 1'' P IRRIGACAO"],
@@ -3915,13 +3981,13 @@ const ORDEM_CATEGORIAS=[
   'ADUTORA - PROJETO 01','ADUTORA - PROJETO 02','Adesivos/Solução','Junção Adutora','Derivação Adutora',
   'CAVALETES','Saida Cavalete','Rede Chicoteada','Rede Secundaria',
   'F. Linha 35 mm','F. Linha 35 mm+ AV1/2','F. Linha 50 mm+ AV1"',
-  'Av 150mm x 1"','Av 125mm x 1"','Av 100mm x 1"','Av 75mm x 1"','Av 50mm x 1"','Av 75mm x 1/2"','Av 50mm x 1/2"','Av 35mm x 1/2"',
+  'ANTI-VACUO 1" X TUBULAÇÃO 150MM','ANTI-VACUO 1" X TUBULAÇÃO 125MM','ANTI-VACUO 1" X TUBULAÇÃO 100MM','ANTI-VACUO 1" X TUBULAÇÃO 75MM','ANTI-VACUO 1" X TUBULAÇÃO 50MM','ANTI-VACUO 1/2" X TUBULAÇÃO 75MM','ANTI-VACUO 1/2" X TUBULAÇÃO 50MM','ANTI-VACUO 1/2" X TUBULAÇÃO 35MM',
   'TE 150 x 35','TE 125 x 35','TE 100 x 35','TE 75 x 35','TE 50 x 35',
   'CURVA90° 150 X 35','CURVA90° 125 X 35','CURVA90° 100 X 35','CURVA90° 75 X 35','CURVA90° 50 X 35',
-  'Luvas Secundarias','Luvas Principais','Gotejador','Tubo de Polietileno','Conectores','Monitoramento','SERIVIÇOS PROJETO',
+  'Luvas Secundarias','Luvas Principais','GOTEJADORES','TUBOS DE POLIETILENO E CONECTORES - Gotejamento','FINAL DE LINHA DE 35MM','Monitoramento','SERVIÇOS PROJETO','Ade./Sol./Pano/P.Lubr. - ADUTORA PROJETO 01 + 02',
   // Recalque
   'Sucção - Recalque','Moto-Bomba - Recalque','Saida bomba - Recalque','Injetro de Cloro - Recalque',
-  'Automação - Recalque','ADUTORA - RECALQUE','Adesivos/Solução - Recalque','Ventosa Recalque','SERIVIÇOS PROJETO - Recalque',
+  'Automação - Recalque','ADUTORA - RECALQUE','Adesivos/Solução - Recalque','Ventosa Recalque','SERVIÇOS PROJETO - Recalque',
 ];
 const _ordemCategoriasIdx=new Map(ORDEM_CATEGORIAS.map((c,i)=>[c,i]));
 // Ordena nomes de categoria (específicos, ex.: "Sucção 75mm Plasson (Negativa)") pela
