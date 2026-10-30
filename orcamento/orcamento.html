@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.50 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.51 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -464,6 +464,31 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.51 (2026-10-30): resolve de vez o resíduo do ADESIVO PVC (701295, 8×9) que ficou
+//   documentado como "limitação conhecida" no v1.50 — usuário pediu pra não aceitar
+//   isso como resposta final. Achada a causa raiz de verdade, em 2 partes:
+//   1) rede_pickDI() (escolha do diâmetro comercial na simulação ponto-a-ponto da Rede
+//      Chicoteada) comparava o mm necessário contra o RÓTULO NOMINAL do tubo (35/50/
+//      75/100mm) — mas arqueologando a aba real 'Submain - Gotejo' ponto a ponto
+//      (coluna S=mm necessário, coluna U=diâmetro escolhido) achei que os limiares
+//      REAIS são ~1-2mm mais baixos (33/48/73mm, não 35/50/75) — a planilha troca de
+//      diâmetro um pouco ANTES do rótulo. Isso fazia os metros de cada diâmetro da
+//      Rede Chicoteada ficarem embaralhados entre os diâmetros vizinhos (confirmado:
+//      701179/100mm tava 65, devia ser 73; 701213/50mm tava 73, devia ser 63) — eram
+//      trocas de bucket, não erro de magnitude. Corrigido com os limiares exatos
+//      confirmados pros 4 diâmetros menores (os 2 maiores, 100/125mm e 125/150mm, não
+//      têm exemplo real que os confirme — extrapolados pelo mesmo padrão).
+//   2) Com os metros de pipe corretos, ainda faltava a contribuição da Rede
+//      Secundária na fórmula de ADESIVO/SOLUÇÃO. A tentativa do v1.50 somava os ROLOS
+//      de verdade da Secundária (errado, dava 16 em vez de 9) — achei via
+//      'Rede Chicoteada-Secundaria'!D41:D46 que a contribuição real é só um FLAG 0/1
+//      por diâmetro (soma "+1 rolo" de grama se esse diâmetro também aparece na Rede
+//      Secundária, não a quantidade real de rolos dela).
+//   RESULTADO: ADESIVO PVC, SOLUÇÃO PREPARADORA e PANO (nas 2 categorias,
+//   "Adesivos/Solução" e "Ade./Sol./Pano/P.Lubr...") ficam 100% "Igual" agora. De
+//   quebra, os 4 itens de tubo da própria "Rede Chicoteada" (701179/701177/701213/
+//   701211) também melhoraram bastante (resíduo antigo documentado desde sessões
+//   anteriores).
 // v1.50 (2026-10-30): corrige "Ade./Sol./Pano/P.Lubr. - ADUTORA PROJETO 01 + 02" e
 //   "Adesivos/Solução" (PANO 01542-000760 aparecia certo em NENHUMA das duas: 0 numa,
 //   quantidade errada na outra). Causa: as 2 categorias compartilhavam o mesmo `grupo`
@@ -1323,7 +1348,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.50';
+const APP_VERSION='v1.51';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -3272,12 +3297,9 @@ function gerarItensAspersorConectores(d){
 // Espaçamento entre Linhas), vazão decrescendo a cada saída (vazão da válvula / nº de
 // saídas), diâmetro "econômico" ideal = K×√(vazão em m³/s) [fórmula clássica, K é um
 // coeficiente ajustável por projeto na planilha — aqui fixo em Configurações], e o
-// diâmetro comercial de cada trecho é o menor da família PN40 (150/125/100/75/50/35,
-// D.I. 144/120/97,6/72,5/48,2/35,7mm) ESTRITAMENTE MAIOR que o diâmetro ideal (decifrado
-// direto da tabela de referência da aba real, testado contra os 2 orçamentos reais nos
-// pontos de corte exatos 125/100/75/50/35mm). Os metros de cada diâmetro ficam dentro de
-// ~2-3% dos valores reais (pequenas inconsistências no "lookup" manual da planilha
-// original perto de alguns pontos de corte — não 100% decifrado, tolerância aceita).
+// diâmetro comercial de cada trecho é escolhido por rede_pickDI() usando os limiares
+// REAIS (ver comentário ali — achados em v1.51, mais precisos que a simples comparação
+// com o rótulo nominal 35/50/75/100/125/150mm usada até v1.50).
 const REDE_CHICOTEADA_NOMINAL_PARA_DI={150:144,125:120,100:97.6,75:72.5,50:48.2,35:35.7};
 const REDE_CHICOTEADA_NOMINAIS=[35,50,75,100,125,150];
 const REDE_CHICOTEADA_CATALOGO_TUBO={144:['Bolsa Irriga','801161','TUBO IRRIGA- LF PN 40 PBL 150MM'],
@@ -3285,9 +3307,26 @@ const REDE_CHICOTEADA_CATALOGO_TUBO={144:['Bolsa Irriga','801161','TUBO IRRIGA- 
   72.5:['Bolsa Irriga','701177','TUBO IRRIGA- LF PN 40 PBL 75MM'],48.2:['Bolsa Irriga','701213','TUBO IRRIGA-LF PN 40 PBL 50MM'],
   35.7:['Bolsa Irriga','701211','TUBO IRRIGA-LF PN 40 PBL 35MM']};
 const REDE_CHICOTEADA_GRAMAS_POR_ROLO={144:40,120:35,97.6:25,72.5:20,48.2:15,35.7:10};
+// v1.51: limiares REAIS de corte, achados arqueologando a aba 'Submain - Gotejo'
+// (colunas S=mm necessário e U=diâmetro escolhido) do orçamento do Miguel Angelo
+// Pimenta ponto a ponto — a comparação ANTIGA (S contra o RÓTULO nominal 35/50/75/
+// 100/125/150mm) estava ~1-2mm folgada: a planilha real troca de diâmetro um pouco
+// ANTES do rótulo nominal, nos limiares exatos 33→35mm, 34-48→50mm, 49-73→75mm,
+// 74+→100mm (confirmado célula a célula: S=73 ainda usa 75mm, S=74 já usa 100mm; a
+// comparação antiga "nom>idealMm" erradamente trocava pra 100mm já em S=75 pra cima
+// E ficava 1 índice adiantada nas transições, embaralhando os metros de 50mm/100mm
+// entre si — a causa raiz do ADESIVO/SOLUÇÃO ficando errado, não só um ajuste de
+// categoria). Os limiares de 100/125mm e 125/150mm não têm orçamento real que os
+// confirme (vazão nunca grande o bastante nos 2 testados) — mantidos pelo mesmo
+// padrão de deslocamento (~1mm abaixo do rótulo nominal) achado nos 3 limiares
+// confirmados, como melhor estimativa disponível.
 function rede_pickDI(idealMm){
-  for(const nom of REDE_CHICOTEADA_NOMINAIS)if(nom>idealMm)return REDE_CHICOTEADA_NOMINAL_PARA_DI[nom];
-  return REDE_CHICOTEADA_NOMINAL_PARA_DI[REDE_CHICOTEADA_NOMINAIS[REDE_CHICOTEADA_NOMINAIS.length-1]];
+  if(idealMm<=33)return 35.7;
+  if(idealMm<=48)return 48.2;
+  if(idealMm<=73)return 72.5;
+  if(idealMm<=98)return 97.6;
+  if(idealMm<=123)return 120;
+  return 144;
 }
 function simularRedeChicoteada(d){
   const metrosRede=(parseFloat(d.metrosChicoteada)||0)/(parseFloat(d.numRedesChicoteadas)||1);
@@ -3333,7 +3372,7 @@ function calcularRolosRedeChicoteada(d){
   }
   return{rolos,ativos};
 }
-function gerarItensRedeChicoteada(d){
+function gerarItensRedeChicoteada(d,diametrosAtivosRedeSecundaria){
   if(d.sistemaIrrigacao!=='Gotejamento')return[];
   // A simulação roda sobre UM header representativo (comprimento =
   // metrosChicoteada/numRedesChicoteadas), já que todos os headers são idênticos. A
@@ -3352,15 +3391,18 @@ function gerarItensRedeChicoteada(d){
     itens.push({fornecedor,codigo,descricao,qtd:rolos[DI],grupo:'Rede Chicoteada'});
     gramasPorDiametro[DI]=rolos[DI]*REDE_CHICOTEADA_GRAMAS_POR_ROLO[DI];
   }
-  // LIMITAÇÃO conhecida (v1.50): a fórmula real de ADESIVO/SOLUÇÃO soma grama da Rede
-  // Chicoteada COM a Rede Secundária ('Rede Chicoteada-Secundaria'!O17:O22 = grams por
-  // diâmetro da Chicoteada + Secundária somadas). Tentei somar a contribuição de
-  // gerarItensRedeSecundaria() aqui, mas os rolos que essa função calcula pra Secundária
-  // são MUITO maiores que a diferença real observada (overcorrigiu ADESIVO de 8 pra 16,
-  // quando o real é 9) — ou seja, o valor de rolos de Rede Secundária que o app calcula
-  // não bate com o que a aba real usa nessa soma específica (pode ser um campo/critério
-  // diferente do que gerarItensRedeSecundaria usa pra gerar os TUBOS). Revertido; fica
-  // o resíduo de ~1 unidade em ADESIVO/SOLUÇÃO quando há Rede Secundária ativa.
+  // v1.51: ADESIVO/SOLUÇÃO soma a grama da Rede Chicoteada COM a Rede Secundária
+  // ('Rede Chicoteada-Secundaria'!O17:O22 = N{row}×grama, onde N{row}=D{chicoteada}+
+  // D{secundária}). Achado via arqueologia (aba 'Rede Chicoteada-Secundaria'!D41:D46):
+  // a contribuição da Secundária NÃO é a quantidade de rolos dela — é só um FLAG 0/1
+  // por diâmetro (1 se esse diâmetro está ativo na Rede Secundária, 0 senão), somado
+  // como "+1 rolo" na conta de grama. A 1ª tentativa (v1.50) somava os rolos de
+  // verdade da Secundária e ficava MUITO alto (8→16 em vez de 9) — era esse engano.
+  // `diametrosAtivosRedeSecundaria` é o array de DIs ativos (1 por item que
+  // gerarItensRedeSecundaria() retorna).
+  (diametrosAtivosRedeSecundaria||[]).forEach(DI=>{
+    gramasPorDiametro[DI]=(gramasPorDiametro[DI]||0)+(REDE_CHICOTEADA_GRAMAS_POR_ROLO[DI]||0);
+  });
   const gramasTotal=Object.values(gramasPorDiametro).reduce((a,b)=>a+b,0);
   if(gramasTotal>0){
     itens.push({fornecedor:'Bolsa Irriga',codigo:'701295',descricao:'ADESIVO PVC INCOLOR FRASCO 850G',qtd:Math.ceil(gramasTotal/850),grupo:'Adesivos/Solução'});
@@ -3999,19 +4041,21 @@ function carregarModelo(nomeModelo){
         adicionarItemCustoFixo(it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
+      // Rede Secundária (tronco Main) — ver fórmulas no comentário de
+      // gerarItensRedeSecundaria. Não é restrita a sistemaIrrigacao="Gotejamento".
+      // Calculada ANTES da Rede Chicoteada pra alimentar o gramasExtras do
+      // ADESIVO/SOLUÇÃO (ver comentário de gerarItensRedeChicoteada).
+      const itensRedeSec=gerarItensRedeSecundaria(d);
+      itensRedeSec.forEach(it=>{
+        adicionarItemCustoFixo(it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
+        n++;
+      });
       // Rede Chicoteada (tubo PN40 + adesivo/solução/pano) — Gotejamento usa a
       // simulação ponto-a-ponto (Submain-Gotejo); Micro-Aspersão/Aspersão usam a
       // cascata simples agregada. Ver comentários de gerarItensRedeChicoteada e
       // gerarItensRedeChicoteadaSimples.
-      const itensRedeChic=[...gerarItensRedeChicoteada(d),...gerarItensRedeChicoteadaSimples(d)];
+      const itensRedeChic=[...gerarItensRedeChicoteada(d,itensRedeSec.map(it=>it.di)),...gerarItensRedeChicoteadaSimples(d)];
       itensRedeChic.forEach(it=>{
-        adicionarItemCustoFixo(it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
-        n++;
-      });
-      // Rede Secundária (tronco Main) — ver fórmulas no comentário de
-      // gerarItensRedeSecundaria. Não é restrita a sistemaIrrigacao="Gotejamento".
-      const itensRedeSec=gerarItensRedeSecundaria(d);
-      itensRedeSec.forEach(it=>{
         adicionarItemCustoFixo(it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
