@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.52 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.54 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -390,7 +390,7 @@ tr.item-row.inativo{opacity:.4}
       <div class="fg"><label>Eficiência da Bomba (%)</label><input type="number" id="cfg_eficienciaPadrao" step="any"><div style="font-size:11px;color:var(--muted);margin-top:2px">Conferido em orçamentos reais: ~63-68% pra vazão total acima de 15m³/h, ~53% pra vazão menor. Ajuste por projeto na aba de Adutora/Recalque se tiver a curva real da bomba selecionada.</div></div>
       <div class="fg"><label>Limiar Bomba Dupla — Adutora (mca)</label><input type="number" id="cfg_limiarBombaDuplaAdutora" step="any"></div>
       <div class="fg"><label>Limiar Bomba Dupla — Recalque (mca)</label><input type="number" id="cfg_limiarBombaDuplaRecalque" step="any"></div>
-      <div class="fg"><label>Rede Chicoteada — Coef. Diâmetro Econômico (K)</label><input type="number" id="cfg_redeChicoteadaK" step="any"></div>
+      <div class="fg"><label>Rede Chicoteada — Coef. Diâmetro Econômico (K), padrão p/ orçamento novo</label><input type="number" id="cfg_redeChicoteadaK" step="any"><div style="font-size:11px;color:var(--muted);margin-top:2px">v1.52: na planilha real esse valor NÃO é uma constante do sistema — é gravado por projeto ('Submain - Gotejo'!C3) e varia (0,85 a 0,75 em 2 casos reais conferidos). Isso aqui é só o valor inicial de um orçamento novo; o valor de cada orçamento fica em Dados de Entrada → Setores do Projeto, e é importado automaticamente ao importar um .xlsm real.</div></div>
     </div>
   </div>
 
@@ -464,6 +464,36 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.54 (2026-10-30): o campo "K" do v1.53 corrigiu a ativação de diâmetro (Anti-
+//   Vácuo/TE/Curva90° de 150mm sumiram do "Só no App" do Antonio Gilberto), mas
+//   sobrou um resíduo nas categorias "TE"/"Curva90" (itens REDUCAO BSA aparecendo
+//   "Só no App" mesmo com a quantidade real total batendo) — causa raiz diferente,
+//   de comparação, não de cálculo: gerarItensReducaoRamal() dava o MESMO `grupo`
+//   literal ('TE'/'Curva90') pras 4 faixas de diâmetro (125/100/75/50mm), e como a
+//   cadeia de reduções em cascata (cadeiaReducoesRamal) repete códigos entre faixas
+//   vizinhas (ex. 701290 "100X75" aparece tanto na cascata da faixa 125mm quanto na
+//   da 100mm), a detecção de fragmentação (calcularComparacaoHistorico) juntava as 4
+//   faixas num bucket genérico só. A planilha real NUNCA faz essa junção (confirmado
+//   em 'Conj.Irri.Projeto - Got 01'!2615-2673: a coluna M de cada faixa já é
+//   específica — "TE 125 x 35", "TE 100 x 35" etc. — nunca cai no genérico "TE").
+//   Corrigido dando um `grupo` específico por faixa (=a própria categoria), igual ao
+//   padrão já usado em gerarItensConsumiveisAdutora (v1.50) e Cavaletes (parte 2).
+//   Resultado: as 47 linhas conferidas de ANTI-VACUO/TE/CURVA90°/CONJUNTO LEITOR DE
+//   PRESSÃO/Adesivos-Solução batem 100% "Igual" nos 2 orçamentos reais agora (Miguel
+//   Angelo Pimenta E Antonio Gilberto da Silveira) — zero regressão em Automação-
+//   Projeto e Cavaletes.
+// v1.53 (2026-10-30): resolve a limitação documentada no v1.52 (constante "Velocidade
+//   - K=" da Rede Chicoteada não é fixa, varia por projeto sem fórmula que explique) —
+//   usuário escolheu a opção "campo manual em Dados de Entrada" em vez de tentar
+//   descobrir/replicar a lógica de ajuste da planilha. Novo campo
+//   dadosEntrada.velocidadeEconomicaK (seção "Dados dos Setores do Projeto", default
+//   = CONFIG_GLOBAL.redeChicoteadaK = 0,85, igual ao comportamento anterior pra quem
+//   não mexer): usado em simularRedeChicoteada() no lugar do K fixo. Ao IMPORTAR um
+//   .xlsm real, lê automaticamente 'Submain - Gotejo'!C3 pro campo — assim o
+//   Relatório de Divergências já nasce com o K certo daquele orçamento específico,
+//   sem o usuário precisar descobrir/digitar o valor manualmente. Orçamentos salvos
+//   antes deste campo existir recebem o default (0,85) automaticamente ao abrir
+//   (mesmo padrão de compatibilidade já usado pras abas de Adutora/Recalque).
 // v1.52 (2026-10-30): usuário trouxe um SEGUNDO orçamento real (Antonio Gilberto da
 //   Silveira, Ribeirão Corrente) pra cross-validar o v1.51 — achou 4 categorias com
 //   divergência que não aparecem no caso de referência (Miguel Angelo Pimenta),
@@ -492,26 +522,17 @@ tr.item-row.inativo{opacity:.4}
 //      Miguel Angelo usa manifold 90mm (801588), Antonio Gilberto usa 110mm (801564).
 //      Tirado do dump estático (que só podia ter 1 código fixo) e gerado dinamicamente
 //      junto com a parte 2 dos Cavaletes, pelo manifoldDiametro já calculado ali.
-//   LIMITAÇÃO conhecida, NÃO resolvida nesta versão (achada mas não corrigida — é
-//   estrutural, não um bug pontual): a categoria "Adesivos/Solução" vinda da Rede
-//   Chicoteada (ADESIVO/SOLUÇÃO por gramasTotal, v1.51) e as categorias
-//   "ANTI-VACUO.../TE.../CURVA90°..." de Final de Ramal dependem de QUAIS diâmetros a
-//   Rede Chicoteada considera "ativos" — e essa ativação real vem, em última instância,
-//   de 'Submain - Gotejo'!C29:C34 (SUMIFS por diâmetro ponto-a-ponto), que por sua vez
-//   depende de uma constante "Velocidade - K=" (célula C3 dessa aba) usada na fórmula
-//   do diâmetro econômico (D.E.=K×√Q). Essa constante NÃO é um valor fixo do sistema:
-//   difere entre os 2 orçamentos reais (Miguel Angelo=0,85; Antonio Gilberto=0,75) sem
-//   nenhuma outra célula de entrada que explique a diferença — é um valor que fica
-//   gravado como número puro (sem fórmula) na aba, sugerindo que é escolhido/ajustado
-//   pelo projetista por fora (não há goal-seek óbvio: a pressão final do gotejador
-//   bate com o mínimo por definição de fórmula, não por ajuste). gerarItensFinalDeRamal
-//   continua usando o K fixo de CONFIG_GLOBAL.redeChicoteadaK (0,85, só verificado pro
-//   caso de Miguel Angelo) — por isso o Antonio Gilberto mostra ANTI-VACUO/TE/CURVA90°
-//   de 150mm como "Só no App" (o app ativa esse diâmetro quando a planilha real não
-//   ativa). Resolver de verdade exige ou (a) um campo novo em Dados de Entrada pro
-//   usuário informar o K que usou na aba Submain-Gotejo daquele orçamento real, ou
-//   (b) implementar a otimização que a planilha usa pra chegar nesse K — nenhuma das
-//   2 feita ainda, fica pro usuário decidir o caminho.
+//   LIMITAÇÃO achada (resolvida no v1.53 — ver changelog acima): a categoria
+//   "Adesivos/Solução" vinda da Rede Chicoteada (ADESIVO/SOLUÇÃO por gramasTotal,
+//   v1.51) e as categorias "ANTI-VACUO.../TE.../CURVA90°..." de Final de Ramal
+//   dependem de QUAIS diâmetros a Rede Chicoteada considera "ativos" — e essa
+//   ativação real vem, em última instância, de 'Submain - Gotejo'!C29:C34 (SUMIFS por
+//   diâmetro ponto-a-ponto), que por sua vez depende de uma constante "Velocidade -
+//   K=" (célula C3 dessa aba) usada na fórmula do diâmetro econômico (D.E.=K×√Q).
+//   Essa constante NÃO é um valor fixo do sistema: difere entre os 2 orçamentos reais
+//   (Miguel Angelo=0,85; Antonio Gilberto=0,75) sem nenhuma outra célula de entrada
+//   que explique a diferença — é um valor gravado como número puro (sem fórmula) na
+//   aba, escolhido/ajustado pelo projetista por fora.
 // v1.51 (2026-10-30): resolve de vez o resíduo do ADESIVO PVC (701295, 8×9) que ficou
 //   documentado como "limitação conhecida" no v1.50 — usuário pediu pra não aceitar
 //   isso como resposta final. Achada a causa raiz de verdade, em 2 partes:
@@ -1396,7 +1417,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.52';
+const APP_VERSION='v1.54';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -1661,6 +1682,7 @@ function novoOrcDadosEntrada(){
     automacaoProjeto:'Sim',automacao:'Hidraulico',automacaoCavalete:'Piloto',
     metrosChicoteada:0,numRedesChicoteadas:0,desnivelMedioRedesChicoteadas:0,
     metrosMain:0,numMain:0,velocidadeSubmain:1.5,velocidadeMain:1.5,
+    velocidadeEconomicaK:CONFIG_GLOBAL.redeChicoteadaK,
     tipoSaidaLateral:'',aspersaoTamanhoMedioSubmain:0,
     // Dados dos Emissores do Projeto
     sistemaIrrigacao:'Gotejamento',gotejador1:'',gotejador2:'',vazaoEmissor:0,espacamentoEmissor:0,
@@ -1698,6 +1720,9 @@ function abrirOrcamento(id){
   atual=orcamentos.find(o=>o.id===id);
   if(!atual)return;
   _categoriasExpandidas=new Set(); // começa com tudo recolhido ao abrir um orçamento
+  // compatibilidade com orçamentos salvos antes de campos novos existirem (ex.
+  // velocidadeEconomicaK, v1.52) — preenche só o que falta, nunca sobrescreve valor salvo
+  atual.dadosEntrada={...novoOrcDadosEntrada(),...(atual.dadosEntrada||{})};
   // compatibilidade com orçamentos salvos antes das abas de Adutora/Recalque (ou do mapa) existirem
   ['adutora01','adutora02','recalque'].forEach(k=>{
     atual[k]={...novaConfigAdutora(),...(atual[k]||{})};
@@ -1954,6 +1979,20 @@ function importarOrcamentoExcel(file){
       importarCotas(42,'adutora02');
       importarCotas(79,'recalque');
 
+      // Coeficiente de velocidade econômica da Rede Chicoteada ("Velocidade - K=",
+      // 'Submain - Gotejo'!C3, usado em D.E.=K×√Q pra escolher o diâmetro de cada
+      // trecho ponto-a-ponto) — achado via arqueologia (v1.52) que NÃO é uma
+      // constante do sistema: é um valor gravado por projeto (0,85 vs 0,75 em 2
+      // orçamentos reais testados, sem fórmula que explique a diferença). Importa
+      // direto da planilha real em vez de usar sempre o padrão de Configurações —
+      // essencial pra o Relatório de Divergências bater nessa categoria.
+      const nomeSubmain=wb.SheetNames.find(n=>n.trim().toLowerCase()==='submain - gotejo');
+      if(nomeSubmain){
+        const ssm=wb.Sheets[nomeSubmain];
+        const kCel=ssm['C3'];
+        if(kCel&&typeof kCel.v==='number'&&kCel.v>0)dadosEntrada.velocidadeEconomicaK=kCel.v;
+      }
+
       // Referência histórica (só leitura, pra comparar com o que o app calcular) —
       // vem da aba "Margens" (Valor do Projeto/Recalque/Total + Margem Bruta), se existir.
       let referenciaHistorica=null;
@@ -2069,6 +2108,7 @@ const CAMPOS_SETORES=[
   ['desnivelMedioRedesChicoteadas','number','Desnível médio Redes Chicoteadas (m)'],
   ['metrosMain','number','Metros Main'],['numMain','number','Número de Main'],
   ['velocidadeSubmain','number','Velocidade Submain (m/seg)'],['velocidadeMain','number','Velocidade Main (m/seg)'],
+  ['velocidadeEconomicaK','number','Rede Chicoteada — Veloc. Econômica "K" (ver Submain-Gotejo!C3 do real)'],
   ['tipoSaidaLateral','text','Tipo de saída lateral'],['aspersaoTamanhoMedioSubmain','number','Aspersão - Tamanho médio Submain'],
 ];
 const CAMPOS_EMISSORES=[
@@ -2144,7 +2184,7 @@ function atualizarCampo(key,val){
   const numKeys=['area','espacamentoLinhas','espacamentoPlantas','altitude','lamina',
     'vazaoValvula','numOperacoes','numValvulasAdutora01','numValvulasAdutora02','metrosChicoteada',
     'numRedesChicoteadas','desnivelMedioRedesChicoteadas','metrosMain','numMain','velocidadeSubmain',
-    'velocidadeMain','aspersaoTamanhoMedioSubmain','vazaoEmissor','espacamentoEmissor','recalqueVazao',
+    'velocidadeMain','velocidadeEconomicaK','aspersaoTamanhoMedioSubmain','vazaoEmissor','espacamentoEmissor','recalqueVazao',
     'desconto','conexoesPct'];
   atual.dadosEntrada[key]=numKeys.includes(key)?(parseFloat(val)||0):val;
   persistirAtual();
@@ -3398,7 +3438,7 @@ function simularRedeChicoteada(d){
   if(!metrosRede||!espLinhas||!Qtotal)return null;
   const nSaidas=metrosRede/espLinhas;
   const QporSaida=Qtotal/nSaidas;
-  const K=CONFIG_GLOBAL.redeChicoteadaK;
+  const K=parseFloat(d.velocidadeEconomicaK)||CONFIG_GLOBAL.redeChicoteadaK;
   const buckets={144:0,120:0,97.6:0,72.5:0,48.2:0,35.7:0};
   let vazao=Qtotal;
   for(let idx=1;idx<=140;idx++){
@@ -3682,9 +3722,18 @@ function gerarItensReducaoRamal(corpoMap,grupo,ativos,multiplicador){
     if(!ativos[DI])continue;
     const nominal=DI_PARA_NOMINAL_PN40[DI];
     const categoria=grupo==='TE'?`RAMAL COM TE ${nominal} X REDUÇÃO TUBO 35MM`:`RAMAL COM CURVA 90°x${nominal}MM X REDUÇÃO TUBO 35MM`;
-    cadeiaReducoesRamal(nominal).forEach(r=>itens.push({fornecedor:'Bolsa Irriga',codigo:r.codigo,descricao:r.descricao,qtd:multiplicador,grupo,categoria}));
+    // grupo = categoria (não o literal 'TE'/'Curva90' compartilhado entre as faixas):
+    // a cadeia de reduções em cascata (cadeiaReducoesRamal) repete o MESMO código
+    // (ex. 701290 "100X75") em 2+ faixas vizinhas (faixa 125mm inclui o passo 100X75
+    // da sua própria cascata, faixa 100mm também) — igual no real (coluna M de cada
+    // faixa já é específica, "TE 125 x 35"/"TE 100 x 35", nunca cai no genérico). Usar
+    // o literal genérico aqui fazia a detecção de fragmentação (calcularComparacaoHistorico)
+    // juntar as faixas num bucket só, que o real nunca junta — achado comparando com
+    // um 2º orçamento real (v1.52) com várias faixas ativas ao mesmo tempo (o caso de
+    // referência original só tinha 1-2 faixas ativas, nunca expondo isso).
+    cadeiaReducoesRamal(nominal).forEach(r=>itens.push({fornecedor:'Bolsa Irriga',codigo:r.codigo,descricao:r.descricao,qtd:multiplicador,grupo:categoria,categoria}));
     const corpo=corpoMap[nominal];
-    itens.push({fornecedor:'Bolsa Irriga',codigo:corpo.codigo,descricao:corpo.descricao,qtd:multiplicador,grupo,categoria});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:corpo.codigo,descricao:corpo.descricao,qtd:multiplicador,grupo:categoria,categoria});
   }
   return itens;
 }
