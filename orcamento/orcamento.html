@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.51 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.52 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -464,6 +464,54 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.52 (2026-10-30): usuário trouxe um SEGUNDO orçamento real (Antonio Gilberto da
+//   Silveira, Ribeirão Corrente) pra cross-validar o v1.51 — achou 4 categorias com
+//   divergência que não aparecem no caso de referência (Miguel Angelo Pimenta),
+//   confirmando a preocupação do usuário: "precisamos de algo estável, que não varie
+//   dependendo da planilha". Investigação célula a célula nos 2 arquivos reais achou
+//   3 bugs genuínos (não cosméticos) que só o 1º arquivo não expunha por coincidência:
+//   1) gerarItensConsumiveisAdutora(): a "classe de consumo" (gramas/barra) de
+//      PASTA LUBRIFICANTE/ADESIVO/SOLUÇÃO NÃO é fixa — depende do diâmetro NOMINAL do
+//      tubo da Adutora. Confirmado em 'Projeto - Adutora 01'!BR63:BT75 nos 2 arquivos:
+//      TB50=15g, TB75=20g, TB100=25g (tubo SOLDÁVEL -> bucket Adesivo/Solução) e
+//      TB118=30g, TB170=35g, TB222=45g, TB274=60g (tubo JEI DEFOFO -> bucket Pasta
+//      Lubrificante). O v1.44/v1.51 usava sempre "30g/barra" pra Pasta (só tinha sido
+//      verificado com tubo Ø118mm) — bateu por coincidência no 1º caso (Ø118mm) e
+//      errou no 2º (Ø170mm: PASTA app=9 vs real=10). ADESIVO/SOLUÇÃO do bucket
+//      Adutora (tubo solda) nunca tinham sido implementados (ficavam sempre 0) —
+//      agora calculados do mesmo jeito. Resultado: PASTA bate exato nos 2 arquivos
+//      agora (6=6 e 10=10).
+//   2) conjuntos.js: categoria estática "Moitoramento" (100% ausente do Relatório de
+//      Divergências desde sempre, documentado como "não investigado" no v1.45) é na
+//      verdade a categoria real "CONJUNTO LEITOR DE PRESSÃO" — os itens e quantidades
+//      já batiam exato (confirmado nos 2 arquivos), só o NOME da categoria estava
+//      errado (por isso nunca casava no comparativo). Renomeado + achado 1 item que
+//      faltava no dump (COLAR TOMADA POLIPROPILENO, pelo Antonio Gilberto): esse colar
+//      usa o MESMO diâmetro do manifold do cavalete (MF75/90/110/160/225, igual à
+//      lógica já existente da categoria "SD-ADT...x CAV.MF..."), não um código fixo —
+//      Miguel Angelo usa manifold 90mm (801588), Antonio Gilberto usa 110mm (801564).
+//      Tirado do dump estático (que só podia ter 1 código fixo) e gerado dinamicamente
+//      junto com a parte 2 dos Cavaletes, pelo manifoldDiametro já calculado ali.
+//   LIMITAÇÃO conhecida, NÃO resolvida nesta versão (achada mas não corrigida — é
+//   estrutural, não um bug pontual): a categoria "Adesivos/Solução" vinda da Rede
+//   Chicoteada (ADESIVO/SOLUÇÃO por gramasTotal, v1.51) e as categorias
+//   "ANTI-VACUO.../TE.../CURVA90°..." de Final de Ramal dependem de QUAIS diâmetros a
+//   Rede Chicoteada considera "ativos" — e essa ativação real vem, em última instância,
+//   de 'Submain - Gotejo'!C29:C34 (SUMIFS por diâmetro ponto-a-ponto), que por sua vez
+//   depende de uma constante "Velocidade - K=" (célula C3 dessa aba) usada na fórmula
+//   do diâmetro econômico (D.E.=K×√Q). Essa constante NÃO é um valor fixo do sistema:
+//   difere entre os 2 orçamentos reais (Miguel Angelo=0,85; Antonio Gilberto=0,75) sem
+//   nenhuma outra célula de entrada que explique a diferença — é um valor que fica
+//   gravado como número puro (sem fórmula) na aba, sugerindo que é escolhido/ajustado
+//   pelo projetista por fora (não há goal-seek óbvio: a pressão final do gotejador
+//   bate com o mínimo por definição de fórmula, não por ajuste). gerarItensFinalDeRamal
+//   continua usando o K fixo de CONFIG_GLOBAL.redeChicoteadaK (0,85, só verificado pro
+//   caso de Miguel Angelo) — por isso o Antonio Gilberto mostra ANTI-VACUO/TE/CURVA90°
+//   de 150mm como "Só no App" (o app ativa esse diâmetro quando a planilha real não
+//   ativa). Resolver de verdade exige ou (a) um campo novo em Dados de Entrada pro
+//   usuário informar o K que usou na aba Submain-Gotejo daquele orçamento real, ou
+//   (b) implementar a otimização que a planilha usa pra chegar nesse K — nenhuma das
+//   2 feita ainda, fica pro usuário decidir o caminho.
 // v1.51 (2026-10-30): resolve de vez o resíduo do ADESIVO PVC (701295, 8×9) que ficou
 //   documentado como "limitação conhecida" no v1.50 — usuário pediu pra não aceitar
 //   isso como resposta final. Achada a causa raiz de verdade, em 2 partes:
@@ -1348,7 +1396,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.51';
+const APP_VERSION='v1.52';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -2860,7 +2908,7 @@ function gerarItensTuboAdutora(adCfg){
       avisos.push(`Tubo Ø${r.nominal}mm PN${pn} (${fmtN(metros,0)}m): sem item de catálogo cadastrado para essa combinação — adicione manualmente no BOM.`);
       return;
     }
-    itens.push({fornecedor:catalogo.fornecedor,codigo:catalogo.codigo,descricao:catalogo.descricao,qtd:Math.ceil(metros/5.8)});
+    itens.push({fornecedor:catalogo.fornecedor,codigo:catalogo.codigo,descricao:catalogo.descricao,qtd:Math.ceil(metros/5.8),nominal:r.nominal});
   });
   return{itens,avisos};
 }
@@ -2868,14 +2916,20 @@ function gerarItensTuboAdutora(adCfg){
 // ADUTORA PROJETO 01 + 02" (achada 100% ausente via Relatório de Divergências por
 // categoria). Porta de 'Projeto - Adutora 01/02'!BU79:BU82, somando as duas adutoras
 // (mesmo padrão do Moto-Bomba/Relé — sempre as 2 adutoras, não a do modelo sendo
-// carregado): ADESIVO/SOLUÇÃO são pra tubo solda (PVC colado) — zero nesse caso
-// porque a Adutora de Miguel Angelo Pimenta usa só tubo JEI DEFOFO (encaixe/anel de
-// borracha, sem cola); PASTA LUBRIFICANTE = ROUNDUP((nº de barras de tubo ×
-// 30g)/1000,0) — bateu exato pra Miguel Angelo Pimenta (PASTA=6) usando "30g/barra"
-// (a classe de consumo da Adutora desse projeto). LIMITAÇÃO: a planilha real tem 7
-// classes de consumo diferentes (15/20/25/30/35/45/60 g por barra, dependendo do
-// tipo/diâmetro específico do tubo JEI DEFOFO) — aqui sempre usa 30g/barra (a única
-// verificada); ADESIVO/SOLUÇÃO (tubo solda) não foram implementados (ficam sempre 0).
+// carregado).
+// v1.52: a classe de consumo (gramas por barra) NÃO é fixa — depende do diâmetro
+// NOMINAL do tubo da Adutora (campo 'nominal' de gerarItensTuboAdutora), confirmado
+// célula a célula em 'Projeto - Adutora 01'!BR63:BT75 em 2 orçamentos reais
+// diferentes (Miguel Angelo Pimenta, tubo Ø118mm JEI DEFOFO; Antonio Gilberto da
+// Silveira, tubo Ø170mm JEI DEFOFO) — a tabela real tem 7 classes "TB nn":
+// TB50=15g, TB75=20g, TB100=25g (tubo SOLDÁVEL PVC -> bucket Adesivo/Solução) e
+// TB118=30g, TB170=35g, TB222=45g, TB274=60g (tubo JEI DEFOFO/encaixe -> bucket
+// Pasta Lubrificante). O v1.44/v1.51 usava sempre "30g/barra" pra Pasta Lubrificante
+// (só tinha sido verificado com Ø118mm) — bateu por coincidência pro caso de Miguel
+// Angelo mas errou pro de Antonio Gilberto (Ø170mm, 35g/barra; PASTA app=9 vs
+// real=10). ADESIVO/SOLUÇÃO (tubo solda) tinham ficado sempre 0 (não implementados)
+// — agora calculados do mesmo jeito, só que acumulando no bucket "solda" em vez do
+// "defofo": ADESIVO=ROUNDUP(gramasSolda/850,0), SOLUÇÃO=ROUNDUP(gramasSolda×1.2/1000,0).
 // PANO = ROUNDUP(comprimento da Adutora 01/500,0) × 2 — achado esquisito mas real: a
 // fórmula de 'Projeto - Adutora 02'!BU81 referencia 'Dados de Entrada'!D30 (o
 // comprimento da Adutora 01), NÃO o da própria Adutora 02 — bug de copia-e-cola da
@@ -2883,16 +2937,25 @@ function gerarItensTuboAdutora(adCfg){
 // verdade: dobra o PANO da Adutora 01 em vez de somar com a 02. Replicado aqui de
 // propósito pra bater com o real (só verificado com Adutora 02 vazia — pode não
 // generalizar se um projeto real usar as duas adutoras).
+const GRAMAS_POR_BARRA_ADUTORA={50.5:15,75:20,100:25,101.6:25,118:30,170:35,222:45,274:60};
+const NOMINAIS_ADUTORA_SOLDA=new Set([50.5,75,100,101.6]);
 function gerarItensConsumiveisAdutora(adCfg01,adCfg02){
-  const barrasDe=adCfg=>{
-    const{itens}=gerarItensTuboAdutora(adCfg);
-    return itens.reduce((s,it)=>s+(it.qtd||0),0);
-  };
+  let gramasSolda=0,gramasDefofo=0;
+  [adCfg01,adCfg02].forEach(adCfg=>{
+    const{itens}=gerarItensTuboAdutora(adCfg||{});
+    itens.forEach(it=>{
+      const g=(GRAMAS_POR_BARRA_ADUTORA[it.nominal]||0)*(it.qtd||0);
+      if(NOMINAIS_ADUTORA_SOLDA.has(it.nominal))gramasSolda+=g;else gramasDefofo+=g;
+    });
+  });
   const comprimento01=adCfg01?.comprimento||0;
-  const totalBarras=barrasDe(adCfg01||{})+barrasDe(adCfg02||{});
   const itens=[];
   if(comprimento01>0)itens.push({fornecedor:'Netafim',codigo:'01542-000760',descricao:'PANO',qtd:Math.ceil(comprimento01/500)*2,grupo:'Adesivos/Solução'});
-  if(totalBarras>0)itens.push({fornecedor:'Bolsa Irriga',codigo:'801442',descricao:'PASTA LUBRIFICANTE BISNAGA 1000G',qtd:Math.ceil(totalBarras*30/1000),grupo:'Adesivos/Solução'});
+  if(gramasDefofo>0)itens.push({fornecedor:'Bolsa Irriga',codigo:'801442',descricao:'PASTA LUBRIFICANTE BISNAGA 1000G',qtd:Math.ceil(gramasDefofo/1000),grupo:'Adesivos/Solução'});
+  if(gramasSolda>0){
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'701295',descricao:'ADESIVO PVC INCOLOR FRASCO 850G',qtd:Math.ceil(gramasSolda/850),grupo:'Adesivos/Solução'});
+    itens.push({fornecedor:'Bolsa Irriga',codigo:'701291',descricao:'SOLUCAO PREPARADORA FRASCO 1L',qtd:Math.ceil(gramasSolda*1.2/1000),grupo:'Adesivos/Solução'});
+  }
   return itens;
 }
 // Automação Pneumática do Projeto (Relé Hidráulico + conectores TEFEN da categoria
@@ -3855,6 +3918,15 @@ function adicionarItensSelecionados(categoria,itens,grupo,origem,modeloBOM){
 function adicionarItemCustoFixo(categoria,fornecedor,codigo,descricao,qtd,custoUnit,grupo,origem,modeloBOM){
   atual.bom.push({id:uid(),categoria,grupo:grupo||categoria,fornecedor,codigo,descricao,qtd,custoUnit,ativo:true,origem:origem||'projeto',modelo:modeloBOM||null});
 }
+// Colar de tomada do "CONJUNTO LEITOR DE PRESSÃO" — mesmo diâmetro do manifold do
+// cavalete (ver uso em carregarModelo, parte 2 dos Cavaletes).
+const COLAR_TOMADA_POR_MANIFOLD={
+  75:{codigo:'801901',descricao:'COLAR TOMADA POLIPROPILENO 75 X 2 PN 10"'},
+  90:{codigo:'801588',descricao:'COLAR TOMADA POLIPROPILENO 90 X 2" PN10'},
+  110:{codigo:'801564',descricao:'COLAR TOMADA POLIPROPILENO 110 X 2"PN 10'},
+  160:{codigo:'801607',descricao:'COLAR TOMADA POLIPROPILENO 160X 2"PN 10'},
+  225:{codigo:'801900',descricao:'COLAR TOMADA POLIPROPILENO 225X 2"PN 10'},
+};
 function carregarModelo(nomeModelo){
   const modeloConj=CONJUNTOS[nomeModelo];
   if(!modeloConj){alert('Modelo não encontrado.');return;}
@@ -4159,6 +4231,18 @@ function carregarModelo(nomeModelo){
               qtd:it.qtd*nValvulas01,custoUnit:buscarCusto(it.fornecedor,it.codigo)||it.preco||0,ativo:true,origem,modelo:nomeModelo});
             n++;
           });
+          // "CONJUNTO LEITOR DE PRESSÃO" (categoria estática de conjuntos.js): o COLAR
+          // DE TOMADA do leitor de pressão casa com o mesmo diâmetro do manifold do
+          // cavalete (MF75/90/110/160/225) — não é um código fixo. Confirmado
+          // divergindo entre 2 orçamentos reais (Miguel Angelo: manifold 90mm,
+          // 801588; Antonio Gilberto da Silveira: manifold 110mm, 801564) — v1.52
+          // removeu o código fixo (801564) do dump estático e gera esse 1 item aqui.
+          const colarLeitorPressao=COLAR_TOMADA_POR_MANIFOLD[manifoldDiametro];
+          if(colarLeitorPressao){
+            atual.bom.push({id:uid(),categoria:'CONJUNTO LEITOR DE PRESSÃO',grupo:'CONJUNTO LEITOR DE PRESSÃO',fornecedor:'Bolsa Irriga',codigo:colarLeitorPressao.codigo,descricao:colarLeitorPressao.descricao,
+              qtd:2,custoUnit:buscarCusto('Bolsa Irriga',colarLeitorPressao.codigo)||0,ativo:true,origem,modelo:nomeModelo});
+            n++;
+          }
         }else{
           avisos.push(`Cavaletes (saída adutora): nenhuma combinação "${chave}" cadastrada — confira o diâmetro calculado na aba Adutora.`);
         }
@@ -4229,7 +4313,7 @@ function escapeHTML(s){
 // (não alfabética) — usada em BOM, Margem x Venda e Proposta Comercial.
 const ORDEM_CATEGORIAS=[
   'Sucção Projeto','Moto-Bomba','Quadro de Partida','MB Projeto - Saida','Injetor de Cloro Ventury',
-  'Automação - Projeto','Moitoramento','FILTRAGEM','Fertikit','Ferti-Irrigação',
+  'Automação - Projeto','CONJUNTO LEITOR DE PRESSÃO','FILTRAGEM','Fertikit','Ferti-Irrigação',
   'ADUTORA - PROJETO 01','ADUTORA - PROJETO 02','Adesivos/Solução','Junção Adutora','Derivação Adutora',
   'CAVALETES','Saida Cavalete','Rede Chicoteada','Rede Secundaria',
   'F. Linha 35 mm','F. Linha 35 mm+ AV1/2','F. Linha 50 mm+ AV1"',
