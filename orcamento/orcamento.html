@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.49 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.50 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -464,6 +464,20 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.50 (2026-10-30): corrige "Ade./Sol./Pano/P.Lubr. - ADUTORA PROJETO 01 + 02" e
+//   "Adesivos/Solução" (PANO 01542-000760 aparecia certo em NENHUMA das duas: 0 numa,
+//   quantidade errada na outra). Causa: as 2 categorias compartilhavam o mesmo `grupo`
+//   interno ('Adesivos/Solução'), então a detecção de fragmentação (v1.47/v1.49)
+//   juntava as 2 fontes num bucket genérico só — mas são 2 fontes REAIS distintas que
+//   a planilha mantém SEPARADAS (a da Adutora vem de um título de seção válido; a da
+//   Rede Chicoteada vem de um título "Descrição..." que a planilha real sempre joga
+//   pra categoria genérica, não importa fragmentação — ver extrairBOMHistoricoSheet()).
+//   Corrigido dando um `grupo` próprio (=a própria categoria) pros itens de
+//   gerarItensConsumiveisAdutora(), isolando-os do bucket genérico 'Adesivos/Solução'
+//   usado por gerarItensRedeChicoteada(). As 2 categorias ficam 100% "Igual" agora,
+//   exceto ADESIVO PVC (701295, 8×9 — fórmula real soma grama da Rede Secundária
+//   também, tentei portar mas os rolos que gerarItensRedeSecundaria() calcula pra esse
+//   fim batem errado com a real — revertido, documentado como limitação conhecida).
 // v1.49 (2026-10-29): reescrita completa de gerarItensAutomacaoProjeto() — usuário
 //   reportou que "Automação - Projeto" ainda tinha muitas divergências após v1.48
 //   (screenshot batia byte-a-byte com o estado ANTES do v1.46, incluindo o resíduo de
@@ -1309,7 +1323,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.49';
+const APP_VERSION='v1.50';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -3338,6 +3352,15 @@ function gerarItensRedeChicoteada(d){
     itens.push({fornecedor,codigo,descricao,qtd:rolos[DI],grupo:'Rede Chicoteada'});
     gramasPorDiametro[DI]=rolos[DI]*REDE_CHICOTEADA_GRAMAS_POR_ROLO[DI];
   }
+  // LIMITAÇÃO conhecida (v1.50): a fórmula real de ADESIVO/SOLUÇÃO soma grama da Rede
+  // Chicoteada COM a Rede Secundária ('Rede Chicoteada-Secundaria'!O17:O22 = grams por
+  // diâmetro da Chicoteada + Secundária somadas). Tentei somar a contribuição de
+  // gerarItensRedeSecundaria() aqui, mas os rolos que essa função calcula pra Secundária
+  // são MUITO maiores que a diferença real observada (overcorrigiu ADESIVO de 8 pra 16,
+  // quando o real é 9) — ou seja, o valor de rolos de Rede Secundária que o app calcula
+  // não bate com o que a aba real usa nessa soma específica (pode ser um campo/critério
+  // diferente do que gerarItensRedeSecundaria usa pra gerar os TUBOS). Revertido; fica
+  // o resíduo de ~1 unidade em ADESIVO/SOLUÇÃO quando há Rede Secundária ativa.
   const gramasTotal=Object.values(gramasPorDiametro).reduce((a,b)=>a+b,0);
   if(gramasTotal>0){
     itens.push({fornecedor:'Bolsa Irriga',codigo:'701295',descricao:'ADESIVO PVC INCOLOR FRASCO 850G',qtd:Math.ceil(gramasTotal/850),grupo:'Adesivos/Solução'});
@@ -3441,7 +3464,7 @@ function gerarItensRedeSecundaria(d){
   const rolosPorDiametro=(metrosMain/5.8)/selecionados.length;
   return selecionados.map(DI=>{
     const[fornecedor,codigo,descricao]=REDE_CHICOTEADA_CATALOGO_TUBO[DI];
-    return{fornecedor,codigo,descricao,qtd:rolosPorDiametro,grupo:'Rede Secundaria'};
+    return{fornecedor,codigo,descricao,qtd:rolosPorDiametro,grupo:'Rede Secundaria',di:DI};
   });
 }
 // Final de Ramal/Anti-Vácuo/Reduções de TE e Curva90/Luvas Secundárias — porta da aba
@@ -3939,7 +3962,15 @@ function carregarModelo(nomeModelo){
       // planilha ("Ade./Sol./Pano/P.Lubr. - ADUTORA PROJETO 01 + 02").
       gerarItensConsumiveisAdutora(atual.adutora01,atual.adutora02).forEach(it=>{
         const categoria='Ade./Sol./Pano/P.Lubr. - ADUTORA PROJETO 01 + 02';
-        atual.bom.push({id:uid(),categoria,grupo:it.grupo,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
+        // grupo=categoria (não 'Adesivos/Solução' genérico) de propósito: achado com o
+        // PANO (01542-000760), que também é gerado por gerarItensRedeChicoteada() sob
+        // grupo='Adesivos/Solução' — são 2 fontes reais DISTINTAS (uma vem de um título
+        // de seção real válido só da Adutora; a outra vem de um título "Descrição..."
+        // que a planilha real SEMPRE joga na categoria genérica, não importa
+        // fragmentação). Compartilhar o mesmo grupo fazia a detecção de fragmentação
+        // juntar os 2 errado (4+2 virando 6 só num lado, quando a real mantém 4 e 2
+        // separados).
+        atual.bom.push({id:uid(),categoria,grupo:categoria,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
           qtd:it.qtd,custoUnit:buscarCusto(it.fornecedor,it.codigo)||0,ativo:true,origem,modelo:nomeModelo});
         n++;
       });
