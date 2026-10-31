@@ -443,7 +443,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.91 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.92 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -8859,6 +8859,59 @@ function _rasterParaCanvas(raster, width, height, samplesPerPixel) {
   return canvas;
 }
 
+// v5.92: pedido do usuário — "toda vez que quero importar uma ortofoto tenho que baixar a
+// resolução pra fora (QGIS etc.) pro app aceitar... pensei em ele fazer isso sozinho". O caminho
+// de redução que já existia (overview do TIFF + readRasters com width/height menor, ver
+// _escolherMelhorOverview/ORTOFOTO_MAX_PX acima) só ajuda quando o arquivo TEM pirâmide interna —
+// nesse caso a overview pequena já é lida direto, rápido. O caso que seguia obrigando o usuário a
+// reduzir na mão por fora é o TIFF SEM pirâmide (comum em export "cru", sem gdaladdo): aí a única
+// imagem disponível já É a nativa, gigante (o usuário confirmou casos de alguns GB no arquivo), e
+// readRasters({width,height}) PRECISA decodificar a imagem inteira na resolução nativa antes de
+// reamostrar pra baixo — pra uma imagem nativa de dezenas de milhões de pixels isso facilmente
+// estoura a memória do navegador (trava a aba ou derruba o import), mesmo pedindo uma saída
+// pequena.
+//
+// Fix: em vez de 1 readRasters gigante, lê a imagem NATIVA em janelas pequenas (readRasters com
+// {window:[x0,y0,x1,y1]} — geotiff.js decodifica só os tiles/strips que caem dentro da janela, não
+// o arquivo inteiro), desenha cada janela já reduzida na posição proporcional certa dentro do
+// canvas de saída (tamanho final pequeno, fixo) e descarta a janela antes de ler a próxima — nunca
+// mantém mais que 1 janela nativa + o canvas final (já pequeno) na memória ao mesmo tempo, não
+// importa o tamanho do arquivo original. Mostra progresso (%) porque esse caminho — só usado pra
+// arquivos realmente grandes — pode levar bem mais que o readRasters direto de antes.
+const ORTOFOTO_PX_NATIVOS_LEITURA_DIRETA = 120_000_000; // acima disso, lê em janelas (ver acima)
+const ORTOFOTO_JANELA_PX = 4000; // lado da janela de leitura, em pixels NATIVOS do arquivo
+
+async function _lerRasterReduzidoPorJanelas(image, wOut, hOut, samplesPerPixel, onProgresso) {
+  const wIn = image.getWidth(), hIn = image.getHeight();
+  const canvasOut = document.createElement('canvas');
+  canvasOut.width = wOut; canvasOut.height = hOut;
+  const ctxOut = canvasOut.getContext('2d');
+  ctxOut.imageSmoothingEnabled = true;
+  ctxOut.imageSmoothingQuality = 'high';
+
+  const escalaX = wOut / wIn, escalaY = hOut / hIn;
+  const totalJanelas = Math.ceil(wIn / ORTOFOTO_JANELA_PX) * Math.ceil(hIn / ORTOFOTO_JANELA_PX);
+  let feitas = 0;
+  for(let y0 = 0; y0 < hIn; y0 += ORTOFOTO_JANELA_PX) {
+    const y1 = Math.min(hIn, y0 + ORTOFOTO_JANELA_PX);
+    for(let x0 = 0; x0 < wIn; x0 += ORTOFOTO_JANELA_PX) {
+      const x1 = Math.min(wIn, x0 + ORTOFOTO_JANELA_PX);
+      const rasterJanela = await image.readRasters({ window: [x0, y0, x1, y1], interleave: true });
+      const wJ = x1 - x0, hJ = y1 - y0;
+      const canvasJanela = _rasterParaCanvas(rasterJanela, wJ, hJ, samplesPerPixel);
+      // posição/tamanho de destino arredondados a partir dos cantos da janela (não do tamanho dela
+      // já escalado) — janelas vizinhas ficam coladas no destino, sem frestas nem sobreposição por
+      // acúmulo de arredondamento.
+      const dx = Math.round(x0 * escalaX), dy = Math.round(y0 * escalaY);
+      const dw = Math.max(1, Math.round(x1 * escalaX) - dx), dh = Math.max(1, Math.round(y1 * escalaY) - dy);
+      ctxOut.drawImage(canvasJanela, 0, 0, wJ, hJ, dx, dy, dw, dh);
+      feitas++;
+      if(onProgresso) onProgresso(feitas, totalJanelas);
+    }
+  }
+  return canvasOut;
+}
+
 async function importarOrtofotoTiff(file) {
   if(!file) return;
   if(!window.GeoTIFF) { setStatus('Biblioteca de leitura de GeoTIFF não carregou (verifique sua conexão) — não é possível importar a ortofoto agora.', 'err'); return; }
@@ -8893,10 +8946,22 @@ async function importarOrtofotoTiff(file) {
     h = Math.max(1, Math.round(h * escala));
   }
 
-  let raster, samplesPerPixel, bbox;
+  let raster, samplesPerPixel, bbox, canvasReduzido = null;
   try {
     samplesPerPixel = image.getSamplesPerPixel();
-    raster = await image.readRasters({ width: w, height: h, interleave: true, resampleMethod: 'bilinear' });
+    // v5.92: ver comentário grande em _lerRasterReduzidoPorJanelas — um TIFF sem pirâmide interna
+    // chega aqui com a imagem NATIVA (gigante), e pedir pro readRasters já entregar reduzido
+    // (width/height menores) ainda exige decodificar tudo na resolução nativa antes de reamostrar.
+    // Acima do limite, lê em janelas pequenas em vez de 1 decodificação só.
+    const pxNativos = image.getWidth() * image.getHeight();
+    if(foiReduzida && pxNativos > ORTOFOTO_PX_NATIVOS_LEITURA_DIRETA) {
+      setStatus(`Ortofoto nativa grande demais pra decodificar de uma vez (${image.getWidth()}×${image.getHeight()}px) — reduzindo em blocos, pode levar alguns minutos…`, 'info');
+      canvasReduzido = await _lerRasterReduzidoPorJanelas(image, w, h, samplesPerPixel, (feitas, total) => {
+        if(st) st.textContent = `Reduzindo resolução em blocos… ${Math.round(feitas / total * 100)}%`;
+      });
+    } else {
+      raster = await image.readRasters({ width: w, height: h, interleave: true, resampleMethod: 'bilinear' });
+    }
     // v4.67: mesmo bug achado no DEM — uma overview gerada por GDAL não carrega tag de
     // georreferência própria (nem ModelPixelScale/Tiepoint), só a imagem principal (idx 0). O
     // bbox real (extensão geográfica) é o mesmo em qualquer resolução, então sempre pega da
@@ -8923,7 +8988,7 @@ async function importarOrtofotoTiff(file) {
     return;
   }
 
-  const canvas = _rasterParaCanvas(raster, w, h, samplesPerPixel);
+  const canvas = canvasReduzido || _rasterParaCanvas(raster, w, h, samplesPerPixel);
 
   if(_ortofotoLocal && _ortofotoLocal.overlay) map.removeLayer(_ortofotoLocal.overlay);
   const dataUrl = canvas.toDataURL('image/png');
@@ -8942,7 +9007,7 @@ async function importarOrtofotoTiff(file) {
   // ortofoto, adicionada depois, cobriria elas — bug relatado: "curvas não aparecem na ortofoto").
   _garantirCurvasNoTopo();
 
-  if(st) st.innerHTML = `✓ ${w}×${h}px${foiReduzida ? ' (reduzida do original pra caber com folga na memória do navegador)' : ''}`;
+  if(st) st.innerHTML = `✓ ${w}×${h}px${canvasReduzido ? ' (reduzida em blocos — original grande demais pra decodificar de uma vez)' : foiReduzida ? ' (reduzida do original pra caber com folga na memória do navegador)' : ''}`;
   const btnRem = $('btnRemoverOrtofotoLocal'); if(btnRem) btnRem.style.display = 'flex';
   _atualizarBotaoAlinharOrtofoto();
   setStatus('✓ Ortofoto importada — a imagem de fundo dessa área agora vem exclusivamente do arquivo local (fora dela, o satélite online continua aparecendo).', 'ok');
