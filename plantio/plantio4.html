@@ -443,7 +443,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.92 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.93 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -7641,23 +7641,36 @@ async function importarDemLocal(file) {
     h = Math.max(1, Math.round(h * escala));
   }
 
-  let raster, bbox, noData;
+  let raster, bbox, noData, resultadoJanelas = null;
   try {
-    // 'nearest', não 'bilinear' — um DEM real quase sempre tem NODATA (ex.: -9999) nas bordas/
-    // buracos sem dado; um resample bilinear misturaria isso com pixels de elevação REAL
-    // vizinhos, criando uma média sem sentido. 'nearest' nunca mistura valores de origem
-    // diferentes, só escolhe o pixel mais próximo — o NODATA que sobra fica isolado e é
-    // filtrado abaixo, não contamina vizinho nenhum.
-    raster = await image.readRasters({ width: w, height: h, resampleMethod: 'nearest' });
     // v4.67: achado com o DEM real do usuário — overview do GeoTIFF (gerada por GDAL) não carrega
     // NENHUMA tag de georreferência própria (nem ModelPixelScale/ModelTiepoint, nem GDAL_NODATA),
     // só a imagem PRINCIPAL (idx 0) tem isso — chamar getBoundingBox() na overview lança "The
     // image does not have an affine transformation." O bbox real (extensão geográfica) é o MESMO
     // em qualquer resolução (overview só tem menos pixels cobrindo a mesma área), então sempre
-    // pega da imagem principal, nunca da overview escolhida pra leitura dos pixels.
+    // pega da imagem principal, nunca da overview escolhida pra leitura dos pixels. Lido ANTES de
+    // decidir o caminho de leitura abaixo — _lerDemReduzidoPorJanelas também precisa do noData.
     bbox = imagemPrincipal.getBoundingBox();
     const fileDirPrincipal = imagemPrincipal.getFileDirectory ? imagemPrincipal.getFileDirectory() : null;
     noData = fileDirPrincipal && fileDirPrincipal.GDAL_NODATA != null ? parseFloat(fileDirPrincipal.GDAL_NODATA) : null;
+    // v5.93: pedido do usuário — "o mesmo deve acontecer com o DEM" (ver comentário grande em
+    // _lerRasterReduzidoPorJanelas/_lerDemReduzidoPorJanelas, escrito pro mesmo problema na
+    // ortofoto — TIFF sem pirâmide interna, nativo gigante, decodificar tudo de uma vez pra depois
+    // reduzir estoura memória). Mesmo gatilho/limite de pixels nativos da ortofoto.
+    const pxNativos = image.getWidth() * image.getHeight();
+    if(foiReduzido && pxNativos > GEOTIFF_PX_NATIVOS_LEITURA_DIRETA) {
+      setStatus(`DEM nativo grande demais pra decodificar de uma vez (${image.getWidth()}×${image.getHeight()}px) — reduzindo em blocos, pode levar alguns minutos…`, 'info');
+      resultadoJanelas = await _lerDemReduzidoPorJanelas(image, w, h, noData, (feitas, total) => {
+        if(st) st.textContent = `Reduzindo resolução em blocos… ${Math.round(feitas / total * 100)}%`;
+      });
+    } else {
+      // 'nearest', não 'bilinear' — um DEM real quase sempre tem NODATA (ex.: -9999) nas bordas/
+      // buracos sem dado; um resample bilinear misturaria isso com pixels de elevação REAL
+      // vizinhos, criando uma média sem sentido. 'nearest' nunca mistura valores de origem
+      // diferentes, só escolhe o pixel mais próximo — o NODATA que sobra fica isolado e é
+      // filtrado abaixo, não contamina vizinho nenhum.
+      raster = await image.readRasters({ width: w, height: h, resampleMethod: 'nearest' });
+    }
   } catch(e) {
     setStatus('Erro ao decodificar os pixels do DEM (formato de compressão pode não ser suportado pelo navegador).', 'err');
     if(st) st.textContent = '';
@@ -7679,17 +7692,22 @@ async function importarDemLocal(file) {
     return;
   }
 
-  const banda = raster[0]; // 1 banda só (elevação) — readRasters sem interleave devolve [banda0, banda1, ...]
-  const valores = new Float32Array(w * h);
-  let minZ = Infinity, maxZ = -Infinity, numValidas = 0;
-  for(let i = 0; i < banda.length; i++) {
-    const v = banda[i];
-    const invalido = !isFinite(v) || (noData != null && Math.abs(v - noData) < 1e-6);
-    if(invalido) { valores[i] = NaN; continue; }
-    valores[i] = v;
-    numValidas++;
-    if(v < minZ) minZ = v;
-    if(v > maxZ) maxZ = v;
+  let valores, minZ, maxZ, numValidas;
+  if(resultadoJanelas) {
+    ({ valores, minZ, maxZ, numValidas } = resultadoJanelas);
+  } else {
+    const banda = raster[0]; // 1 banda só (elevação) — readRasters sem interleave devolve [banda0, banda1, ...]
+    valores = new Float32Array(w * h);
+    minZ = Infinity; maxZ = -Infinity; numValidas = 0;
+    for(let i = 0; i < banda.length; i++) {
+      const v = banda[i];
+      const invalido = !isFinite(v) || (noData != null && Math.abs(v - noData) < 1e-6);
+      if(invalido) { valores[i] = NaN; continue; }
+      valores[i] = v;
+      numValidas++;
+      if(v < minZ) minZ = v;
+      if(v > maxZ) maxZ = v;
+    }
   }
   if(numValidas < 8) {
     setStatus('O DEM não tem pixels de elevação válidos suficientes (só NODATA?). Confira o arquivo.', 'err');
@@ -7709,7 +7727,7 @@ async function importarDemLocal(file) {
   _garantirCurvasNoTopo();
 
   const numCelulasM = (w * h / 1e6).toFixed(1);
-  if(st) st.innerHTML = `✓ ${w}×${h}px (${numCelulasM}M células) · cotas ${minZ.toFixed(1)}–${maxZ.toFixed(1)}m${foiReduzido ? ' · reduzido do original pra caber com folga na memória do navegador' : ''}`;
+  if(st) st.innerHTML = `✓ ${w}×${h}px (${numCelulasM}M células) · cotas ${minZ.toFixed(1)}–${maxZ.toFixed(1)}m${resultadoJanelas ? ' · reduzido em blocos (original grande demais pra decodificar de uma vez)' : foiReduzido ? ' · reduzido do original pra caber com folga na memória do navegador' : ''}`;
   const btnRem = $('btnRemoverDemLocal'); if(btnRem) btnRem.style.display = 'flex';
   setStatus(`✓ DEM importado — a partir de agora, a elevação de todo o app vem exclusivamente dele (${w}×${h}px, ${numCelulasM} milhões de células, prioridade acima das curvas de nível).`, 'ok');
   try { map.fitBounds(bounds, { padding: [20,20] }); } catch(e) {}
@@ -8878,8 +8896,13 @@ function _rasterParaCanvas(raster, width, height, samplesPerPixel) {
 // mantém mais que 1 janela nativa + o canvas final (já pequeno) na memória ao mesmo tempo, não
 // importa o tamanho do arquivo original. Mostra progresso (%) porque esse caminho — só usado pra
 // arquivos realmente grandes — pode levar bem mais que o readRasters direto de antes.
-const ORTOFOTO_PX_NATIVOS_LEITURA_DIRETA = 120_000_000; // acima disso, lê em janelas (ver acima)
-const ORTOFOTO_JANELA_PX = 4000; // lado da janela de leitura, em pixels NATIVOS do arquivo
+//
+// v5.93: pedido do usuário — "o mesmo deve acontecer com o DEM". Mesmos limites/tamanho de janela
+// (GEOTIFF_*, nomes sem "ORTOFOTO" agora que servem pros dois) — só o jeito de MONTAR a saída
+// muda: ortofoto desenha num canvas (_lerRasterReduzidoPorJanelas), DEM monta um Float32Array de
+// elevação por janela (_lerDemReduzidoPorJanelas, ver mais abaixo, antes de importarDemLocal usar).
+const GEOTIFF_PX_NATIVOS_LEITURA_DIRETA = 120_000_000; // acima disso, lê em janelas (ver acima)
+const GEOTIFF_JANELA_PX = 4000; // lado da janela de leitura, em pixels NATIVOS do arquivo
 
 async function _lerRasterReduzidoPorJanelas(image, wOut, hOut, samplesPerPixel, onProgresso) {
   const wIn = image.getWidth(), hIn = image.getHeight();
@@ -8890,12 +8913,12 @@ async function _lerRasterReduzidoPorJanelas(image, wOut, hOut, samplesPerPixel, 
   ctxOut.imageSmoothingQuality = 'high';
 
   const escalaX = wOut / wIn, escalaY = hOut / hIn;
-  const totalJanelas = Math.ceil(wIn / ORTOFOTO_JANELA_PX) * Math.ceil(hIn / ORTOFOTO_JANELA_PX);
+  const totalJanelas = Math.ceil(wIn / GEOTIFF_JANELA_PX) * Math.ceil(hIn / GEOTIFF_JANELA_PX);
   let feitas = 0;
-  for(let y0 = 0; y0 < hIn; y0 += ORTOFOTO_JANELA_PX) {
-    const y1 = Math.min(hIn, y0 + ORTOFOTO_JANELA_PX);
-    for(let x0 = 0; x0 < wIn; x0 += ORTOFOTO_JANELA_PX) {
-      const x1 = Math.min(wIn, x0 + ORTOFOTO_JANELA_PX);
+  for(let y0 = 0; y0 < hIn; y0 += GEOTIFF_JANELA_PX) {
+    const y1 = Math.min(hIn, y0 + GEOTIFF_JANELA_PX);
+    for(let x0 = 0; x0 < wIn; x0 += GEOTIFF_JANELA_PX) {
+      const x1 = Math.min(wIn, x0 + GEOTIFF_JANELA_PX);
       const rasterJanela = await image.readRasters({ window: [x0, y0, x1, y1], interleave: true });
       const wJ = x1 - x0, hJ = y1 - y0;
       const canvasJanela = _rasterParaCanvas(rasterJanela, wJ, hJ, samplesPerPixel);
@@ -8910,6 +8933,51 @@ async function _lerRasterReduzidoPorJanelas(image, wOut, hOut, samplesPerPixel, 
     }
   }
   return canvasOut;
+}
+
+// v5.93: versão pro DEM da mesma ideia acima — em vez de desenhar num canvas (ortofoto é imagem
+// RGB/RGBA), monta direto o Float32Array de elevação final (1 valor por célula), janela a janela.
+// Pede pro geotiff.js já devolver cada janela REAMOSTRADA pro tamanho de destino proporcional dela
+// (window + width/height no mesmo readRasters) — mesmo resultado de pedir a imagem toda reduzida
+// de uma vez, só que decodificando a origem em pedaços pequenos. 'nearest' (não 'bilinear'/médio
+// padrão), igual ao caminho direto de sempre — ver comentário em importarDemLocal sobre por que um
+// DEM nunca pode misturar NODATA com elevação real de um vizinho.
+async function _lerDemReduzidoPorJanelas(image, wOut, hOut, noData, onProgresso) {
+  const wIn = image.getWidth(), hIn = image.getHeight();
+  const valores = new Float32Array(wOut * hOut);
+  let minZ = Infinity, maxZ = -Infinity, numValidas = 0;
+  const escalaX = wOut / wIn, escalaY = hOut / hIn;
+  const totalJanelas = Math.ceil(wIn / GEOTIFF_JANELA_PX) * Math.ceil(hIn / GEOTIFF_JANELA_PX);
+  let feitas = 0;
+  for(let y0 = 0; y0 < hIn; y0 += GEOTIFF_JANELA_PX) {
+    const y1 = Math.min(hIn, y0 + GEOTIFF_JANELA_PX);
+    // mesmo arredondamento "pelos cantos" de _lerRasterReduzidoPorJanelas — janelas de destino
+    // vizinhas ficam coladas na grade final, sem fresta (linha/coluna faltando) nem sobreposição.
+    const dy0 = Math.round(y0 * escalaY), dh = Math.max(1, Math.round(y1 * escalaY) - dy0);
+    for(let x0 = 0; x0 < wIn; x0 += GEOTIFF_JANELA_PX) {
+      const x1 = Math.min(wIn, x0 + GEOTIFF_JANELA_PX);
+      const dx0 = Math.round(x0 * escalaX), dw = Math.max(1, Math.round(x1 * escalaX) - dx0);
+      const rasterJanela = await image.readRasters({ window: [x0, y0, x1, y1], width: dw, height: dh, resampleMethod: 'nearest' });
+      const banda = rasterJanela[0];
+      for(let row = 0; row < dh; row++) {
+        const baseDestino = (dy0 + row) * wOut + dx0;
+        const baseOrigem = row * dw;
+        for(let col = 0; col < dw; col++) {
+          const v = banda[baseOrigem + col];
+          const destIdx = baseDestino + col;
+          const invalido = !isFinite(v) || (noData != null && Math.abs(v - noData) < 1e-6);
+          if(invalido) { valores[destIdx] = NaN; continue; }
+          valores[destIdx] = v;
+          numValidas++;
+          if(v < minZ) minZ = v;
+          if(v > maxZ) maxZ = v;
+        }
+      }
+      feitas++;
+      if(onProgresso) onProgresso(feitas, totalJanelas);
+    }
+  }
+  return { valores, minZ, maxZ, numValidas };
 }
 
 async function importarOrtofotoTiff(file) {
@@ -8954,7 +9022,7 @@ async function importarOrtofotoTiff(file) {
     // (width/height menores) ainda exige decodificar tudo na resolução nativa antes de reamostrar.
     // Acima do limite, lê em janelas pequenas em vez de 1 decodificação só.
     const pxNativos = image.getWidth() * image.getHeight();
-    if(foiReduzida && pxNativos > ORTOFOTO_PX_NATIVOS_LEITURA_DIRETA) {
+    if(foiReduzida && pxNativos > GEOTIFF_PX_NATIVOS_LEITURA_DIRETA) {
       setStatus(`Ortofoto nativa grande demais pra decodificar de uma vez (${image.getWidth()}×${image.getHeight()}px) — reduzindo em blocos, pode levar alguns minutos…`, 'info');
       canvasReduzido = await _lerRasterReduzidoPorJanelas(image, w, h, samplesPerPixel, (feitas, total) => {
         if(st) st.textContent = `Reduzindo resolução em blocos… ${Math.round(feitas / total * 100)}%`;
