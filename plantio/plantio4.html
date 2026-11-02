@@ -235,21 +235,20 @@ body.layout-lateral #status{grid-area:status;}
 /* v4.63: fundo neutro pro mapa quando "Ocultar Imagem Online" está ativo — sem isso, fora da área
    da ortofoto (ou se nem houver ortofoto) o mapa ficava branco/quebrado em vez de só "vazio" de
    propósito. v5.64: background-color em vez do shorthand "background" — o shorthand reseta
-   background-image pra "none" quando não especificado na MESMA regra, o que apagaria a grade de
-   baixo (.map-grade-cad) se essa regra viesse depois no cascade. */
+   background-image pra "none" quando não especificado na MESMA regra (na época, apagaria a grade
+   CAD de baixo; desde a v5.94 a grade é um <canvas> por cima, não mais um background-image, mas
+   background-color continua o jeito certo de não mexer em mais nada da regra à toa). */
 #map.map-sem-online{background-color:var(--cor-fundo-mapa,#000000);}
 /* v5.64 — pedido do usuário: "quando eu ocultar a imagem de satelite, gostaria de um visual cad,
    aquela folha preta quadriculada". Grade quadriculada estilo AutoCAD, só junto com o fundo "sem
    imagem online" (.map-sem-online — nunca aparece por cima de satélite de verdade, não faria
-   sentido). v5.66: usuário pediu "escala sempre fixa, por mais que eu dê zoom" — tamanho em
-   pixels de tela FIXO (não representa mais metros reais, não reage a pan/zoom; a v5.64 original
-   escalava com o zoom e ancorava num ponto geográfico via JS — removido, ver changelog). */
-#map.map-sem-online.map-grade-cad{
-  background-image:
-    linear-gradient(to right, rgba(140,140,140,.35) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(140,140,140,.35) 1px, transparent 1px);
-  background-size: 50px 50px;
-}
+   sentido). v5.66: usuário pediu "escala sempre fixa" — virou tamanho de tela FIXO em CSS puro.
+   v5.94: usuário pediu de volta o auto-ajuste ("autoajustavel conforme eu afasto ou aproximo a
+   tela") — CSS sozinho não dá conta de espaçamento em metros reais + linha maior a cada 5, então a
+   grade virou um <canvas> posicionado por cima do mapa, redesenhado em JS a cada pan/zoom (ver
+   _redesenharGradeCad) em vez de background-image; mostrar/esconder também é só JS (_aplicarGradeCad,
+   junto com .map-sem-online), essa regra só define a posição/empilhamento fixos do canvas. */
+#gradeCadCanvas{ position:absolute; left:0; top:0; pointer-events:none; z-index:250; }
 #infoFloat{width:220px;background:var(--panel-bg-float);border:1px solid var(--panel-border);border-radius:10px;box-shadow:0 6px 22px rgba(0,0,0,.5);color:var(--panel-text);flex-shrink:0;min-height:0;}
 #infoFloat .ifhead{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;cursor:pointer;}
 #infoFloat .ifhead span{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--panel-text-dim);}
@@ -443,7 +442,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.93 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.94 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1280,7 +1279,7 @@ body.layout-lateral #status{grid-area:status;}
                 <input type="color" id="inputCorFundoMapa" value="#000000" oninput="definirCorFundoMapa(this.value)" title="Escolher outra cor" style="width:30px;height:24px;padding:0;border:1px solid var(--panel-border);background:none;cursor:pointer;">
               </div>
               <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--panel-text);cursor:pointer;margin-top:6px;">
-                <input type="checkbox" id="chkGradeCad" onchange="alternarGradeCad(this.checked)" title="Grade quadriculada estilo AutoCAD por cima da cor de fundo — tamanho de tela fixo (50px), não muda com o zoom."> Grade estilo CAD (quadriculado)
+                <input type="checkbox" id="chkGradeCad" onchange="alternarGradeCad(this.checked)" title="Grade quadriculada estilo AutoCAD por cima da cor de fundo — espaçamento em metros reais, se ajusta sozinho (igual ao grid do AutoCAD) conforme você afasta/aproxima o zoom."> Grade estilo CAD (quadriculado)
               </label>
             </div>
           </div>
@@ -1719,6 +1718,7 @@ body.layout-lateral #status{grid-area:status;}
     <span class="sbItem">X <b id="sbCoordX">—</b></span>
     <span class="sbItem">Y <b id="sbCoordY">—</b></span>
     <span class="sbItem">Escala <b id="sbEscala">—</b></span>
+    <span class="sbItem" id="sbGradeWrap" style="display:none;">Grade <b id="sbGrade">—</b></span>
     <span class="sbSep"></span>
     <span class="sbItem sbModo" id="sbModo">Pronto</span>
   </div>
@@ -5081,6 +5081,10 @@ function alternarImagemOnline() {
   _mostrarImagemOnline = !_mostrarImagemOnline;
   localStorage.setItem('mostrarImagemOnline', String(_mostrarImagemOnline));
   _aplicarVisibilidadeImagemOnline();
+  // v5.94: a grade CAD só faz sentido sem imagem online por cima (ver _aplicarGradeCad) — reavalia
+  // visibilidade dela aqui (não dentro de _aplicarVisibilidadeImagemOnline, que também roda EAGER
+  // no carregamento da página, antes de _gradeCadAtiva existir — ver comentário no bloco da grade).
+  _aplicarGradeCad();
   setStatus(_mostrarImagemOnline
     ? 'Imagem online (ESRI/Google) voltou a aparecer no mapa.'
     : 'Imagem online ocultada — agora só a ortofoto importada (se houver), curvas e linhas aparecem. Fora da área da ortofoto aparece só a cor de fundo (escolha em "Cor de fundo do mapa").', 'info');
@@ -5105,22 +5109,117 @@ _aplicarVisibilidadeImagemOnline(); // respeita a preferência salva já na carg
 
 // v5.64 — pedido do usuário: "quando eu ocultar a imagem de satelite, gostaria de um visual cad,
 // aquela folha preta quadriculada". Grade quadriculada por cima da "Cor de fundo do mapa"
-// (.map-sem-online já existente) — ver CSS .map-grade-cad.
+// (.map-sem-online já existente), ancorada num ponto geográfico e escalando com o zoom.
 // v5.66: usuário pediu "quero a quadricula de fundo com escala sempre fixa, por mais que eu dou
-// zoom" — a v5.64 original escalava o tamanho da célula com o zoom (representando 50m reais) e
-// ancorava a fase do padrão num ponto geográfico fixo via JS a cada pan/zoom. Simplificado pra um
-// tamanho de tela FIXO (50px, direto no CSS — ver .map-grade-cad) que nunca muda, sem nenhum JS
-// recalculando nada: _atualizarGradeCadGeo/o listener map.on('move zoom',...) foram removidos.
+// zoom" — virou um tamanho de tela FIXO (50px, puro CSS), sem nenhum JS recalculando nada.
+// v5.94: usuário pediu de volta o auto-ajuste — "quero que o grid de fundo seja igual do autocad,
+// autoajustavel conforme eu afasto ou aproximo a tela". Volta a representar METROS reais (não
+// mais pixels de tela fixos), mas melhor que a v5.64 original: espaçamento escolhido numa
+// sequência "redonda" (1-2-5 × 10ⁿ — a régua padrão de qualquer CAD, ver _espacamentoGradeCad),
+// nunca denso/ilegível nem esparso demais, com linha MAIOR destacada a cada 5 linhas menores
+// (igual ao grid principal do AutoCAD) e o espaçamento atual mostrado na barra de status
+// (#sbGradeWrap, ver _atualizarStatusBarCad). CSS puro não dá conta de nada disso (precisa
+// recalcular a cada pan/zoom) — por isso virou um <canvas> (#gradeCadCanvas) redesenhado em JS,
+// não mais background-image (ver CSS #gradeCadCanvas). É só referência visual: usa a mesma
+// aproximação local (graus→metros pela latitude do centro do mapa) já usada em várias outras
+// partes do app, não UTM de verdade — precisão de sobra pra uma escala visual.
 let _gradeCadAtiva = localStorage.getItem('gradeCadAtiva') === 'true';
+let _gradeCadCanvas = null, _gradeCadCtx = null, _gradeCadEspacamentoAtual = null;
+
 function alternarGradeCad(ativa) {
   _gradeCadAtiva = ativa;
   try { localStorage.setItem('gradeCadAtiva', String(ativa)); } catch(e) {}
   _aplicarGradeCad();
+  _atualizarStatusBarCad(null); // só aqui (nunca dentro de _aplicarGradeCad) — ver comentário lá
 }
+
 function _aplicarGradeCad() {
-  const mapEl = $('map');
-  if(mapEl) mapEl.classList.toggle('map-grade-cad', _gradeCadAtiva);
   const chk = $('chkGradeCad'); if(chk && chk.checked !== _gradeCadAtiva) chk.checked = _gradeCadAtiva;
+  const deveMostrar = _gradeCadAtiva && !_mostrarImagemOnline;
+  if(deveMostrar) {
+    if(!_gradeCadCanvas) {
+      _gradeCadCanvas = document.createElement('canvas');
+      _gradeCadCanvas.id = 'gradeCadCanvas';
+      _gradeCadCtx = _gradeCadCanvas.getContext('2d');
+      map.getContainer().appendChild(_gradeCadCanvas);
+      // 'move'/'zoom' (não só moveend/zoomend) — disparam a cada frame DURANTE o arrasto/animação
+      // de zoom, pra grade acompanhar ao vivo (pedido: "autoajustavel conforme eu afasto ou
+      // aproximo a tela"), não só reaparecer pronta quando o gesto termina.
+      map.on('move zoom resize', _redesenharGradeCad);
+    }
+    _gradeCadCanvas.style.display = '';
+    _redesenharGradeCad();
+  } else {
+    _gradeCadEspacamentoAtual = null;
+    if(_gradeCadCanvas) _gradeCadCanvas.style.display = 'none';
+  }
+  // v5.63 relembrado: NÃO chama _atualizarStatusBarCad aqui — essa função lê _modoPickLinha/
+  // _modoMontagemSetores (declarados bem mais abaixo no script) e _aplicarGradeCad() roda EAGER no
+  // carregamento da página (ver chamada no fim deste bloco); chamá-la eager de novo repetiria o bug
+  // "Cannot access '...' before initialization" que quebrava a importação de projeto. A barra de
+  // status já atualiza sozinha no próximo mousemove/zoomend — alternarGradeCad() (só chamada pelo
+  // checkbox, nunca eager) força isso na hora, pra quem já está com o mouse parado no mapa.
+}
+
+// Espaçamento "redondo" (1-2-5 × 10ⁿ metros — régua padrão de qualquer CAD/AutoCAD) cujo tamanho
+// em TELA fica logo acima de alvoPx: zoom afastado usa espaçamento maior (grid mais esparso),
+// zoom próximo usa espaçamento menor (grid mais denso) — nunca denso/ilegível nem esparso demais.
+function _espacamentoGradeCad(metrosPorPixel, alvoPx) {
+  const alvoM = Math.max(1e-6, metrosPorPixel * alvoPx);
+  const pot = Math.pow(10, Math.floor(Math.log10(alvoM)));
+  for(const mult of [1, 2, 5]) { if(mult * pot >= alvoM - 1e-9) return mult * pot; }
+  return 10 * pot;
+}
+
+// Formata o espaçamento pra exibição (barra de status) — sempre um dos valores "redondos" de
+// _espacamentoGradeCad, então nunca precisa de mais de 1 casa decimal.
+function _formatarEspacamentoGradeCad(m) {
+  if(m >= 1000) return (m / 1000).toFixed(m % 1000 === 0 ? 0 : 1) + ' km';
+  if(m < 1) return m.toFixed(1) + ' m';
+  return m.toFixed(0) + ' m';
+}
+
+function _redesenharGradeCad() {
+  if(!_gradeCadCanvas || _gradeCadCanvas.style.display === 'none') return;
+  const size = map.getSize();
+  _gradeCadCanvas.width = size.x; _gradeCadCanvas.height = size.y;
+  const ctx = _gradeCadCtx;
+  ctx.clearRect(0, 0, size.x, size.y);
+
+  const centro = map.getCenter();
+  const mLat = 111320, mLng = Math.max(Math.cos(centro.lat * Math.PI / 180) * 111320, 1);
+  // metros por pixel, medido no centro da tela — só pra ESCOLHER o espaçamento, não precisa ser
+  // exato em cada ponto da tela (projeção não é equidistante, mas a diferença é desprezível na
+  // escala de uma fazenda).
+  const pA = map.latLngToContainerPoint(centro);
+  const pB = map.latLngToContainerPoint(L.latLng(centro.lat, centro.lng + 1 / mLng));
+  const metrosPorPixel = 1 / Math.max(1e-9, Math.abs(pB.x - pA.x));
+  const espacamento = _espacamentoGradeCad(metrosPorPixel, 45);
+  _gradeCadEspacamentoAtual = espacamento;
+
+  const bounds = map.getBounds();
+  const xMin = bounds.getWest() * mLng, xMax = bounds.getEast() * mLng;
+  const yMin = bounds.getSouth() * mLat, yMax = bounds.getNorth() * mLat;
+  const xIni = Math.floor(xMin / espacamento) * espacamento;
+  const yIni = Math.floor(yMin / espacamento) * espacamento;
+
+  const corMenor = 'rgba(150,150,150,.28)', corMaior = 'rgba(175,175,175,.62)';
+  for(let x = xIni; x <= xMax + espacamento; x += espacamento) {
+    const idx = Math.round(x / espacamento);
+    const pTop = map.latLngToContainerPoint(L.latLng(bounds.getNorth(), x / mLng));
+    const px = Math.round(pTop.x) + 0.5;
+    ctx.strokeStyle = (idx % 5 === 0) ? corMaior : corMenor;
+    ctx.lineWidth = (idx % 5 === 0) ? 1.2 : 1;
+    ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, size.y); ctx.stroke();
+  }
+  for(let y = yIni; y <= yMax + espacamento; y += espacamento) {
+    const idy = Math.round(y / espacamento);
+    const pLeft = map.latLngToContainerPoint(L.latLng(y / mLat, bounds.getWest()));
+    const py = Math.round(pLeft.y) + 0.5;
+    ctx.strokeStyle = (idy % 5 === 0) ? corMaior : corMenor;
+    ctx.lineWidth = (idy % 5 === 0) ? 1.2 : 1;
+    ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(size.x, py); ctx.stroke();
+  }
 }
 _aplicarGradeCad(); // respeita a preferência salva já na carga da página
 
@@ -5529,6 +5628,9 @@ function _atualizarStatusBarCad(latlng) {
   }
   $('sbEscala').textContent = _escalaCad(map.getCenter().lat, map.getZoom());
   $('sbModo').textContent = _descricaoModoAtual();
+  const mostraGrade = _gradeCadAtiva && !_mostrarImagemOnline && _gradeCadEspacamentoAtual != null;
+  $('sbGradeWrap').style.display = mostraGrade ? '' : 'none';
+  if(mostraGrade) $('sbGrade').textContent = _formatarEspacamentoGradeCad(_gradeCadEspacamentoAtual);
 }
 map.on('mousemove', e => _atualizarStatusBarCad(e.latlng));
 map.on('zoomend moveend', () => _atualizarStatusBarCad(null));
