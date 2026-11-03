@@ -232,6 +232,14 @@ body.layout-lateral #status{grid-area:status;}
 #statusBarCad .sbItem b{color:var(--panel-text);font-weight:600;}
 #statusBarCad .sbModo{color:var(--acc-light);font-weight:600;}
 #statusBarCad .sbSep{flex:1;}
+/* v5.96 — pedido do usuário, depois da v5.95: "com a imagem de satelite ativa a coordenada
+   continua tampada". Causa DIFERENTE da v5.95 (controle de zoom): o Google Maps (GoogleMutant)
+   desenha sua própria logo "Google" fixa no canto inferior-esquerdo, por fora do sistema de panes
+   do Leaflet — com um z-index que não dá pra disputar com segurança (é controle interno do Google,
+   pode mudar sem aviso). Em vez de brigar por z-index, afasta o conteúdo da barra pra começar DEPOIS
+   da largura da logo — só quando o Google está mesmo ativo (ESRI não tem essa logo, não precisa do
+   respiro). Ver _aplicarEspacoLogoGoogle, chamada de toda vez que a camada ativa pode ter mudado. */
+#statusBarCad.status-espaco-logo-google{ padding-left: 130px; }
 /* v5.95 — pedido do usuário: "a barra de zoom esta em cima da coordenada". O controle de zoom do
    Leaflet foi movido pra baixo-esquerda na v4.32 (fugindo do painel "Camadas", que mora no topo-
    esquerda) — bem antes da barra de status (v5.62) existir, então essa colisão nunca foi
@@ -448,7 +456,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.95 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.96 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -5632,12 +5640,41 @@ function _escalaCad(lat, zoom) {
   return `1:${Math.round(n).toLocaleString('pt-BR')}`;
 }
 // v5.95: pedido do usuário — "tbm quero que apareça a cota Z qdo passar o mouse". Só funciona com
-// DEM ou curvas de nível LOCAIS ativos — são as únicas fontes de elevação síncronas/instantâneas
-// do app (amostragem local, sem rede); uma fonte ONLINE (Google/SRTM/etc.) exigiria 1 chamada de
-// rede por movimento de mouse, o que não dá pra fazer ao vivo. Reaproveita os mesmos amostradores
-// já usados por _buscarElevacaoViaDemLote/_buscarElevacaoLocal — DEM tem prioridade (mesma ordem
-// de _atualizarIndicadorFonteElevacao). null = sem dado ali (fora de ambas, ou nenhuma fonte local
-// ativa) — _atualizarStatusBarCad decide esconder o campo Z inteiro ou só mostrar "—".
+// fontes de elevação síncronas/instantâneas (amostragem local, sem rede) — uma fonte ONLINE
+// exigiria 1 chamada de rede por movimento de mouse, o que não dá pra fazer ao vivo.
+// v5.96: pedido do usuário, com print mostrando curvas de nível GERADAS na tela (340-360m) e "a
+// altitude não aparece" — a v5.95 só olhava DEM/curvas de nível LOCAIS IMPORTADAS (_demLocal/
+// _curvasLocais), mas essas curvas vinham de "Gerar Curvas de Nível" (_curvaGeradaCache), uma
+// grade de elevação regular já BUSCADA e guardada em memória (local OU online — não importa a
+// origem, o ponto é que já está em memória, uma 3ª fonte "grátis" que nem o DEM nem as curvas
+// locais cobrem) — nova função _cotaZViaCurvaGerada interpola essa grade (mesma bilinear simples
+// de _construirAmostradorDem, só que indexada por lats[]/lngs[] regulares em vez de 4 cantos).
+// Reaproveita os mesmos amostradores já usados por _buscarElevacaoViaDemLote/_buscarElevacaoLocal
+// — DEM tem prioridade (mesma ordem de _atualizarIndicadorFonteElevacao), curva gerada por último
+// (3ª opção, só quando nem DEM nem curvas importadas cobrem o ponto). null = sem dado ali (fora de
+// todas, ou nenhuma fonte ativa) — _atualizarStatusBarCad decide esconder o campo Z inteiro ou só
+// mostrar "—".
+function _cotaZViaCurvaGerada(latlng) {
+  const cache = _curvaGeradaCache;
+  if(!cache) return null;
+  const { elevGridBruta, lats, lngs, polyRef } = cache;
+  try { if(!turf.booleanPointInPolygon(turf.point([latlng.lng, latlng.lat]), polyRef)) return null; }
+  catch(e) { return null; }
+  const nc = lngs.length, nr = lats.length;
+  if(nc < 2 || nr < 2) return null;
+  if(latlng.lng < lngs[0] || latlng.lng > lngs[nc - 1] || latlng.lat < lats[0] || latlng.lat > lats[nr - 1]) return null;
+  const fc = (latlng.lng - lngs[0]) / (lngs[nc - 1] - lngs[0]) * (nc - 1);
+  const fr = (latlng.lat - lats[0]) / (lats[nr - 1] - lats[0]) * (nr - 1);
+  const c0 = Math.floor(fc), r0 = Math.floor(fr);
+  const c1 = Math.min(nc - 1, c0 + 1), r1 = Math.min(nr - 1, r0 + 1);
+  const tc = fc - c0, tr = fr - r0;
+  const g = (r, c) => elevGridBruta[r][c];
+  const a = g(r0, c0), b = g(r0, c1), cc = g(r1, c0), d = g(r1, c1);
+  if([a, b, cc, d].some(v => v == null || Number.isNaN(v))) return null;
+  const topo = a * (1 - tc) + b * tc, base = cc * (1 - tc) + d * tc;
+  return topo * (1 - tr) + base * tr;
+}
+
 function _cotaZNoPonto(latlng) {
   if(_demLocalDisponivel()) {
     if(!_demLocal.sampler) _demLocal.sampler = _construirAmostradorDem(_demLocal);
@@ -5651,6 +5688,7 @@ function _cotaZNoPonto(latlng) {
     if(z == null) z = _elevacaoViaIDW(latlng.lat, latlng.lng, cl.indiceEspacial, 8);
     return z;
   }
+  if(_curvaGeradaCache) return _cotaZViaCurvaGerada(latlng);
   return null;
 }
 
@@ -5660,7 +5698,10 @@ function _atualizarStatusBarCad(latlng) {
   if(latlng) {
     $('sbCoordX').textContent = latlng.lng.toFixed(6);
     $('sbCoordY').textContent = latlng.lat.toFixed(6);
-    const temFonteLocal = _demLocalDisponivel() || _elevacaoLocalDisponivel();
+    // v5.96: 3ª fonte (curva gerada em tela, ver _cotaZNoPonto) — sem isso, o campo Z ficava
+    // escondido mesmo com curvas de nível bem visíveis no mapa (só reconhecia DEM/curvas de nível
+    // IMPORTADAS, não "Gerar Curvas de Nível").
+    const temFonteLocal = _demLocalDisponivel() || _elevacaoLocalDisponivel() || !!_curvaGeradaCache;
     $('sbCotaWrap').style.display = temFonteLocal ? '' : 'none';
     if(temFonteLocal) {
       const z = _cotaZNoPonto(latlng);
@@ -5672,6 +5713,14 @@ function _atualizarStatusBarCad(latlng) {
   const mostraGrade = _gradeCadAtiva && !_mostrarImagemOnline && _gradeCadEspacamentoAtual != null;
   $('sbGradeWrap').style.display = mostraGrade ? '' : 'none';
   if(mostraGrade) $('sbGrade').textContent = _formatarEspacamentoGradeCad(_gradeCadEspacamentoAtual);
+  // v5.96: pedido do usuário — "com a imagem de satelite ativa a coordenada continua tampada". O
+  // Google Maps (GoogleMutant) desenha sua própria logo fixa no canto inferior-esquerdo, por fora
+  // do Leaflet, com z-index alto o bastante pra cobrir a barra (não dá pra brigar por z-index com
+  // segurança contra um controle interno do Google). Em vez disso, afasta o CONTEÚDO da barra pra
+  // começar depois da logo (ver CSS .status-espaco-logo-google) só quando o Google está realmente
+  // ativo — recalculado aqui (não num hook em cada lugar que troca de camada) porque essa função já
+  // roda em todo mousemove/zoomend/moveend, então nunca fica desatualizada.
+  sb.classList.toggle('status-espaco-logo-google', !!(googleLayer && map.hasLayer(googleLayer)));
 }
 map.on('mousemove', e => _atualizarStatusBarCad(e.latlng));
 map.on('zoomend moveend', () => _atualizarStatusBarCad(null));
