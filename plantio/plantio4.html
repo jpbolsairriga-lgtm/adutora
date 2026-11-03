@@ -232,6 +232,12 @@ body.layout-lateral #status{grid-area:status;}
 #statusBarCad .sbItem b{color:var(--panel-text);font-weight:600;}
 #statusBarCad .sbModo{color:var(--acc-light);font-weight:600;}
 #statusBarCad .sbSep{flex:1;}
+/* v5.95 — pedido do usuário: "a barra de zoom esta em cima da coordenada". O controle de zoom do
+   Leaflet foi movido pra baixo-esquerda na v4.32 (fugindo do painel "Camadas", que mora no topo-
+   esquerda) — bem antes da barra de status (v5.62) existir, então essa colisão nunca foi
+   reconciliada: os dois ficaram empilhados no mesmo canto. Sobe o controle de zoom o suficiente
+   pra sempre ficar ACIMA da barra (~26px de altura real), nunca em cima dela. */
+#map .leaflet-control-zoom{margin-bottom:34px !important;}
 /* v4.63: fundo neutro pro mapa quando "Ocultar Imagem Online" está ativo — sem isso, fora da área
    da ortofoto (ou se nem houver ortofoto) o mapa ficava branco/quebrado em vez de só "vazio" de
    propósito. v5.64: background-color em vez do shorthand "background" — o shorthand reseta
@@ -442,7 +448,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.94 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.95 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1717,6 +1723,7 @@ body.layout-lateral #status{grid-area:status;}
   <div id="statusBarCad">
     <span class="sbItem">X <b id="sbCoordX">—</b></span>
     <span class="sbItem">Y <b id="sbCoordY">—</b></span>
+    <span class="sbItem" id="sbCotaWrap" style="display:none;" title="Cota do terreno sob o cursor — só aparece com DEM ou curvas de nível locais ativos (fonte online exigiria 1 chamada de rede por movimento do mouse, inviável).">Z <b id="sbCota">—</b></span>
     <span class="sbItem">Escala <b id="sbEscala">—</b></span>
     <span class="sbItem" id="sbGradeWrap" style="display:none;">Grade <b id="sbGrade">—</b></span>
     <span class="sbSep"></span>
@@ -5188,16 +5195,21 @@ function _redesenharGradeCad() {
 
   const centro = map.getCenter();
   const mLat = 111320, mLng = Math.max(Math.cos(centro.lat * Math.PI / 180) * 111320, 1);
-  // metros por pixel, medido no centro da tela — só pra ESCOLHER o espaçamento, não precisa ser
-  // exato em cada ponto da tela (projeção não é equidistante, mas a diferença é desprezível na
-  // escala de uma fazenda).
-  const pA = map.latLngToContainerPoint(centro);
-  const pB = map.latLngToContainerPoint(L.latLng(centro.lat, centro.lng + 1 / mLng));
-  const metrosPorPixel = 1 / Math.max(1e-9, Math.abs(pB.x - pA.x));
+  const bounds = map.getBounds();
+  // v5.95: BUG relatado — a barra de status mostrava "Grade 50000000 km" (nenhuma linha cabia na
+  // tela). Causa: metrosPorPixel media a distância em TELA entre 2 pontos a só 1 METRO de
+  // distância um do outro (pA/pB) — uma diferença minúscula o bastante (~1e-5° de longitude) pra,
+  // dependendo da precisão da transformação da projeção no zoom daquele instante, os dois pontos
+  // colapsarem no MESMO pixel (diferença zero), caindo no piso de segurança (1e-9) e inflando
+  // metrosPorPixel pra ~1 bilhão — daí o espaçamento "redondo" escolhido virar bilhões de metros.
+  // Fix: mede pela LARGURA INTEIRA da tela (centenas de pixels reais, nunca colapsa) em vez de um
+  // delta de 1 metro isolado — só pra ESCOLHER o espaçamento, não precisa ser exato em cada ponto
+  // da tela (projeção não é equidistante, mas a diferença é desprezível na escala de uma fazenda).
+  const larguraTelaM = Math.max(1e-6, (bounds.getEast() - bounds.getWest()) * mLng);
+  const metrosPorPixel = larguraTelaM / Math.max(1, size.x);
   const espacamento = _espacamentoGradeCad(metrosPorPixel, 45);
   _gradeCadEspacamentoAtual = espacamento;
 
-  const bounds = map.getBounds();
   const xMin = bounds.getWest() * mLng, xMax = bounds.getEast() * mLng;
   const yMin = bounds.getSouth() * mLat, yMax = bounds.getNorth() * mLat;
   const xIni = Math.floor(xMin / espacamento) * espacamento;
@@ -5619,12 +5631,41 @@ function _escalaCad(lat, zoom) {
   if(n >= 1000) return `1:${(Math.round(n / 100) * 100).toLocaleString('pt-BR')}`;
   return `1:${Math.round(n).toLocaleString('pt-BR')}`;
 }
+// v5.95: pedido do usuário — "tbm quero que apareça a cota Z qdo passar o mouse". Só funciona com
+// DEM ou curvas de nível LOCAIS ativos — são as únicas fontes de elevação síncronas/instantâneas
+// do app (amostragem local, sem rede); uma fonte ONLINE (Google/SRTM/etc.) exigiria 1 chamada de
+// rede por movimento de mouse, o que não dá pra fazer ao vivo. Reaproveita os mesmos amostradores
+// já usados por _buscarElevacaoViaDemLote/_buscarElevacaoLocal — DEM tem prioridade (mesma ordem
+// de _atualizarIndicadorFonteElevacao). null = sem dado ali (fora de ambas, ou nenhuma fonte local
+// ativa) — _atualizarStatusBarCad decide esconder o campo Z inteiro ou só mostrar "—".
+function _cotaZNoPonto(latlng) {
+  if(_demLocalDisponivel()) {
+    if(!_demLocal.sampler) _demLocal.sampler = _construirAmostradorDem(_demLocal);
+    return _demLocal.sampler(latlng.lat, latlng.lng);
+  }
+  if(_elevacaoLocalDisponivel()) {
+    const cl = _curvasLocais;
+    try { if(!turf.booleanPointInPolygon(turf.point([latlng.lng, latlng.lat]), cl.coberturaPoly)) return null; }
+    catch(e) { return null; }
+    let z = cl.indiceTin ? _elevacaoViaTin(latlng.lat, latlng.lng, cl.indiceTin) : null;
+    if(z == null) z = _elevacaoViaIDW(latlng.lat, latlng.lng, cl.indiceEspacial, 8);
+    return z;
+  }
+  return null;
+}
+
 function _atualizarStatusBarCad(latlng) {
   const sb = $('statusBarCad');
   if(!sb) return;
   if(latlng) {
     $('sbCoordX').textContent = latlng.lng.toFixed(6);
     $('sbCoordY').textContent = latlng.lat.toFixed(6);
+    const temFonteLocal = _demLocalDisponivel() || _elevacaoLocalDisponivel();
+    $('sbCotaWrap').style.display = temFonteLocal ? '' : 'none';
+    if(temFonteLocal) {
+      const z = _cotaZNoPonto(latlng);
+      $('sbCota').textContent = z != null ? z.toFixed(1) + ' m' : '—';
+    }
   }
   $('sbEscala').textContent = _escalaCad(map.getCenter().lat, map.getZoom());
   $('sbModo').textContent = _descricaoModoAtual();
