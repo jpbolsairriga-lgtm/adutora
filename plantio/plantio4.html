@@ -355,12 +355,21 @@ body.apresentacao-ativa #rightFloatStack,
 body.apresentacao-ativa #statusBarCad{display:none;}
 #apresentacaoOverlay{display:none;position:fixed;inset:0;z-index:9500;pointer-events:none;}
 #apresentacaoOverlay.open{display:block;}
+/* v5.98: pedido do usuário — a legenda antiga (2 linhas centralizadas, sem destaque nenhum) fazia a
+   apresentação "parecer vários prints"; redesenhada como um selo numerado + texto ao lado (mesma
+   linguagem visual do vídeo de referência que o usuário mostrou: círculo laranja com o número da
+   etapa, pílula escura ao lado). Cor fixa (não usa as variáveis de tema do app) — é a "marca" do
+   vídeo gerado, não deve mudar com o tema escolhido pra EDITAR o projeto. */
 #apresentacaoCaption{position:absolute;left:50%;bottom:88px;transform:translateX(-50%);pointer-events:none;
-  background:rgba(10,14,20,.78);color:#fff;padding:14px 28px;border-radius:12px;max-width:min(680px,86vw);
-  text-align:center;backdrop-filter:blur(3px);box-shadow:0 8px 30px rgba(0,0,0,.5);}
-#apresentacaoProgresso{font-size:11px;letter-spacing:.06em;color:#9fd6ff;text-transform:uppercase;margin-bottom:4px;}
-#apresentacaoTitulo{font-size:19px;font-weight:700;margin-bottom:4px;}
-#apresentacaoDesc{font-size:13px;color:#d7dee6;}
+  display:flex;align-items:center;gap:14px;
+  background:rgba(10,14,20,.8);color:#fff;padding:10px 26px 10px 10px;border-radius:999px;max-width:min(680px,86vw);
+  backdrop-filter:blur(3px);box-shadow:0 8px 30px rgba(0,0,0,.5);}
+#apresentacaoNumero{flex:0 0 auto;width:40px;height:40px;border-radius:50%;background:#ff9800;color:#1a1200;
+  display:flex;align-items:center;justify-content:center;font-size:19px;font-weight:800;}
+#apresentacaoTextos{text-align:left;}
+#apresentacaoProgresso{font-size:10px;letter-spacing:.06em;color:#9fd6ff;text-transform:uppercase;margin-bottom:2px;}
+#apresentacaoTitulo{font-size:17px;font-weight:700;margin-bottom:2px;}
+#apresentacaoDesc{font-size:12.5px;color:#d7dee6;}
 #apresentacaoControles{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);display:flex;gap:8px;pointer-events:auto;}
 #apresentacaoControles button{background:rgba(20,24,32,.85);color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:8px 14px;font-size:12.5px;cursor:pointer;white-space:nowrap;}
 #apresentacaoControles button:hover{background:rgba(40,46,58,.95);}
@@ -482,7 +491,7 @@ body.apresentacao-ativa #statusBarCad{display:none;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.97 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.98 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1874,9 +1883,12 @@ body.apresentacao-ativa #statusBarCad{display:none;}
      rodapé; os controles somem (quase) durante a gravação pro vídeo final sair limpo. ── -->
 <div id="apresentacaoOverlay">
   <div id="apresentacaoCaption">
-    <div id="apresentacaoProgresso">Etapa 1 de 1</div>
-    <div id="apresentacaoTitulo">—</div>
-    <div id="apresentacaoDesc">—</div>
+    <span id="apresentacaoNumero">1</span>
+    <div id="apresentacaoTextos">
+      <div id="apresentacaoProgresso">Etapa 1 de 1</div>
+      <div id="apresentacaoTitulo">—</div>
+      <div id="apresentacaoDesc">—</div>
+    </div>
   </div>
   <div id="apresentacaoControles">
     <button id="btnApresentacaoAnterior" onclick="etapaAnteriorApresentacao()" title="Etapa anterior">&#9664; Anterior</button>
@@ -17709,7 +17721,7 @@ let _apresentacaoEtapaAtual = 0;
 let _apresentacaoAutoAvanco = false;
 let _apresentacaoTimer = null;
 let _apresentacaoCamadaVisivelSnapshot = null;
-const _APRESENTACAO_TEMPO_ETAPA_MS = 4500;
+const _APRESENTACAO_TEMPO_ETAPA_MS = 5500; // v5.98: folga maior pro movimento de câmera (flyToBounds, ~1.1s) terminar antes de trocar de etapa
 
 function abrirApresentacao() {
   const etapas = _montarEtapasApresentacao();
@@ -17746,21 +17758,78 @@ function _irParaEtapaApresentacao(idx) {
   const ativos = new Set();
   for(let i = 0; i <= idx; i++) _apresentacaoEtapas[i].camadas.forEach(id => ativos.add(id));
   _aplicarApresentacaoEstado(ativos);
+  _enquadrarCameraApresentacao(ativos);
   _atualizarUiApresentacao();
 }
 
 // Liga/desliga cada categoria de camada conforme ela está (ou não) no conjunto cumulativo da etapa
 // atual — reaproveita _aplicarCamada (mesma função do painel "Camadas" de sempre).
+// v5.98: BUG relatado com print — "eu acutei a legenda do talhao e mesmo assim ela continuar
+// aparecendo na apresentação". Causa: antes, TODA camada do conjunto cumulativo da etapa era
+// ligada incondicionalmente, mesmo que o usuário já tivesse desligado ela de propósito no painel
+// "Camadas" ANTES de abrir a apresentação (ex.: "Rótulos dos Talhões" desligado pra não poluir o
+// vídeo) — "Linhas de Plantio" liga "rotulos" junto (mesmo grupo, ver _ETAPAS_APRESENTACAO_DEF) e
+// forçava de volta. Fix: uma camada que já estava desligada no snapshot (tirado em
+// abrirApresentacao, ANTES de qualquer etapa mexer em nada) fica desligada a apresentação INTEIRA —
+// a revelação cumulativa só liga o que o usuário já deixava ligado por padrão.
 function _aplicarApresentacaoEstado(idsAtivos) {
   Object.keys(_CAMADAS).forEach(id => {
-    _camadaVisivel[id] = idsAtivos.has(id);
+    const permitidoPeloUsuario = !_apresentacaoCamadaVisivelSnapshot || _apresentacaoCamadaVisivelSnapshot[id] !== false;
+    _camadaVisivel[id] = permitidoPeloUsuario && idsAtivos.has(id);
     _aplicarCamada(id);
   });
+}
+
+// v5.98: pedido do usuário — "a apresentação aparece como se fossem varios printes (...) pensei em
+// algo mais interativo" (comparando com um vídeo de referência bem mais cinematográfico, com câmera
+// se movendo suavemente entre cenas). Replicar a produção de vídeo em si (infográficos customizados,
+// ilustrações, narração) está fora do alcance de um app que só reflete o estado real do projeto —
+// mas o "corte seco" entre etapas (camadas aparecendo/sumindo na mesma posição de câmera) É algo que
+// dá pra resolver: cada etapa agora enquadra a câmera (map.flyToBounds — já nativo do Leaflet, pan+
+// zoom animados juntos) nos limites de tudo que está visível até ali, crescendo o enquadramento
+// conforme mais camadas entram — looks like a continuous camera move, não uma sequência de prints.
+function _boundsDaCamadaApresentacao(id) {
+  const cfg = _CAMADAS[id];
+  if(!cfg) return null;
+  let bounds = null;
+  cfg.get().forEach(layer => {
+    if(!layer) return;
+    try {
+      let b = null;
+      if(typeof layer.getBounds === 'function') b = layer.getBounds();
+      else if(typeof layer.getLatLng === 'function') { const ll = layer.getLatLng(); b = L.latLngBounds(ll, ll); }
+      if(b && b.isValid && b.isValid()) bounds = bounds ? bounds.extend(b) : L.latLngBounds(b.getSouthWest(), b.getNorthEast());
+    } catch(e) {}
+  });
+  return bounds;
+}
+function _enquadrarCameraApresentacao(idsAtivos) {
+  let bounds = null;
+  idsAtivos.forEach(id => {
+    // Chamada DEPOIS de _aplicarApresentacaoEstado (ver _irParaEtapaApresentacao) — _camadaVisivel
+    // já reflete o resultado REAL (cumulativo ∩ permitido pelo usuário, ver comentário grande em
+    // _aplicarApresentacaoEstado). Sem esse checar aqui também, a câmera enquadraria uma camada que
+    // nem está mais visível de verdade (ex.: desligada de propósito antes de apresentar).
+    if(!_camadaVisivel[id]) return;
+    const b = _boundsDaCamadaApresentacao(id);
+    if(b) bounds = bounds ? bounds.extend(b) : L.latLngBounds(b.getSouthWest(), b.getNorthEast());
+  });
+  if(!bounds) {
+    // Etapa "base" (nenhuma camada ligada ainda) — mesmo assim já enquadra a área do projeto
+    // inteiro (TODAS as camadas que existem, visíveis ou não), senão a câmera ficaria parada onde
+    // estava antes de abrir a apresentação em vez de já mostrar o lugar certo desde a 1ª etapa.
+    Object.keys(_CAMADAS).forEach(id => {
+      const b = _boundsDaCamadaApresentacao(id);
+      if(b) bounds = bounds ? bounds.extend(b) : L.latLngBounds(b.getSouthWest(), b.getNorthEast());
+    });
+  }
+  if(bounds && bounds.isValid()) map.flyToBounds(bounds, { padding: [70, 70], duration: 1.1, maxZoom: 19 });
 }
 
 function _atualizarUiApresentacao() {
   const etapa = _apresentacaoEtapas[_apresentacaoEtapaAtual];
   if(!etapa) return;
+  const elNum = $('apresentacaoNumero'); if(elNum) elNum.textContent = String(_apresentacaoEtapaAtual + 1);
   const elProg = $('apresentacaoProgresso'); if(elProg) elProg.textContent = `Etapa ${_apresentacaoEtapaAtual + 1} de ${_apresentacaoEtapas.length}`;
   const elTit = $('apresentacaoTitulo'); if(elTit) elTit.textContent = etapa.titulo;
   const elDesc = $('apresentacaoDesc'); if(elDesc) elDesc.textContent = etapa.desc;
