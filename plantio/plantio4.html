@@ -345,6 +345,32 @@ body.layout-lateral #status{grid-area:status;}
 .floatpanel{display:none;position:fixed;right:16px;bottom:16px;z-index:9998;background:var(--panel-bg);border:1px solid var(--panel-border);border-radius:12px;padding:16px 18px;max-width:320px;width:88vw;color:var(--panel-text);font-size:12.5px;line-height:1.5;box-shadow:0 6px 28px rgba(0,0,0,.4);}
 .floatpanel.open{display:block;}
 
+/* v5.97 — Apresentação ao Cliente: esconde o ribbon/painéis flutuantes pra deixar o mapa em tela
+   cheia (limpo pra apresentar/gravar), e mostra só a legenda da etapa + controles no rodapé. O mapa
+   em si (#mapWrap) continua visível e ocupando o espaço liberado (flex:1 já existente). */
+body.apresentacao-ativa #titlebar,
+body.apresentacao-ativa #ribbon,
+body.apresentacao-ativa #layerFloat,
+body.apresentacao-ativa #rightFloatStack,
+body.apresentacao-ativa #statusBarCad{display:none;}
+#apresentacaoOverlay{display:none;position:fixed;inset:0;z-index:9500;pointer-events:none;}
+#apresentacaoOverlay.open{display:block;}
+#apresentacaoCaption{position:absolute;left:50%;bottom:88px;transform:translateX(-50%);pointer-events:none;
+  background:rgba(10,14,20,.78);color:#fff;padding:14px 28px;border-radius:12px;max-width:min(680px,86vw);
+  text-align:center;backdrop-filter:blur(3px);box-shadow:0 8px 30px rgba(0,0,0,.5);}
+#apresentacaoProgresso{font-size:11px;letter-spacing:.06em;color:#9fd6ff;text-transform:uppercase;margin-bottom:4px;}
+#apresentacaoTitulo{font-size:19px;font-weight:700;margin-bottom:4px;}
+#apresentacaoDesc{font-size:13px;color:#d7dee6;}
+#apresentacaoControles{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);display:flex;gap:8px;pointer-events:auto;}
+#apresentacaoControles button{background:rgba(20,24,32,.85);color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:8px 14px;font-size:12.5px;cursor:pointer;white-space:nowrap;}
+#apresentacaoControles button:hover{background:rgba(40,46,58,.95);}
+#apresentacaoControles button:disabled{opacity:.35;cursor:default;}
+#apresentacaoControles button.active{background:var(--acc,#2196f3);border-color:var(--acc,#2196f3);}
+/* durante a gravação, os controles ficam quase invisíveis (não escondidos de vez — ainda dá pra
+   passar o mouse e clicar) pro vídeo final sair limpo, sem a barra de botões do app aparecendo. */
+#apresentacaoOverlay.gravando #apresentacaoControles{opacity:.12;transition:opacity .2s;}
+#apresentacaoOverlay.gravando #apresentacaoControles:hover{opacity:1;}
+
 /* ── Vista 3D — Análise do Terreno ── */
 #modal3dAnalise{display:none;position:fixed;inset:0;background:#0d1b2a;z-index:10000;}
 #modal3dAnalise.open{display:block;}
@@ -456,7 +482,7 @@ body.layout-lateral #status{grid-area:status;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.96 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.97 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -476,6 +502,7 @@ body.layout-lateral #status{grid-area:status;}
     <button class="rtab" data-panel="rp-curvas" onclick="ativarRibbon('rp-curvas')">Curvas de Nível</button>
     <button class="rtab" data-panel="rp-analise" onclick="ativarRibbon('rp-analise')">Análise</button>
     <button class="rtab" data-panel="rp-relatorio" onclick="ativarRibbon('rp-relatorio')">Exportar &amp; Relatório</button>
+    <button class="rtab" data-panel="rp-apresentacao" onclick="ativarRibbon('rp-apresentacao')">&#127909; Apresentação</button>
     <button class="rtab" data-panel="rp-config" onclick="ativarRibbon('rp-config')">&#9881; Configurações</button>
   </div>
 
@@ -1258,6 +1285,28 @@ body.layout-lateral #status{grid-area:status;}
       </div>
     </div>
 
+    <!-- ══ Apresentação (v5.97) — pedido do usuário: "quero criar uma aba de apresentação, quero
+    criar um video mostrando todo o processo de confecção de cada mapa ate o resultado final, para
+    apresentar ao cliente, todos os passos". Monta a sequência de etapas AUTOMATICAMENTE a partir do
+    que já existe no projeto (_montarEtapasApresentacao) — pula qualquer camada que não foi usada.
+    Cada etapa LIGA uma camada a mais por cima das anteriores (revelação cumulativa, terminando com
+    tudo visível = "Resultado Final"), reaproveitando o sistema de Camadas já existente
+    (_CAMADAS/_aplicarCamada, v4.31) em vez de duplicar lógica de visibilidade. Avanço manual
+    (clique) OU automático (tempo fixo), os dois — e "Gravar Vídeo" usa a gravação de tela nativa do
+    navegador (getDisplayMedia + MediaRecorder) pra baixar um .webm pronto, sem nenhuma lib nova. ══ -->
+    <div class="rpanel" id="rp-apresentacao">
+      <div class="rgroup">
+        <div class="rgroup-body">
+          <div style="font-size:11px;color:var(--panel-text-dim);max-width:260px;white-space:normal;margin-bottom:6px;">
+            Monta sozinha uma sequência com o que já existe neste projeto (talhão, linhas, curvas, carreadores etc.) — pula o que não foi usado — e mostra cada etapa em tela cheia, pronta pra apresentar ao cliente.
+          </div>
+          <div id="apresentacaoPrevia" style="font-size:11px;color:var(--panel-text);max-width:260px;white-space:normal;margin-bottom:8px;"></div>
+          <button class="rbtn c-purple" id="btnIniciarApresentacao" onclick="abrirApresentacao()"><span class="ico">&#127909;</span><span class="lbl">Iniciar Apresentação</span></button>
+        </div>
+        <div class="rgroup-title">Apresentação ao Cliente</div>
+      </div>
+    </div>
+
     <!-- ══ Configurações (v5.66) — pedido do usuário: "quero criar uma aba de configurações, onde
     coloco toda essa parte de configurações do app (...) quero organizar". Reúne o que era
     "preferência do app, configurada 1x e raramente mexida de novo" (atualizações, chave/fundo do
@@ -1817,6 +1866,24 @@ body.layout-lateral #status{grid-area:status;}
       </div>
     </div>
   </div>
+  </div>
+</div>
+
+<!-- ── Apresentação ao Cliente (v5.97) — overlay em tela cheia, por cima do mapa (ribbon/painéis
+     ficam escondidos via body.apresentacao-ativa, ver CSS). Legenda da etapa atual + controles no
+     rodapé; os controles somem (quase) durante a gravação pro vídeo final sair limpo. ── -->
+<div id="apresentacaoOverlay">
+  <div id="apresentacaoCaption">
+    <div id="apresentacaoProgresso">Etapa 1 de 1</div>
+    <div id="apresentacaoTitulo">—</div>
+    <div id="apresentacaoDesc">—</div>
+  </div>
+  <div id="apresentacaoControles">
+    <button id="btnApresentacaoAnterior" onclick="etapaAnteriorApresentacao()" title="Etapa anterior">&#9664; Anterior</button>
+    <button id="btnApresentacaoProxima" onclick="proximaEtapaApresentacao()" title="Próxima etapa">Próxima &#9654;</button>
+    <button id="btnApresentacaoAuto" onclick="_alternarAutoAvancoApresentacao()" title="Avança sozinho, tempo fixo por etapa">&#9654;&#65039; Automático</button>
+    <button id="btnApresentacaoGravar" onclick="_alternarGravacaoApresentacao()" title="Grava a apresentação como vídeo — pede pra compartilhar esta aba (1x)">&#9210; Gravar Vídeo</button>
+    <button onclick="fecharApresentacao()" title="Sair da apresentação">&#10005; Sair</button>
   </div>
 </div>
 
@@ -17579,6 +17646,245 @@ function _aplicarTodasCamadas() {
 }
 _initCamadas();
 
+// ══ Apresentação ao Cliente (v5.97) ═════════════════════════════════════════════════════════════
+// Pedido do usuário: "quero criar uma aba de apresentação, quero criar um video mostrando todo o
+// processo de confecção de cada mapa ate o resultado final, para apresentar ao cliente, todos os
+// passos". Reaproveita o sistema de Camadas acima (_CAMADAS/_aplicarCamada, v4.31) — cada "etapa"
+// da apresentação é só ligar mais uma categoria de camada por cima das anteriores (revelação
+// CUMULATIVA: Imagem Base → Talhão → Carreadores → Curvas → Linhas → ... → tudo junto = Resultado
+// Final), em vez de duplicar qualquer lógica de visibilidade. A sequência é montada
+// AUTOMATICAMENTE a partir do que o projeto ATUAL tem — pula qualquer categoria vazia (ex: sem
+// curvas de nível geradas/importadas, essa etapa nem aparece).
+//
+// Avanço manual (clique "Próxima") OU automático (tempo fixo por etapa, com play/pause) — os dois,
+// a pedido do usuário. "Gravar Vídeo" usa a gravação de tela NATIVA do navegador (getDisplayMedia +
+// MediaRecorder, nenhuma biblioteca nova) — pede 1 vez pra compartilhar a própria aba, grava
+// enquanto a apresentação roda, e ao parar baixa um .webm pronto pra mandar pro cliente.
+const _ETAPAS_APRESENTACAO_DEF = [
+  { id: 'ortofotoLocal', titulo: 'Ortofoto Local', desc: 'Imagem aérea de alta resolução, importada especificamente para esta área.', camadas: ['ortofotoLocal'] },
+  { id: 'demLocal', titulo: 'Modelo Digital de Elevação', desc: 'Relevo real do terreno — base para os cálculos de declividade e escoamento.', camadas: ['demLocal'] },
+  { id: 'talhoes', titulo: 'Delimitação do(s) Talhão(ões)', desc: 'Contorno da área de plantio.', camadas: ['talhoes'] },
+  { id: 'carreadores', titulo: 'Carreadores', desc: 'Faixas de acesso e manobra entre os talhões.', camadas: ['carreadores', 'carreadorIntRef'] },
+  { id: 'curvas', titulo: 'Curvas de Nível', desc: 'Linhas de mesma altitude, usadas para orientar o plantio em nível e reduzir erosão.', camadas: ['curvasMestras', 'curvasMenores', 'curvasLocais'] },
+  { id: 'linhas', titulo: 'Linhas de Plantio', desc: 'Traçado final das linhas de plantio, seguindo o relevo do terreno.', camadas: ['linhas', 'rotulos'] },
+  { id: 'declividade', titulo: 'Classificação de Declividade', desc: 'Faixas de declividade do terreno, por cor.', camadas: ['declividade'] },
+  { id: 'declivTerreno', titulo: 'Declividade do Terreno', desc: 'Mapa contínuo de declividade de toda a área.', camadas: ['declivTerreno'] },
+  { id: 'escoamento', titulo: 'Mapa de Escoamento', desc: 'Direção e concentração do escoamento de água na superfície.', camadas: ['escoamento'] },
+  { id: 'erosao', titulo: 'Risco de Erosão', desc: 'Áreas com maior risco de erosão do solo.', camadas: ['erosao'] },
+  { id: 'vazao', titulo: 'Vazão de Pico', desc: 'Pontos de maior concentração de vazão de água.', camadas: ['vazao'] },
+  { id: 'tematico', titulo: 'Mapa Temático', desc: 'Cenário otimizado de sistematização de plantio.', camadas: ['mapaTematico'] },
+];
+
+// Monta a sequência de etapas a partir do que o projeto ATUAL tem — chamada toda vez que a
+// apresentação é aberta (nunca guardada entre uma apresentação e outra, pra nunca ficar
+// desatualizada se o projeto mudar no meio do caminho).
+function _montarEtapasApresentacao() {
+  const etapas = [{ id: 'base', titulo: 'Imagem Base', desc: 'Ponto de partida: imagem de satélite da área.', camadas: [] }];
+  _ETAPAS_APRESENTACAO_DEF.forEach(def => {
+    const temConteudo = def.camadas.some(id => _CAMADAS[id] && _CAMADAS[id].get().length > 0);
+    if(temConteudo) etapas.push(def);
+  });
+  if(etapas.length > 1) {
+    etapas.push({ id: 'final', titulo: 'Resultado Final', desc: 'Mapa completo, pronto para uso em campo.', camadas: [] });
+  }
+  return etapas;
+}
+
+// Prévia na própria aba (mostra o que vai entrar ANTES de clicar "Iniciar Apresentação") — ajuda a
+// perceber cedo se falta gerar/travar alguma coisa no projeto antes de apresentar.
+function _atualizarPreviaApresentacao() {
+  const el = $('apresentacaoPrevia');
+  if(!el) return;
+  const etapas = _montarEtapasApresentacao();
+  if(etapas.length <= 1) {
+    el.innerHTML = '<span style="color:#e57373;">Nada pra mostrar ainda — desenhe e trave pelo menos 1 talhão primeiro.</span>';
+    return;
+  }
+  el.innerHTML = `<b>${etapas.length} etapa(s):</b><br>` + etapas.map(e => '• ' + e.titulo).join('<br>');
+}
+
+let _apresentacaoAtiva = false;
+let _apresentacaoEtapas = [];
+let _apresentacaoEtapaAtual = 0;
+let _apresentacaoAutoAvanco = false;
+let _apresentacaoTimer = null;
+let _apresentacaoCamadaVisivelSnapshot = null;
+const _APRESENTACAO_TEMPO_ETAPA_MS = 4500;
+
+function abrirApresentacao() {
+  const etapas = _montarEtapasApresentacao();
+  if(etapas.length <= 1) { setStatus('Nada pra apresentar ainda — desenhe e trave pelo menos 1 talhão primeiro.', 'err'); return; }
+  _apresentacaoEtapas = etapas;
+  _apresentacaoAtiva = true;
+  // Restaurado em fecharApresentacao() — sem isso, o painel de Camadas "mentiria" depois (checkbox
+  // ligado mas a camada desligada de verdade, ou vice-versa) por causa da revelação cumulativa.
+  _apresentacaoCamadaVisivelSnapshot = { ..._camadaVisivel };
+  document.body.classList.add('apresentacao-ativa');
+  const overlay = $('apresentacaoOverlay'); if(overlay) overlay.classList.add('open');
+  _irParaEtapaApresentacao(0);
+  setStatus(`Apresentação iniciada — ${etapas.length} etapa(s). Use os controles no rodapé ou "Gravar Vídeo" pra salvar.`, 'ok');
+}
+
+function fecharApresentacao() {
+  if(!_apresentacaoAtiva) return;
+  _pararGravacaoApresentacao();
+  _cancelarAutoAvancoApresentacao();
+  _apresentacaoAtiva = false;
+  document.body.classList.remove('apresentacao-ativa');
+  const overlay = $('apresentacaoOverlay'); if(overlay) { overlay.classList.remove('open'); overlay.classList.remove('gravando'); }
+  if(_apresentacaoCamadaVisivelSnapshot) {
+    Object.assign(_camadaVisivel, _apresentacaoCamadaVisivelSnapshot);
+    _aplicarTodasCamadas();
+    _apresentacaoCamadaVisivelSnapshot = null;
+  }
+  setStatus('Apresentação encerrada.', 'info');
+}
+
+function _irParaEtapaApresentacao(idx) {
+  idx = Math.max(0, Math.min(idx, _apresentacaoEtapas.length - 1));
+  _apresentacaoEtapaAtual = idx;
+  const ativos = new Set();
+  for(let i = 0; i <= idx; i++) _apresentacaoEtapas[i].camadas.forEach(id => ativos.add(id));
+  _aplicarApresentacaoEstado(ativos);
+  _atualizarUiApresentacao();
+}
+
+// Liga/desliga cada categoria de camada conforme ela está (ou não) no conjunto cumulativo da etapa
+// atual — reaproveita _aplicarCamada (mesma função do painel "Camadas" de sempre).
+function _aplicarApresentacaoEstado(idsAtivos) {
+  Object.keys(_CAMADAS).forEach(id => {
+    _camadaVisivel[id] = idsAtivos.has(id);
+    _aplicarCamada(id);
+  });
+}
+
+function _atualizarUiApresentacao() {
+  const etapa = _apresentacaoEtapas[_apresentacaoEtapaAtual];
+  if(!etapa) return;
+  const elProg = $('apresentacaoProgresso'); if(elProg) elProg.textContent = `Etapa ${_apresentacaoEtapaAtual + 1} de ${_apresentacaoEtapas.length}`;
+  const elTit = $('apresentacaoTitulo'); if(elTit) elTit.textContent = etapa.titulo;
+  const elDesc = $('apresentacaoDesc'); if(elDesc) elDesc.textContent = etapa.desc;
+  const btnProx = $('btnApresentacaoProxima'); if(btnProx) btnProx.disabled = _apresentacaoEtapaAtual >= _apresentacaoEtapas.length - 1;
+  const btnAnt = $('btnApresentacaoAnterior'); if(btnAnt) btnAnt.disabled = _apresentacaoEtapaAtual <= 0;
+}
+
+function proximaEtapaApresentacao() {
+  if(_apresentacaoEtapaAtual >= _apresentacaoEtapas.length - 1) return;
+  _irParaEtapaApresentacao(_apresentacaoEtapaAtual + 1);
+}
+function etapaAnteriorApresentacao() {
+  if(_apresentacaoEtapaAtual <= 0) return;
+  _irParaEtapaApresentacao(_apresentacaoEtapaAtual - 1);
+}
+
+// Avanço automático (tempo fixo por etapa) — pedido do usuário, junto com o manual: "os dois".
+function _alternarAutoAvancoApresentacao() {
+  _apresentacaoAutoAvanco = !_apresentacaoAutoAvanco;
+  const btn = $('btnApresentacaoAuto');
+  if(_apresentacaoAutoAvanco) {
+    if(btn) { btn.classList.add('active'); btn.innerHTML = '&#9208; Pausar'; }
+    _agendarProximaEtapaAutoApresentacao();
+  } else {
+    if(btn) { btn.classList.remove('active'); btn.innerHTML = '&#9654;&#65039; Automático'; }
+    _cancelarAutoAvancoApresentacao();
+  }
+}
+function _agendarProximaEtapaAutoApresentacao() {
+  _cancelarAutoAvancoApresentacao();
+  _apresentacaoTimer = setTimeout(() => {
+    proximaEtapaApresentacao();
+    if(_apresentacaoEtapaAtual >= _apresentacaoEtapas.length - 1) {
+      // Chegou na última etapa sozinho — pára aqui (ela já foi exibida pelo mesmo tempo que
+      // qualquer outra etapa; esperar mais 1 ciclo "em branco" antes de parar seria um atraso
+      // invisível, sem nenhuma mudança na tela nesse meio tempo) e, se estiver gravando, encerra a
+      // gravação também depois de um tempo igual ao de 1 etapa (deixa a etapa final "respirar" na
+      // tela antes de cortar, em vez de parar em cima da transição que acabou de acontecer).
+      _apresentacaoAutoAvanco = false;
+      const btn = $('btnApresentacaoAuto'); if(btn) { btn.classList.remove('active'); btn.innerHTML = '&#9654;&#65039; Automático'; }
+      if(_apresentacaoMediaRecorder && _apresentacaoMediaRecorder.state !== 'inactive') {
+        setTimeout(_pararGravacaoApresentacao, _APRESENTACAO_TEMPO_ETAPA_MS);
+      }
+    } else if(_apresentacaoAutoAvanco) {
+      _agendarProximaEtapaAutoApresentacao();
+    }
+  }, _APRESENTACAO_TEMPO_ETAPA_MS);
+}
+function _cancelarAutoAvancoApresentacao() {
+  if(_apresentacaoTimer) { clearTimeout(_apresentacaoTimer); _apresentacaoTimer = null; }
+}
+
+// ── Gravação (getDisplayMedia + MediaRecorder — só APIs nativas do navegador, nenhuma lib nova) ──
+let _apresentacaoMediaRecorder = null;
+let _apresentacaoChunks = [];
+let _apresentacaoStream = null;
+
+function _alternarGravacaoApresentacao() {
+  if(_apresentacaoMediaRecorder && _apresentacaoMediaRecorder.state !== 'inactive') _pararGravacaoApresentacao();
+  else _iniciarGravacaoApresentacao();
+}
+
+async function _iniciarGravacaoApresentacao() {
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+    setStatus('Este navegador não suporta gravação de tela. Use uma versão recente do Chrome/Edge.', 'err');
+    return;
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: false, preferCurrentTab: true, selfBrowserSurface: 'include' });
+  } catch(e) {
+    setStatus('Gravação cancelada (nenhuma tela/aba foi compartilhada).', 'info');
+    return;
+  }
+  _apresentacaoStream = stream;
+  const candidatos = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+  const mime = candidatos.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
+  _apresentacaoChunks = [];
+  try {
+    _apresentacaoMediaRecorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+  } catch(e) {
+    setStatus('Não consegui iniciar a gravação (formato de vídeo não suportado por este navegador).', 'err');
+    stream.getTracks().forEach(t => t.stop());
+    _apresentacaoStream = null;
+    return;
+  }
+  _apresentacaoMediaRecorder.ondataavailable = (e) => { if(e.data && e.data.size > 0) _apresentacaoChunks.push(e.data); };
+  _apresentacaoMediaRecorder.onstop = _finalizarGravacaoApresentacao;
+  // Se o usuário parar o compartilhamento pela UI nativa do navegador (em vez do nosso botão) —
+  // encerra a gravação do mesmo jeito, baixando o que já tiver sido gravado até ali.
+  const trilhaVideo = stream.getVideoTracks()[0];
+  if(trilhaVideo) trilhaVideo.addEventListener('ended', () => { if(_apresentacaoMediaRecorder && _apresentacaoMediaRecorder.state !== 'inactive') _apresentacaoMediaRecorder.stop(); });
+  _apresentacaoMediaRecorder.start();
+  const overlay = $('apresentacaoOverlay'); if(overlay) overlay.classList.add('gravando');
+  const btn = $('btnApresentacaoGravar'); if(btn) { btn.classList.add('active'); btn.innerHTML = '&#9210; Parar Gravação'; }
+  setStatus('Gravando — se o navegador ainda não perguntou, escolha "Esta aba". Avance as etapas normalmente.', 'ok');
+}
+
+function _pararGravacaoApresentacao() {
+  if(_apresentacaoMediaRecorder && _apresentacaoMediaRecorder.state !== 'inactive') _apresentacaoMediaRecorder.stop();
+}
+
+function _finalizarGravacaoApresentacao() {
+  const chunks = _apresentacaoChunks;
+  _apresentacaoChunks = [];
+  if(_apresentacaoStream) { _apresentacaoStream.getTracks().forEach(t => t.stop()); _apresentacaoStream = null; }
+  _apresentacaoMediaRecorder = null;
+  const overlay = $('apresentacaoOverlay'); if(overlay) overlay.classList.remove('gravando');
+  const btn = $('btnApresentacaoGravar'); if(btn) { btn.classList.remove('active'); btn.innerHTML = '&#9210; Gravar Vídeo'; }
+  if(!chunks.length) { setStatus('Gravação cancelada — nenhum vídeo foi salvo.', 'info'); return; }
+  const blob = new Blob(chunks, { type: 'video/webm' });
+  const url = URL.createObjectURL(blob);
+  const campoPropriedade = $('rPropriedade'), campoCliente = $('rCliente');
+  const nomeBase = ((campoPropriedade && campoPropriedade.value) || (campoCliente && campoCliente.value) || 'mapa').trim().replace(/[^a-zA-Z0-9]+/g, '_') || 'mapa';
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `apresentacao-${nomeBase}-${new Date().toISOString().slice(0, 10)}.webm`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 15000);
+  setStatus('✓ Vídeo salvo — confira a pasta de downloads do navegador.', 'ok');
+}
+
 // Init divisão mode buttons
 setModoDivisaoGuia('reta');
 </script>
@@ -17602,6 +17908,9 @@ function ativarRibbon(panelId) {
   // sem isso ele só atualizava no oninput dos próprios campos, ficando com o número de antes de
   // travar um talhão novo noutra aba e voltar aqui.
   if(panelId === 'rp-setores' && typeof _atualizarCalculoMontagem === 'function') _atualizarCalculoMontagem();
+  // v5.97: igual ao caso acima — mostra cedo (antes de clicar "Iniciar Apresentação") se o projeto
+  // já tem o suficiente pra apresentar, sem esperar o usuário descobrir isso só depois de abrir.
+  if(panelId === 'rp-apresentacao' && typeof _atualizarPreviaApresentacao === 'function') _atualizarPreviaApresentacao();
 }
 
 // Cancela qualquer ferramenta interativa que ainda esteja "armada" (esperando clique/ação no mapa)
