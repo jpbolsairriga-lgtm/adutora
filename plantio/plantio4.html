@@ -491,7 +491,7 @@ body.apresentacao-ativa #statusBarCad{display:none;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.98 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.99 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -16109,12 +16109,23 @@ let _linhasComPesoAumentado = []; // polylines com o weight temporariamente aume
 // simplesmente não faria nada na maioria das tentativas. Aumenta temporariamente o weight (peso
 // visual = também a tolerância de clique do Leaflet) de todas as linhas de plantio visíveis
 // enquanto o modo estiver ativo, e devolve ao normal ao escolher ou cancelar.
+//
+// v5.99: pedido do usuário — "não estou conseguindo usar o comando de criar carreador a partir de
+// linha, a linha fica grossa mais não consigo selecionar". O weight aumentado (acima) resolve o
+// clique contra o PRÓPRIO contorno do talhão (desenhado antes das linhas, portanto sempre por
+// baixo delas no SVG) — mas não resolve contra o contorno de um talhão VIZINHO (ex.: um já dividido
+// antes por "Traçar Divisão" ou por este mesmo "Carreador a partir de Linha"), que pode ter sido
+// desenhado DEPOIS dessas linhas e por isso ficar por CIMA delas bem perto da borda compartilhada
+// — exatamente onde se clica pra escolher a próxima linha de corte. bringToFront() em cada linha
+// de plantio, feito JUNTO com o aumento de weight, garante que elas fiquem por cima de qualquer
+// contorno de talhão (próprio ou vizinho) enquanto o picking estiver ativo.
 function _aumentarClicabilidadeLinhas() {
   const todas = [...linhas, ...talhoesArquivados.flatMap(t => t.linhas)];
   todas.forEach(pl => {
     if(pl._pesoOriginalPicking != null) return; // já aumentado
     pl._pesoOriginalPicking = pl.options.weight;
     pl.setStyle({ weight: Math.max(pl.options.weight, 6) });
+    if(typeof pl.bringToFront === 'function') pl.bringToFront();
   });
   _linhasComPesoAumentado = todas;
 }
