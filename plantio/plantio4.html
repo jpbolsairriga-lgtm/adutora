@@ -491,7 +491,7 @@ body.apresentacao-ativa #statusBarCad{display:none;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v5.99 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v6.00 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -12142,12 +12142,13 @@ function _extrairFormasDoKML(doc) {
   return { poligonos, linhas };
 }
 
-// Associa cada linha (de `linhasLL`) ao talhão (de `poligonosLL`) em que ela CAI geometricamente
-// (ponto médio dentro do polígono, turf.booleanPointInPolygon) — igual um humano faria olhando o
-// mapa. Usado quando a fonte (KML cru de CAD, DXF) não liga cada linha a um talhão específico, só
-// traz formas soltas — mesmo princípio já usado pro import do "shapefile genérico" (Agres/Fendt/
-// .../v5.45, onde o POLYLINE.shp combinado tem o mesmo problema). Linha que não cai em NENHUM
-// talhão importado é ignorada (ruído do CAD — não quebra a importação, só não entra).
+// Associa cada linha (de `linhasLL`) ao talhão (de `poligonosLL`) em que ela CAI geometricamente —
+// igual um humano faria olhando o mapa. Usado quando a fonte (KML cru de CAD, DXF) não liga cada
+// linha a um talhão específico, só traz formas soltas — mesmo princípio já usado pro import do
+// "shapefile genérico" (Agres/Fendt/.../v5.45, onde o POLYLINE.shp combinado tem o mesmo problema).
+// v6.00: votação por TODOS os pontos da linha (não só o do meio) + fallback por distância pro
+// talhão mais próximo quando nenhum ponto cai dentro de nenhum — ver comentário grande na função,
+// nunca mais descarta uma linha de plantio em silêncio.
 function _importarTalhoesELinhas(poligonosLL, linhasLL) {
   if(!poligonosLL.length) return { talhoes: 0, linhas: 0 };
 
@@ -12157,22 +12158,57 @@ function _importarTalhoesELinhas(poligonosLL, linhasLL) {
   if(!novos.length) return { talhoes: 0, linhas: 0 };
 
   const comTurfPoly = novos.map(t => {
-    let turfPoly = null;
-    try { turfPoly = turf.polygon([[...t.polyPts.map(p => [p.lng, p.lat]), [t.polyPts[0].lng, t.polyPts[0].lat]]]); } catch(e) {}
-    return { t, turfPoly };
+    let turfPoly = null, turfLine = null;
+    try {
+      const ring = [...t.polyPts.map(p => [p.lng, p.lat]), [t.polyPts[0].lng, t.polyPts[0].lat]];
+      turfPoly = turf.polygon([ring]);
+      turfLine = turf.lineString(ring);
+    } catch(e) {}
+    return { t, turfPoly, turfLine, bbox: _bboxOfPts(t.polyPts.map(p => [p.lng, p.lat])) };
   });
 
+  // v6.00: pedido do usuário ("Ueslie - Final - 061126 - v6.dxf", real) — "não consigo importar
+  // todas as linhas do dxf (...) corrija para importar tudo". Causa: só o PONTO DO MEIO de cada
+  // linha era testado contra cada talhão — pra linhas que seguem o relevo (dezenas de vértices,
+  // nada reto), esse único ponto cai às vezes bem numa reentrância do contorno (fora do polígono)
+  // mesmo com quase toda a linha de verdade dentro dele. No arquivo real, isso descartava 64 das
+  // 350 linhas (18%) EM SILÊNCIO, sem aviso nenhum. Fix: vota — conta quantos pontos de cada linha
+  // caem dentro de cada talhão (com pré-filtro por bounding box, senão fica lento em DXF grande) e
+  // associa ao que ganhar mais votos; só cai pro talhão GEOMETRICAMENTE MAIS PRÓXIMO (distância até
+  // a borda) nos casos raros de uma linha sem NENHUM ponto dentro de talhão nenhum (ex.: talhão
+  // cujo contorno não fechou direito no DXF) — nunca mais descarta uma linha sem avisar.
   let linhasAssociadas = 0;
   (linhasLL || []).forEach(coordsLL => {
     if(coordsLL.length < 2) return;
-    const meio = coordsLL[Math.floor(coordsLL.length / 2)];
-    let ptMeio = null;
-    try { ptMeio = turf.point([meio.lng, meio.lat]); } catch(e) { return; }
-    const alvo = comTurfPoly.find(o => o.turfPoly && turf.booleanPointInPolygon(ptMeio, o.turfPoly));
-    if(!alvo) return;
+    const votos = comTurfPoly.map(() => 0);
+    coordsLL.forEach(p => {
+      let pt = null;
+      comTurfPoly.forEach((o, i) => {
+        if(!o.turfPoly) return;
+        const b = o.bbox;
+        if(p.lng < b[0] || p.lng > b[2] || p.lat < b[1] || p.lat > b[3]) return; // fora do bbox: nem testa
+        if(!pt) { try { pt = turf.point([p.lng, p.lat]); } catch(e) { return; } }
+        try { if(turf.booleanPointInPolygon(pt, o.turfPoly)) votos[i]++; } catch(e) {}
+      });
+    });
+    let alvoIdx = -1, maxVotos = 0;
+    votos.forEach((v, i) => { if(v > maxVotos) { maxVotos = v; alvoIdx = i; } });
+    if(alvoIdx === -1) {
+      const meio = coordsLL[Math.floor(coordsLL.length / 2)];
+      let ptMeio = null;
+      try { ptMeio = turf.point([meio.lng, meio.lat]); } catch(e) {}
+      if(ptMeio) {
+        let menorDist = Infinity;
+        comTurfPoly.forEach((o, i) => {
+          if(!o.turfLine) return;
+          try { const d = turf.pointToLineDistance(ptMeio, o.turfLine, { units: 'meters' }); if(d < menorDist) { menorDist = d; alvoIdx = i; } } catch(e) {}
+        });
+      }
+    }
+    if(alvoIdx === -1) return; // só chega aqui se não houver NENHUM talhão válido (bem raro)
     const pl = L.polyline(coordsLL.map(p => [p.lat, p.lng]), { color: '#FFD600', weight: 1.5, opacity: .95 }).addTo(map);
     pl.on('click', () => { if(_modoPickLinha) _cliqueEmLinhaPlantio(pl); });
-    alvo.t.linhas.push(pl);
+    comTurfPoly[alvoIdx].t.linhas.push(pl);
     linhasAssociadas++;
   });
 
