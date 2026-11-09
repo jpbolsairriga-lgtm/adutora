@@ -491,7 +491,7 @@ body.apresentacao-ativa #statusBarCad{display:none;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v6.00 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v6.01 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -694,6 +694,13 @@ body.apresentacao-ativa #statusBarCad{display:none;}
             <div class="rcol">
               <button class="rbtn-sm" id="btnCarreadorDeLinha" onclick="iniciarCarreadorDeLinha()" title="Clique numa linha de plantio já gerada do talhão selecionado — ela vira o contorno do lado bom, com 1m de afastamento até o carreador (largura configurada ao lado)">&#128207; Carreador a partir de Linha</button>
               <button class="rbtn-sm clr" id="btnCancelarCarreadorLinha" style="display:none;" onclick="cancelarCarreadorDeLinha()">&#10005; Cancelar</button>
+            </div>
+            <div class="rcol">
+              <label>Alongar linhas de plantio (m por ponta)</label>
+              <div class="rrow">
+                <input type="number" id="alongamentoLinhasM" class="rfield" value="10" min="0" max="500" step="1" style="max-width:90px;">
+                <button class="rbtn-sm" id="btnAlongarLinhas" onclick="alongarLinhasDoTalhao()" title="Estica cada PONTA de todas as linhas de plantio do talhão selecionado pra fora do contorno, na direção que a própria linha já segue (não em linha reta ponta-a-ponta) — útil pra manobra de máquina ou ligar com área vizinha. Reaplique com outro valor (ou 0 pra voltar ao tamanho original) a qualquer hora: sempre parte do traçado original, nunca acumula. Só as linhas mudam — contorno e área do talhão continuam os mesmos.">&#8596; Alongar Linhas</button>
+              </div>
             </div>
             <div class="rcol">
               <button class="rbtn-sm warn" id="btnCortarAngulo" style="display:none;" onclick="cortarNoAnguloDaGuia()">&#8961; Cortar no Ângulo da Guia</button>
@@ -15401,6 +15408,58 @@ function limparLinhasSelecionado() {
   limparLinhas();              // limpa linhas existentes
   $('btnTravarTalhao').style.display = 'flex'; // mantém opção de re-arquivar
   setStatus('Linhas apagadas. Desenhe a linha guia e gere as novas linhas de plantio, ou trave o talhão de volta sem linhas.', 'info');
+}
+
+// ── Alongar Linhas de Plantio pra Fora do Talhão (v6.01) ────────────────────────────────────────
+// Pedido do usuário: "quero uma opção de alongar as linhas de plantio para fora do talhão, mas
+// apenas qdo eu quiser, seria uma opção extra para areas prontoas, eu escolheria o talhão e qtos
+// metros seria alongada a linha". Estica cada PONTA de toda linha de plantio do talhão selecionado
+// na direção TANGENTE local da própria ponta (vetor entre o penúltimo e o último ponto) — não na
+// direção ponta-a-ponta da linha inteira, senão uma linha em curva de nível "alongaria" reto e
+// destoaria do resto do traçado curvo. Guarda a geometria ORIGINAL (pl._pontosBaseAlongamento) na
+// primeira vez que a linha é tocada aqui — reaplicar com outro valor (inclusive 0, pra voltar ao
+// tamanho de antes) sempre recalcula a partir dela, nunca acumula alongamento em cima de
+// alongamento. Só as linhas mudam — o contorno/área do talhão não é tocado.
+function alongarLinhasDoTalhao() {
+  if(talhaoSelecionadoUid === null) { setStatus('Selecione um talhão travado primeiro.', 'err'); return; }
+  const t = talhoesArquivados.find(x => x.uid === talhaoSelecionadoUid);
+  if(!t) { setStatus('Selecione um talhão travado primeiro.', 'err'); return; }
+  if(!t.linhas.length) { setStatus('O talhão selecionado não tem linhas de plantio geradas.', 'err'); return; }
+
+  const metros = parseFloat($('alongamentoLinhasM').value);
+  if(isNaN(metros) || metros < 0) { setStatus('Informe quantos metros alongar (0 ou mais — 0 volta ao tamanho original).', 'err'); return; }
+
+  let metrosLin = 0;
+  t.linhas.forEach(pl => {
+    if(!pl._pontosBaseAlongamento) pl._pontosBaseAlongamento = pl.getLatLngs().flat().map(p => ({ lat: p.lat, lng: p.lng }));
+    const base = pl._pontosBaseAlongamento;
+    if(base.length >= 2 && metros > 0) {
+      const inicio = _alongarPontaLinha(base[1], base[0], metros);
+      const fim = _alongarPontaLinha(base[base.length - 2], base[base.length - 1], metros);
+      pl.setLatLngs([inicio, ...base.slice(1, -1), fim].map(p => [p.lat, p.lng]));
+    } else {
+      pl.setLatLngs(base.map(p => [p.lat, p.lng]));
+    }
+    const ll = pl.getLatLngs().flat();
+    for(let i = 0; i < ll.length - 1; i++) metrosLin += haversineM(ll[i], ll[i + 1]);
+  });
+
+  t.metrosLin = metrosLin;
+  if(t.infoMarker) t.infoMarker.remove();
+  t.infoMarker = _criarInfoMarkerParaTalhao(t);
+
+  setStatus(metros > 0
+    ? `${t.linhas.length} linha(s) alongada(s) ${metros}m em cada ponta, pra fora do talhão — comprimento e exportação (KML/DXF/shapefile) já refletem o traçado novo. Reaplique com outro valor (ou 0) quando quiser: sempre parte do traçado original.`
+    : `Linhas de volta ao comprimento original (sem alongamento).`, 'ok');
+}
+
+// Estica a ponta `ponta` pra fora de `penultimo` (direção tangente local daquele trecho específico
+// da linha, não da linha inteira) pela distância `metros` — usado só por alongarLinhasDoTalhao().
+function _alongarPontaLinha(penultimo, ponta, metros) {
+  const brg = turf.bearing(turf.point([penultimo.lng, penultimo.lat]), turf.point([ponta.lng, ponta.lat]));
+  const dest = turf.destination(turf.point([ponta.lng, ponta.lat]), metros / 1000, brg, { units: 'kilometers' });
+  const c = dest.geometry.coordinates;
+  return { lat: c[1], lng: c[0] };
 }
 
 // v5.54: pedido do usuário — "tem como deixar meus contornos, linhas de plantio tão suaves como do
