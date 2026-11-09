@@ -491,7 +491,7 @@ body.apresentacao-ativa #statusBarCad{display:none;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v6.01 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v6.02 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -17847,6 +17847,7 @@ function fecharApresentacao() {
   if(!_apresentacaoAtiva) return;
   _pararGravacaoApresentacao();
   _cancelarAutoAvancoApresentacao();
+  _cancelarAnimacoesRevelacao();
   _apresentacaoAtiva = false;
   document.body.classList.remove('apresentacao-ativa');
   const overlay = $('apresentacaoOverlay'); if(overlay) { overlay.classList.remove('open'); overlay.classList.remove('gravando'); }
@@ -17861,10 +17862,15 @@ function fecharApresentacao() {
 function _irParaEtapaApresentacao(idx) {
   idx = Math.max(0, Math.min(idx, _apresentacaoEtapas.length - 1));
   _apresentacaoEtapaAtual = idx;
-  const ativos = new Set();
-  for(let i = 0; i <= idx; i++) _apresentacaoEtapas[i].camadas.forEach(id => ativos.add(id));
+  _cancelarAnimacoesRevelacao(); // corta o "desenho" da etapa anterior, se ainda estava rolando
+  const ativosAntes = new Set();
+  for(let i = 0; i < idx; i++) _apresentacaoEtapas[i].camadas.forEach(id => ativosAntes.add(id));
+  const ativos = new Set(ativosAntes);
+  _apresentacaoEtapas[idx].camadas.forEach(id => ativos.add(id));
+  const novos = [...ativos].filter(id => !ativosAntes.has(id)); // só estas serão desenhadas com animação
   _aplicarApresentacaoEstado(ativos);
   _enquadrarCameraApresentacao(ativos);
+  if(novos.length) _revelarCamadasAnimadas(novos, _APRESENTACAO_DURACAO_REVELACAO_MS);
   _atualizarUiApresentacao();
 }
 
@@ -17909,6 +17915,115 @@ function _boundsDaCamadaApresentacao(id) {
   });
   return bounds;
 }
+// v6.02: pedido do usuário, comparando com a animação de escoamento/erosão em 3D que já existe no
+// projeto ("Gravar Vídeo da Chuva", bem mais viva porque mostra o processo acontecendo de verdade):
+// "não aparece slides (...) o video da chuva é mto bom, quero algo naquele nivel, que mostre o
+// andamento dentro de cada etapa". Antes, uma camada NOVA da etapa aparecia pronta de uma vez
+// (_aplicarCamada liga tudo instantaneamente) — mesmo com a câmera se movendo, ainda parecia "print
+// trocado". Agora, toda camada nova da etapa é REVELADA progressivamente em vez de só ligada:
+// linha/contorno "desenha" ponto a ponto (sem precisar de nenhuma lib nova — só encurta e alonga a
+// lista de pontos real do traçado a cada frame, com requestAnimationFrame), ponto/rótulo entra com
+// fade, e raster (ortofoto/DEM/mapas de declividade/erosão/temático) também em fade — sempre com a
+// geometria/opacidade REAL do projeto, nunca um efeito decorativo por cima.
+const _APRESENTACAO_DURACAO_REVELACAO_MS = 2200;
+let _apresentacaoAnimRaf = null;
+let _apresentacaoAnimItens = []; // usado por _cancelarAnimacoesRevelacao pra terminar de uma vez se a etapa trocar no meio do "desenho"
+
+// Identifica o tipo de layer pela FORMA (métodos que ela expõe), não por instanceof — mesmo critério
+// já usado em _boundsDaCamadaApresentacao acima (getBounds/getLatLng) pra não depender de como cada
+// versão do Leaflet nomeia a classe internamente.
+function _tipoLayerApresentacao(layer) {
+  if(!layer) return null;
+  if(typeof layer.getLatLngs === 'function' && typeof layer.setLatLngs === 'function') return 'caminho'; // polyline/polygon
+  if(typeof layer.getLatLng === 'function') return 'ponto'; // marker (label) ou circleMarker
+  if(typeof layer.setOpacity === 'function' && typeof layer.getBounds === 'function') return 'overlay'; // imagem (ortofoto/DEM/raster)
+  return null;
+}
+
+// Aplica o estado de revelação de UMA layer pro fator dado (0 = nada revelado ainda, 1 = completo).
+// Guarda a geometria/opacidade ORIGINAL na própria layer na 1ª chamada (mesmo padrão de
+// "_pontosBaseAlongamento" usado em alongarLinhasDoTalhao, v6.01) — nunca recalcula a partir de um
+// estado já parcial, senão uma troca rápida de etapa no meio do desenho deixaria a linha encolhida
+// de vez.
+function _aplicarFatorRevelacao(layer, tipo, fator) {
+  fator = Math.max(0, Math.min(1, fator));
+  if(tipo === 'caminho') {
+    if(!layer._pontosOriginaisApresent) {
+      const ll = layer.getLatLngs();
+      const plano = Array.isArray(ll[0]) ? ll[0] : ll;
+      layer._pontosOriginaisApresent = plano.map(p => [p.lat, p.lng]);
+      layer._fillOriginalApresent = layer.options ? layer.options.fill : undefined;
+    }
+    if(layer._fillOriginalApresent !== undefined && typeof layer.setStyle === 'function') {
+      // sem preenchimento enquanto ainda tá "desenhando" (um contorno aberto com fill ligado
+      // mostraria um preenchimento esquisito) — volta ao normal só quando o traçado fecha de vez.
+      layer.setStyle({ fill: fator >= 1 ? layer._fillOriginalApresent : false });
+    }
+    const pts = layer._pontosOriginaisApresent;
+    layer.setLatLngs(fator >= 1 ? pts : pts.slice(0, Math.max(1, Math.ceil(pts.length * fator))));
+  } else if(tipo === 'ponto') {
+    if(layer._opacidadeOriginalApresent === undefined) {
+      layer._opacidadeOriginalApresent = (layer.options && layer.options.opacity != null) ? layer.options.opacity : 1;
+      layer._fillOpacityOriginalApresent = (layer.options && layer.options.fillOpacity != null) ? layer.options.fillOpacity : null;
+    }
+    if(typeof layer.setOpacity === 'function') layer.setOpacity(layer._opacidadeOriginalApresent * fator);
+    else if(typeof layer.setStyle === 'function') {
+      const patch = { opacity: layer._opacidadeOriginalApresent * fator };
+      if(layer._fillOpacityOriginalApresent != null) patch.fillOpacity = layer._fillOpacityOriginalApresent * fator;
+      layer.setStyle(patch);
+    }
+  } else if(tipo === 'overlay') {
+    if(layer._opacidadeOriginalApresent === undefined) layer._opacidadeOriginalApresent = (layer.options && layer.options.opacity != null) ? layer.options.opacity : 1;
+    layer.setOpacity(layer._opacidadeOriginalApresent * fator);
+  }
+}
+
+// Corta o(s) rAF em andamento e deixa toda layer pendente no estado FINAL (fator=1) de uma vez — sem
+// isso, avançar/voltar de etapa rápido (ou fechar a apresentação) no meio de um "desenho" deixaria
+// linha/rótulo/raster pela metade na tela.
+function _cancelarAnimacoesRevelacao() {
+  if(_apresentacaoAnimRaf) { cancelAnimationFrame(_apresentacaoAnimRaf); _apresentacaoAnimRaf = null; }
+  _apresentacaoAnimItens.forEach(it => _aplicarFatorRevelacao(it.layer, it.tipo, 1));
+  _apresentacaoAnimItens = [];
+}
+
+// Revela, com animação, só as camadas NOVAS desta etapa (idsNovos) — as que já estavam visíveis
+// desde uma etapa anterior permanecem como estão (_aplicarApresentacaoEstado só liga/desliga, não
+// re-anima quem já tava ligado). Dentro de cada camada com vários itens (ex.: dezenas de linhas de
+// plantio), o desenho é em CASCATA — cada item começa um pouco depois do anterior — mas todos
+// terminam JUNTOS no fim da janela, pra nenhum ficar cortado pela metade quando a etapa muda.
+function _revelarCamadasAnimadas(idsNovos, duracaoMs) {
+  const itens = [];
+  idsNovos.forEach(id => {
+    const cfg = _CAMADAS[id];
+    if(!cfg) return;
+    const porTipo = (cfg.get() || []).filter(Boolean)
+      .map(l => ({ layer: l, tipo: _tipoLayerApresentacao(l) }))
+      .filter(o => o.tipo);
+    const total = porTipo.length;
+    porTipo.forEach((o, i) => {
+      const startDelay = total > 1 ? (i / total) * duracaoMs * 0.5 : 0;
+      itens.push({ layer: o.layer, tipo: o.tipo, startDelay, windowDur: Math.max(300, duracaoMs - startDelay) });
+      _aplicarFatorRevelacao(o.layer, o.tipo, 0); // zera ANTES do 1º paint — sem isso, um frame mostraria tudo pronto antes do rAF come
+    });
+  });
+  if(!itens.length) return;
+  _apresentacaoAnimItens = itens;
+  const t0 = performance.now();
+  function tick() {
+    const elapsed = performance.now() - t0;
+    let pendente = false;
+    itens.forEach(it => {
+      const local = (elapsed - it.startDelay) / it.windowDur;
+      _aplicarFatorRevelacao(it.layer, it.tipo, local);
+      if(local < 1) pendente = true;
+    });
+    if(pendente) _apresentacaoAnimRaf = requestAnimationFrame(tick);
+    else { _apresentacaoAnimRaf = null; _apresentacaoAnimItens = []; }
+  }
+  _apresentacaoAnimRaf = requestAnimationFrame(tick);
+}
+
 function _enquadrarCameraApresentacao(idsAtivos) {
   let bounds = null;
   idsAtivos.forEach(id => {
