@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- build 2026-10-16 v1.3.0 -->
+<!-- build 2026-11-10 v1.4.0 -->
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
@@ -218,6 +218,18 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.9rem 1rem calc(.
 <div id="msg"></div>
 
 <div class="card">
+  <p class="sec-title">Levantamento / projeto</p>
+  <div class="field"><label for="fProj">Levantamento ativo</label>
+    <select id="fProj"></select></div>
+  <div class="btns">
+    <button id="btnProjNovo">+ Novo</button>
+    <button id="btnProjRen">Renomear</button>
+    <button id="btnProjDel" style="color:var(--rd)">Excluir</button>
+  </div>
+  <div class="note">Cada levantamento tem seus próprios alvos importados e pontos coletados — projetos com os mesmos nomes (PC-01…) não se misturam. Exportar CSV/TXT/KML sai só do levantamento ativo, com o nome dele no arquivo.</div>
+</div>
+
+<div class="card">
   <p class="sec-title">Leitura atual</p>
   <div class="grid">
     <div class="kv"><div class="k">Latitude</div><div class="v" id="vLat">—</div></div>
@@ -323,7 +335,7 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.9rem 1rem calc(.
 
 <div class="card">
   <div class="card-top">
-    <p class="sec-title">Pontos salvos</p>
+    <p class="sec-title">Pontos salvos · <span id="projNomeLista" style="text-transform:none;letter-spacing:0"></span></p>
     <span class="count" id="count">0</span>
   </div>
   <div class="btns" style="margin-bottom:.8rem">
@@ -377,8 +389,9 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.9rem 1rem calc(.
 /* ==================================================================
    VERSÃO / HISTÓRICO
    ================================================================== */
-var VERSAO_APP="1.3.0";
+var VERSAO_APP="1.4.0";
 var HISTORICO_VERSOES=[
+  {v:"1.4.0",d:"10/11/2026",t:"Levantamentos/projetos separados: cada um tem seus próprios alvos importados e pontos coletados. Corrige a sobreposição de dois projetos com os mesmos nomes de ponto (PC-01…PC-08) — antes, importar o 2º KML atualizava os alvos do 1º e “Marcar ponto” substituía os pontos antigos. Ao importar um KML com o levantamento atual já em uso, o app oferece criar um levantamento novo com o nome do arquivo. Exportações saem só do levantamento ativo, com o nome dele no arquivo (e coluna Projeto no CSV). Os dados que já estavam no aparelho viram o “Levantamento 1”."},
   {v:"1.3.0",d:"16/10/2026",t:"Cor dos pontos de controle importados: toque num ponto no mapa de satélite pra abrir uma paleta de cores e escolher a dele — inclusive pontos já marcados/visitados. A cor fica salva, aparece na lista de alvos também, e o próprio popup ganhou um botão “Navegar até aqui”."},
   {v:"1.2.0",d:"14/10/2026",t:"A tela de navegação até um ponto agora funciona exatamente como o mapa principal por padrão: arrastar e dar zoom sempre liberados, sem travar nada. O giro automático (mapa virar sozinho pra onde você anda) deixou de ligar sozinho — agora só liga se você tocar no botão redondo (◎) no canto superior direito; enquanto ele estiver desligado (o normal), nada no mapa fica travado."},
   {v:"1.1.2",d:"14/10/2026",t:"A trava de zoom da v1.1.1 travou demais: o zoom do mapa (pinça, duplo toque) agora fica sempre liberado em qualquer tela com mapa. Só o arrastar continua travado enquanto o giro automático está ativo (a direção do dedo fica errada quando o mapa está girado) — pra arrastar livremente, desligue o giro no botão redondo do canto superior direito."},
@@ -481,12 +494,124 @@ function aplicarAtualizacao(){
 var KEY="pontos_gps_v1";
 var pontos=[], live=null, downloads=null, autoTimer=null, linhaAtual=null, wake=null;
 
+/* ---------- projetos / levantamentos ----------
+   Cada levantamento guarda seus pontos coletados e seus alvos importados em chaves
+   próprias do armazenamento. Antes (até a v1.3.0) havia uma lista única: dois projetos
+   com os mesmos nomes de ponto (PC-01…PC-08) se sobrepunham — a importação do 2º KML
+   "atualizava" os alvos do 1º e "Marcar ponto" substituía o PC-01 antigo pelo novo. */
+var KEYPROJ="projetos_gps_v1", projetos={lista:[],ativo:null};
+function kPontos(id){ return KEY+"@"+(id||projetos.ativo); }
+function kAlvos(id){ return "alvos_gps_v1@"+(id||projetos.ativo); }
+function novoIdProj(){ return "p"+Date.now().toString(36)+Math.floor(Math.random()*1e4).toString(36); }
+function saveProjetos(){ try{ localStorage.setItem(KEYPROJ,JSON.stringify(projetos)); }catch(e){} }
+function projAtivo(){ return projetos.lista.filter(function(p){return p.id===projetos.ativo;})[0]||null; }
+function loadProjetos(){
+  try{ var r=localStorage.getItem(KEYPROJ); if(r) projetos=JSON.parse(r); }catch(e){}
+  if(!projetos||!Array.isArray(projetos.lista)) projetos={lista:[],ativo:null};
+  if(!projetos.lista.length){
+    /* primeira abertura nesta versão: o que já existia vira o "Levantamento 1" */
+    var id=novoIdProj();
+    projetos.lista.push({id:id,nome:"Levantamento 1",criado:new Date().toISOString()});
+    projetos.ativo=id;
+    try{
+      var velhoP=localStorage.getItem(KEY), velhoA=localStorage.getItem("alvos_gps_v1");
+      if(velhoP){ localStorage.setItem(kPontos(id),velhoP); localStorage.setItem(KEY+"_backup_v13",velhoP); localStorage.removeItem(KEY); }
+      if(velhoA){ localStorage.setItem(kAlvos(id),velhoA); localStorage.removeItem("alvos_gps_v1"); }
+    }catch(e){}
+    saveProjetos();
+  }
+  if(!projAtivo()){ projetos.ativo=projetos.lista[0].id; saveProjetos(); }
+}
+function contaDe(chave){
+  try{ var r=localStorage.getItem(chave), a=r?JSON.parse(r):[]; return Array.isArray(a)?a.length:0; }catch(e){ return 0; }
+}
+function criaProjeto(nome){
+  var id=novoIdProj();
+  projetos.lista.push({id:id,nome:nome,criado:new Date().toISOString()});
+  saveProjetos();
+  return id;
+}
+function nomeProjetoLivre(base){
+  var nomes=projetos.lista.map(function(p){return p.nome.toLowerCase();});
+  if(nomes.indexOf(base.toLowerCase())<0) return base;
+  for(var i=2;;i++){ var n=base+" ("+i+")"; if(nomes.indexOf(n.toLowerCase())<0) return n; }
+}
+function podeTrocarProjeto(){
+  if(autoTimer){ erro("Pare a captura automática antes de trocar de levantamento."); return false; }
+  return true;
+}
+function trocaProjeto(id){
+  if(id===projetos.ativo){ renderProjetos(); return; }
+  if(!podeTrocarProjeto()){ renderProjetos(); return; }
+  if(navAlvo) sairNav();
+  save(); saveAlvos();
+  projetos.ativo=id; saveProjetos();
+  load(); loadAlvos();
+  nAjuste=-1;
+  document.getElementById("fNome").value="";
+  document.getElementById("fObs").value="";
+  document.getElementById("autoN").textContent="0";
+  document.getElementById("autoNote").innerHTML=autoNotePadrao;
+  render(); renderAlvos(); renderProjetos();
+  document.getElementById("fNome").placeholder=proximoNome();
+  setTimeout(function(){ if(map) centralizar(); },60);
+  var pa=projAtivo(); if(pa) info("Levantamento ativo: "+esc(pa.nome));
+}
+function renderProjetos(){
+  var sel=document.getElementById("fProj"); if(!sel) return;
+  sel.innerHTML="";
+  projetos.lista.forEach(function(p){
+    var o=document.createElement("option"); o.value=p.id;
+    var np=(p.id===projetos.ativo)?pontos.length:contaDe(kPontos(p.id));
+    var na=(p.id===projetos.ativo)?alvos.length:contaDe(kAlvos(p.id));
+    o.textContent=p.nome+" — "+np+" pto"+(np===1?"":"s")+(na?" · "+na+" alvo"+(na===1?"":"s"):"");
+    if(p.id===projetos.ativo) o.selected=true;
+    sel.appendChild(o);
+  });
+  sel.disabled=!!autoTimer;
+  var pa=projAtivo(), t=document.getElementById("projNomeLista");
+  if(t) t.textContent=pa?pa.nome:"";
+}
+function novoProjeto(){
+  if(!podeTrocarProjeto()) return;
+  var n=prompt("Nome do novo levantamento/projeto:",nomeProjetoLivre("Levantamento "+(projetos.lista.length+1)));
+  if(n==null) return; n=n.trim(); if(!n) return;
+  trocaProjeto(criaProjeto(nomeProjetoLivre(n)));
+}
+function renomeiaProjeto(){
+  var pa=projAtivo(); if(!pa) return;
+  var n=prompt("Novo nome para “"+pa.nome+"”:",pa.nome);
+  if(n==null) return; n=n.trim(); if(!n||n===pa.nome) return;
+  pa.nome=nomeProjetoLivre(n); saveProjetos(); renderProjetos();
+}
+function excluiProjeto(){
+  var pa=projAtivo(); if(!pa) return;
+  if(!podeTrocarProjeto()) return;
+  if(!confirm("Excluir o levantamento “"+pa.nome+"” com "+pontos.length+" ponto(s) coletado(s) e "+alvos.length+" alvo(s)?\n\nExporte antes — não dá pra desfazer.")) return;
+  if(navAlvo) sairNav();
+  try{ localStorage.removeItem(kPontos(pa.id)); localStorage.removeItem(kAlvos(pa.id)); }catch(e){}
+  projetos.lista=projetos.lista.filter(function(p){return p!==pa;});
+  if(!projetos.lista.length) projetos.lista.push({id:novoIdProj(),nome:"Levantamento 1",criado:new Date().toISOString()});
+  projetos.ativo=null;
+  var destino=projetos.lista[projetos.lista.length-1].id;
+  pontos=[]; alvos=[];
+  projetos.ativo=destino; saveProjetos();
+  load(); loadAlvos(); nAjuste=-1;
+  render(); renderAlvos(); renderProjetos();
+  document.getElementById("fNome").placeholder=proximoNome();
+  info("Levantamento excluído.");
+}
+
 /* ---------- storage ---------- */
 function load(){
-  try{var r=localStorage.getItem(KEY); pontos=r?JSON.parse(r):[];}catch(e){pontos=[];}
+  try{var r=localStorage.getItem(kPontos()); pontos=r?JSON.parse(r):[];}catch(e){pontos=[];}
   if(!Array.isArray(pontos)) pontos=[];
 }
-function save(){ try{localStorage.setItem(KEY,JSON.stringify(pontos));}catch(e){} }
+function save(){
+  try{localStorage.setItem(kPontos(),JSON.stringify(pontos));}
+  catch(e){ erro("Não foi possível gravar no aparelho (armazenamento cheio?). Exporte os pontos agora."); }
+  renderProjetos();
+}
 
 /* ---------- UTM (WGS84 / SIRGAS 2000) ---------- */
 function toUTM(lat,lon){
@@ -649,6 +774,7 @@ function iniciaAuto(){
   var b=document.getElementById("btnAuto");
   b.textContent="Parar captura automática"; b.classList.add("btn-stop");
   autoTimer=setInterval(checaAuto,500);
+  renderProjetos();
   entraFullscreenColeta();
   checaAuto();
 }
@@ -672,6 +798,7 @@ function atualizaFab(){
 }
 function paraAuto(){
   clearInterval(autoTimer); autoTimer=null;
+  renderProjetos();
   document.getElementById("fInt").disabled=false;
   document.getElementById("fTipo").disabled=false;
   document.body.classList.remove("coleta");
@@ -1115,12 +1242,12 @@ function renderCroqui(){
 }
 
 /* ---------- navegação até pontos (alvos importados) ---------- */
-var KEYA="alvos_gps_v1", alvos=[], navAlvo=null, hdgC=null, hdgCt=0, hdgG=null, hdgGt=0, bussolaOn=false, chegouAvisado=false;
+var alvos=[], navAlvo=null, hdgC=null, hdgCt=0, hdgG=null, hdgGt=0, bussolaOn=false, chegouAvisado=false;
 function loadAlvos(){
-  try{ var r=localStorage.getItem(KEYA); alvos=r?JSON.parse(r):[]; }catch(e){ alvos=[]; }
+  try{ var r=localStorage.getItem(kAlvos()); alvos=r?JSON.parse(r):[]; }catch(e){ alvos=[]; }
   if(!Array.isArray(alvos)) alvos=[];
 }
-function saveAlvos(){ try{ localStorage.setItem(KEYA,JSON.stringify(alvos)); }catch(e){} }
+function saveAlvos(){ try{ localStorage.setItem(kAlvos(),JSON.stringify(alvos)); }catch(e){} renderProjetos(); }
 function alvoPorId(id){ return alvos.filter(function(a){return a.id===id;})[0]||null; }
 function distRumo(la1,lo1,la2,lo2){
   var R=6371008.8, r=Math.PI/180, f1=la1*r, f2=la2*r, dl=(lo2-lo1)*r, dp=f2-f1;
@@ -1180,6 +1307,19 @@ function importaArquivos(files){
   Promise.all(lista.map(lerArquivo)).then(function(res){
     var novos=[]; res.forEach(function(r){ novos=novos.concat(r); });
     if(!novos.length){ erro("Nenhum ponto encontrado no arquivo."); return; }
+    /* levantamento atual já em uso → por padrão, os pontos do arquivo vão pra um levantamento novo
+       (evita que PC-01…PC-08 de um projeto sobrescrevam os de outro) */
+    var pa=projAtivo();
+    if((alvos.length||pontos.length)&&pa){
+      var base=(lista[0].name||"Levantamento").replace(/\.(kml|kmz)$/i,"").trim()||"Levantamento";
+      var nomeNovo=nomeProjetoLivre(base);
+      if(confirm("O levantamento atual “"+pa.nome+"” já tem "+pontos.length+" ponto(s) coletado(s) e "+alvos.length+" alvo(s).\n\n"+
+        "OK = criar um levantamento NOVO “"+nomeNovo+"” para estes "+novos.length+" pontos (recomendado).\n"+
+        "Cancelar = juntar ao levantamento atual (pontos com o mesmo nome têm a posição atualizada).")){
+        if(!podeTrocarProjeto()) return;
+        trocaProjeto(criaProjeto(nomeNovo));
+      }
+    }
     var add=0, upd=0;
     novos.forEach(function(n,i){
       var ex=alvos.filter(function(a){return a.nome.toLowerCase()===n.nome.toLowerCase();})[0];
@@ -1401,7 +1541,8 @@ function apagaOffline(){
 
 /* ---------- export ---------- */
 function csv(){
-  var l=["Nome;Obs;Latitude;Longitude;Altitude_m;UTM_E;UTM_N;Zona;Precisao_m;Linha;DataHora"];
+  var l=["Nome;Obs;Latitude;Longitude;Altitude_m;UTM_E;UTM_N;Zona;Precisao_m;Linha;DataHora;Projeto"];
+  var pn=((projAtivo()||{}).nome||"").replace(/[;\r\n]/g," ");
   pontos.forEach(function(p){
     l.push([
       p.nome, (p.obs||"").replace(/[;\r\n]/g," "),
@@ -1410,7 +1551,7 @@ function csv(){
       p.e.toFixed(3).replace(".",","), p.n.toFixed(3).replace(".",","),
       p.zona+p.hemi,
       (p.acc==null?"":p.acc.toFixed(2).replace(".",",")),
-      p.linha||"", p.data
+      p.linha||"", p.data, pn
     ].join(";"));
   });
   return l.join("\r\n");
@@ -1423,7 +1564,7 @@ function txt(){
   }).join("\r\n");
 }
 function kml(){
-  var x='<?xml version="1.0" encoding="UTF-8"?>\r\n<kml xmlns="http://www.opengis.net/kml/2.2">\r\n<Document>\r\n<name>Pontos GPS '+stamp()+'</name>\r\n'+
+  var x='<?xml version="1.0" encoding="UTF-8"?>\r\n<kml xmlns="http://www.opengis.net/kml/2.2">\r\n<Document>\r\n<name>'+esc((projAtivo()||{nome:"Pontos GPS"}).nome)+' '+stamp()+'</name>\r\n'+
     '<Style id="pt"><IconStyle><scale>0.9</scale><Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon></IconStyle></Style>\r\n'+
     '<Style id="ln"><LineStyle><color>ff00d4ff</color><width>3</width></LineStyle></Style>\r\n'+
     '<Style id="ar"><LineStyle><color>ff00d4ff</color><width>3</width></LineStyle><PolyStyle><color>4000d4ff</color></PolyStyle></Style>\r\n'+
@@ -1474,7 +1615,9 @@ function viaAncora(nome,blob){
 function exportar(ext){
   if(!pontos.length){erro("Nenhum ponto para exportar.");return;}
   var conteudo=(ext==="csv"?csv():ext==="kml"?kml():txt());
-  var nome="pontos_"+stamp()+"."+ext;
+  var pnome=((projAtivo()||{}).nome||"pontos").normalize("NFD").replace(/[̀-ͯ]/g,"")
+    .replace(/[^A-Za-z0-9_-]+/g,"_").replace(/^_+|_+$/g,"").slice(0,40)||"pontos";
+  var nome=pnome+"_"+stamp()+"."+ext;
   var bom=(ext==="kml"?"":"\ufeff");
   var blob=new Blob([bom+conteudo],{type:mime(ext)});
   function plano_b(){ if(!viaAncora(nome,blob)) fallback(nome+" (copie o conteúdo)",conteudo); }
@@ -1510,8 +1653,12 @@ function exportar(ext){
 }
 
 /* ---------- init ---------- */
-load(); render(); loadAlvos(); renderAlvos(); pintaOff();
+loadProjetos(); load(); loadAlvos(); render(); renderAlvos(); renderProjetos(); pintaOff();
 iniciaSobreVersao();
+document.getElementById("fProj").onchange=function(){ trocaProjeto(this.value); };
+document.getElementById("btnProjNovo").onclick=novoProjeto;
+document.getElementById("btnProjRen").onclick=renomeiaProjeto;
+document.getElementById("btnProjDel").onclick=excluiProjeto;
 document.getElementById("btnBuscarAtt").onclick=function(){
   if(versaoDisponivel) aplicarAtualizacao();
   else buscarAtualizacoes(false);
