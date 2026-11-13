@@ -536,7 +536,7 @@ body.apresentacao-ativa #statusBarCad{display:none;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v6.03 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v6.04 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -1475,6 +1475,7 @@ body.apresentacao-ativa #statusBarCad{display:none;}
       <label>Curvas analisadas <select id="fidFonte" class="rfield wide" onchange="_fidTrocarFonte(this.value)"></select></label>
       <label title="Desvio vertical aceitável. Padrão = ½ equidistância (limite do PEC Classe A).">Tolerância &plusmn; <input id="fidTol" class="rfield" style="width:60px;" onchange="_fidTrocarTol(this.value)"> m</label>
       <button class="rbtn-sm" onclick="_fidAnalisar()" title="Refaz a análise (ela já atualiza sozinha quando você muda a suavização)">&#8635; Reanalisar</button>
+      <button class="rbtn-sm" id="fidBtnJanela" onclick="_fidAlternarJanela()" title="Abre o painel numa janela separada do navegador — arraste pra outro monitor e maximize pra ver melhor. O mapa continua no app e tudo segue sincronizado.">&#10697; Abrir em outra janela</button>
     </div>
     <div class="fid-tabs">
       <button class="fid-tab active" data-aba="resumo" onclick="_fidAbrirAba('resumo')">Resumo</button>
@@ -18286,10 +18287,79 @@ const _FID = {
   calorModo: 'nenhum', calorOpacidade: 0.75, colorirLinhas: true, tolerancia: null, ordemCota: 'pior',
   varredura: null, perfil: null, externa: null, alvoPEC: 'A', timer: null,
   layers: { linhas: null, calor: null, externa: null, perfil: null, destaque: null },
-  perfilPts: [], perfilClickFn: null
+  perfilPts: [], perfilClickFn: null, popup: null, box: null
 };
 const _FID_ROT_RELEVO = { 0: 'nenhuma', 1: 'leve', 2: 'média', 4: 'forte' };
 const _fidPausa = () => new Promise(r => setTimeout(r, 0));
+
+// ── v6.04: janela destacável ─────────────────────────────────────────────────────────────────
+// O painel pode ir pra uma janela separada do navegador (arrastável pra outro monitor e
+// maximizável). O MESMO elemento é movido (adoptNode) — o estado e a lógica continuam no app;
+// a janela só exibe. Fechar a janela devolve o painel pro app.
+function _fidPopupAtivo() { return !!(_FID.popup && !_FID.popup.closed && _FID.box && _FID.box.ownerDocument === _FID.popup.document); }
+function _fidDoc() { return _fidPopupAtivo() ? _FID.popup.document : document; }
+function _fidEl(id) { return _fidDoc().getElementById(id); }
+function _fidAlternarJanela() { if(_fidPopupAtivo()) _fidReacoplar(true); else _fidDestacarJanela(); }
+function _fidSincronizarTema() {
+  if(!_fidPopupAtivo()) return;
+  const t = document.body.getAttribute('data-tema'), b = _FID.popup.document.body;
+  if(t) b.setAttribute('data-tema', t); else b.removeAttribute('data-tema');
+}
+function _fidAtualizarBotaoJanela() {
+  const b = _fidEl('fidBtnJanela'); if(!b) return;
+  const fora = _fidPopupAtivo();
+  b.innerHTML = fora ? '&#8617; Voltar pro app' : '&#10697; Abrir em outra janela';
+  b.title = fora ? 'Devolve o painel pra dentro do app (fechar esta janela faz o mesmo)'
+    : 'Abre o painel numa janela separada do navegador — arraste pra outro monitor e maximize pra ver melhor. O mapa continua no app e tudo segue sincronizado.';
+}
+function _fidDestacarJanela() {
+  if(_fidPopupAtivo()) { _FID.popup.focus(); return; }
+  const box = document.querySelector('#modalFidelidade .modal'); if(!box) return;
+  const larg = Math.min(1100, (screen.availWidth || 1200) - 40), alt = Math.min(950, (screen.availHeight || 900) - 40);
+  const w = window.open('', 'agrolinhasFidelidade', `popup=yes,width=${larg},height=${alt}`);
+  if(!w) { setStatus('O navegador bloqueou a janela nova. Permita pop-ups pra esta página e tente de novo.', 'err'); return; }
+  const estilos = [...document.querySelectorAll('style')].map(e => e.outerHTML).join('\n');
+  w.document.open();
+  w.document.write(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fidelidade ao Terreno — Agrolinhas</title>${estilos}<style>
+html{background:var(--panel-bg);}
+body{display:block!important;height:auto!important;min-height:100vh;overflow:auto!important;margin:0;background:var(--panel-bg);color:var(--panel-text);}
+body>.modal{position:static!important;left:auto!important;top:auto!important;margin:0 auto!important;max-width:1400px!important;width:auto!important;max-height:none!important;overflow:visible!important;border:none!important;border-radius:0!important;box-shadow:none!important;padding:16px 24px 24px!important;font-size:13px;line-height:1.5;}
+body>.modal .modal-close{display:none;}
+body>.modal #fidTitulo{cursor:default;}
+body>.modal .fid-scroll{max-height:none;}
+body>.modal .fid-svg{max-width:900px;}
+</style></head><body></body></html>`);
+  w.document.close();
+  // inline onclick/onchange do painel rodam no escopo da janela nova: expõe nela o estado e as funções do módulo
+  w._FID = _FID; w.fecharAnaliseFidelidade = fecharAnaliseFidelidade;
+  Object.getOwnPropertyNames(window).forEach(k => { if(/^_fid/.test(k) && typeof window[k] === 'function') { try { w[k] = window[k]; } catch(e) {} } });
+  // o título arrastável do app não deve reagir dentro da janela
+  ['mousedown', 'touchstart'].forEach(ev => w.document.addEventListener(ev, e => { if(e.target.closest && e.target.closest('#fidTitulo')) e.stopPropagation(); }, true));
+  _FID.popup = w; _FID.box = box;
+  w.document.body.appendChild(w.document.adoptNode(box));
+  $('modalFidelidade').classList.remove('open');
+  _fidSincronizarTema();
+  w.addEventListener('pagehide', () => _fidReacoplar(false));
+  clearInterval(_FID.popupTimer);
+  _FID.popupTimer = setInterval(() => { if(!_FID.popup || _FID.popup.closed) _fidReacoplar(false); }, 700);
+  _fidAtualizarBotaoJanela();
+  _fidRenderizar();
+  w.focus();
+}
+// Devolve o painel pro app (fecharJanela=false quando a própria janela já está fechando).
+function _fidReacoplar(fecharJanela) {
+  clearInterval(_FID.popupTimer); _FID.popupTimer = null;
+  const w = _FID.popup, box = _FID.box;
+  _FID.popup = null;
+  if(box && box.ownerDocument !== document) {
+    try { $('modalFidelidade').appendChild(document.adoptNode(box)); } catch(e) { console.warn('fid reacoplar', e); }
+  }
+  if(_FID.aberto) $('modalFidelidade').classList.add('open');
+  if(fecharJanela && w && !w.closed) { try { w.close(); } catch(e) {} }
+  _fidAtualizarBotaoJanela();
+}
+window.addEventListener('beforeunload', () => { if(_FID.popup && !_FID.popup.closed) { try { _FID.popup.close(); } catch(e) {} } });
 const _fidFmt = (v, d = 2) => (v == null || !isFinite(v)) ? '—' : v.toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
 const _fidFmtInt = v => (v == null || !isFinite(v)) ? '—' : Math.round(v).toLocaleString('pt-BR');
 const _fidEsc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
@@ -18646,11 +18716,11 @@ async function _fidAnalisar() {
   catch(e) { console.error(e); }
   if(!ctx || !ctx.estagios[0].cands.length) {
     _fidProgresso(null);
-    $('fidCorpo').innerHTML = `<div class="fid-note" style="padding:14px 0;">Nada pra analisar — ${_FID.fonte === 'importadas' ? 'importe curvas DXF/KML' : 'gere as curvas de nível'} primeiro.</div>`;
+    _fidEl('fidCorpo').innerHTML = `<div class="fid-note" style="padding:14px 0;">Nada pra analisar — ${_FID.fonte === 'importadas' ? 'importe curvas DXF/KML' : 'gere as curvas de nível'} primeiro.</div>`;
     _fidLimparCamadas(); return;
   }
   _FID.ctx = ctx;
-  if(_FID.tolerancia == null || _FID._eqTol !== ctx.eq) { _FID.tolerancia = ctx.eq / 2; _FID._eqTol = ctx.eq; $('fidTol').value = _fidFmt(_FID.tolerancia, 2); }
+  if(_FID.tolerancia == null || _FID._eqTol !== ctx.eq) { _FID.tolerancia = ctx.eq / 2; _FID._eqTol = ctx.eq; _fidEl('fidTol').value = _fidFmt(_FID.tolerancia, 2); }
   const passo = _fidPassoAmostragem(ctx);
   const capH = Math.max(30, ctx.celulaM * 8, ctx.eq * 10);
   const orig = ctx.estagios[0];
@@ -18794,7 +18864,7 @@ function abrirAnaliseFidelidade() {
   const temGer = !!_curvaGeradaCache, temImp = !!(_curvasLocais && _curvasLocais.contornosDecimados);
   if(!temGer && !temImp) { setStatus('Gere as curvas de nível (ou importe curvas DXF/KML) antes de analisar a fidelidade ao terreno.', 'err'); return; }
   _FID.aberto = true;
-  $('modalFidelidade').classList.add('open');
+  if(_fidPopupAtivo()) _FID.popup.focus(); else $('modalFidelidade').classList.add('open');
   _FID.varredura = null; _FID.perfil = null;
   _fidAnalisar();
 }
@@ -18802,13 +18872,14 @@ function abrirAnaliseFidelidade() {
 // com a janela aberta.
 function _fidAtualizarFontes() {
   const temGer = !!_curvaGeradaCache, temImp = !!(_curvasLocais && _curvasLocais.contornosDecimados);
-  const sel = $('fidFonte');
+  const sel = _fidEl('fidFonte');
   sel.innerHTML = (temGer ? '<option value="geradas">Curvas geradas (DEM / grade)</option>' : '') + (temImp ? '<option value="importadas">Curvas importadas (DXF/KML)</option>' : '');
   if(!_FID.fonte || (_FID.fonte === 'geradas' && !temGer && temImp) || (_FID.fonte === 'importadas' && !temImp && temGer)) _FID.fonte = temGer ? 'geradas' : 'importadas';
   sel.value = _FID.fonte;
 }
 function fecharAnaliseFidelidade() {
   _FID.aberto = false; _FID.token++;
+  if(_FID.popup) _fidReacoplar(true);
   $('modalFidelidade').classList.remove('open');
   _fidCancelarPerfil();
   _fidLimparCamadas();
@@ -18821,7 +18892,7 @@ function _fidTrocarTol(v) {
 }
 function _fidAbrirAba(aba) { _FID.aba = aba; if(aba !== 'perfil') _fidCancelarPerfil(); _fidRenderizar(); }
 function _fidProgresso(txt, frac) {
-  const el = $('fidProg'); if(!el) return;
+  const el = _fidEl('fidProg'); if(!el) return;
   if(txt == null) { el.style.display = 'none'; return; }
   el.style.display = '';
   el.innerHTML = `<div class="fid-note">${_fidEsc(txt)}</div><div class="fid-barra"><div style="width:${Math.round((frac || 0) * 100)}%"></div></div>`;
@@ -18836,8 +18907,9 @@ function _fidBadge(c) { return `<span class="fid-badge fid-${c}">${c === 'X' ? '
 function _fidKpi(rot, val, sub, cor) { return `<div class="fid-kpi"><div class="k">${rot}</div><div class="v"${cor ? ` style="color:${cor}"` : ''}>${val}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`; }
 
 function _fidRenderizar() {
-  const corpo = $('fidCorpo'); if(!corpo) return;
-  document.querySelectorAll('.fid-tab').forEach(b => b.classList.toggle('active', b.dataset.aba === _FID.aba));
+  const corpo = _fidEl('fidCorpo'); if(!corpo) return;
+  _fidSincronizarTema();
+  _fidDoc().querySelectorAll('.fid-tab').forEach(b => b.classList.toggle('active', b.dataset.aba === _FID.aba));
   const res = _FID.res;
   if(!res) { if(!corpo.innerHTML.trim()) corpo.innerHTML = ''; return; }
   const fn = { resumo: _fidHtmlResumo, cotas: _fidHtmlCotas, varredura: _fidHtmlVarredura, perfil: _fidHtmlPerfil, externa: _fidHtmlExterna }[_FID.aba] || _fidHtmlResumo;
