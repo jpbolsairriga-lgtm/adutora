@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.54 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.55 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -464,6 +464,25 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.55 (2026-11-12): validado contra o 3º orçamento real (Adelcio Peixoto Neves, 1º
+//   com Adutora 02 preenchida e tubo 75mm) — 148 divergências → 0, e os 2 anteriores
+//   (Miguel Angelo 65→0, Antonio Gilberto 88→0). Principais causas-raiz:
+//   1) Motor da Adutora 01/02 trocado por porta FIEL da aba 'Projeto - Adutora 0x'
+//      (calcularAdutoraPlanilha em hidraulica-adutora.js): diâmetro por fator K do
+//      projeto (BH2), PN por pressão em 42 pontos interpolados, válvulas Open/Close
+//      (BK), P.Extra MB (BJ4), eficiência (CS3) — tudo importado da planilha. Bate
+//      pressão/potência/barras por PN nos 3 reais. Tubos e PE 8mm = múltiplo de 5.
+//   2) Got 01 traz as DUAS adutoras (seções "Adutora - Projeto 01/02").
+//   3) Kits de Saída MB regenerados do template atual (selecao.js v3, com itens que
+//      dependem do tubo de saída) + versão das tabelas salvas no navegador.
+//   4) Novos: Junção Adutora A01×A02, SD-PIG, Saída Cavalete generalizada (9 kits),
+//      colares do Injetor, SD-ADT somando A02, Ferti por área, gate Injetor/Ferti.
+//   5) Arredondamentos reais: Rede Chicoteada/Secundária CEILING(ROUND;5), conectores
+//      CEILING(;10), adesivo da adutora por adutora, tubo-stub da derivação, luvas.
+//   6) Import: velocidades Submain/Main (H54/H55); extrator do relatório aceita
+//      fornecedor "NETAFIM" (o Excel não diferencia maiúscula).
+//   7) Relatório de Divergências: casa pelo título da seção OU pela coluna Categoria,
+//      mostra o nome da lista de materiais e segue a ORDEM das linhas da planilha.
 // v1.54 (2026-10-30): o campo "K" do v1.53 corrigiu a ativação de diâmetro (Anti-
 //   Vácuo/TE/Curva90° de 150mm sumiram do "Só no App" do Antonio Gilberto), mas
 //   sobrou um resíduo nas categorias "TE"/"Curva90" (itens REDUCAO BSA aparecendo
@@ -1417,7 +1436,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.54';
+const APP_VERSION='v1.55';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -1556,14 +1575,30 @@ const SELECAO_CAMPO_TITULO={
 const SELECAO_CAMPOS_NUMERICOS=new Set(['vazaoMin','vazaoMax','numBombas','pressaoMin','pressaoMax']);
 let SELECAO_ATUAL=null;
 let _selecaoExpandida=new Set();
+// v1.55: quando selecao.js traz kits novos (SELECAO_VERSAO maior que a versão salva no
+// navegador), as categorias atualizadas naquela versão são substituídas pelas novas —
+// sem isso, quem já tinha salvo as tabelas (aba Configurações) continuava usando os kits
+// antigos pra sempre. As outras categorias mantêm as edições do usuário.
+const SELECAO_CATEGORIAS_POR_VERSAO={3:['mbsaida_projeto']};
 function carregarSelecaoConfig(){
   try{
     const raw=localStorage.getItem('orcamento_selecao');
     SELECAO_ATUAL=raw?JSON.parse(raw):JSON.parse(JSON.stringify(SELECAO));
+    const versaoSalva=parseInt(localStorage.getItem('orcamento_selecao_versao')||'0',10);
+    const versaoAtual=typeof SELECAO_VERSAO!=='undefined'?SELECAO_VERSAO:0;
+    if(raw&&versaoSalva<versaoAtual){
+      Object.entries(SELECAO_CATEGORIAS_POR_VERSAO).forEach(([v,cats])=>{
+        if(+v>versaoSalva)cats.forEach(c=>{if(SELECAO[c])SELECAO_ATUAL[c]=JSON.parse(JSON.stringify(SELECAO[c]));});
+      });
+      salvarSelecaoConfig();
+    }
   }catch(e){SELECAO_ATUAL=JSON.parse(JSON.stringify(SELECAO));}
 }
 function salvarSelecaoConfig(){
-  try{localStorage.setItem('orcamento_selecao',JSON.stringify(SELECAO_ATUAL));}catch(e){alert('Não foi possível salvar: '+e.message);}
+  try{
+    localStorage.setItem('orcamento_selecao',JSON.stringify(SELECAO_ATUAL));
+    if(typeof SELECAO_VERSAO!=='undefined')localStorage.setItem('orcamento_selecao_versao',String(SELECAO_VERSAO));
+  }catch(e){alert('Não foi possível salvar: '+e.message);}
 }
 function restaurarSelecaoPadrao(){
   if(!confirm('Restaurar as tabelas de seleção (faixas de vazão, itens) para os valores originais extraídos da planilha? Isso descarta as edições feitas aqui.'))return;
@@ -1706,6 +1741,9 @@ function novaConfigAdutora(limiarBombaDupla=CONFIG_GLOBAL.limiarBombaDuplaAdutor
   return {comprimento:0,vazao:0,cotas:[0,0,0,0,0,0,0,0,0,0],
     material:140,vazaoResidual:CONFIG_GLOBAL.pResPadrao,perdasLocalizadas:CONFIG_GLOBAL.perdasPadrao,filtro:CONFIG_GLOBAL.filtroPadrao,margemProjeto:CONFIG_GLOBAL.margemProjetoPadrao,
     velocidadeMax:1.5,folgaVazao:CONFIG_GLOBAL.folgaPadrao,eficienciaBomba:CONFIG_GLOBAL.eficienciaPadrao,limiarBombaDupla,resultado:null,
+    // v1.55 — motor da planilha (só Adutora 01/02): fator K do D.teórico ('Projeto -
+    // Adutora 0x'!BH2), pressão extra da MB (BJ4) e válvulas "OPEN" da coluna BK.
+    fatorK:0.9,pressaoExtraMB:0,valvulasAbertas:null,
     tracePoints:[],profileData:null}; // tracePoints/profileData vêm do traçado no mapa (Google Elevation API)
 }
 function novoOrcamento(){
@@ -1820,6 +1858,9 @@ const MAPA_IMPORT_DADOS_ENTRADA=[
   ['D51','dadosEntrada','metrosChicoteada','number'],['D52','dadosEntrada','numRedesChicoteadas','number'],
   ['D53','dadosEntrada','desnivelMedioRedesChicoteadas','number'],['D54','dadosEntrada','metrosMain','number'],
   ['D55','dadosEntrada','numMain','number'],['D56','dadosEntrada','tipoSaidaLateral','text'],
+  // v1.55: velocidades da Submain/Main (coluna H) — usadas na Rede Chicoteada/
+  // Secundária e na escolha do PVC da Saída Cavalete; antes ficavam no padrão 1,5.
+  ['H54','dadosEntrada','velocidadeSubmain','number'],['H55','dadosEntrada','velocidadeMain','number'],
   ['D57','dadosEntrada','aspersaoTamanhoMedioSubmain','number'],
   ['D60','dadosEntrada','sistemaIrrigacao','select'],['D61','dadosEntrada','gotejador1','text'],['D62','dadosEntrada','gotejador2','text'],
   ['D63','dadosEntrada','vazaoEmissor','number'],['D64','dadosEntrada','espacamentoEmissor','number'],
@@ -1851,7 +1892,7 @@ function normalizarOpcaoImport(valor,opcoes){
 // conjuntos.js) de uma aba Conj.Irri.* do Excel importado — vira a "lista real da
 // planilha" usada só pra comparação no Relatório de Divergências, nunca pra
 // alimentar o cálculo do app.
-function extrairBOMHistoricoSheet(sheet){
+function extrairBOMHistoricoSheet(sheet,ordemAba=0){
   const itens=[];
   if(!sheet||!sheet['!ref'])return itens;
   const range=XLSX.utils.decode_range(sheet['!ref']);
@@ -1884,15 +1925,21 @@ function extrairBOMHistoricoSheet(sheet){
       categoriaSecao=(t&&!/^descri[çc][aã]o\b/i.test(t))?t:null;
       continue;
     }
-    const fornecedor=colB; // coluna B
-    if(fornecedor!=='Bolsa Irriga'&&fornecedor!=='Netafim')continue;
+    // v1.55: comparação SEM diferenciar maiúscula, igual ao Excel — o template real tem
+    // linhas com fornecedor "NETAFIM" (ex. mangote/adaptador/redução da Sucção e da
+    // Saída MB) que a planilha soma normalmente (o IF(B="Netafim") do Excel é
+    // case-insensitive); antes o extrator pulava essas linhas e elas apareciam como
+    // "Só no App" mesmo estando no orçamento real (conferido em 'Lista Recalque+Projeto').
+    const fornNorm=String(colB??'').trim().toLowerCase();
+    if(fornNorm!=='bolsa irriga'&&fornNorm!=='netafim')continue;
+    const fornecedor=fornNorm==='netafim'?'Netafim':'Bolsa Irriga';
     const qtd=sheet[XLSX.utils.encode_cell({r,c:8})]?.v; // coluna I = QTD.
     if(typeof qtd!=='number'||!qtd)continue;
     const codigo=colC; // coluna C
     const descricao=sheet[XLSX.utils.encode_cell({r,c:4})]?.v; // coluna E
     const categoriaM=sheet[XLSX.utils.encode_cell({r,c:12})]?.v; // coluna M = Categoria
     brutos.push({fornecedor,codigo:String(codigo??''),descricao:descricao!=null?String(descricao):'',qtd,
-      titulo:categoriaSecao,categoriaM:categoriaM!=null?String(categoriaM):null});
+      titulo:categoriaSecao,categoriaM:categoriaM!=null?String(categoriaM):null,linha:ordemAba*100000+r+1});
   }
   // Detecta, por (M, fornecedor, código), se 2+ títulos diferentes contribuem pro
   // MESMO item — sinal de que ali os "títulos" são pedaços de fórmula somados (não
@@ -1915,7 +1962,11 @@ function extrairBOMHistoricoSheet(sheet){
     const chave=it.categoriaM+'\u0001'+it.fornecedor+'\u0001'+it.codigo;
     const fragmentado=it.categoriaM&&titulosPorChaveCodigo[chave]&&titulosPorChaveCodigo[chave].size>1;
     const categoria=fragmentado?it.categoriaM:(it.titulo||it.categoriaM);
-    itens.push({fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,qtd:it.qtd,categoria:categoria||'(sem categoria)'});
+    // titulo/categoriaM/linha (v1.55): usados pelo Relatório de Divergências pra casar
+    // com a categoria do app por qualquer um dos 2 nomes reais e pra ordenar igual à
+    // lista de materiais da planilha (ordem das linhas da aba).
+    itens.push({fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,qtd:it.qtd,categoria:categoria||'(sem categoria)',
+      titulo:it.titulo||null,categoriaM:it.categoriaM||null,linha:it.linha});
   });
   return itens;
 }
@@ -1993,6 +2044,30 @@ function importarOrcamentoExcel(file){
         if(kCel&&typeof kCel.v==='number'&&kCel.v>0)dadosEntrada.velocidadeEconomicaK=kCel.v;
       }
 
+      // v1.55 — parâmetros por projeto do motor da Adutora ('Projeto - Adutora 01/02'):
+      // fator K (BH2: 0,9/0,95/1,05 nos reais), Hazen-Williams (BH4), pressão de saída
+      // (BH5), filtro/válvula (BP1/BP2), folga de pressão (BP4) e de vazão (CN2),
+      // eficiência da MB (CS3 — às vezes fórmula, às vezes digitada), pressão extra MB
+      // (BJ4) e a coluna BK "Close/Open" das 42 linhas (16..57). Sem isso o diâmetro, a
+      // classe PN de cada trecho e o nº de bombas não batem com a planilha real.
+      [['Projeto - Adutora 01','adutora01'],['Projeto - Adutora 02','adutora02']].forEach(([nomeAba,dest])=>{
+        const n=wb.SheetNames.find(x=>x.trim().toLowerCase()===nomeAba.toLowerCase());
+        if(!n)return;
+        const sa=wb.Sheets[n],cfgA=destinos[dest];
+        const num=c=>{const v=sa[c]?.v;return typeof v==='number'?v:null;};
+        if(num('BH2')>0)cfgA.fatorK=num('BH2');
+        if(num('BH4')>0)cfgA.material=num('BH4');
+        if(num('BH5')!=null)cfgA.vazaoResidual=num('BH5');
+        if(num('BP1')!=null)cfgA.filtro=num('BP1');
+        if(num('BP2')!=null)cfgA.perdasLocalizadas=num('BP2');
+        if(num('BP4')!=null)cfgA.margemProjeto=num('BP4')*100;
+        if(num('CN2')!=null)cfgA.folgaVazao=num('CN2')*100;
+        if(num('CS3')>0)cfgA.eficienciaBomba=num('CS3');
+        cfgA.pressaoExtraMB=num('BJ4')||0;
+        const abertas=[];for(let r=16;r<=57;r++)abertas.push(String(sa['BK'+r]?.v||'').trim().toUpperCase()==='OPEN');
+        cfgA.valvulasAbertas=abertas;
+      });
+
       // Referência histórica (só leitura, pra comparar com o que o app calcular) —
       // vem da aba "Margens" (Valor do Projeto/Recalque/Total + Margem Bruta), se existir.
       let referenciaHistorica=null;
@@ -2015,9 +2090,9 @@ function importarOrcamentoExcel(file){
       // divergência de verdade. Pra comparar, carregue só "Gotejamento 1ª Opção" no
       // app (não carregue a 2ª Opção também).
       const bomHistorico=[];
-      [['Conj.Irri.Projeto - Got 01'],['Conj.Irri.Recalque']].forEach(([nome])=>{
+      [['Conj.Irri.Projeto - Got 01'],['Conj.Irri.Recalque']].forEach(([nome],idxAba)=>{
         const n=wb.SheetNames.find(x=>x.trim().toLowerCase()===nome.toLowerCase());
-        if(n)bomHistorico.push(...extrairBOMHistoricoSheet(wb.Sheets[n]));
+        if(n)bomHistorico.push(...extrairBOMHistoricoSheet(wb.Sheets[n],idxAba));
       });
 
       atual={id:uid(),criadoEm:new Date().toISOString(),dadosEntrada,bom:[],adutora01,adutora02,recalque,referenciaHistorica,bomHistorico};
@@ -2217,7 +2292,8 @@ const ADUTORA_TABS={
 };
 const PARAMS_ADUTORA=[
   ['comprimento','Comprimento da tubulação (m)','Auto (gere o perfil no mapa)'],['vazao','Vazão de projeto (m³/h)',''],
-  ['material','Coeficiente Hazen-Williams (material)',''],['velocidadeMax','Velocidade máxima (m/s)',''],
+  ['material','Coeficiente Hazen-Williams (material)',''],['velocidadeMax','Velocidade máxima (m/s)','','rec'],
+  ['fatorK','Fator K do diâmetro (D=K·√Q)','planilha BH2','proj'],['pressaoExtraMB','Pressão extra MB (mca)','planilha BJ4','proj'],
   ['vazaoResidual','Pressão residual mínima no fim (mca)',''],['filtro','Perda de carga no filtro (mca)',''],
   ['perdasLocalizadas','Perdas localizadas extras (mca)',''],['margemProjeto','Margem de projeto (%)',''],
   ['folgaVazao','Folga sobre a vazão (%)',''],['eficienciaBomba','Eficiência da bomba (%)',''],
@@ -2300,7 +2376,7 @@ function renderAdutoraView(key){
     <div class="card">
       <div class="ct">${titulo}</div>
       <p style="font-size:.8rem;color:var(--mu);margin-bottom:.6rem">${nota}</p>
-      <div class="g4">${PARAMS_ADUTORA.map(([campo,label,hint])=>
+      <div class="g4">${PARAMS_ADUTORA.filter(p=>!p[3]||p[3]===(key==='recalque'?'rec':'proj')).map(([campo,label,hint])=>
         `<div class="fg"><label>${label}${hint?` <span style="color:#2e7d32;font-size:.62rem;text-transform:none;font-weight:400">(${hint})</span>`:''}</label>
           <input type="number" id="adpar-${key}-${campo}" value="${cfg[campo]}" step="any" onchange="atualizarParamAdutora('${key}','${campo}',this.value)"></div>`
       ).join('')}</div>
@@ -2336,9 +2412,10 @@ function renderResultadoAdutora(key){
   const badges=r.pnsUsados.slice().sort((a,b)=>b-a).map(pn=>`<span class="tag tag-bi" style="margin-right:.3rem">PN ${pn}</span>`).join('');
   const segsHTML=r.segs.map(s=>{
     const pipe=r.nominalPipes?.[s.pn];
-    const V=pipe?velocity(r.Q_calc,pipe[3]):0;
+    const di=s.di??(pipe?pipe[3]:null);
+    const V=di?velocity(cfg.vazao||r.Q_calc,di):0;
     return `<tr><td>${fmtN(s.from,0)} – ${fmtN(s.to,0)} m</td><td class="num">${fmtN(s.len,0)} m</td>
-      <td>PN ${s.pn}</td><td class="num">${pipe?fmtN(pipe[3],1):'—'} mm</td><td class="num">${fmtN(V,2)} m/s</td></tr>`;
+      <td>${s.nome?escapeHTML(s.nome)+' — ':''}PN ${s.pn??'—'}</td><td class="num">${di?fmtN(di,1):'—'} mm</td><td class="num">${fmtN(V,2)} m/s</td></tr>`;
   }).join('');
   el.innerHTML=`
     <div class="g4" style="margin-bottom:.8rem">
@@ -2374,6 +2451,20 @@ function atualizarCotaAdutora(key,idx,val){
 }
 function calcularAdutoraTab(key,silencioso){
   const cfg=atual[key];
+  // Adutora 01/02 do Projeto: porta fiel da aba 'Projeto - Adutora 0x' da planilha
+  // (v1.55, ver calcularAdutoraPlanilha). Recalque segue no motor Multi-PN antigo.
+  if(key!=='recalque'){
+    const rp=calcularAdutoraPlanilha({...cfg,fatorK:cfg.fatorK??0.9,pressaoExtraMB:cfg.pressaoExtraMB||0});
+    if(!rp){if(!silencioso)alert('Preencha comprimento e vazão antes de calcular.');cfg.resultado=null;persistirAtual();renderResultadoAdutora(key);return;}
+    cfg.resultado={motor:'planilha',AMT_hid:rp.AMT_hid,AMT_design:rp.AMT_design,pIni:rp.pIni,totalHf:rp.totalHf,
+      pnsUsados:rp.pnsUsados,segs:rp.segs,metrosPorNome:rp.metrosPorNome,nominal:rp.nominal,dTeorico:rp.dTeorico,Q_calc:rp.Q_calc,
+      // motor mostrado = POR BOMBA, igual ao BOM (MB+CH Partida: CV com margem ÷ nº bombas)
+      Pkw:rp.Pkw,Pcv:rp.Pcv,motorCV:(calcularMotorEQuadroPartida(rp.Pcv,rp.numBombas)||{}).cvCatalogo??rp.motorCV,chaveMotor:rp.chaveMotor,numBombas:rp.numBombas,
+      pressaoPorBomba:rp.pressaoPorBomba,tuboSaidaAdutora:rp.tuboSaidaAdutora,nominalPipes:null};
+    persistirAtual();
+    renderResultadoAdutora(key);
+    return;
+  }
   const r=calcularAdutoraSimples(cfg);
   if(!r){if(!silencioso)alert('Preencha comprimento e vazão antes de calcular.');return;}
   // serializa (localStorage não guarda Set nem funções)
@@ -2934,6 +3025,22 @@ const TUBOS_ADUTORA={
 // BK=ROUNDUP(metros/5,8)).
 function gerarItensTuboAdutora(adCfg){
   const r=adCfg.resultado;
+  // v1.55 — motor da planilha: metros por "nome popular" (ex. "75/125") direto da coluna
+  // CL; barras = ROUNDUP(m/5,8) ('Projeto - Adutora 0x'!BK61:BK86) e a QTD. do BOM
+  // ('Conj.Irri.Projeto - Got 01'!I) = CEILING.MATH(barras;5) — múltiplo de 5. O
+  // consumo de adesivo/pasta usa as barras SEM o arredondamento de 5 (qtdBarras).
+  if(r&&r.metrosPorNome){
+    const itens=[],avisos=[];
+    Object.entries(r.metrosPorNome).forEach(([nome,metros])=>{
+      if(metros<=0)return;
+      const catalogo=TUBOS_ADUTORA[nome];
+      const qtdBarras=Math.ceil(metros/5.8-1e-9);
+      if(!catalogo){avisos.push(`Tubo ${nome} (${fmtN(metros,0)}m): sem item de catálogo cadastrado — adicione manualmente no BOM.`);return;}
+      itens.push({fornecedor:catalogo.fornecedor,codigo:catalogo.codigo,descricao:catalogo.descricao,qtd:Math.ceil(qtdBarras/5)*5,qtdBarras,
+        nominal:parseFloat(nome.split('/')[0].replace(',','.'))});
+    });
+    return{itens,avisos};
+  }
   if(!r||!r.segs||!r.nominal)return{itens:[],avisos:['Calcule a aba Adutora/Recalque primeiro (precisa dos trechos e do diâmetro calculados).']};
   const metrosPorPN={};
   r.segs.forEach(s=>{metrosPorPN[s.pn]=(metrosPorPN[s.pn]||0)+s.len;});
@@ -2980,22 +3087,28 @@ function gerarItensTuboAdutora(adCfg){
 const GRAMAS_POR_BARRA_ADUTORA={50.5:15,75:20,100:25,101.6:25,118:30,170:35,222:45,274:60};
 const NOMINAIS_ADUTORA_SOLDA=new Set([50.5,75,100,101.6]);
 function gerarItensConsumiveisAdutora(adCfg01,adCfg02){
-  let gramasSolda=0,gramasDefofo=0;
+  // v1.55: o ROUNDUP é feito POR ADUTORA ('Projeto - Adutora 01'!BU79:BU82 e 'Projeto -
+  // Adutora 02'!BU79:BU82) e só depois somado no Got 01 (F1591=BU79(01)+BU79(02)) —
+  // somar as gramas antes de arredondar dava 1 frasco a menos no Adelcio (6 vs 7).
+  let adesivo=0,solucao=0,pasta=0;
   [adCfg01,adCfg02].forEach(adCfg=>{
-    const{itens}=gerarItensTuboAdutora(adCfg||{});
+    if(!adCfg||!adCfg.comprimento||!adCfg.vazao)return;
+    let gramasSolda=0,gramasDefofo=0;
+    const{itens}=gerarItensTuboAdutora(adCfg);
     itens.forEach(it=>{
-      const g=(GRAMAS_POR_BARRA_ADUTORA[it.nominal]||0)*(it.qtd||0);
+      const g=(GRAMAS_POR_BARRA_ADUTORA[it.nominal]||0)*(it.qtdBarras??it.qtd??0);
       if(NOMINAIS_ADUTORA_SOLDA.has(it.nominal))gramasSolda+=g;else gramasDefofo+=g;
     });
+    adesivo+=Math.ceil(gramasSolda/850-1e-9);
+    solucao+=Math.ceil(gramasSolda*1.2/1000-1e-9);
+    pasta+=Math.ceil(gramasDefofo/1000-1e-9);
   });
   const comprimento01=adCfg01?.comprimento||0;
   const itens=[];
   if(comprimento01>0)itens.push({fornecedor:'Netafim',codigo:'01542-000760',descricao:'PANO',qtd:Math.ceil(comprimento01/500)*2,grupo:'Adesivos/Solução'});
-  if(gramasDefofo>0)itens.push({fornecedor:'Bolsa Irriga',codigo:'801442',descricao:'PASTA LUBRIFICANTE BISNAGA 1000G',qtd:Math.ceil(gramasDefofo/1000),grupo:'Adesivos/Solução'});
-  if(gramasSolda>0){
-    itens.push({fornecedor:'Bolsa Irriga',codigo:'701295',descricao:'ADESIVO PVC INCOLOR FRASCO 850G',qtd:Math.ceil(gramasSolda/850),grupo:'Adesivos/Solução'});
-    itens.push({fornecedor:'Bolsa Irriga',codigo:'701291',descricao:'SOLUCAO PREPARADORA FRASCO 1L',qtd:Math.ceil(gramasSolda*1.2/1000),grupo:'Adesivos/Solução'});
-  }
+  if(pasta>0)itens.push({fornecedor:'Bolsa Irriga',codigo:'801442',descricao:'PASTA LUBRIFICANTE BISNAGA 1000G',qtd:pasta,grupo:'Adesivos/Solução'});
+  if(adesivo>0)itens.push({fornecedor:'Bolsa Irriga',codigo:'701295',descricao:'ADESIVO PVC INCOLOR FRASCO 850G',qtd:adesivo,grupo:'Adesivos/Solução'});
+  if(solucao>0)itens.push({fornecedor:'Bolsa Irriga',codigo:'701291',descricao:'SOLUCAO PREPARADORA FRASCO 1L',qtd:solucao,grupo:'Adesivos/Solução'});
   return itens;
 }
 // Automação Pneumática do Projeto (Relé Hidráulico + conectores TEFEN da categoria
@@ -3083,33 +3196,80 @@ const AUTOMACAO_PROJETO_FIXOS=[ // itens fixos (qty=1 quando automacao=Pneumatic
   {codigo:'701194',descricao:'CONECTOR RETO TEFEN 8 X 1/4 M"'},
   {codigo:'',descricao:'FILTRO DE AR + REGULADOR PRESSÃO PARA COMPRESSOR'},
 ];
-// "Saída Cavalete" — porta da aba real 'Saida Cavaletes' (tabela de kits por faixa de
-// diâmetro "A mm x B mm"), achada rastreando célula a célula de onde vinham 6 itens
-// que o app gerava a menos (ex. 801496 "JOELHO PVC IRR SOLDA 90 100MM" estava 16
-// unidades abaixo do real). Confirmada EXATA pra faixa "90mm x 100mm" (Miguel Angelo
-// Pimenta): qty de cada item = (qtd por válvula) × nºValvulas da Adutora, somando
-// Adutora 01 e Adutora 02 quando as duas caem na mesma faixa (mesmo padrão do Relé
-// Hidráulico — kit compartilhado entre Gotejador 1ª/2ª Opção). A faixa "A" (90mm) é
-// escolhida pela vazão da Adutora, faixa 32-68 m³/h (confirmado: planilha real usa um
-// range de 4 faixas pela vazão: <9, 9-32, 32-68, 68-106 → provavelmente 50/75/90/110mm).
-// LIMITAÇÃO: a faixa "B" (100mm) depende de uma 2ª tabela cruzada (vazão da Rede
-// Chicoteada) que não foi replicada — sempre usa B=100mm (confirmado/mais comum), então
-// projetos que precisem de B=125/150mm não batem exato aqui.
-const SAIDA_CAVALETE_90X100=[
-  {codigo:'701562',descricao:'LUVA PVC REDUCAO 100 X 90',qtdPorValvula:1},
-  {codigo:'801496',descricao:'JOELHO PVC IRR SOLDA 90 100MM DURO',qtdPorValvula:2},
-  {codigo:'701286',descricao:'TE BSA SOLD IRRIGA-LF 100',qtdPorValvula:1},
-  {codigo:'701303',descricao:'LUVA SOLD.IRRIGA-LF 100',qtdPorValvula:1},
-  {codigo:'701290',descricao:'REDUCAO BSA SD IRRIGA-LF 100X75',qtdPorValvula:1},
-  {codigo:'801864',descricao:'JOELHO 90 SOLDAVEL DN75MM AZUL',qtdPorValvula:1},
+// ── v1.55: kits por diâmetro de tubo/cavalete (porta da aba 'Parametros' + abas
+// 'Saida Cavaletes'/'Junção Adutoras' da planilha). Kits extraídos do template atual
+// (orçamento real Adelcio Peixoto Neves, 1º com Adutora 02 preenchida e tubo 75mm).
+const KITS_JUNCAO_ADUTORA={"50x50":{"titulo":"Junção Adutora 50mm x 50mm","itens":[{"fornecedor":"Bolsa Irriga","codigo":"701288","descricao":"TE BSA SOLD IRRIRGA-LF 50","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"801499","descricao":"JOELHO PVC IRR SOLDA 90 50MM DURO","qtd":2}]},"75x50":{"titulo":"Junção Adutora 75mm x 50mm","itens":[{"fornecedor":"Bolsa Irriga","codigo":"701304","descricao":"TE BSA SOLD IRRIGA-LF 75","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"801497","descricao":"JOELHO PVC IRR SOLDA 90 75MM DURO","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"701289","descricao":"REDUCAO BSA SD IRRIGA-LF 75X50","qtd":1}]},"75x75":{"titulo":"Junção Adutora 75mm x 75mm","itens":[{"fornecedor":"Bolsa Irriga","codigo":"701304","descricao":"TE BSA SOLD IRRIGA-LF 75","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"801497","descricao":"JOELHO PVC IRR SOLDA 90 75MM DURO","qtd":2}]},"118x75":{"titulo":"Junção Adutora 118mm x 75mm","itens":[{"fornecedor":"Netafim","codigo":"701312","descricao":"TE PVC SOLDAVEL 110MM PLASSON/FIP","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701888","descricao":"LUVA PVC REDUCAO 118 X 110","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"701119","descricao":"CURVA 90. SOLDA 110MM PLASSON/FIP","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"701113","descricao":"BUCHA RED. SOLD. 110MX90F PLASSON","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701021","descricao":"BUCHA RED.SOLD. 90MX75F PLASSOM","qtd":1}]},"118x118":{"titulo":"Junção Adutora 118mm x 118mm","itens":[{"fornecedor":"Netafim","codigo":"701312","descricao":"TE PVC SOLDAVEL 110MM PLASSON/FIP","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701888","descricao":"LUVA PVC REDUCAO 118 X 110","qtd":3},{"fornecedor":"Bolsa Irriga","codigo":"701119","descricao":"CURVA 90. SOLDA 110MM PLASSON/FIP","qtd":2}]},"170x118":{"titulo":"Junção Adutora 170mm x 118mm","itens":[{"fornecedor":"Bolsa Irriga","codigo":"801177","descricao":"TE PVC SOLDAVEL 160MM PLASSON/FIP","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"801347","descricao":"LUVA RED 170 X 160MM SOLD","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"701407","descricao":"BUCHA RED. SOLD. 160M X 110F PLASSON","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701888","descricao":"LUVA PVC REDUCAO 118 X 110","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701329","descricao":"CURVA 90. SOLDA 160 MM PLASSON/FIP","qtd":2}]},"170x170":{"titulo":"Junção Adutora 170mm x 170mm","itens":[{"fornecedor":"Bolsa Irriga","codigo":"801177","descricao":"TE PVC SOLDAVEL 160MM PLASSON/FIP","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"801347","descricao":"LUVA RED 170 X 160MM SOLD","qtd":3},{"fornecedor":"Bolsa Irriga","codigo":"701329","descricao":"CURVA 90. SOLDA 160 MM PLASSON/FIP","qtd":2}]},"222x170":{"titulo":"Junção Adutora 222mm x 170mm","itens":[{"fornecedor":"Bolsa Irriga","codigo":"801008","descricao":"TE PVC SOLDAVEL 225MM PLASSON/FIP","qtd":1},{"fornecedor":"Netafim","codigo":"01520-103596","descricao":"ADAPTADOR PVC PBS 225 X 222 MM","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"801010","descricao":"BUCHA RED. SOLD. 225MX160F PLASSON","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"801009","descricao":"CURVA 90. SOLDA 225 MM PLASSON/FIP","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"801347","descricao":"LUVA RED 170 X 160MM SOLD","qtd":1}]},"222x222":{"titulo":"Junção Adutora 222mm x 222mm","itens":[{"fornecedor":"Bolsa Irriga","codigo":"801008","descricao":"TE PVC SOLDAVEL 225MM PLASSON/FIP","qtd":1},{"fornecedor":"Netafim","codigo":"01520-103596","descricao":"ADAPTADOR PVC PBS 225 X 222 MM","qtd":3},{"fornecedor":"Bolsa Irriga","codigo":"801009","descricao":"CURVA 90. SOLDA 225 MM PLASSON/FIP","qtd":2}]}};
+const KITS_SD_PIG={"SD-PIG-MF75":{"tubos":[75],"itens":[{"fornecedor":"Bolsa Irriga","codigo":"901075","descricao":"FL PVC 75 MM","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"901074","descricao":"ADAPTADOR P/ FL 75MM SOLDA","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"801049","descricao":"JUNTA PLANA 2.1/2''","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701468","descricao":"ARRUELA LISA AC 5/8 ZB\"","qtd":8},{"fornecedor":"Bolsa Irriga","codigo":"801048","descricao":"PARAFUSO SX AC UNC 5/8 X 4\" RI ZB\"","qtd":4},{"fornecedor":"Bolsa Irriga","codigo":"701017","descricao":"PORCA SX AC UNC 5/8 CHV 15/16\" ZB\"","qtd":4},{"fornecedor":"Bolsa Irriga","codigo":"801049","descricao":"JUNTA PLANA 2.1/2''","qtd":1}]},"SD-PIG-MF90":{"tubos":[100],"itens":[{"fornecedor":"Bolsa Irriga","codigo":"701023","descricao":"ADAPTADOR P/ FL 90MM SOLDA","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701116","descricao":"FL PVC 90 MM","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701317","descricao":"JUNTA PLANA 3\"","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701468","descricao":"ARRUELA LISA AC 5/8 ZB\"","qtd":16},{"fornecedor":"Bolsa Irriga","codigo":"801048","descricao":"PARAFUSO SX AC UNC 5/8 X 4\" RI ZB\"","qtd":8},{"fornecedor":"Bolsa Irriga","codigo":"701017","descricao":"PORCA SX AC UNC 5/8 CHV 15/16\" ZB\"","qtd":8},{"fornecedor":"Bolsa Irriga","codigo":"701317","descricao":"JUNTA PLANA 3''","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701026","descricao":"FLANGE CEGA 3\" PVC PLASSOM","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"801055","descricao":"TUBO PVC PBA 90 CL 10 - 5,6M","qtd":0.4}]},"SD-PIG-MF110":{"tubos":[118],"itens":[{"fornecedor":"Bolsa Irriga","codigo":"701115","descricao":"ADAPTADOR P/FL 110MM SOLDA","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"701117","descricao":"FL PVC 110 MM","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"701119","descricao":"CURVA 90. SOLDA 110MM PLASSON/FIP","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"701276","descricao":"JUNTA PLANA 4''","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701114","descricao":"BUCHA RED. SOLD. 110MX75F PLASSON","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701019","descricao":"ADAPTADOR 75(63) 2'' FEMEA","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701223","descricao":"BUCHA RED C/ROSCA 2 X 1","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"801839","descricao":"VENTOSA CINETICA/SIMPLES FUNCAO, MOD.K10, 1 DN 25, RO","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701468","descricao":"ARRUELA LISA AC 5/8 ZB\"","qtd":16},{"fornecedor":"Bolsa Irriga","codigo":"801048","descricao":"PARAFUSO SX AC UNC 5/8 X 4\" RI ZB\"","qtd":8},{"fornecedor":"Bolsa Irriga","codigo":"701017","descricao":"PORCA SX AC UNC 5/8 CHV 15/16\" ZB\"","qtd":8},{"fornecedor":"Bolsa Irriga","codigo":"701276","descricao":"JUNTA PLANA 4''","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701254","descricao":"TUBO PVC PBA 110 CL 10 - 5,6M","qtd":0.4}]},"SD-PIG-MF160":{"tubos":[170,222],"itens":[{"fornecedor":"Bolsa Irriga","codigo":"701330","descricao":"ADAPTADOR P/FLANGE 160MM SOLDA","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"701329","descricao":"CURVA 90° SOLDA 160MM PLASSON","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"701753","descricao":"FLANGE PVC 160 MM","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"701114","descricao":"BUCHA RED. SOLD. 110MX75F PLASSON","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701019","descricao":"ADAPTADOR 75(63) 2'' FEMEA","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"702908","descricao":"VALVULA DE AR VENTOSA COMBIN. C30 BSP 2\" PN 16","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701407","descricao":"BUCHA RED. SOLD. 160M X 110F PLASSON","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701468","descricao":"ARRUELA LISA AC 5/8 ZB\"","qtd":16},{"fornecedor":"Bolsa Irriga","codigo":"801048","descricao":"PARAFUSO SX AC UNC 5/8 X 4\" RI ZB\"","qtd":8},{"fornecedor":"Bolsa Irriga","codigo":"701017","descricao":"PORCA SX AC UNC 5/8 CHV 15/16\" ZB\"","qtd":8},{"fornecedor":"Bolsa Irriga","codigo":"701324","descricao":"JUNTA PLANA 6\"","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701338","descricao":"TUBO PVC PBA 160 CL 10 - 5,6M","qtd":0.4}]}};
+const KITS_SAIDA_CAVALETE={"50x50":{"titulo":"Saida Cavalete 50 mm x 50 mm","itens":[{"fornecedor":"Bolsa Irriga","codigo":"701285","descricao":"LUVA SOLD.IRRIGA-LF 50","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701288","descricao":"TE BSA SOLD IRRIGA-LF 50","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701850","descricao":"CURVA 90 PTA/BSA SOLD IRRIGA-LF 50","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"701271","descricao":"REDUCAO BSA SD IRRIGA-LF 50X35","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"801866","descricao":"JOELHO 90 SOLDAVEL DN35MM AZUL","qtd":1}]},"75x50":{"titulo":"Saida Cavalete 75 mm x 50 mm","itens":[{"fornecedor":"Bolsa Irriga","codigo":"701285","descricao":"LUVA SOLD.IRRIGA-LF 50","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701288","descricao":"TE BSA SOLD IRRIGA-LF 50","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701850","descricao":"CURVA 90 PTA/BSA SOLD IRRIGA-LF 50","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"701289","descricao":"REDUCAO BSA SD IRRIGA-LF 75X50","qtd":1}]},"75x75":{"titulo":"Saida Cavalete 75 mm x 75 mm","itens":[{"fornecedor":"Bolsa Irriga","codigo":"701181","descricao":"CURVA 90 PTA/BSA SOLD IRRIGA-LF 75","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"701304","descricao":"TE BSA SOLD IRRIGA-LF 75","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701302","descricao":"LUVA SOLD.IRRIGA-LF 75","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701289","descricao":"REDUCAO BSA SD IRRIGA-LF 75X50","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"801865","descricao":"JOELHO 90 SOLDAVEL DN50MM AZUL","qtd":1}]},"75x100":{"titulo":"Saida Cavalete 75 mm x 100 mm","itens":[{"fornecedor":"Bolsa Irriga","codigo":"801496","descricao":"JOELHO PVC IRR SOLDA 90 100MM DURO","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"701286","descricao":"TE BSA SOLD IRRIGA-LF 100","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701303","descricao":"LUVA SOLD.IRRIGA-LF 100","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701290","descricao":"REDUCAO BSA SD IRRIGA-LF 100X75","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"801864","descricao":"JOELHO 90 SOLDAVEL DN75MM AZUL","qtd":1}]},"90x100":{"titulo":"Saida Cavalete 90 mm x 100 mm","itens":[{"fornecedor":"Bolsa Irriga","codigo":"701562","descricao":"LUVA PVC REDUCAO 100 X 90","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"801496","descricao":"JOELHO PVC IRR SOLDA 90 100MM DURO","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"701286","descricao":"TE BSA SOLD IRRIGA-LF 100","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701303","descricao":"LUVA SOLD.IRRIGA-LF 100","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701290","descricao":"REDUCAO BSA SD IRRIGA-LF 100X75","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"801864","descricao":"JOELHO 90 SOLDAVEL DN75MM AZUL","qtd":1}]},"90x125":{"titulo":"Saida Cavalete 90 mm x 125 mm","itens":[{"fornecedor":"Bolsa Irriga","codigo":"701562","descricao":"LUVA PVC REDUCAO 100 X 90","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701269","descricao":"REDUCAO BSA SD IRRIGA-LF PN 80 125X100MM","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"701859","descricao":"CURVA 90° SOLDA 125MM PLASSON","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"801047","descricao":"TE PVC SOLDAVEL 125MM PLASSON","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701267","descricao":"LUVA SOLD IRRIGA-LF PN 80 125MM","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"801496","descricao":"JOELHO PVC IRR SOLDA 90 100MM DURO","qtd":1}]},"90x150":{"titulo":"Saida Cavalete 90 mm x 150 mm","itens":[{"fornecedor":"Bolsa Irriga","codigo":"701562","descricao":"LUVA PVC REDUCAO 100 X 90","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701269","descricao":"REDUCAO BSA SD IRRIGA-LF PN 80 125X100MM","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701275","descricao":"RED BSA SOLD IRRIGA-LF PN80 150X125MM","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"701329","descricao":"CURVA 90 SOLDA 160MM PLASSON","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"901214","descricao":"REDUCAO PVC CURTA 160 X 150","qtd":7},{"fornecedor":"Bolsa Irriga","codigo":"801177","descricao":"TE PVC SOLDAVEL 160MM PLASSON","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701533","descricao":"LUVA PVC IRRIGA SOLD 150","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701859","descricao":"CURVA 90° SOLDA 125MM PLASSON","qtd":1}]},"110x125":{"titulo":"Saida Cavalete 110 mm x 125 mm","itens":[{"fornecedor":"Bolsa Irriga","codigo":"701530","descricao":"LUVA PVC IRRIGA SOLD RED 125 X 110","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701859","descricao":"CURVA 90° SOLDA 125MM PLASSON","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"801047","descricao":"TE PVC SOLDAVEL 125MM PLASSON","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701267","descricao":"LUVA SOLD IRRIGA-LF PN 80 125MM","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701269","descricao":"REDUCAO BSA SD IRRIGA-LF PN 80 125X100MM","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"801496","descricao":"JOELHO PVC IRR SOLDA 90 100MM DURO","qtd":1}]},"110x150":{"titulo":"Saida Cavalete 110 mm x 150 mm","itens":[{"fornecedor":"Bolsa Irriga","codigo":"701530","descricao":"LUVA PVC IRRIGA SOLD RED 125 X 110","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701275","descricao":"RED BSA SOLD IRRIGA-LF PN80 150X125MM","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"901214","descricao":"REDUCAO PVC CURTA 160 X 150","qtd":7},{"fornecedor":"Bolsa Irriga","codigo":"701329","descricao":"CURVA 90 SOLDA 160MM PLASSON","qtd":2},{"fornecedor":"Bolsa Irriga","codigo":"801177","descricao":"TE PVC SOLDAVEL 160MM PLASSON","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701533","descricao":"LUVA PVC IRRIGA SOLD 150","qtd":1},{"fornecedor":"Bolsa Irriga","codigo":"701859","descricao":"CURVA 90° SOLDA 125MM PLASSON","qtd":1}]}};
+// Ø externo do 1º tubo da adutora ("Tubo Saida Adutora", Parametros!D25:D49/I25:I49):
+// 50,5 vira 50 (coluna C da tabela); adutora vazia = 0.
+function tuboExtAdutora(ac){
+  const n=ac?.resultado?.nominal;
+  if(!n||!ac.comprimento||!ac.vazao)return 0;
+  return n===50.5?50:n;
+}
+// "Saida Cavalete AxB" (aba 'Saida Cavaletes', Parametros!L125:R149): A = Ø do
+// cavalete pela vazão da VÁLVULA (D42) em faixas fixas; B = Ø do PVC de saída pela
+// mesma vazão contra a capacidade de cada tubo PN40 na velocidade da Submain
+// ('Rede Chicoteada-Secundaria'!D11:D15 = 3600·π·v·(DI/2)²). QTD. = kit ×
+// (nºVálv. Adutora 01 + nºVálv. Adutora 02) — as duas adutoras usam a MESMA vazão de
+// válvula (D42). Antes o app só tinha o kit 90x100, escolhido pela vazão da ADUTORA.
+const FAIXAS_CAVALETE_SAIDA=[[50,1,9],[75,9.1,32],[90,32.1,68],[110,68.1,106]];
+const DI_PVC_SAIDA_CAVALETE=[[50,48.2],[75,72.5],[100,97.6],[125,120],[150,144]];
+function faixaPvcSaidaCavalete(vazao,velocidade){
+  let min=1;
+  for(const[diam,di]of DI_PVC_SAIDA_CAVALETE){
+    const max=3600*3.1415*velocidade*Math.pow(di/1000/2,2);
+    if(vazao>=min&&vazao<=max)return diam;
+    min=max+0.1;
+  }
+  return null;
+}
+function gerarItensSaidaCavalete(d){
+  const v=parseFloat(d.vazaoValvula)||0;
+  const cav=(FAIXAS_CAVALETE_SAIDA.find(([,a,b])=>v>=a&&v<=b)||[])[0];
+  const pvc=faixaPvcSaidaCavalete(v,parseFloat(d.velocidadeSubmain)||0);
+  const kit=cav&&pvc?KITS_SAIDA_CAVALETE[`${cav}x${pvc}`]:null;
+  const mult=(parseFloat(d.numValvulasAdutora01)||0)+(parseFloat(d.numValvulasAdutora02)||0);
+  if(!kit||mult<=0)return[];
+  return kit.itens.map(it=>({...it,qtd:it.qtd*mult,grupo:kit.titulo}));
+}
+// "Junção Adutora AxB" (Parametros!I177:N185): só quando as DUAS adutoras existem e o
+// par (tubo A01 × tubo A02) está na tabela; 1 kit.
+function gerarItensJuncaoAdutora(){
+  const t1=tuboExtAdutora(atual.adutora01),t2=tuboExtAdutora(atual.adutora02);
+  const kit=t1&&t2?KITS_JUNCAO_ADUTORA[`${t1}x${t2}`]:null;
+  if(!kit)return[];
+  return kit.itens.map(it=>({...it,grupo:kit.titulo}));
+}
+// "SD-PIG-MFxx" (Parametros!B165:F168): 1 kit por adutora cujo tubo bate (75→MF75,
+// 100→MF90, 118→MF110, 170→MF160; a linha 222 da tabela não tem fórmula = nunca).
+function gerarItensSaidaPIG(){
+  const t1=tuboExtAdutora(atual.adutora01),t2=tuboExtAdutora(atual.adutora02);
+  const itens=[];
+  Object.entries(KITS_SD_PIG).forEach(([titulo,kit])=>{
+    const tubos=titulo==='SD-PIG-MF160'?[170]:kit.tubos;
+    const mult=(tubos.includes(t1)?1:0)+(tubos.includes(t2)?1:0);
+    if(mult>0)kit.itens.forEach(it=>itens.push({...it,qtd:it.qtd*mult,grupo:titulo}));
+  });
+  return itens;
+}
+// Colares de tomada do "Injetor de Cloro Ventury" (Parametros!K5:M9): 1 colar do Ø da
+// SUCÇÃO (faixa de vazão da tabela de sucção) + 1 do Ø da SAÍDA DA MB (faixa da
+// tabela de saída MB), ambos pela vazão da Adutora 01. Antes ficavam de fora.
+const COLARES_INJETOR=[
+  {codigo:'801901',descricao:'COLAR DE TOMADA SIMPLES 75 X 2" PN 10',succao:[7.2,20.1],mb:[9.1,28]},
+  {codigo:'801588',descricao:'COLAR TOMADA POLIPROPILENO 90 X 2" PN10',succao:[20.2,28.1],mb:[28.1,45]},
+  {codigo:'801564',descricao:'COLAR TOMADA POLIPROPILENO 110 X 2"PN 10',succao:[28.2,45.1],mb:[45.1,99]},
+  {codigo:'801607',descricao:'COLAR TOMADA POLIPROPILENO 160X 2"PN 10',succao:[45.2,95.1],mb:[99.1,180]},
+  {codigo:'801900',descricao:'COLAR TOMADA POLIPROPILENO 225X 2"PN 10',succao:[95.2,183],mb:null},
 ];
-function faixaVazaoAdutoraCombina90mm(vazao){return vazao>32&&vazao<=68;}
-function gerarItensSaidaCavalete(vazaoAdutora01,nv01,vazaoAdutora02,nv02){
-  let mult=0;
-  if(faixaVazaoAdutoraCombina90mm(vazaoAdutora01))mult+=parseFloat(nv01)||0;
-  if(faixaVazaoAdutoraCombina90mm(vazaoAdutora02))mult+=parseFloat(nv02)||0;
-  if(mult<=0)return[];
-  return SAIDA_CAVALETE_90X100.map(it=>({fornecedor:'Bolsa Irriga',codigo:it.codigo,descricao:it.descricao,qtd:it.qtdPorValvula*mult,grupo:'Saida Cavalete 90 mm x 100 mm'}));
+function gerarItensColaresInjetor(d){
+  if(String(d.injetorCloro||'').trim().toLowerCase()!=='sim')return[];
+  const q=parseFloat(atual.adutora01?.vazao)||0;
+  const dentro=(f)=>f&&q>=f[0]&&q<=f[1]?1:0;
+  return COLARES_INJETOR.map(c=>({fornecedor:'Bolsa Irriga',codigo:c.codigo,descricao:c.descricao,qtd:dentro(c.succao)+dentro(c.mb),grupo:'Injetor de Cloro Ventury'})).filter(it=>it.qtd>0);
 }
 // IMPORTANTE (v1.46): a categoria usada por item é a categoria REAL da fonte, não uma
 // única "Automação - Projeto" pra tudo — achado pelo usuário vendo o Relatório de
@@ -3190,18 +3350,27 @@ function gerarItensAutomacaoProjeto(d,cotasAdutora01,nv01,nv02){
 // caso real conferido, a qtd final tinha mais 2-9 unidades vindas de outra fonte não
 // identificada (provavelmente um 2º circuito pneumático, de automação de válvula em vez
 // de automação da moto-bomba) — essa função cobre a fonte PRINCIPAL/maior, não 100%.
-function gerarItensAutomacaoPneumatica(d,adCfg,numValvulas){
-  if(d.automacaoProjeto!=='Sim')return[];
+// v1.55 (Adelcio Peixoto Neves, 1º orçamento real com Adutora 02 preenchida) — fórmulas
+// reais de 'Projeto - Adutora 0x'!BI87:BK89 + 'Conj.Irri.Projeto - Got 01'!F/I:
+//  - PE 8mm = ROUNDUP(comprimento×(nºVálvulas DESSA adutora+1)×1,03/500); União = PE;
+//    TE 8x8x8 = nºVálvulas da ADUTORA 01 + 2 (as DUAS abas usam D44 — inclusive a 02);
+//  - QTD. do BOM = CEILING.MATH(qtd;5) (múltiplo de 5), igual aos tubos;
+//  - "gate" de automação: Adutora 01 compara D46 com "Sem automação" (valor que nunca
+//    existe → sempre entra); Adutora 02 zera só se D46="Não". Replicado como está.
+function gerarItensAutomacaoPneumatica(d,adCfg,numValvulas,numValvulasTE,ehAdutora02){
+  if(ehAdutora02&&d.automacaoProjeto==='Não')return[];
   const comprimento=adCfg?.comprimento||0;
   const nv=parseFloat(numValvulas)||0;
+  const nvTE=parseFloat(numValvulasTE??numValvulas)||0;
   if(!comprimento)return[];
   const metrosTubo=comprimento*(nv+1)*1.03;
   const qtdRolosPE8mm=Math.ceil(metrosTubo/500);
   if(qtdRolosPE8mm<=0)return[];
+  const c5=q=>Math.ceil(q/5)*5;
   return[
-    {fornecedor:'Bolsa Irriga',codigo:'701042',descricao:'PE 8 MM - 500M',qtd:qtdRolosPE8mm,grupo:'Automação Pneumática'},
-    {fornecedor:'Bolsa Irriga',codigo:'701196',descricao:'CONECTOR UNIAO TEFEN 8 X 8',qtd:qtdRolosPE8mm,grupo:'Automação Pneumática'},
-    {fornecedor:'Bolsa Irriga',codigo:'801369',descricao:'CONECTOR TE 8X8X8',qtd:nv+2,grupo:'Automação Pneumática'},
+    {fornecedor:'Bolsa Irriga',codigo:'701042',descricao:'PE 8 MM - 500M',qtd:c5(qtdRolosPE8mm),grupo:'Automação Pneumática'},
+    {fornecedor:'Bolsa Irriga',codigo:'701196',descricao:'CONECTOR UNIAO TEFEN 8 X 8',qtd:c5(qtdRolosPE8mm),grupo:'Automação Pneumática'},
+    {fornecedor:'Bolsa Irriga',codigo:'801369',descricao:'CONECTOR TE 8X8X8',qtd:c5(nvTE+2),grupo:'Automação Pneumática'},
   ];
 }
 // Serviços do Projeto (Montagem/Mapeamento/Abertura de Valetas/Frete) — eram um
@@ -3464,7 +3633,9 @@ function calcularRolosRedeChicoteada(d){
   const rolos={144:0,120:0,97.6:0,72.5:0,48.2:0,35.7:0},ativos={144:false,120:false,97.6:false,72.5:false,48.2:false,35.7:false};
   if(!buckets)return{rolos,ativos};
   const metrosM={};
-  for(const DI of Object.keys(buckets).map(Number))metrosM[DI]=Math.ceil(buckets[DI]);
+  // v1.55: tolerância de ponto flutuante — somar 10× 3,6 dá 36,00000000000001 e o
+  // ROUNDUP virava 37 (Antonio Gilberto: 100mm saía 130 barras em vez de 125).
+  for(const DI of Object.keys(buckets).map(Number))metrosM[DI]=Math.ceil(buckets[DI]-1e-9);
   const totalM=Object.values(metrosM).reduce((a,b)=>a+b,0);
   const metrosChicoteadaTotal=parseFloat(d.metrosChicoteada)||0;
   if(totalM>0)for(const DI of Object.keys(metrosM).map(Number)){
@@ -3747,18 +3918,27 @@ function gerarItensLuvasSecundarias(ativos,fatorArea){
   // — arredonda pra cima, não usa o fatorArea "cru" (ex. 1,5 vira 2). Achado via
   // orçamento real (Miguel Angelo Pimenta): todo item dessa categoria estava 0,5
   // abaixo do real (1,5 em vez de 2) por faltar esse arredondamento.
+  // v1.55 (Antonio Gilberto) — 3 detalhes reais das fórmulas I2678:I2688:
+  //  - LUVA SOLD 75 e LUVA DE CORRER 50 usam ROUND (não ROUNDUP);
+  //  - LUVA DE CORRER 150 (801441) é ligada pela flag do Ø125 (Parametros!E216 — erro
+  //    de cópia na planilha, mas é o que o orçamento real soma), não pela do Ø150.
   const qtd=Math.ceil(fatorArea);
+  const qtdRound=Math.round(fatorArea);
   const itens=[];
   for(const DI of Object.keys(ativos).map(Number)){
     if(!ativos[DI])continue;
     const[codSolda,descSolda]=LUVA_SOLDA_POR_DI[DI];
-    itens.push({fornecedor:'Bolsa Irriga',codigo:codSolda,descricao:descSolda,qtd,grupo:'Luvas Secundarias'});
-    if(LUVA_CORRER_POR_DI[DI]){
+    itens.push({fornecedor:'Bolsa Irriga',codigo:codSolda,descricao:descSolda,qtd:DI===72.5?qtdRound:qtd,grupo:'Luvas Secundarias'});
+    if(LUVA_CORRER_POR_DI[DI]&&DI!==144){
       const[codCorrer,descCorrer]=LUVA_CORRER_POR_DI[DI];
-      itens.push({fornecedor:'Bolsa Irriga',codigo:codCorrer,descricao:descCorrer,qtd,grupo:'Luvas Secundarias'});
+      itens.push({fornecedor:'Bolsa Irriga',codigo:codCorrer,descricao:descCorrer,qtd:DI===48.2?qtdRound:qtd,grupo:'Luvas Secundarias'});
     }
   }
-  return itens;
+  if(ativos[120]){
+    const[codCorrer,descCorrer]=LUVA_CORRER_POR_DI[144];
+    itens.push({fornecedor:'Bolsa Irriga',codigo:codCorrer,descricao:descCorrer,qtd,grupo:'Luvas Secundarias'});
+  }
+  return itens.filter(it=>it.qtd>0);
 }
 // Ponto de entrada único: calcula os multiplicadores (C234/C243/C249 da aba real) a
 // partir dos diâmetros ativos + numRedesChicoteadas, e gera todos os itens acima.
@@ -3823,17 +4003,19 @@ function gerarItensDerivacaoAdutora(nominalAdutora01,nominalAdutora02){
     const matchD=nominalParaDerivacaoAdutora(nominalAdutora01)===diam?1:0;
     const matchJ=nominalParaDerivacaoAdutora(nominalAdutora02)===diam?1:0;
     const kit=DERIVACAO_ADUTORA_KITS[diam];
+    // v1.55: o tubo-stub soma SÓ as 2 luvas (2º item de cada lado: 'Conj.Irri.Projeto -
+    // Got 01'!F1656=(F1658+F1655)*0,2) — antes somava TE+curva+luvas (Miguel: 4 vs 2,8).
     let somaTe=0,somaCurva=0;
-    kit.te.forEach(it=>{
+    kit.te.forEach((it,idx)=>{
       const m=it.soAdutora01?matchD:(matchD+matchJ);
       const qtd=it.mult*2*m;
-      somaTe+=qtd;
+      if(idx>0)somaTe+=qtd;
       if(qtd>0)itens.push({fornecedor:it.fornecedor||'Bolsa Irriga',codigo:it.codigo,descricao:it.descricao,qtd,grupo:'Derivação Adutora'});
     });
-    kit.curva.forEach(it=>{
+    kit.curva.forEach((it,idx)=>{
       const m=it.soAdutora01?matchD:(matchD+matchJ);
       const qtd=it.mult*4*m;
-      somaCurva+=qtd;
+      if(idx>0)somaCurva+=qtd;
       if(qtd>0)itens.push({fornecedor:it.fornecedor||'Bolsa Irriga',codigo:it.codigo,descricao:it.descricao,qtd,grupo:'Derivação Adutora'});
     });
     if(kit.tuboStub){
@@ -3992,8 +4174,36 @@ function carregarModelo(nomeModelo){
   atual.bom=atual.bom.filter(it=>it.modelo!==nomeModelo);
   const origem=nomeModelo==='recalque'?'recalque':'projeto';
   let n=0;
-  Object.keys(modeloConj).forEach(categoria=>{
-    modeloConj[categoria].forEach(it=>{
+  // v1.55: categorias estáticas com chave liga/desliga real na planilha — Injetor de
+  // Cloro só com 'Dados de Entrada'!D72="Sim"; Ferti-Irrigação (Injeção Direta) só com
+  // D68="Direta". Antes entravam sempre.
+  const dEnt=atual.dadosEntrada||{};
+  const categoriaEstaticaAtiva=cat=>{
+    if(cat==='Injetor de Cloro Ventury')return String(dEnt.injetorCloro||'').trim().toLowerCase()==='sim';
+    if(cat==='Ferti-Irrigação')return String(dEnt.fertirrigacao||'').trim().toLowerCase()==='direta';
+    return true;
+  };
+  // v1.55: na Ferti-Irrigação, bomba/chave/caixas dependem da ÁREA ('Conj.Irri.Projeto -
+  // Got 01'!F1511:F1524, achado no Antonio Gilberto, 46 ha): <40 ha = bomba 2cv TRIF +
+  // chave 2cv + 2 caixas 1000L; >40 ha = bomba 3cv MONOF + chave 3cv (além da chave 3cv
+  // fixa); 40-60 ha = 2 caixas 3000L; >60 ha = 2 caixas 5000L (40 e 60 exatos = nada,
+  // igual às fórmulas). O dump estático tinha fixo o caso <40 ha.
+  const areaHa=parseFloat(dEnt.area)||0;
+  const FERTI_POR_AREA=['803161','801193','701134'];
+  const itensFertiArea=[
+    areaHa<40&&{fornecedor:'Bolsa Irriga',codigo:'803161',descricao:'BOMBA TBPS5- 11 2,0 CV TRIF IP21/IR3.220/380V WEG INO',qtd:1},
+    areaHa<40&&{fornecedor:'Bolsa Irriga',codigo:'801193',descricao:'CHAVE PDWB02 2 CV N 220/60 HZ',qtd:1},
+    areaHa>40&&{fornecedor:'Bolsa Irriga',codigo:'803986',descricao:'BOMBA TBPS5 -16 3,0 CV MONOF.IP21.127/220-254V WEG.INOX',qtd:1},
+    areaHa>40&&{fornecedor:'Bolsa Irriga',codigo:'701867',descricao:'CHAVE PDWB02 3 CV N 220/60 HZ',qtd:1},
+    areaHa<40&&{fornecedor:'Bolsa Irriga',codigo:'701134',descricao:'CAIXA FIBRA FERTI-IRRIGAÇÃO 1000 LTS',qtd:2},
+    areaHa>40&&areaHa<60&&{fornecedor:'Bolsa Irriga',codigo:'802157',descricao:'CAIXA FIBRA FERTI-IRRIGAÇÃO 3000 LTS',qtd:2},
+    areaHa>60&&{fornecedor:'Bolsa Irriga',codigo:'702368',descricao:'CAIXA FIBRA FERTI-IRRIGAÇÃO 5000 LTS',qtd:2},
+  ].filter(Boolean);
+  const itensEstaticos=cat=>cat==='Ferti-Irrigação'
+    ?[...modeloConj[cat].filter(it=>!FERTI_POR_AREA.includes(String(it.codigo))),...itensFertiArea]
+    :modeloConj[cat];
+  Object.keys(modeloConj).filter(categoriaEstaticaAtiva).forEach(categoria=>{
+    itensEstaticos(categoria).forEach(it=>{
       atual.bom.push({
         id:uid(),categoria,grupo:categoria,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
         qtd:it.qtd,custoUnit:buscarCusto(it.fornecedor,it.codigo)||it.preco||0,ativo:true,origem,modelo:nomeModelo,
@@ -4020,7 +4230,12 @@ function carregarModelo(nomeModelo){
     }
 
     const grupoMB=selecionarGrupoPorVazaoNumBombas(SELECAO_ATUAL[cfgSel.mbSaida],vazao,numBombas);
-    if(grupoMB)n+=adicionarItensSelecionados(grupoMB.label,grupoMB.itens,cfgSel.labelMB,origem,nomeModelo);
+    // v1.55: itens com "qtdPorTubo" dependem do Ø do tubo de saída da ADUTORA 01
+    // (Parametros!X26:X37 = 1º "nome popular" da adutora → Ø externo; 50,5 vira 50).
+    const nomTuboSaida=atual.adutora01?.resultado?.nominal;
+    const tuboSaidaX=nomTuboSaida===50.5?50:nomTuboSaida;
+    const itensMB=grupoMB?grupoMB.itens.map(it=>it.qtdPorTubo?{...it,qtd:it.qtdPorTubo[tuboSaidaX]||0}:it).filter(it=>it.qtd):[];
+    if(grupoMB)n+=adicionarItensSelecionados(grupoMB.label,itensMB,cfgSel.labelMB,origem,nomeModelo);
     else avisos.push(`Saída Moto-Bomba: nenhuma faixa compatível (vazão=${vazao}, nº de bombas=${numBombas}) — calcule a aba Adutora/Recalque primeiro para definir o nº de bombas.`);
 
     const grupoBombaAux=selecionarGrupoBombaAux(SELECAO_ATUAL[cfgSel.bombaAux],d[cfgSel.bombaAuxField]);
@@ -4089,24 +4304,35 @@ function carregarModelo(nomeModelo){
     // categoria SÓ, igual a aba real "ADUTORA - PROJETO 01/02/RECALQUE" — antes cada
     // trecho de PN/diâmetro virava uma categoria própria, "detalhando por tubos" na
     // tela de Conjuntos em vez de agrupar tudo numa categoria só, igual a planilha).
-    const{itens:itensTubo,avisos:avisosTubo}=gerarItensTuboAdutora(adCfg);
-    itensTubo.forEach(it=>{
-      atual.bom.push({id:uid(),categoria:cfgSel.labelAdutora,grupo:cfgSel.labelAdutora,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
-        qtd:it.qtd,custoUnit:buscarCusto(it.fornecedor,it.codigo)||0,ativo:true,origem,modelo:nomeModelo});
-      n++;
-    });
-    avisos.push(...avisosTubo);
-
-    // Automação Pneumática (PE 8mm + conectores TEFEN) — mesma categoria da Adutora
-    // (ver comentário de gerarItensAutomacaoPneumatica). Só verificado pra Projeto
-    // (Adutora 01/02); Recalque fica de fora por falta de fórmula real conferida.
-    if(cfgSel.adutoraKey!=='recalque'){
-      const numValvulasAdCfg=cfgSel.adutoraKey==='adutora02'?d.numValvulasAdutora02:d.numValvulasAdutora01;
-      gerarItensAutomacaoPneumatica(d,adCfg,numValvulasAdCfg).forEach(it=>{
-        atual.bom.push({id:uid(),categoria:cfgSel.labelAdutora,grupo:cfgSel.labelAdutora,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
+    // v1.55: no Projeto, a lista real ('Conj.Irri.Projeto - Got 01' E Got 02) traz as
+    // DUAS adutoras (seções "Adutora - Projeto 01" e "Adutora - Projeto 02"), cada uma
+    // com seus tubos + PE 8mm/conectores — a "1ª/2ª Opção" é só o gotejador, a infra é
+    // a mesma. Antes o app gerava só a adutora "do modelo", e a Adutora 02 sumia.
+    const adutorasDoModelo=cfgSel.adutoraKey==='recalque'
+      ?[{cfg:adCfg,label:cfgSel.labelAdutora,key:'recalque'}]
+      :[{cfg:atual.adutora01,label:'ADUTORA - PROJETO 01',key:'adutora01'},{cfg:atual.adutora02,label:'ADUTORA - PROJETO 02',key:'adutora02'}];
+    adutorasDoModelo.forEach(({cfg:ac,label,key})=>{
+      if(!ac||!ac.comprimento||!ac.vazao)return;
+      const{itens:itensTubo,avisos:avisosTubo}=gerarItensTuboAdutora(ac);
+      itensTubo.forEach(it=>{
+        atual.bom.push({id:uid(),categoria:label,grupo:label,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
           qtd:it.qtd,custoUnit:buscarCusto(it.fornecedor,it.codigo)||0,ativo:true,origem,modelo:nomeModelo});
         n++;
       });
+      avisos.push(...avisosTubo);
+      // Automação Pneumática (PE 8mm + conectores TEFEN) — mesma categoria da Adutora
+      // (ver comentário de gerarItensAutomacaoPneumatica). Recalque fica de fora por
+      // falta de fórmula real conferida.
+      if(key==='recalque')return;
+      const nvAd=key==='adutora02'?d.numValvulasAdutora02:d.numValvulasAdutora01;
+      gerarItensAutomacaoPneumatica(d,ac,nvAd,d.numValvulasAdutora01,key==='adutora02').forEach(it=>{
+        atual.bom.push({id:uid(),categoria:label,grupo:label,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
+          qtd:it.qtd,custoUnit:buscarCusto(it.fornecedor,it.codigo)||0,ativo:true,origem,modelo:nomeModelo});
+        n++;
+      });
+    });
+
+    if(cfgSel.adutoraKey!=='recalque'){
       // Automação Pneumática do Projeto (Relé Hidráulico + conectores TEFEN) —
       // sempre a partir da Adutora 01 (ver comentário de gerarItensAutomacaoProjeto),
       // não da adutora do modelo sendo carregado.
@@ -4116,8 +4342,10 @@ function carregarModelo(nomeModelo){
       });
       // Saída Cavalete — mesmo padrão (sempre Adutora 01 e 02, não a do modelo sendo
       // carregado). Ver comentário de gerarItensSaidaCavalete.
-      gerarItensSaidaCavalete(atual.adutora01&&atual.adutora01.vazao,d.numValvulasAdutora01,atual.adutora02&&atual.adutora02.vazao,d.numValvulasAdutora02).forEach(it=>{
-        adicionarItemCustoFixo(it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
+      // v1.55: + Junção Adutora (A01×A02), Saída PIG e colares do Injetor de Cloro.
+      [...gerarItensSaidaCavalete(d),...gerarItensJuncaoAdutora(),...gerarItensSaidaPIG(),...gerarItensColaresInjetor(d)].forEach(it=>{
+        const cat=it.grupo,grp=/^SD-PIG/.test(cat)?'CAVALETES':cat;
+        adicionarItemCustoFixo(cat,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,grp,origem,nomeModelo);
         n++;
       });
       // Adesivo/Solução/Pano/Pasta Lubrificante — sempre Adutora 01 + 02 somadas (ver
@@ -4158,7 +4386,11 @@ function carregarModelo(nomeModelo){
         ...gerarItensMicroAspersorConectores(d,cfgSel.campoGotejador),
         ...gerarItensAspersorConectores(d),
       ];
-      itensEmissor.forEach(it=>{
+      // v1.55: 'Conj.Irri.Projeto - Got 01'!I2734:I2745 = CEILING.MATH(qtd;10) nos
+      // CONECTORES do gotejamento (os 2 tubos PE das linhas 2732/2733 não arredondam).
+      const arredConector=it=>(/^TUBOS DE POLIETILENO E CONECTORES - Gotejamento$/.test(it.grupo)&&!/^TUBO/i.test(it.descricao))
+        ?{...it,qtd:Math.ceil(it.qtd/10-1e-9)*10}:it;
+      itensEmissor.map(arredConector).forEach(it=>{
         adicionarItemCustoFixo(it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
@@ -4167,7 +4399,11 @@ function carregarModelo(nomeModelo){
       // Calculada ANTES da Rede Chicoteada pra alimentar o gramasExtras do
       // ADESIVO/SOLUÇÃO (ver comentário de gerarItensRedeChicoteada).
       const itensRedeSec=gerarItensRedeSecundaria(d);
-      itensRedeSec.forEach(it=>{
+      // v1.55: QTD. real das Redes Chicoteada/Secundária = CEILING.MATH(ROUND(qtd;0);5)
+      // ('Conj.Irri.Projeto - Got 01'!I2490:I2505) — o valor bruto já batia (ex. 97,414).
+      const arredRede=it=>(it.grupo==='Rede Chicoteada'||it.grupo==='Rede Secundaria')
+        ?{...it,qtd:Math.ceil(Math.round(it.qtd)/5-1e-9)*5}:it;
+      itensRedeSec.map(arredRede).forEach(it=>{
         adicionarItemCustoFixo(it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
@@ -4176,7 +4412,7 @@ function carregarModelo(nomeModelo){
       // cascata simples agregada. Ver comentários de gerarItensRedeChicoteada e
       // gerarItensRedeChicoteadaSimples.
       const itensRedeChic=[...gerarItensRedeChicoteada(d,itensRedeSec.map(it=>it.di)),...gerarItensRedeChicoteadaSimples(d)];
-      itensRedeChic.forEach(it=>{
+      itensRedeChic.map(arredRede).forEach(it=>{
         adicionarItemCustoFixo(it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
         n++;
       });
@@ -4265,21 +4501,31 @@ function carregarModelo(nomeModelo){
     if(nomeModelo.startsWith('gotejamento')&&gruposCavalete.length){
       const mfMatch=gruposCavalete[0].label.match(/MF(\d+)/);
       const manifoldDiametro=mfMatch?mfMatch[1]:null;
-      const nominalAdutora=adCfg.resultado&&adCfg.resultado.nominal;
-      const nValvulas01=d.numValvulasAdutora01||0;
-      if(manifoldDiametro&&nominalAdutora&&nValvulas01>0){
+      // v1.55: Parametros!D174:F188 — F = (Adutora 01 casa ? nºVálv.01) + (Adutora 02
+      // casa ? nºVálv.02), cada adutora com o SEU tubo de saída (antes só a 01).
+      const t01=tuboExtAdutora(atual.adutora01),t02=tuboExtAdutora(atual.adutora02);
+      const nominalAdutora=t01||(adCfg.resultado&&adCfg.resultado.nominal);
+      const nValvulas01=d.numValvulasAdutora01||0,nValvulas02=d.numValvulasAdutora02||0;
+      if(manifoldDiametro&&nominalAdutora&&(nValvulas01>0||nValvulas02>0)){
         const chave=`${nominalAdutora}x${manifoldDiametro}`;
+        const multPorChave={};
+        if(t01&&nValvulas01>0)multPorChave[`${t01}x${manifoldDiametro}`]=(multPorChave[`${t01}x${manifoldDiametro}`]||0)+(+nValvulas01);
+        if(t02&&nValvulas02>0)multPorChave[`${t02}x${manifoldDiametro}`]=(multPorChave[`${t02}x${manifoldDiametro}`]||0)+(+nValvulas02);
         const grupoManifold=(SELECAO_ATUAL.cavaletes_manifold||[]).find(g=>g.chave===chave);
-        if(grupoManifold){
-          // categoria = título real da seção na planilha, confirmado via arqueologia
-          // (ex. "SD-ADT 118MM x CAV.MF90"), não o nome descritivo antigo — necessário
-          // pro comparativo com a planilha bater exato.
-          const categoriaReal=`SD-ADT ${nominalAdutora}MM x CAV.MF${manifoldDiametro}`;
-          grupoManifold.itens.forEach(it=>{
+        Object.entries(multPorChave).forEach(([ch,mult])=>{
+          const gm=(SELECAO_ATUAL.cavaletes_manifold||[]).find(g=>g.chave===ch);
+          if(!gm)return;
+          // categoria = título real da seção na planilha (ex. "SD-ADT 118MM x CAV.MF90";
+          // o 50x50 é "SD-ADT 50MM x CV.MF50" na planilha).
+          const [tb]=ch.split('x');
+          const categoriaReal=ch==='50x50'?'SD-ADT 50MM x CV.MF50':`SD-ADT ${tb}MM x CAV.MF${manifoldDiametro}`;
+          gm.itens.forEach(it=>{
             atual.bom.push({id:uid(),categoria:categoriaReal,grupo:'CAVALETES',fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
-              qtd:it.qtd*nValvulas01,custoUnit:buscarCusto(it.fornecedor,it.codigo)||it.preco||0,ativo:true,origem,modelo:nomeModelo});
+              qtd:it.qtd*mult,custoUnit:buscarCusto(it.fornecedor,it.codigo)||it.preco||0,ativo:true,origem,modelo:nomeModelo});
             n++;
           });
+        });
+        if(grupoManifold){
           // "CONJUNTO LEITOR DE PRESSÃO" (categoria estática de conjuntos.js): o COLAR
           // DE TOMADA do leitor de pressão casa com o mesmo diâmetro do manifold do
           // cavalete (MF75/90/110/160/225) — não é um código fixo. Confirmado
@@ -4705,22 +4951,65 @@ function calcularComparacaoHistorico(orc){
     if(!categoriasPorChaveCodigo[chave])categoriasPorChaveCodigo[chave]=new Set();
     categoriasPorChaveCodigo[chave].add(it.categoria);
   });
+  // v1.55: índice auxiliar pelo GRUPO do app (ex. "MB Projeto - Saida", "Derivação
+  // Adutora") — a planilha tem 2 nomes por linha (título da seção, coluna E do
+  // cabeçalho, ex. "Derivações Adutora"/"MB-ES-S75-VH2-M2-SPP - Atualizado", e a coluna
+  // M "Categoria", ex. "Derivação Adutora"/"MB Projeto - Saida") e o app às vezes usa um,
+  // às vezes o outro. Antes isso virava par falso "Só no App"+"Só na Planilha" com a
+  // MESMA quantidade dos 2 lados (achado no Adelcio Peixoto Neves: Luvas, Derivações,
+  // kit da Saída MB).
+  const sufixoItem=it=>'\u0001'+String(it.fornecedor||'').trim().toLowerCase()+'\u0001'+String(it.codigo).trim();
+  const appPorGrupo={};
+  const ordemApp=[]; // ordem de categoria do app (igual à tela Conjuntos/BOM)
   itensAtivos.forEach(it=>{
     const chave=it.grupo+'\u0001'+(it.fornecedor||'')+'\u0001'+it.codigo;
     const fragmentado=it.grupo&&categoriasPorChaveCodigo[chave]&&categoriasPorChaveCodigo[chave].size>1;
     const categoria=fragmentado?it.grupo:(it.categoria||'(sem categoria)');
-    const k=normCat(categoria)+'\u0001'+(it.fornecedor||'')+'\u0001'+it.codigo;
-    if(!porChave[k])porChave[k]={categoria,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,qtdApp:0,qtdHist:0,descricoesHist:new Set()};
+    const k=normCat(categoria)+sufixoItem(it);
+    if(!porChave[k])porChave[k]={categoria,grupoApp:it.grupo||categoria,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,qtdApp:0,qtdHist:0,descricoesHist:new Set(),linha:null};
     porChave[k].qtdApp+=it.qtd;
+    if(it.grupo){const kg=normCat(it.grupo)+sufixoItem(it);(appPorGrupo[kg]=appPorGrupo[kg]||new Set()).add(k);}
   });
   orc.bomHistorico.forEach(it=>{
     const categoria=it.categoria||'(sem categoria)';
-    const k=normCat(categoria)+'\u0001'+(it.fornecedor||'')+'\u0001'+it.codigo;
-    if(!porChave[k])porChave[k]={categoria,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,qtdApp:0,qtdHist:0,descricoesHist:new Set()};
-    porChave[k].qtdHist+=it.qtd;
-    if(!porChave[k].descricao)porChave[k].descricao=it.descricao;
-    if(it.descricao)porChave[k].descricoesHist.add(it.descricao.trim());
+    const suf=sufixoItem(it);
+    const candidatos=[categoria,it.titulo,it.categoriaM].filter(Boolean).map(c=>normCat(c)+suf);
+    let k=candidatos.find(c=>porChave[c]&&porChave[c].qtdApp>0);
+    if(!k){
+      for(const c of candidatos){const s=appPorGrupo[c];if(s&&s.size===1){k=[...s][0];break;}}
+    }
+    if(!k)k=candidatos[0];
+    if(!porChave[k])porChave[k]={categoria,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,qtdApp:0,qtdHist:0,descricoesHist:new Set(),linha:null};
+    const alvo=porChave[k];
+    // nome mostrado = o da SUA lista de materiais (título real da planilha)
+    if(!alvo.categoriaPlanilha)alvo.categoriaPlanilha=categoria;
+    alvo.qtdHist+=it.qtd;
+    if(it.linha!=null&&(alvo.linha==null||it.linha<alvo.linha))alvo.linha=it.linha;
+    if(!alvo.descricao)alvo.descricao=it.descricao;
+    if(it.descricao)alvo.descricoesHist.add(it.descricao.trim());
   });
+  // Ordem do relatório = ordem das linhas da lista de materiais da planilha
+  // ('Conj.Irri.Projeto - Got 01' depois 'Conj.Irri.Recalque'). Categoria que só existe
+  // no app entra logo depois da categoria vizinha dela na ordem da tela Conjuntos (BOM).
+  Object.values(porChave).forEach(it=>{if(it.categoriaPlanilha)it.categoria=it.categoriaPlanilha;});
+  const ordemCat={};
+  Object.values(porChave).forEach(it=>{if(it.linha!=null){const c=it.categoria;ordemCat[c]=Math.min(ordemCat[c]??Infinity,it.linha);}});
+  {
+    const mapaApp={};itensAtivos.forEach(it=>{if(!mapaApp[it.categoria])mapaApp[it.categoria]={grupo:it.grupo||it.categoria};});
+    const catsApp=ordenarCategoriasMapa(mapaApp);
+    // categoria do app -> categoria mostrada no relatório (a 1ª que recebeu item dela)
+    const catRelPorApp={};
+    itensAtivos.forEach(it=>{
+      const r=Object.values(porChave).find(p=>p.codigo===it.codigo&&p.fornecedor===it.fornecedor&&p.qtdApp>0&&(normCat(p.categoria)===normCat(it.categoria)||normCat(p.grupoApp||'')===normCat(it.grupo||'')));
+      if(r&&!catRelPorApp[it.categoria])catRelPorApp[it.categoria]=r.categoria;
+    });
+    let ultimo=0;
+    catsApp.forEach(ca=>{
+      const cr=catRelPorApp[ca]||ca;
+      if(ordemCat[cr]!=null){ultimo=ordemCat[cr];}
+      else{ultimo+=0.001;ordemCat[cr]=ultimo;}
+    });
+  }
   return Object.values(porChave).map(it=>{
     const diferenca=it.qtdApp-it.qtdHist;
     let status;
@@ -4732,13 +5021,15 @@ function calcularComparacaoHistorico(orc){
     // outros textos achados (ambiguidade de dado na fonte, não erro do app).
     const outras=[...it.descricoesHist].filter(d=>d.trim().toLowerCase()!==(it.descricao||'').trim().toLowerCase());
     const descricaoAlt=outras.length?outras.join(' | '):null;
-    const{descricoesHist,...rest}=it;
-    return{...rest,diferenca,status,descricaoAlt};
+    const{descricoesHist,categoriaPlanilha,grupoApp,...rest}=it;
+    return{...rest,diferenca,status,descricaoAlt,ordemCategoria:ordemCat[it.categoria]??Infinity};
   }).sort((a,b)=>{
+    // mesma ordem da lista de materiais da planilha (categoria e, dentro dela, linha)
+    if(a.ordemCategoria!==b.ordemCategoria)return a.ordemCategoria-b.ordemCategoria;
     if(a.categoria!==b.categoria)return a.categoria.localeCompare(b.categoria,'pt-BR');
-    const pa=a.status==='Igual'?1:0,pb=b.status==='Igual'?1:0;
-    if(pa!==pb)return pa-pb; // divergentes primeiro
-    return Math.abs(b.diferenca)-Math.abs(a.diferenca)||a.descricao.localeCompare(b.descricao,'pt-BR');
+    const la=a.linha??Infinity,lb=b.linha??Infinity;
+    if(la!==lb)return la-lb;
+    return String(a.descricao).localeCompare(String(b.descricao),'pt-BR');
   });
 }
 function gerarRelatorioDivergencias(){
