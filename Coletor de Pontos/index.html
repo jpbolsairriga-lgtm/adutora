@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- build 2026-11-10 v1.4.0 -->
+<!-- build 2026-11-13 v1.5.0 -->
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
@@ -218,15 +218,27 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.9rem 1rem calc(.
 <div id="msg"></div>
 
 <div class="card">
-  <p class="sec-title">Levantamento / projeto</p>
+  <p class="sec-title">Cliente / levantamento</p>
   <div class="field"><label for="fProj">Levantamento ativo</label>
     <select id="fProj"></select></div>
   <div class="btns">
     <button id="btnProjNovo">+ Novo</button>
-    <button id="btnProjRen">Renomear</button>
+    <button id="btnProjRen">Editar</button>
     <button id="btnProjDel" style="color:var(--rd)">Excluir</button>
   </div>
-  <div class="note">Cada levantamento tem seus próprios alvos importados e pontos coletados — projetos com os mesmos nomes (PC-01…) não se misturam. Exportar CSV/TXT/KML sai só do levantamento ativo, com o nome dele no arquivo.</div>
+  <p class="sec-title" style="margin-top:1rem">Backup de todos os projetos</p>
+  <div class="btns">
+    <button id="btnBackup">Salvar backup</button>
+    <button id="btnRestaura">Restaurar backup</button>
+    <button id="btnZipTudo">Exportar todos (ZIP)</button>
+  </div>
+  <input type="file" id="fileBackup" accept=".json,application/json" style="display:none">
+  <div class="note" id="backupInfo"></div>
+  <div id="lixeiraWrap" style="display:none;margin-top:.7rem">
+    <details><summary style="cursor:pointer;font-size:.8rem;font-weight:700;color:var(--mu)">Lixeira (<span id="lixeiraN">0</span>)</summary>
+      <div id="lixeira"></div></details>
+  </div>
+  <div class="note">Cada levantamento tem seus próprios alvos e pontos, agrupados por cliente — nomes iguais (PC-01…) em projetos diferentes não se misturam. <b>Salvar backup</b> gera um único arquivo com todos os clientes e levantamentos (guarde no Drive/WhatsApp); <b>Restaurar</b> só acrescenta, nunca apaga. <b>Exportar todos</b> gera um ZIP com pastas Cliente/Levantamento contendo CSV, TXT e KML.</div>
 </div>
 
 <div class="card">
@@ -389,8 +401,9 @@ footer{background:#fff;border-top:2px solid var(--bdr);padding:.9rem 1rem calc(.
 /* ==================================================================
    VERSÃO / HISTÓRICO
    ================================================================== */
-var VERSAO_APP="1.4.0";
+var VERSAO_APP="1.5.0";
 var HISTORICO_VERSOES=[
+  {v:"1.5.0",d:"13/11/2026",t:"Vários clientes sem perder nada: cada levantamento ganha um Cliente/fazenda e a lista fica agrupada por cliente. “Excluir” agora manda pra uma lixeira (dá pra restaurar). Novo backup completo: “Salvar backup” gera um arquivo único com todos os clientes e levantamentos, e “Restaurar backup” traz tudo de volta (só acrescenta, nunca apaga) — serve também pra passar os dados pra outro celular. “Exportar todos (ZIP)” gera pastas Cliente/Levantamento com CSV, TXT e KML de cada um. Aviso de quantos dias desde o último backup."},
   {v:"1.4.0",d:"10/11/2026",t:"Levantamentos/projetos separados: cada um tem seus próprios alvos importados e pontos coletados. Corrige a sobreposição de dois projetos com os mesmos nomes de ponto (PC-01…PC-08) — antes, importar o 2º KML atualizava os alvos do 1º e “Marcar ponto” substituía os pontos antigos. Ao importar um KML com o levantamento atual já em uso, o app oferece criar um levantamento novo com o nome do arquivo. Exportações saem só do levantamento ativo, com o nome dele no arquivo (e coluna Projeto no CSV). Os dados que já estavam no aparelho viram o “Levantamento 1”."},
   {v:"1.3.0",d:"16/10/2026",t:"Cor dos pontos de controle importados: toque num ponto no mapa de satélite pra abrir uma paleta de cores e escolher a dele — inclusive pontos já marcados/visitados. A cor fica salva, aparece na lista de alvos também, e o próprio popup ganhou um botão “Navegar até aqui”."},
   {v:"1.2.0",d:"14/10/2026",t:"A tela de navegação até um ponto agora funciona exatamente como o mapa principal por padrão: arrastar e dar zoom sempre liberados, sem travar nada. O giro automático (mapa virar sozinho pra onde você anda) deixou de ligar sozinho — agora só liga se você tocar no botão redondo (◎) no canto superior direito; enquanto ele estiver desligado (o normal), nada no mapa fica travado."},
@@ -520,19 +533,40 @@ function loadProjetos(){
     }catch(e){}
     saveProjetos();
   }
-  if(!projAtivo()){ projetos.ativo=projetos.lista[0].id; saveProjetos(); }
+  var pa=projAtivo();
+  if(!pa||pa.excluido){
+    var vivos=projetos.lista.filter(function(p){return !p.excluido;});
+    projetos.ativo=vivos.length?vivos[0].id:null;
+    if(!projetos.ativo){ var nid=novoIdProj(); projetos.lista.push({id:nid,nome:"Levantamento 1",cliente:"",criado:new Date().toISOString()}); projetos.ativo=nid; }
+    saveProjetos();
+  }
 }
 function contaDe(chave){
   try{ var r=localStorage.getItem(chave), a=r?JSON.parse(r):[]; return Array.isArray(a)?a.length:0; }catch(e){ return 0; }
 }
-function criaProjeto(nome){
+function criaProjeto(nome,cliente){
   var id=novoIdProj();
-  projetos.lista.push({id:id,nome:nome,criado:new Date().toISOString()});
+  if(cliente==null){ var pa=projAtivo(); cliente=pa?(pa.cliente||""):""; }
+  projetos.lista.push({id:id,nome:nome,cliente:cliente,criado:new Date().toISOString()});
   saveProjetos();
   return id;
 }
-function nomeProjetoLivre(base){
-  var nomes=projetos.lista.map(function(p){return p.nome.toLowerCase();});
+function projetosVivos(){ return projetos.lista.filter(function(p){return !p.excluido;}); }
+function clientesExistentes(){
+  var m={}; projetosVivos().forEach(function(p){ if(p.cliente) m[p.cliente]=1; });
+  return Object.keys(m).sort(function(a,b){return a.localeCompare(b,"pt-BR");});
+}
+function perguntaCliente(atual){
+  var cl=clientesExistentes();
+  var n=prompt("Cliente / fazenda"+(cl.length?" (já cadastrados: "+cl.join(", ")+")":"")+":\n(deixe vazio se não quiser agrupar por cliente)",atual||"");
+  if(n==null) return null;
+  n=n.trim();
+  /* reaproveita a grafia de um cliente já cadastrado (evita "Faz. Boa Vista" e "faz. boa vista" separados) */
+  var igual=cl.filter(function(c){return c.toLowerCase()===n.toLowerCase();})[0];
+  return igual||n;
+}
+function nomeProjetoLivre(base,exceto){
+  var nomes=projetosVivos().filter(function(p){return p!==exceto;}).map(function(p){return p.nome.toLowerCase();});
   if(nomes.indexOf(base.toLowerCase())<0) return base;
   for(var i=2;;i++){ var n=base+" ("+i+")"; if(nomes.indexOf(n.toLowerCase())<0) return n; }
 }
@@ -560,46 +594,86 @@ function trocaProjeto(id){
 function renderProjetos(){
   var sel=document.getElementById("fProj"); if(!sel) return;
   sel.innerHTML="";
-  projetos.lista.forEach(function(p){
-    var o=document.createElement("option"); o.value=p.id;
-    var np=(p.id===projetos.ativo)?pontos.length:contaDe(kPontos(p.id));
-    var na=(p.id===projetos.ativo)?alvos.length:contaDe(kAlvos(p.id));
-    o.textContent=p.nome+" — "+np+" pto"+(np===1?"":"s")+(na?" · "+na+" alvo"+(na===1?"":"s"):"");
-    if(p.id===projetos.ativo) o.selected=true;
-    sel.appendChild(o);
+  /* agrupa por cliente (em ordem alfabética); levantamentos sem cliente ficam no fim */
+  var grupos={}, ordem=[];
+  projetosVivos().forEach(function(p){
+    var g=p.cliente||"";
+    if(!grupos[g]){ grupos[g]=[]; ordem.push(g); }
+    grupos[g].push(p);
+  });
+  ordem.sort(function(a,b){ if(!a) return 1; if(!b) return -1; return a.localeCompare(b,"pt-BR"); });
+  ordem.forEach(function(g){
+    var dest=sel;
+    if(ordem.length>1||g){ dest=document.createElement("optgroup"); dest.label=g||"Sem cliente"; sel.appendChild(dest); }
+    grupos[g].forEach(function(p){
+      var o=document.createElement("option"); o.value=p.id;
+      var np=(p.id===projetos.ativo)?pontos.length:contaDe(kPontos(p.id));
+      var na=(p.id===projetos.ativo)?alvos.length:contaDe(kAlvos(p.id));
+      o.textContent=p.nome+" — "+np+" pto"+(np===1?"":"s")+(na?" · "+na+" alvo"+(na===1?"":"s"):"");
+      if(p.id===projetos.ativo) o.selected=true;
+      dest.appendChild(o);
+    });
   });
   sel.disabled=!!autoTimer;
   var pa=projAtivo(), t=document.getElementById("projNomeLista");
-  if(t) t.textContent=pa?pa.nome:"";
+  if(t) t.textContent=pa?((pa.cliente?pa.cliente+" › ":"")+pa.nome):"";
+  renderLixeira(); pintaBackup();
+}
+function renderLixeira(){
+  var box=document.getElementById("lixeira"); if(!box) return;
+  var lx=projetos.lista.filter(function(p){return p.excluido;});
+  document.getElementById("lixeiraWrap").style.display=lx.length?"block":"none";
+  document.getElementById("lixeiraN").textContent=lx.length;
+  box.innerHTML="";
+  lx.forEach(function(p){
+    var d=document.createElement("div"); d.className="alvo feito";
+    var inf=document.createElement("div"); inf.className="info";
+    var np=contaDe(kPontos(p.id));
+    inf.innerHTML='<div class="nm"></div><div class="ds"></div>';
+    inf.firstChild.textContent=(p.cliente?p.cliente+" › ":"")+p.nome;
+    inf.lastChild.textContent=np+" ponto(s) · excluído em "+new Date(p.excluido).toLocaleDateString("pt-BR");
+    var r=document.createElement("button"); r.textContent="Restaurar";
+    r.onclick=function(){ p.excluido=null; p.nome=nomeProjetoLivre(p.nome,p); saveProjetos(); trocaProjeto(p.id); renderProjetos(); };
+    var x=document.createElement("button"); x.className="del"; x.textContent="Apagar de vez";
+    x.onclick=function(){
+      if(!confirm("Apagar DEFINITIVAMENTE “"+p.nome+"” ("+np+" pontos)? Não dá pra desfazer.")) return;
+      try{ localStorage.removeItem(kPontos(p.id)); localStorage.removeItem(kAlvos(p.id)); }catch(e){}
+      projetos.lista=projetos.lista.filter(function(z){return z!==p;}); saveProjetos(); renderProjetos();
+    };
+    d.appendChild(inf); d.appendChild(r); d.appendChild(x); box.appendChild(d);
+  });
 }
 function novoProjeto(){
   if(!podeTrocarProjeto()) return;
-  var n=prompt("Nome do novo levantamento/projeto:",nomeProjetoLivre("Levantamento "+(projetos.lista.length+1)));
+  var pa=projAtivo();
+  var cli=perguntaCliente(pa?pa.cliente:""); if(cli==null) return;
+  var n=prompt("Nome do levantamento"+(cli?" de "+cli:"")+":\n(ex.: Talhão 5, Pivô 2, Levantamento drone nov/26)",
+    nomeProjetoLivre("Levantamento "+(projetosVivos().length+1)));
   if(n==null) return; n=n.trim(); if(!n) return;
-  trocaProjeto(criaProjeto(nomeProjetoLivre(n)));
+  trocaProjeto(criaProjeto(nomeProjetoLivre(n),cli));
 }
 function renomeiaProjeto(){
   var pa=projAtivo(); if(!pa) return;
-  var n=prompt("Novo nome para “"+pa.nome+"”:",pa.nome);
-  if(n==null) return; n=n.trim(); if(!n||n===pa.nome) return;
-  pa.nome=nomeProjetoLivre(n); saveProjetos(); renderProjetos();
+  var cli=perguntaCliente(pa.cliente); if(cli==null) return;
+  var n=prompt("Nome do levantamento:",pa.nome);
+  if(n==null) return; n=n.trim(); if(!n) return;
+  pa.cliente=cli; if(n!==pa.nome) pa.nome=nomeProjetoLivre(n,pa);
+  saveProjetos(); renderProjetos();
 }
 function excluiProjeto(){
   var pa=projAtivo(); if(!pa) return;
   if(!podeTrocarProjeto()) return;
-  if(!confirm("Excluir o levantamento “"+pa.nome+"” com "+pontos.length+" ponto(s) coletado(s) e "+alvos.length+" alvo(s)?\n\nExporte antes — não dá pra desfazer.")) return;
+  if(!confirm("Mover o levantamento “"+pa.nome+"” ("+pontos.length+" ponto(s), "+alvos.length+" alvo(s)) para a lixeira?\n\nDá pra restaurar depois, no fim deste quadro.")) return;
   if(navAlvo) sairNav();
-  try{ localStorage.removeItem(kPontos(pa.id)); localStorage.removeItem(kAlvos(pa.id)); }catch(e){}
-  projetos.lista=projetos.lista.filter(function(p){return p!==pa;});
-  if(!projetos.lista.length) projetos.lista.push({id:novoIdProj(),nome:"Levantamento 1",criado:new Date().toISOString()});
-  projetos.ativo=null;
-  var destino=projetos.lista[projetos.lista.length-1].id;
-  pontos=[]; alvos=[];
+  save(); saveAlvos();
+  pa.excluido=new Date().toISOString();
+  var vivos=projetosVivos();
+  var destino=vivos.length?vivos[vivos.length-1].id:criaProjeto("Levantamento 1","");
   projetos.ativo=destino; saveProjetos();
   load(); loadAlvos(); nAjuste=-1;
   render(); renderAlvos(); renderProjetos();
   document.getElementById("fNome").placeholder=proximoNome();
-  info("Levantamento excluído.");
+  info("Levantamento movido para a lixeira.");
 }
 
 /* ---------- storage ---------- */
@@ -948,9 +1022,9 @@ function centralizar(){
   if(b.getNorth()===b.getSouth()&&b.getEast()===b.getWest()) map.setView(b.getCenter(),18,{animate:false});
   else map.fitBounds(b,{padding:[35,35],maxZoom:18,animate:false});
 }
-function linhasDe(){
+function linhasDe(ps){
   var m={},ord=[];
-  pontos.forEach(function(p){
+  (ps||pontos).forEach(function(p){
     if(!p.linha) return;
     if(!m[p.linha]){m[p.linha]={id:p.linha,tipo:p.tipo||"linha",pts:[]};ord.push(m[p.linha]);}
     m[p.linha].pts.push(p);
@@ -1540,10 +1614,11 @@ function apagaOffline(){
 }
 
 /* ---------- export ---------- */
-function csv(){
-  var l=["Nome;Obs;Latitude;Longitude;Altitude_m;UTM_E;UTM_N;Zona;Precisao_m;Linha;DataHora;Projeto"];
-  var pn=((projAtivo()||{}).nome||"").replace(/[;\r\n]/g," ");
-  pontos.forEach(function(p){
+function csv(ps,proj){
+  ps=ps||pontos; proj=proj||projAtivo()||{};
+  var l=["Nome;Obs;Latitude;Longitude;Altitude_m;UTM_E;UTM_N;Zona;Precisao_m;Linha;DataHora;Projeto;Cliente"];
+  var pn=(proj.nome||"").replace(/[;\r\n]/g," "), cl=(proj.cliente||"").replace(/[;\r\n]/g," ");
+  ps.forEach(function(p){
     l.push([
       p.nome, (p.obs||"").replace(/[;\r\n]/g," "),
       p.lat.toFixed(8).replace(".",","), p.lon.toFixed(8).replace(".",","),
@@ -1551,37 +1626,38 @@ function csv(){
       p.e.toFixed(3).replace(".",","), p.n.toFixed(3).replace(".",","),
       p.zona+p.hemi,
       (p.acc==null?"":p.acc.toFixed(2).replace(".",",")),
-      p.linha||"", p.data, pn
+      p.linha||"", p.data, pn, cl
     ].join(";"));
   });
   return l.join("\r\n");
 }
-function txt(){
-  return pontos.map(function(p){
+function txt(ps){
+  return (ps||pontos).map(function(p){
     return [p.nome,p.e.toFixed(3),p.n.toFixed(3),
       (p.alt==null?"0.000":p.alt.toFixed(3)),
       (p.obs||"").replace(/[,\r\n]/g," ")].join(",");
   }).join("\r\n");
 }
-function kml(){
-  var x='<?xml version="1.0" encoding="UTF-8"?>\r\n<kml xmlns="http://www.opengis.net/kml/2.2">\r\n<Document>\r\n<name>'+esc((projAtivo()||{nome:"Pontos GPS"}).nome)+' '+stamp()+'</name>\r\n'+
+function kml(ps,proj){
+  ps=ps||pontos; proj=proj||projAtivo()||{nome:"Pontos GPS"};
+  var x='<?xml version="1.0" encoding="UTF-8"?>\r\n<kml xmlns="http://www.opengis.net/kml/2.2">\r\n<Document>\r\n<name>'+esc((proj.cliente?proj.cliente+" - ":"")+proj.nome)+' '+stamp()+'</name>\r\n'+
     '<Style id="pt"><IconStyle><scale>0.9</scale><Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon></IconStyle></Style>\r\n'+
     '<Style id="ln"><LineStyle><color>ff00d4ff</color><width>3</width></LineStyle></Style>\r\n'+
     '<Style id="ar"><LineStyle><color>ff00d4ff</color><width>3</width></LineStyle><PolyStyle><color>4000d4ff</color></PolyStyle></Style>\r\n'+
     '<Folder><name>Pontos</name>\r\n';
   function co(p){return p.lon.toFixed(8)+","+p.lat.toFixed(8)+","+(p.alt==null?0:p.alt.toFixed(3));}
-  pontos.forEach(function(p){
+  ps.forEach(function(p){
     x+='<Placemark><name>'+esc(p.nome)+'</name><description>'+esc((p.obs||"")+" UTM "+p.e.toFixed(3)+" E "+p.n.toFixed(3)+" N "+p.zona+p.hemi)+
       '</description><styleUrl>#pt</styleUrl><TimeStamp><when>'+p.data+'</when></TimeStamp><Point><coordinates>'+co(p)+'</coordinates></Point></Placemark>\r\n';
   });
   x+='</Folder>\r\n<Folder><name>Linhas</name>\r\n';
-  linhasDe().forEach(function(l){
+  linhasDe(ps).forEach(function(l){
     if(l.pts.length<2||l.tipo==="area") return;
     x+='<Placemark><name>Linha '+l.id+'</name><styleUrl>#ln</styleUrl><LineString><tessellate>1</tessellate><coordinates>'+
       l.pts.map(co).join(" ")+'</coordinates></LineString></Placemark>\r\n';
   });
   x+='</Folder>\r\n<Folder><name>Áreas</name>\r\n';
-  linhasDe().forEach(function(l){
+  linhasDe(ps).forEach(function(l){
     if(l.tipo!=="area"||l.pts.length<3) return;
     var m=medida(l), c=l.pts.map(co); c.push(c[0]);
     x+='<Placemark><name>Área '+l.id+'</name><description>Área: '+fmtNum(m.area,1)+' m² ('+fmtNum(m.area/10000,4)+' ha) · Perímetro: '+fmtNum(m.per,1)+' m</description><styleUrl>#ar</styleUrl>'+
@@ -1598,7 +1674,43 @@ function fallback(titulo,conteudo){
   document.getElementById("dlgTxt").value=conteudo;
   document.getElementById("dlg").showModal();
 }
-function mime(ext){return ext==="csv"?"text/csv;charset=utf-8":ext==="kml"?"application/vnd.google-earth.kml+xml":"text/plain;charset=utf-8";}
+function mime(ext){return ext==="csv"?"text/csv;charset=utf-8":ext==="kml"?"application/vnd.google-earth.kml+xml":
+  ext==="json"?"application/json":ext==="zip"?"application/zip":"text/plain;charset=utf-8";}
+function nomeArq(s,padrao){
+  return String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"")
+    .replace(/[^A-Za-z0-9_-]+/g,"_").replace(/^_+|_+$/g,"").slice(0,40)||padrao||"pontos";
+}
+/* entrega um arquivo pro usuário: Claude → folha de compartilhar (iOS/Android) → download → copiar.
+   `texto` só existe para arquivos de texto (usado no plano "copiar" e no downloads do Claude). */
+function salvaArquivo(nome,blob,texto,aoSalvar){
+  var ext=(nome.split(".").pop()||"").toLowerCase();
+  function ok(){ info("Arquivo "+esc(nome)+" gerado."); if(aoSalvar) aoSalvar(); }
+  function plano_b(){
+    if(viaAncora(nome,blob)){ ok(); return; }
+    if(texto!=null) fallback(nome+" (copie o conteúdo)",texto);
+    else erro("Não foi possível salvar o arquivo neste navegador.");
+  }
+  if(downloads&&texto!=null){
+    downloads.save({filename:nome,data:texto}).then(ok).catch(function(e){
+      if(e && e.code==="declined") return;
+      plano_b();
+    });
+    return;
+  }
+  try{
+    if(navigator.share && navigator.canShare){
+      var arq=new File([blob],nome,{type:mime(ext)});
+      if(navigator.canShare({files:[arq]})){
+        navigator.share({files:[arq],title:nome}).then(ok).catch(function(e){
+          if(e && e.name==="AbortError") return;
+          plano_b();
+        });
+        return;
+      }
+    }
+  }catch(e){}
+  plano_b();
+}
 function viaAncora(nome,blob){
   try{
     var url=URL.createObjectURL(blob);
@@ -1615,41 +1727,117 @@ function viaAncora(nome,blob){
 function exportar(ext){
   if(!pontos.length){erro("Nenhum ponto para exportar.");return;}
   var conteudo=(ext==="csv"?csv():ext==="kml"?kml():txt());
-  var pnome=((projAtivo()||{}).nome||"pontos").normalize("NFD").replace(/[̀-ͯ]/g,"")
-    .replace(/[^A-Za-z0-9_-]+/g,"_").replace(/^_+|_+$/g,"").slice(0,40)||"pontos";
-  var nome=pnome+"_"+stamp()+"."+ext;
-  var bom=(ext==="kml"?"":"\ufeff");
-  var blob=new Blob([bom+conteudo],{type:mime(ext)});
-  function plano_b(){ if(!viaAncora(nome,blob)) fallback(nome+" (copie o conteúdo)",conteudo); }
+  var pa=projAtivo()||{};
+  var nome=(pa.cliente?nomeArq(pa.cliente)+"_":"")+nomeArq(pa.nome)+"_"+stamp()+"."+ext;
+  var bom=(ext==="kml"?"":"﻿");
+  salvaArquivo(nome,new Blob([bom+conteudo],{type:mime(ext)}),bom+conteudo);
+}
 
-  /* 1) dentro do Claude */
-  if(downloads){
-    downloads.save({filename:nome,data:bom+conteudo}).then(function(){
-      info("Arquivo "+nome+" gerado.");
-    }).catch(function(e){
-      if(e && e.code==="declined") return;
-      plano_b();
+/* ---------- backup completo / restaurar / exportar tudo ----------
+   O armazenamento do navegador pode ser apagado pelo sistema (ex.: iPhone limpa dados de
+   sites pouco usados, ou ao limpar o histórico). O backup .json leva TODOS os levantamentos
+   (inclusive os da lixeira) num arquivo só; restaurar nunca apaga nada — só acrescenta. */
+function dadosDe(id){
+  var ps=(id===projetos.ativo)?pontos:null, as=(id===projetos.ativo)?alvos:null;
+  try{ if(!ps){ ps=JSON.parse(localStorage.getItem(kPontos(id))||"[]"); } }catch(e){ ps=[]; }
+  try{ if(!as){ as=JSON.parse(localStorage.getItem(kAlvos(id))||"[]"); } }catch(e){ as=[]; }
+  return {pontos:Array.isArray(ps)?ps:[], alvos:Array.isArray(as)?as:[]};
+}
+function backupCompleto(){
+  save(); saveAlvos();
+  var pacote={app:"TophoFarm Coleta de Pontos",versao:VERSAO_APP,gerado:new Date().toISOString(),
+    projetos:projetos.lista.map(function(p){
+      var d=dadosDe(p.id);
+      return {id:p.id,nome:p.nome,cliente:p.cliente||"",criado:p.criado,excluido:p.excluido||null,pontos:d.pontos,alvos:d.alvos};
+    })};
+  var texto=JSON.stringify(pacote);
+  var nome="backup_coleta_"+stamp()+".json";
+  salvaArquivo(nome,new Blob([texto],{type:"application/json"}),texto,function(){
+    projetos.ultBackup=new Date().toISOString(); saveProjetos(); pintaBackup();
+  });
+}
+function restauraBackup(file){
+  if(!file) return;
+  if(autoTimer){ erro("Pare a captura automática antes de restaurar."); return; }
+  file.text().then(function(t){
+    var pk=JSON.parse(t);
+    if(!pk||!Array.isArray(pk.projetos)) throw new Error("o arquivo não é um backup do Coletor de Pontos.");
+    save(); saveAlvos();
+    /* descarta levantamentos VAZIOS (sem pontos e sem alvos) que não vieram no backup — ex.: o
+       "Levantamento 1" criado sozinho num celular novo/limpo. Nada com dado é removido. */
+    var idsBk={}; pk.projetos.forEach(function(bp){ if(bp&&bp.id) idsBk[bp.id]=1; });
+    projetos.lista=projetos.lista.filter(function(p){
+      if(idsBk[p.id]) return true;
+      if(contaDe(kPontos(p.id))+contaDe(kAlvos(p.id))>0) return true;
+      try{ localStorage.removeItem(kPontos(p.id)); localStorage.removeItem(kAlvos(p.id)); }catch(e){}
+      return false;
     });
-    return;
-  }
-  /* 2) folha de compartilhamento do iOS: Salvar em Arquivos, WhatsApp, e-mail */
-  try{
-    if(navigator.share && navigator.canShare){
-      var arq=new File([blob],nome,{type:mime(ext)});
-      if(navigator.canShare({files:[arq]})){
-        navigator.share({files:[arq],title:nome}).then(function(){
-          info("Arquivo "+nome+" gerado.");
-        }).catch(function(e){
-          if(e && e.name==="AbortError") return;
-          plano_b();
-        });
-        return;
+    var novos=0, mesclados=0, ptsAdd=0;
+    pk.projetos.forEach(function(bp){
+      if(!bp||!bp.id) return;
+      var ex=projetos.lista.filter(function(p){return p.id===bp.id;})[0];
+      var bPts=Array.isArray(bp.pontos)?bp.pontos:[], bAlv=Array.isArray(bp.alvos)?bp.alvos:[];
+      if(!ex){
+        projetos.lista.push({id:bp.id,nome:nomeProjetoLivre(bp.nome||"Levantamento"),cliente:bp.cliente||"",
+          criado:bp.criado||new Date().toISOString(),excluido:bp.excluido||null});
+        localStorage.setItem(kPontos(bp.id),JSON.stringify(bPts));
+        localStorage.setItem(kAlvos(bp.id),JSON.stringify(bAlv));
+        novos++; ptsAdd+=bPts.length;
+      }else{
+        /* já existe: junta sem duplicar (ponto = mesmo nome + mesma data/hora; alvo = mesmo id) */
+        var d=dadosDe(bp.id), chave=function(p){return (p.nome||"")+"|"+(p.data||"");};
+        var tem={}; d.pontos.forEach(function(p){ tem[chave(p)]=1; });
+        var add=bPts.filter(function(p){ return !tem[chave(p)]; });
+        var temA={}; d.alvos.forEach(function(a){ temA[a.id]=1; });
+        var addA=bAlv.filter(function(a){ return !temA[a.id]; });
+        if(add.length||addA.length){
+          var ps=d.pontos.concat(add).sort(function(a,b){ return new Date(a.data)-new Date(b.data); });
+          localStorage.setItem(kPontos(bp.id),JSON.stringify(ps));
+          localStorage.setItem(kAlvos(bp.id),JSON.stringify(d.alvos.concat(addA)));
+          mesclados++; ptsAdd+=add.length;
+        }
+        if(!ex.cliente&&bp.cliente) ex.cliente=bp.cliente;
       }
+    });
+    var at=projAtivo();
+    if(!at||at.excluido){
+      var vivos=projetosVivos();
+      if(vivos.length) projetos.ativo=vivos[0].id;
+      else{ projetos.ativo=null; projetos.ativo=criaProjeto("Levantamento 1",""); }
     }
-  }catch(e){}
-  /* 3) download direto */
-  if(viaAncora(nome,blob)){ info("Arquivo "+nome+" gerado."); return; }
-  fallback(nome+" (copie o conteúdo)",conteudo);
+    saveProjetos();
+    load(); loadAlvos(); nAjuste=-1;
+    render(); renderAlvos(); renderProjetos();
+    info("Backup restaurado: "+novos+" levantamento(s) novo(s), "+mesclados+" completado(s), "+ptsAdd+" ponto(s) recuperado(s). Nada foi apagado.");
+  }).catch(function(e){ erro("Não foi possível restaurar: "+esc(e.message||e)); });
+}
+function exportaTudoZip(){
+  if(typeof JSZip==="undefined"){ erro("Gerador de ZIP indisponível."); return; }
+  save(); saveAlvos();
+  var z=new JSZip(), n=0, usados={};
+  projetos.lista.forEach(function(p){
+    if(p.excluido) return;
+    var d=dadosDe(p.id); if(!d.pontos.length) return;
+    var pasta=nomeArq(p.cliente||"Sem_cliente","Sem_cliente")+"/"+nomeArq(p.nome,"Levantamento");
+    if(usados[pasta]) pasta+="_"+p.id; usados[pasta]=1;
+    var base=pasta+"/"+nomeArq(p.nome,"Levantamento");
+    z.file(base+".csv","﻿"+csv(d.pontos,p));
+    z.file(base+".txt","﻿"+txt(d.pontos));
+    z.file(base+".kml",kml(d.pontos,p));
+    n++;
+  });
+  if(!n){ erro("Nenhum levantamento com pontos coletados para exportar."); return; }
+  z.generateAsync({type:"blob",mimeType:"application/zip"}).then(function(blob){
+    salvaArquivo("levantamentos_"+stamp()+".zip",blob,null);
+  });
+}
+function pintaBackup(){
+  var el=document.getElementById("backupInfo"); if(!el) return;
+  var u=projetos.ultBackup;
+  if(!u){ el.innerHTML='<b style="color:var(--rd)">Nenhum backup feito ainda.</b> Faça um ao fim de cada dia de campo.'; return; }
+  var dias=Math.floor((Date.now()-new Date(u))/864e5);
+  el.innerHTML="Último backup: <b"+(dias>=3?' style="color:var(--rd)"':"")+">"+new Date(u).toLocaleString("pt-BR")+"</b>"+
+    (dias>=1?" (há "+dias+" dia"+(dias>1?"s":"")+")":"");
 }
 
 /* ---------- init ---------- */
@@ -1659,6 +1847,12 @@ document.getElementById("fProj").onchange=function(){ trocaProjeto(this.value); 
 document.getElementById("btnProjNovo").onclick=novoProjeto;
 document.getElementById("btnProjRen").onclick=renomeiaProjeto;
 document.getElementById("btnProjDel").onclick=excluiProjeto;
+document.getElementById("btnBackup").onclick=backupCompleto;
+document.getElementById("btnZipTudo").onclick=exportaTudoZip;
+document.getElementById("btnRestaura").onclick=function(){ document.getElementById("fileBackup").click(); };
+document.getElementById("fileBackup").onchange=function(){ restauraBackup(this.files[0]); this.value=""; };
+/* pede ao navegador pra não apagar os dados do app sozinho (quando o sistema precisa de espaço) */
+try{ if(navigator.storage&&navigator.storage.persist) navigator.storage.persist().catch(function(){}); }catch(e){}
 document.getElementById("btnBuscarAtt").onclick=function(){
   if(versaoDisponivel) aplicarAtualizacao();
   else buscarAtualizacoes(false);
