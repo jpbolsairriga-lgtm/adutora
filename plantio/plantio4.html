@@ -375,6 +375,9 @@ body.layout-lateral #status{grid-area:status;}
 .fid-chk{display:flex;align-items:center;gap:6px;font-size:11.5px;cursor:pointer;margin:4px 0;}
 .fid-acoes{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0 2px;}
 .fid-grad{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--panel-text-dim);margin:4px 0;}
+.fid-areas{background:var(--panel-bg-2);border:1px solid var(--panel-border);border-radius:8px;padding:6px 10px;margin:0 0 10px;font-size:11.5px;}
+.fid-areas .fid-acoes{margin:5px 0 0;}
+.fid-desenhando{border-color:var(--acc2);box-shadow:0 0 0 2px var(--acc2-wash);}
 .fid-grad-barra{flex:1;max-width:260px;height:9px;border-radius:3px;background:linear-gradient(90deg,#2166ac,#f7f7f7,#b2182b);}
 @media (max-width:600px){#modalFidelidade .modal{margin:8px;width:calc(100% - 16px);max-height:calc(100vh - 16px);} .fid-kpi .v{font-size:16px;}}
 .modal ol{padding-left:18px;margin:10px 0;}
@@ -536,7 +539,7 @@ body.apresentacao-ativa #statusBarCad{display:none;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v6.04 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v6.05 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -18286,8 +18289,9 @@ const _FID = {
   aberto: false, aba: 'resumo', fonte: null, token: 0, ctx: null, res: null, sup: null,
   calorModo: 'nenhum', calorOpacidade: 0.75, colorirLinhas: true, tolerancia: null, ordemCota: 'pior',
   varredura: null, perfil: null, externa: null, alvoPEC: 'A', timer: null,
-  layers: { linhas: null, calor: null, externa: null, perfil: null, destaque: null },
-  perfilPts: [], perfilClickFn: null, popup: null, box: null
+  layers: { linhas: null, calor: null, externa: null, perfil: null, destaque: null, areas: null, rascunho: null },
+  perfilPts: [], perfilClickFn: null, popup: null, box: null,
+  areas: [], desenho: null
 };
 const _FID_ROT_RELEVO = { 0: 'nenhuma', 1: 'leve', 2: 'média', 4: 'forte' };
 const _fidPausa = () => new Promise(r => setTimeout(r, 0));
@@ -18607,7 +18611,8 @@ function _fidMedirEtapa(cands, ctx, idxOrig, passo, guardarAmostras, capH) {
   const { xy, ref } = ctx;
   const dzTodos = [], dhTodos = [];
   const porCota = new Map();
-  let comp = 0, giro = 0, semPar = 0, foraRef = 0;
+  let comp = 0, giro = 0, semPar = 0, foraRef = 0, ignorados = 0;
+  const filtro = ctx.filtro;
   const linhas = guardarAmostras ? [] : null;
   for(const c of cands) {
     const P = c.pontos.map(xy.to);
@@ -18622,6 +18627,7 @@ function _fidMedirEtapa(cands, ctx, idxOrig, passo, guardarAmostras, capH) {
     const dzLinha = guardarAmostras ? new Float32Array(S.length) : null;
     for(let i = 0; i < S.length; i++) {
       const ll = xy.from(S[i][0], S[i][1]);
+      if(filtro && !filtro(ll.lat, ll.lng)) { ignorados++; if(dzLinha) dzLinha[i] = NaN; continue; }
       const z = ref.sampler(ll.lat, ll.lng);
       if(z == null || !isFinite(z)) { foraRef++; if(dzLinha) dzLinha[i] = NaN; continue; }
       const dz = z - c.level;
@@ -18637,7 +18643,7 @@ function _fidMedirEtapa(cands, ctx, idxOrig, passo, guardarAmostras, capH) {
   porCota.forEach(pc => { pc.estDz = _fidEstat(pc.dz); pc.estDh = pc.dh.length ? _fidEstat(pc.dh) : null; pc.dz = null; pc.dh = null; });
   return {
     vert: _fidEstat(dzTodos), horiz: idxOrig ? _fidEstat(dhTodos) : null,
-    comp, rug: comp > 0 ? giro / comp * 100 : 0, semPar, foraRef, porCota, linhas, nCurvas: cands.length
+    comp, rug: comp > 0 ? giro / comp * 100 : 0, semPar, foraRef, ignorados, porCota, linhas, nCurvas: cands.length
   };
 }
 
@@ -18719,7 +18725,14 @@ async function _fidAnalisar() {
     _fidEl('fidCorpo').innerHTML = `<div class="fid-note" style="padding:14px 0;">Nada pra analisar — ${_FID.fonte === 'importadas' ? 'importe curvas DXF/KML' : 'gere as curvas de nível'} primeiro.</div>`;
     _fidLimparCamadas(); return;
   }
+  ctx.filtro = _fidCriarFiltro();
+  if(ctx.filtro) {
+    const { lats, lngs, n, mask } = ctx.grade, m2 = new Uint8Array(mask);
+    for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) if(m2[r*n + c] && !ctx.filtro(lats[r], lngs[c])) m2[r*n + c] = 0;
+    ctx.grade.mask = m2;
+  }
   _FID.ctx = ctx;
+  _fidDesenharAreas();
   if(_FID.tolerancia == null || _FID._eqTol !== ctx.eq) { _FID.tolerancia = ctx.eq / 2; _FID._eqTol = ctx.eq; _fidEl('fidTol').value = _fidFmt(_FID.tolerancia, 2); }
   const passo = _fidPassoAmostragem(ctx);
   const capH = Math.max(30, ctx.celulaM * 8, ctx.eq * 10);
@@ -18808,11 +18821,11 @@ function _fidDesenharLinhas() {
     for(let i = 0; i < l.S.length; i++) {
       const c = _fidCorDz(l.dz[i], tol), ll = xy.from(l.S[i][0], l.S[i][1]);
       if(c !== cor) {
-        if(atual) { atual.push([ll.lat, ll.lng]); L.polyline(atual, { color: cor, weight: l.isMaster ? 4 : 3, opacity: .95, renderer: rend, interactive: false }).addTo(grp); }
+        if(atual) { atual.push([ll.lat, ll.lng]); L.polyline(atual, { color: cor, weight: l.isMaster ? 4 : 3, opacity: cor === '#9e9e9e' ? .45 : .95, renderer: rend, interactive: false }).addTo(grp); }
         atual = [[ll.lat, ll.lng]]; cor = c;
       } else atual.push([ll.lat, ll.lng]);
     }
-    if(atual && atual.length > 1) L.polyline(atual, { color: cor, weight: l.isMaster ? 4 : 3, opacity: .95, renderer: rend, interactive: false }).addTo(grp);
+    if(atual && atual.length > 1) L.polyline(atual, { color: cor, weight: l.isMaster ? 4 : 3, opacity: cor === '#9e9e9e' ? .45 : .95, renderer: rend, interactive: false }).addTo(grp);
   });
   grp.addTo(map);
   _FID.layers.linhas = grp;
@@ -18882,6 +18895,7 @@ function fecharAnaliseFidelidade() {
   if(_FID.popup) _fidReacoplar(true);
   $('modalFidelidade').classList.remove('open');
   _fidCancelarPerfil();
+  _fidCancelarArea();
   _fidLimparCamadas();
 }
 function _fidTrocarFonte(v) { _FID.fonte = v; _FID.varredura = null; _FID.perfil = null; _fidLimparCamadas(['perfil', 'destaque']); _fidAnalisar(); }
@@ -18913,7 +18927,7 @@ function _fidRenderizar() {
   const res = _FID.res;
   if(!res) { if(!corpo.innerHTML.trim()) corpo.innerHTML = ''; return; }
   const fn = { resumo: _fidHtmlResumo, cotas: _fidHtmlCotas, varredura: _fidHtmlVarredura, perfil: _fidHtmlPerfil, externa: _fidHtmlExterna }[_FID.aba] || _fidHtmlResumo;
-  corpo.innerHTML = fn(res);
+  corpo.innerHTML = _fidHtmlAreas(res) + fn(res);
 }
 
 function _fidHtmlResumo(res) {
@@ -18925,7 +18939,8 @@ function _fidHtmlResumo(res) {
   const dRug = o.rug > 0 ? (f.rug - o.rug) / o.rug * 100 : 0;
   let h = `<div class="fid-note" style="margin-bottom:8px;">Referência: <b>${_fidEsc(ctx.ref.nome)}</b><br>
     ${f.nCurvas} trechos de curva · equidistância ${_fidFmt(eq, eq < 1 ? 2 : 1)} m · amostrado a cada ${_fidFmt(res.passo, 2)} m (${_fidFmtInt(v.n)} pontos)
-    ${f.foraRef ? ` · ${_fidFmtInt(f.foraRef)} pontos fora da referência ignorados` : ''}</div>`;
+    ${f.foraRef ? ` · ${_fidFmtInt(f.foraRef)} pontos fora da referência ignorados` : ''}
+    ${f.ignorados ? ` · <b>${_fidFmtInt(f.ignorados)} pontos (${_fidFmt(f.ignorados / Math.max(1, f.ignorados + v.n + f.foraRef) * 100, 1)}%) fora da área analisada</b>` : ''}</div>`;
   if(ctx.aviso) h += `<div class="fid-aviso">&#9888; ${_fidEsc(ctx.aviso)}</div>`;
   if(unica) h += `<div class="fid-aviso">Nenhuma suavização ativa — os números abaixo são o erro da própria representação em curvas (linha de base). Ligue a suavização do relevo/traçado na aba Curvas pra ver o impacto (esta janela atualiza sozinha).</div>`;
   h += `<div class="fid-kpis">
@@ -19139,7 +19154,124 @@ function _fidHtmlPerfil(res) {
   if(_FID.perfil) h += _fidSvgPerfil(_FID.perfil, res);
   return h;
 }
+// ── v6.05: área analisada ───────────────────────────────────────────────────────────────────
+// O usuário circula no mapa a ÁREA DE INTERESSE (só conta o que está dentro) e/ou áreas a EXCLUIR
+// (árvores, mata, construção, estrada…). Num DEM de superfície (DSM) do Agisoft esses objetos
+// aparecem como "terreno" metros acima do chão e derrubam a classe PEC sem culpa das curvas.
+// Os pontos de fora não entram em nenhuma estatística, mapa de calor, varredura ou comparação
+// externa — no mapa, os trechos de curva ignorados ficam cinza.
+function _fidPip(anel, x, y) {
+  let dentro = false;
+  for(let i = 0, j = anel.length - 1; i < anel.length; j = i++) {
+    const xi = anel[i][0], yi = anel[i][1], xj = anel[j][0], yj = anel[j][1];
+    if((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) dentro = !dentro;
+  }
+  return dentro;
+}
+function _fidCriarFiltro() {
+  const inc = _FID.areas.filter(a => a.tipo === 'incluir'), exc = _FID.areas.filter(a => a.tipo === 'excluir');
+  if(!inc.length && !exc.length) return null;
+  const em = (a, lat, lng) => lng >= a.bb[0] && lng <= a.bb[2] && lat >= a.bb[1] && lat <= a.bb[3] && _fidPip(a.anel, lng, lat);
+  return (lat, lng) => (!inc.length || inc.some(a => em(a, lat, lng))) && !exc.some(a => em(a, lat, lng));
+}
+function _fidHtmlAreas(res) {
+  const d = _FID.desenho;
+  const inc = _FID.areas.filter(a => a.tipo === 'incluir').length, exc = _FID.areas.length - inc;
+  let h = `<div class="fid-areas${d ? ' fid-desenhando' : ''}"><b>Área analisada:</b> `;
+  if(!_FID.areas.length) h += `toda a área das curvas <span class="fid-note">— se o DEM pegou árvores, mata ou construções, circule e exclua esses trechos</span>`;
+  else {
+    const p = [];
+    if(inc) p.push(`só dentro de ${inc} área${inc > 1 ? 's' : ''} de interesse`);
+    if(exc) p.push(`${exc} área${exc > 1 ? 's' : ''} excluída${exc > 1 ? 's' : ''}`);
+    h += p.join(' · ');
+    const ign = res && res.final ? res.final.ignorados : 0, tot = res && res.final ? ign + res.final.vert.n + res.final.foraRef : 0;
+    if(tot) h += ` <span class="fid-note">(${_fidFmt(ign / tot * 100, 1)}% dos pontos das curvas ficaram de fora — trechos em cinza no mapa)</span>`;
+  }
+  if(d) {
+    h += `<div class="fid-aviso" style="margin:6px 0 0;">&#9998; Desenhando ${d.tipo === 'incluir' ? '<b>área de interesse</b>' : '<b>área a excluir</b>'}: clique no mapa pra marcar os vértices (${d.pts.length} até agora). Pra fechar: clique duplo, clique no 1º ponto ou &#10004; Concluir. Esc cancela.</div>
+      <div class="fid-acoes"><button class="rbtn-sm" onclick="_fidConcluirArea()" ${d.pts.length < 3 ? 'disabled' : ''}>&#10004; Concluir</button><button class="rbtn-sm" onclick="_fidCancelarArea();_fidRenderizar()">&#10005; Cancelar</button></div>`;
+  } else {
+    h += `<div class="fid-acoes">
+      <button class="rbtn-sm" onclick="_fidIniciarArea('excluir')" title="Circule no mapa um trecho pra ficar FORA da análise: árvores, mata, construções, estradas, barrancos. Pode desenhar várias.">&#9986; Excluir área (árvores, mata…)</button>
+      <button class="rbtn-sm" onclick="_fidIniciarArea('incluir')" title="Circule no mapa a área de interesse — só o que estiver DENTRO entra na análise. Pode desenhar várias.">&#9998; Analisar só dentro de…</button>
+      ${_FID.areas.length ? `<button class="rbtn-sm" onclick="_fidDesfazerArea()">&#8630; Desfazer última</button><button class="rbtn-sm" onclick="_fidLimparAreas()">Limpar áreas</button>` : ''}
+    </div>`;
+  }
+  return h + '</div>';
+}
+function _fidDesenharAreas() {
+  _fidLimparCamadas(['areas']);
+  if(!_FID.areas.length) return;
+  const pane = _fidPane('fidAreas', 650), grp = L.featureGroup();
+  _FID.areas.forEach(a => {
+    const ll = a.anel.map(p => [p[1], p[0]]);
+    if(a.tipo === 'excluir') L.polygon(ll, { color: '#ff1744', weight: 3, dashArray: '8 5', fillColor: '#ff1744', fillOpacity: .3, interactive: false, pane }).addTo(grp);
+    else L.polygon(ll, { color: '#00c853', weight: 3, dashArray: '10 6', fill: false, interactive: false, pane }).addTo(grp);
+  });
+  grp.addTo(map); _FID.layers.areas = grp;
+}
+function _fidDesenharRascunho() {
+  _fidLimparCamadas(['rascunho']);
+  const d = _FID.desenho; if(!d || !d.pts.length) return;
+  const pane = _fidPane('fidAreas', 650), cor = d.tipo === 'excluir' ? '#c62828' : '#00c853';
+  const grp = L.featureGroup();
+  const pts = d.cursor ? [...d.pts, d.cursor] : d.pts;
+  if(pts.length >= 2) L.polygon(pts, { color: cor, weight: 2, dashArray: '4 4', fillColor: cor, fillOpacity: .12, interactive: false, pane }).addTo(grp);
+  d.pts.forEach((p, i) => L.circleMarker(p, { radius: i === 0 ? 6 : 4, color: '#000', weight: 1.5, fillColor: i === 0 ? cor : '#fff', fillOpacity: 1, interactive: false, pane }).addTo(grp));
+  grp.addTo(map); _FID.layers.rascunho = grp;
+}
+function _fidIniciarArea(tipo) {
+  _fidCancelarPerfil(); _fidCancelarArea();
+  if(typeof _abandonarFerramentaAtiva === 'function') _abandonarFerramentaAtiva();
+  _modoPickLinha = 'fidelidadeArea'; // impede o clique de selecionar talhão por baixo
+  map.getContainer().style.cursor = 'crosshair';
+  const d = _FID.desenho = { tipo, pts: [], cursor: null };
+  d.click = e => {
+    if(d.pts.length >= 3) {
+      const a = map.latLngToContainerPoint(d.pts[0]), b = map.latLngToContainerPoint(e.latlng);
+      if(a.distanceTo(b) < 12) { _fidConcluirArea(); return; }
+    }
+    d.pts.push(e.latlng); _fidDesenharRascunho(); _fidRenderizar();
+  };
+  d.dbl = () => _fidConcluirArea();
+  d.mover = e => { d.cursor = e.latlng; _fidDesenharRascunho(); };
+  d.tecla = e => { if(e.key === 'Escape') { _fidCancelarArea(); _fidRenderizar(); } else if(e.key === 'Enter') _fidConcluirArea(); };
+  map.on('click', d.click); map.on('dblclick', d.dbl); map.on('mousemove', d.mover);
+  document.addEventListener('keydown', d.tecla);
+  setStatus(`Fidelidade: clique no mapa pra desenhar a área ${tipo === 'excluir' ? 'a EXCLUIR' : 'de INTERESSE'} — clique duplo fecha, Esc cancela.`, 'ok');
+  _fidRenderizar();
+}
+function _fidCancelarArea() {
+  const d = _FID.desenho; if(!d) return;
+  map.off('click', d.click); map.off('dblclick', d.dbl); map.off('mousemove', d.mover);
+  document.removeEventListener('keydown', d.tecla);
+  _FID.desenho = null;
+  _fidLimparCamadas(['rascunho']);
+  if(typeof _modoPickLinha !== 'undefined' && _modoPickLinha === 'fidelidadeArea') { _modoPickLinha = null; map.getContainer().style.cursor = ''; }
+}
+function _fidConcluirArea() {
+  const d = _FID.desenho; if(!d) return;
+  // o clique duplo também dispara 2 cliques: tira vértices colados (< 6 px)
+  const pts = [];
+  d.pts.forEach(p => { const q = pts[pts.length - 1]; if(!q || map.latLngToContainerPoint(q).distanceTo(map.latLngToContainerPoint(p)) >= 6) pts.push(p); });
+  if(pts.length < 3) { setStatus('A área precisa de pelo menos 3 vértices.', 'err'); return; }
+  const anel = pts.map(p => [p.lng, p.lat]);
+  const lngs = anel.map(p => p[0]), lats = anel.map(p => p[1]);
+  _FID.areas.push({ tipo: d.tipo, anel, bb: [Math.min(...lngs), Math.min(...lats), Math.max(...lngs), Math.max(...lats)] });
+  _fidCancelarArea();
+  _fidAposMudarAreas();
+}
+function _fidDesfazerArea() { _FID.areas.pop(); _fidAposMudarAreas(); }
+function _fidLimparAreas() { _FID.areas = []; _fidAposMudarAreas(); }
+function _fidAposMudarAreas() {
+  _FID.varredura = null; // a varredura foi medida com a área antiga
+  _fidDesenharAreas();
+  setStatus(_FID.areas.length ? 'Fidelidade: área analisada atualizada — reanalisando…' : 'Fidelidade: voltando a analisar toda a área.', 'ok');
+  _fidAnalisar();
+}
+
 function _fidIniciarPerfil() {
+  _fidCancelarArea();
   _fidCancelarPerfil();
   _FID.perfilPts = [];
   if(typeof _abandonarFerramentaAtiva === 'function') _abandonarFerramentaAtiva();
@@ -19287,7 +19419,8 @@ function _fidCompararExterna() {
   const ctx = res.ctx, xy = ctx.xy, passo = Math.max(1, res.passo);
   // Recorta a referência à área analisada (o Agisoft costuma exportar o bloco inteiro do voo).
   const [bx0, by0, bx1, by1] = turf.bbox(ctx.poly);
-  const dentro = p => { if(p.lng < bx0 || p.lng > bx1 || p.lat < by0 || p.lat > by1) return false; try { return turf.booleanPointInPolygon(turf.point([p.lng, p.lat]), ctx.poly); } catch(e) { return false; } };
+  const dentro = p => { if(p.lng < bx0 || p.lng > bx1 || p.lat < by0 || p.lat > by1) return false; if(ctx.filtro && !ctx.filtro(p.lat, p.lng)) return false; try { return turf.booleanPointInPolygon(turf.point([p.lng, p.lat]), ctx.poly); } catch(e) { return false; } };
+  const filtroXY = s => { if(!ctx.filtro) return true; const ll = xy.from(s[0], s[1]); return ctx.filtro(ll.lat, ll.lng); };
   const exXY = [];
   ex.cands.forEach(c => {
     let atual = [];
@@ -19305,7 +19438,7 @@ function _fidCompararExterna() {
     const d = [];
     et.cands.forEach(c => {
       if(!nivEx.has(Math.round(c.level * 100))) return;
-      _fidAmostrar(c.pontos.map(xy.to), passo).forEach(s => { const v = _fidDistMesmaCota(idxEx, c.level, s[0], s[1], cap); if(v != null) d.push(v); });
+      _fidAmostrar(c.pontos.map(xy.to), passo).forEach(s => { if(!filtroXY(s)) return; const v = _fidDistMesmaCota(idxEx, c.level, s[0], s[1], cap); if(v != null) d.push(v); });
     });
     return { id: et.id, nome: et.nome, est: _fidEstat(d) };
   });
