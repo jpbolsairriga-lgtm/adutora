@@ -539,7 +539,7 @@ body.apresentacao-ativa #statusBarCad{display:none;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v6.05 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v6.06 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -5960,7 +5960,7 @@ map.on('contextmenu', e => {
   _mostrarMenuContextoTalhao(t, e.originalEvent.clientX, e.originalEvent.clientY);
 });
 map.on('click movestart zoomstart', _esconderMenuContextoTalhao);
-document.addEventListener('keydown', e => { if(e.key === 'Escape') _esconderMenuContextoTalhao(); });
+// v6.06: Esc agora é tratado por cancelarTudoEsc() (fim do script do ribbon), que também fecha este menu.
 document.addEventListener('click', e => { const m = $('ctxMenuTalhao'); if(m && m.style.display === 'block' && !m.contains(e.target)) _esconderMenuContextoTalhao(); });
 
 // ── Polígono ──────────────────────────────────────────────────────────────────
@@ -15362,7 +15362,30 @@ function _recalcularTurfPolyDoTalhao(t) {
 // Linhas — talhaoSelecionadoUid populado normalmente, nenhuma das dezenas de checagens existentes
 // baseadas nele precisou mudar). Com 0 ou 2+, essas ferramentas de "um talhão só" não fazem
 // sentido e ficam escondidas; com 2+ aparecem as ações de multi-seleção (Unificar/Travar Todos).
+// v6.06: BUG relatado — "não estou conseguindo ativar algumas ferramentas mesmo com talhão
+// selecionado, tenho que tirar a seleção e selecionar de novo". Causa: Editar Linhas / Ajustar
+// Vértices (ativarTalhaoParaEdicao), Dividir, Carreador a partir de Linha e Excluir zeravam só
+// talhaoSelecionadoUid, mas deixavam o uid antigo dentro de talhoesMultiSel. O próximo clique num
+// talhão ENTRAVA na seleção junto com esse "fantasma" → contava como 2 selecionados → todas as
+// ferramentas de "um talhão só" ficavam escondidas, até o usuário limpar a seleção na mão.
+function _zerarSelecaoTalhoesSilenciosa() {
+  talhoesMultiSel.forEach(uid => {
+    const t = talhoesArquivados.find(x => x.uid === uid);
+    if(t && t.polyLayer) t.polyLayer.setStyle({color:t.cor, weight:2, fillOpacity:.06, dashArray:null});
+  });
+  talhoesMultiSel.clear();
+  $('iMultiSelCount').textContent = 0;
+  $('divMultiSelInfo').style.display = 'none';
+  $('btnCancelarMulti').style.display = 'none';
+  $('btnUnificarMulti').style.display = 'none';
+  $('btnTravarTodos').style.display = 'none';
+  _atualizarVisibilidadeAjustarVertices();
+  _atualizarPainelPropriedades();
+}
 function _sincronizarSelecaoTalhoes() {
+  // v6.06: defensivo — descarta da seleção talhões que não existem mais (excluídos/divididos/
+  // puxados pra edição por algum caminho que não limpou a seleção).
+  [...talhoesMultiSel].forEach(uid => { if(!talhoesArquivados.some(x => x.uid === uid)) talhoesMultiSel.delete(uid); });
   const n = talhoesMultiSel.size;
   $('iMultiSelCount').textContent = n;
   $('divMultiSelInfo').style.display = n > 0 ? 'block' : 'none';
@@ -15676,7 +15699,7 @@ function ativarTalhaoParaEdicao() {
   }
 
   // Clear selection
-  talhaoSelecionadoUid = null;
+  talhaoSelecionadoUid = null; _zerarSelecaoTalhoesSilenciosa(); // v6.06
   $('divSelInfo').innerHTML = 'Clique em um talh&#227;o travado para selecionar';
   $('divCarreadorOps').style.display = 'none';
   setStatus(`Talhão ${t.idx} ativo para edição — desenhe a guia e gere linhas, ou clique em "Travar Talhão" para bloquear de volta sem alterar nada.`, 'info');
@@ -16036,7 +16059,7 @@ function confirmarDivisao() {
 
   // ─ Limpar estado da divisão e seleção ─
   _limparDivisaoLine();
-  talhaoSelecionadoUid = null;
+  talhaoSelecionadoUid = null; _zerarSelecaoTalhoesSilenciosa(); // v6.06
   $('divSelInfo').innerHTML = 'Clique em um talh&#227;o travado para selecionar';
   $('divCarreadorOps').style.display = 'none';
   $('btnLimparArquivados').style.display = '';
@@ -16118,7 +16141,7 @@ function _criarCarreadorDeLinhaPlantio(pl) {
   const r = _executarDivisaoTalhao(uid, offsetCoords, largura, { clipLinhas: false });
   if(!r.ok) { setStatus(r.erro, 'err'); return; }
 
-  talhaoSelecionadoUid = null;
+  talhaoSelecionadoUid = null; _zerarSelecaoTalhoesSilenciosa(); // v6.06
   $('divSelInfo').innerHTML = 'Clique em um talh&#227;o travado para selecionar';
   $('divCarreadorOps').style.display = 'none';
   $('btnLimparArquivados').style.display = '';
@@ -16150,7 +16173,7 @@ function excluirTalhaoSelecionado() {
   talhoesArquivados.splice(idx, 1);
   renumerarTalhoes();
   // Limpa seleção
-  talhaoSelecionadoUid = null;
+  talhaoSelecionadoUid = null; _zerarSelecaoTalhoesSilenciosa(); // v6.06
   $('divSelInfo').innerHTML = 'Clique em um talh&#227;o travado para selecionar';
   $('divCarreadorOps').style.display = 'none';
   if(!talhoesArquivados.length) $('btnLimparArquivados').style.display = 'none';
@@ -18718,17 +18741,34 @@ function _fidPassoAmostragem(ctx) {
   if(total / passo > 150000) passo = total / 150000;
   return Math.round(passo * 100) / 100;
 }
+// v6.06: BUG relatado — "não estou conseguindo mudar de tela depois que faço alterações nas opções
+// de curva". Mudar a suavização reanalisa sozinho (gancho no fim do módulo), e a reanálise zerava
+// _FID.res logo no início; enquanto ela rodava (com DEM real de drone leva vários segundos) — ou pra
+// sempre, se ela desse erro no meio — _fidRenderizar() saía cedo e o clique nas abas só mexia no
+// sublinhado, o conteúdo ficava congelado na aba antiga. Agora: o resultado ANTERIOR continua
+// visível (e navegável) até o novo ficar pronto, com aviso de "recalculando" na barra de
+// progresso; e qualquer erro vira mensagem no painel em vez de deixá-lo travado.
 async function _fidAnalisar() {
   if(!_FID.aberto) return;
   const token = ++_FID.token;
+  try { await _fidAnalisarNucleo(token); }
+  catch(e) {
+    console.error('Fidelidade — falha na análise', e);
+    if(token !== _FID.token) return;
+    _fidProgresso(null);
+    const corpo = _fidEl('fidCorpo');
+    if(corpo) corpo.innerHTML = `<div class="fid-aviso">&#9888; Não consegui concluir a análise com as opções atuais (${_fidEsc(e && e.message || e)}). Mude a opção de novo ou clique em "Reanalisar".</div>` + (_FID.res ? corpo.innerHTML : '');
+  }
+}
+async function _fidAnalisarNucleo(token) {
   _fidAtualizarFontes();
-  _FID.res = null; _FID.sup = null;
-  _fidProgresso('Reconstruindo as etapas de suavização…', 0.02);
+  _fidProgresso(_FID.res ? 'Recalculando com as novas opções — mostrando o resultado anterior até terminar…' : 'Reconstruindo as etapas de suavização…', 0.02);
   await _fidPausa(); if(token !== _FID.token) return;
   let ctx = null;
   try { ctx = _FID.fonte === 'importadas' ? _fidContextoImportadas() : _fidContextoGeradas(); }
   catch(e) { console.error(e); }
   if(!ctx || !ctx.estagios[0].cands.length) {
+    _FID.res = null; _FID.sup = null;
     _fidProgresso(null);
     _fidEl('fidCorpo').innerHTML = `<div class="fid-note" style="padding:14px 0;">Nada pra analisar — ${_FID.fonte === 'importadas' ? 'importe curvas DXF/KML' : 'gere as curvas de nível'} primeiro.</div>`;
     _fidLimparCamadas(); return;
@@ -18758,6 +18798,7 @@ async function _fidAnalisar() {
   let areaM2 = 0; try { areaM2 = turf.area(ctx.poly); } catch(e) {}
   res.areaM2 = areaM2;
   res.espacamentoMedio = res.original.comp > 0 ? areaM2 / res.original.comp : null; // ≈ área / comprimento total de curvas
+  _FID.sup = null; // a superfície anterior é de outra configuração — a nova é calculada logo abaixo
   _FID.res = res;
   if(_FID.externa) { _FID.externa.comp = null; _fidCompararExterna(); }
   _fidRenderizar();
@@ -18933,7 +18974,9 @@ function _fidRenderizar() {
   _fidSincronizarTema();
   _fidDoc().querySelectorAll('.fid-tab').forEach(b => b.classList.toggle('active', b.dataset.aba === _FID.aba));
   const res = _FID.res;
-  if(!res) { if(!corpo.innerHTML.trim()) corpo.innerHTML = ''; return; }
+  // v6.06: sem resultado (análise em andamento pela 1ª vez, ou curvas limpas) — avisa em vez de
+  // deixar o conteúdo da aba anterior congelado na tela.
+  if(!res) { corpo.innerHTML = `<div class="fid-note" style="padding:14px 0;">${_FID.aberto ? 'Analisando as curvas… o conteúdo desta aba aparece assim que a análise terminar.' : ''}</div>`; return; }
   const fn = { resumo: _fidHtmlResumo, cotas: _fidHtmlCotas, varredura: _fidHtmlVarredura, perfil: _fidHtmlPerfil, externa: _fidHtmlExterna }[_FID.aba] || _fidHtmlResumo;
   corpo.innerHTML = _fidHtmlAreas(res) + fn(res);
 }
@@ -19531,7 +19574,8 @@ function _fidCopiarResumo() {
 // na ferramenta antiga). Agora toda troca de aba manual cancela a ferramenta ativa primeiro.
 function ativarRibbon(panelId) {
   const atual = document.querySelector('.rtab.active')?.dataset.panel;
-  if(atual && atual !== panelId) _abandonarFerramentaAtiva();
+  // v6.06: um erro ao cancelar a ferramenta anterior não pode mais impedir a troca de aba.
+  if(atual && atual !== panelId) { try { _abandonarFerramentaAtiva(); } catch(e) { console.error('abandonar ferramenta', e); } }
   document.querySelectorAll('.rtab').forEach(t => t.classList.toggle('active', t.dataset.panel === panelId));
   document.querySelectorAll('.rpanel').forEach(p => p.classList.toggle('active', p.id === panelId));
   _atualizarDicaRolagem();
@@ -19571,6 +19615,43 @@ function _abandonarFerramentaAtiva() {
   // (um modal de verdade bloquearia o clique na aba antes disso ser necessário).
   if(_cenariosCurvas) cancelarCenarioCurvas();
 }
+
+// v6.06: pedido do usuário — "quero opção de soltar e cancelar qualquer comando ou ferramenta
+// quando usar a tecla ESC" (igual ao AutoCAD). 1º Esc: cancela o comando/ferramenta em andamento
+// (mesma limpeza de trocar de aba — _abandonarFerramentaAtiva — mais o que só existe fora dela:
+// Ajustar Vértices, montagem de setores por clique, seção/área da Fidelidade). Se não havia
+// comando nenhum, o Esc solta a seleção de talhões. Painéis de consulta (Fidelidade, Perfil,
+// Propriedades…) continuam abertos — Esc só desarma o que está esperando clique no mapa.
+function _comandoAtivoNoMapa() {
+  const cfgInt = $('grpCarreadorIntConfig');
+  const menu = $('ctxMenuTalhao');
+  return modo !== 'idle' || modoDivisao || !!_modoPickLinha || _pickingCurvaGuia || !!_cenariosCurvas ||
+    _ajustandoVertices || _modoMontagemSetores || !!(_FID.desenho || _FID.perfilClickFn) ||
+    !!(cfgInt && cfgInt.style.display !== 'none') || !!(menu && menu.style.display !== 'none' && menu.style.display !== '');
+}
+function cancelarTudoEsc() {
+  const tinhaComando = _comandoAtivoNoMapa();
+  const passo = (nome, fn) => { try { fn(); } catch(e) { console.error('Esc — ' + nome, e); } };
+  if(tinhaComando) {
+    passo('ferramenta', _abandonarFerramentaAtiva);
+    passo('fidelidade', () => { _fidCancelarPerfil(); if(_FID.desenho) { _fidCancelarArea(); _fidRenderizar(); } });
+    passo('vértices', () => { if(_ajustandoVertices) toggleAjustarVertices(); });
+    passo('setores', () => { if(_modoMontagemSetores) _cancelarMontagemSetores(); });
+    // qualquer "pick" que tenha sobrado sem função própria de cancelamento
+    passo('pick', () => { if(_modoPickLinha) { _modoPickLinha = null; } map.getContainer().style.cursor = ''; });
+    setStatus('Comando cancelado (Esc). Esc de novo solta a seleção.', 'info');
+  } else if(talhoesMultiSel.size) {
+    passo('seleção', limparSelecaoTalhoes);
+    setStatus('Seleção liberada (Esc).', '');
+  }
+}
+document.addEventListener('keydown', e => {
+  if(e.key !== 'Escape' || e.defaultPrevented) return;
+  const alvo = e.target;
+  // dentro de um campo de texto/lista, o 1º Esc só sai do campo (não perde o que está digitando)
+  if(alvo && /^(INPUT|TEXTAREA|SELECT)$/.test(alvo.tagName)) { alvo.blur(); return; }
+  cancelarTudoEsc();
+});
 
 // "Tem mais ferramentas escondidas" — sem isso, um grupo que só cabe rolando pra direita (ex:
 // Exportar, antes perdido no fim da aba Guia & Linhas) fica invisível sem nenhum aviso. Recalcula
