@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.55 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.56 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -406,7 +406,7 @@ tr.item-row.inativo{opacity:.4}
 
   <div class="card">
     <div class="ct">Serviços do Projeto (Montagem, Mapeamento, Abertura de Valetas)</div>
-    <p style="font-size:.8rem;color:var(--mu);margin-bottom:.6rem">Preços por unidade, aplicados automaticamente ao carregar o modelo. Quantidade: Montagem e Mapeamento = área do projeto (ha); Abertura de Valetas = comprimento da Adutora + Metros Chicoteada + Metros Main. Frete não tem fórmula (varia por distância/transportadora) — entra no BOM com preço zerado, para o usuário preencher manualmente a cada orçamento.</p>
+    <p style="font-size:.8rem;color:var(--mu);margin-bottom:.6rem">Preços por unidade, aplicados automaticamente ao carregar o modelo. Quantidade: Montagem e Mapeamento = área do projeto (ha); Abertura de Valetas = comprimento da Adutora + Metros Chicoteada + Metros Main. Frete = 2% do custo de material do modelo (mesma fórmula da planilha), calculado ao carregar o modelo.</p>
     <div class="g4">
       <div class="fg"><label>Montagem (R$/ha)</label><input type="number" id="cfg_precoMontagemHa" step="any"></div>
       <div class="fg"><label>Mapeamento (R$/ha)</label><input type="number" id="cfg_precoMapeamentoHa" step="any"></div>
@@ -464,6 +464,20 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.56 (2026-11-20): 4º orçamento real (José Ricardo Cunha, 67,70 ha, 121126).
+//   (1) FRETE deixa de ser R$ 0: = 2% × custo de material do modelo, replicando a
+//   lista fixa de subtotais de 'Conj.Irri.Projeto - Got 01'!G2768 (ver
+//   calcularBaseFrete — fora: Serviços, Injetor de Cloro, Régua Aceletadora, Saída
+//   Cavalete, Luvas, Junção, Adutora 02, Fertikit, Micro/Aspersão, Monitoramento e as
+//   "últimas linhas" que ficam fora do SUM na planilha). Real: R$ 12.351,91.
+//   (2) Automação: itens sem código (Filtro de Ar, Suporte p/ Régua, Regulador
+//   pneumático) eram fundidos num item só com custo 0 — separados e com os preços
+//   fixos da planilha (250/80/140). (3) Colar do leitor de pressão: pela vazão da
+//   Adutora 01 (tabela "Manifold Saida Bomba"), não pelo manifold do cavalete.
+//   (4) Ferti-Irrigação: registro gaveta 701806 = R$45 e esfera 801019 = R$46
+//   (preços digitados na planilha, não os da tabela). (5) MAPEAMENTO com mínimo de
+//   R$2.500 no total (Miguel Angelo, 25,88 ha). Frete e custo total conferidos nos
+//   4 orçamentos reais (Adelcio, Miguel, Antonio, José).
 // v1.55 (2026-11-12): validado contra o 3º orçamento real (Adelcio Peixoto Neves, 1º
 //   com Adutora 02 preenchida e tubo 75mm) — 148 divergências → 0, e os 2 anteriores
 //   (Miguel Angelo 65→0, Antonio Gilberto 88→0). Principais causas-raiz:
@@ -1436,7 +1450,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.55';
+const APP_VERSION='v1.56';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -3292,14 +3306,21 @@ function gerarItensAutomacaoProjeto(d,cotasAdutora01,nv01,nv02){
   // merge aqui dentro ficava com a categoria de quem chamou add() primeiro, e o
   // comparativo via "Só no App" (com a soma certa) + "Só na Planilha" (do lado certo)
   // em vez de "Igual".
+  // v1.56: itens SEM código (Regulador pneumático, Suporte p/ Régua, Filtro de Ar)
+  // eram todos a chave grupo+'' — viravam 1 item só ("REGULADOR..." qtd 5, custo 0).
+  // Agora a chave inclui a descrição quando não há código. qtdForaFrete = parte que
+  // veio da Régua Aceletadora (grupo que a fórmula do FRETE não soma), pra quando o
+  // mesmo código é mesclado com outra fonte.
   const add=(codigo,descricao,qtd,grupo,categoria,fornecedor)=>{
     if(qtd<=0)return;
-    const k=grupo+'\u0001'+codigo;
+    const k=grupo+'\u0001'+codigo+(codigo?'':'\u0001'+descricao);
     const catFinal=categoria||grupo;
-    if(!porChave[k])porChave[k]={fornecedor:fornecedor||'Bolsa Irriga',codigo,descricao,qtd:0,grupo,categoria:catFinal};
+    if(!porChave[k])porChave[k]={fornecedor:fornecedor||'Bolsa Irriga',codigo,descricao,qtd:0,grupo,categoria:catFinal,qtdForaFrete:0};
     else if(porChave[k].categoria!==catFinal)porChave[k].categoria=grupo;
     porChave[k].qtd+=qtd;
+    if(regua)porChave[k].qtdForaFrete+=qtd;
   };
+  let regua=false;
   if(d.automacaoCavalete==='Piloto + Galit'){
     const multCav=(parseFloat(nv01)||0)+(parseFloat(nv02)||0);
     AUTOMACAO_PROJETO_CAVALETE.forEach(it=>add(it.codigo,it.descricao,it.qtdPorCavalete*multCav,'CAVALETES','PR.DOROT.29/200+GALIT'));
@@ -3311,6 +3332,7 @@ function gerarItensAutomacaoProjeto(d,cotasAdutora01,nv01,nv02){
         const fator=Math.ceil((amplitude-25)/25);
         const nv=parseFloat(nv01)||0;
         const CAT='Regua Aceletadora - Adutora 01';
+        regua=true;
         AUTOMACAO_PROJETO_AMPLITUDE.forEach(it=>add(it.codigo,it.descricao,it.mult*nv*fator,'Automação - Projeto',CAT));
         // 701015/801461 usam ROUNDUP(nv01/6,0) em vez do mult linear acima (fórmula
         // própria confirmada nas linhas 1035/1047 da aba real).
@@ -3321,6 +3343,7 @@ function gerarItensAutomacaoProjeto(d,cotasAdutora01,nv01,nv02){
         // Sem código no real (linha 1048) — fica na categoria genérica de propósito
         // (ver comentário de AUTOMACAO_PROJETO_FIXOS).
         add('','REGULADOR DE PRESSÃO PNEUMATICO COM MANOMETRO DE 1/4',1*fator,'Automação - Projeto');
+        regua=false;
       }
     }
     const numOperacoes=parseFloat(d.numOperacoes)||0;
@@ -3381,12 +3404,17 @@ function gerarItensAutomacaoPneumatica(d,adCfg,numValvulas,numValvulasTE,ehAduto
 // Chicoteada + Metros Main) × preço/m — bateu exato nos dois casos. Frete não tem
 // fórmula (varia por transportadora/distância): entra com preço zerado, de
 // propósito, para o usuário preencher à mão a cada orçamento.
+const MAPEAMENTO_MINIMO=2500;
 function gerarItensServicosProjeto(d,adCfg,ehRecalque){
   const area=parseFloat(d.area)||0;
   const metrosValetas=(adCfg.comprimento||0)+(ehRecalque?0:(parseFloat(d.metrosChicoteada)||0)+(parseFloat(d.metrosMain)||0));
   const itens=[
     {fornecedor:'Bolsa Irriga',codigo:'XXXXXX-17',descricao:'MONTAGEM',qtd:area,custoUnit:CONFIG_GLOBAL.precoMontagemHa},
-    {fornecedor:'Bolsa Irriga',codigo:'XXXXXX-20',descricao:'MAPEAMENTO',qtd:area,custoUnit:CONFIG_GLOBAL.precoMapeamentoHa},
+    // v1.56: mínimo de R$2.500 no total ('Conj.Irri.Projeto - Got 01'!G2769/H2769:
+    // se área×75 < 2500, total = 2500). Achado no Miguel Angelo (25,88 ha → 2.500,
+    // não 1.941). Unitário = 2500/área pra manter a qtd = área igual à planilha.
+    {fornecedor:'Bolsa Irriga',codigo:'XXXXXX-20',descricao:'MAPEAMENTO',qtd:area,
+      custoUnit:area>0&&area*CONFIG_GLOBAL.precoMapeamentoHa<MAPEAMENTO_MINIMO?MAPEAMENTO_MINIMO/area:CONFIG_GLOBAL.precoMapeamentoHa},
     {fornecedor:'Bolsa Irriga',codigo:'XXXXXX-18',descricao:'ABERTURA DE VALETAS',qtd:metrosValetas,custoUnit:CONFIG_GLOBAL.precoAberturaValetasM},
     {fornecedor:'Bolsa Irriga',codigo:'XXXXXX-19',descricao:'FRETE',qtd:1,custoUnit:0},
   ];
@@ -4146,6 +4174,15 @@ function adicionarItensSelecionados(categoria,itens,grupo,origem,modeloBOM){
   });
   return (itens||[]).length;
 }
+// v1.56: preços digitados direto na coluna G da planilha (não vêm da Tabela de
+// Preços) — 'Conj.Irri.Projeto - Got 01' linhas 1025/1029/1047/1048 (automação) e
+// 1517/1518 (Ferti-Irrigação, sobrepõem o preço da tabela).
+const PRECO_FIXO_PLANILHA={
+  'FILTRO DE AR + REGULADOR PRESSÃO PARA COMPRESSOR':250,
+  'Suporte para Regua de Aquantiv':80,
+  'REGULADOR DE PRESSÃO PNEUMATICO COM MANOMETRO DE 1/4':140,
+};
+const PRECO_FIXO_FERTI={'701806':45,'801019':46};
 function adicionarItemCustoFixo(categoria,fornecedor,codigo,descricao,qtd,custoUnit,grupo,origem,modeloBOM){
   atual.bom.push({id:uid(),categoria,grupo:grupo||categoria,fornecedor,codigo,descricao,qtd,custoUnit,ativo:true,origem:origem||'projeto',modelo:modeloBOM||null});
 }
@@ -4158,6 +4195,55 @@ const COLAR_TOMADA_POR_MANIFOLD={
   160:{codigo:'801607',descricao:'COLAR TOMADA POLIPROPILENO 160X 2"PN 10'},
   225:{codigo:'801900',descricao:'COLAR TOMADA POLIPROPILENO 225X 2"PN 10'},
 };
+// v1.56: colar do leitor de pressão pela vazão da Adutora 01 — Parametros!N41:Q45
+// ("Manifold Saida Bomba") + 'Conj.Irri.Projeto - Got 01'!F1074:F1080. Na faixa de
+// 50 mm não há colar: entram TE 50 + luva + bucha, com a cascata literal da planilha
+// (F1075=F1074×P25, F1076=F1075×P25).
+function gerarItensColarLeitorPressao(ad){
+  const vazao=parseFloat(ad&&ad.vazao)||0;
+  const nb=(ad&&ad.resultado&&ad.resultado.numBombas)||1; // = Parametros!P25
+  if(vazao>=1&&vazao<=7)return[
+    {codigo:'801084',descricao:'TE 90 SOLD 50MM',qtd:nb},
+    {codigo:'801102',descricao:(mapaFornecedor('Bolsa Irriga').get('801102')||{}).descricao||'801102',qtd:nb*nb},
+    {codigo:'701839',descricao:'BUCHA RED C/ ROSC 1 1/2 X 1',qtd:nb*nb*nb},
+  ];
+  const faixa=vazao>=7.1&&vazao<=28?75:vazao>=28.1&&vazao<=45?90:vazao>=45.1&&vazao<=99?110:vazao>=99.1&&vazao<=180?160:null;
+  const c=faixa&&COLAR_TOMADA_POR_MANIFOLD[faixa];
+  return c?[{codigo:c.codigo,descricao:c.descricao,qtd:nb}]:[];
+}
+// v1.56: FRETE (XXXXXX-19) — 'Conj.Irri.Projeto - Got 01'!G2768 = 2% × soma de uma
+// lista FIXA de subtotais (coluna J = custo). Não é "tudo": a fórmula deixa de fora
+// alguns grupos e, por faixa de SUM curta demais na planilha, a última linha de
+// alguns grupos. Replicado literalmente (achado no José Ricardo Cunha, 121126:
+// frete real R$ 12.351,91; app dava R$ 0,00).
+const _normCat=s=>String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+const FRETE_CATEGORIAS_FORA=[ // prefixos normalizados (Got 01/02 e Recalque)
+  'SERVICOS','INJETORDECLORO','INJETRODECLORO','REGUAACELETADORA','SAIDACAVALETE',
+  'LUVASSECUNDARIAS','LUVASPRINCIPAIS','LUVASREDES','MONITORAMENTO','MICROASPERSORES','ASPERSORES',
+  'TUBOSDEPOLIETILENOECONECTORESMICROASPERSAO','JUNCAOADUTORA','ADUTORAPROJETO02','FERTIKIT',
+  'MOTOBOMBASUBMERSIVEL','VENTOSARECALQUE',
+  'CONJUNTODEFILTRAGEMCOM2X2COMRETROLAVAGEM','CONJUNTODEFILTRAGEMCOM2X20COMRETROLAVAGEM',
+];
+// [categoria normalizada (regex), código] — linhas fora da faixa do SUM do subtotal.
+const FRETE_ITENS_FORA=[
+  [/^SUCCAO.*MANGOTE/,'802082'],[/^SUCCAO75MMPLASSONNEGATIVA/,'701070'],
+  [/^SDADT(75MMXCAVMF75|118MMXCAVMF75|170MMXCAVMF75)$/,'801056'],
+  [/^SDADT(118MMXCAVMF90|170MMXCAVMF90)$/,'801055'],[/^SDADT170MMXCAVMF110$/,'701254'],
+  [/^FINALDELINHADE35MM$/,'701387'],[/^TUBOSDEPOLIETILENOECONECTORESGOTEJAMENTO$/,'801104'],
+];
+function calcularBaseFrete(itens){
+  let base=0;
+  for(const it of itens){
+    if(it.ativo===false)continue;
+    const cat=_normCat(it.categoria);
+    if(FRETE_CATEGORIAS_FORA.some(p=>cat.startsWith(p)))continue;
+    if(FRETE_ITENS_FORA.some(([re,cod])=>re.test(cat)&&String(it.codigo)===cod))continue;
+    // parte da Régua Aceletadora mesclada num item de outra categoria (mesmo código)
+    const q=(+it.qtd||0)-(+it.qtdForaFrete||0);
+    base+=q*(+it.custoUnit||0);
+  }
+  return base;
+}
 function carregarModelo(nomeModelo){
   const modeloConj=CONJUNTOS[nomeModelo];
   if(!modeloConj){alert('Modelo não encontrado.');return;}
@@ -4206,7 +4292,7 @@ function carregarModelo(nomeModelo){
     itensEstaticos(categoria).forEach(it=>{
       atual.bom.push({
         id:uid(),categoria,grupo:categoria,fornecedor:it.fornecedor,codigo:it.codigo,descricao:it.descricao,
-        qtd:it.qtd,custoUnit:buscarCusto(it.fornecedor,it.codigo)||it.preco||0,ativo:true,origem,modelo:nomeModelo,
+        qtd:it.qtd,custoUnit:(categoria==='Ferti-Irrigação'&&PRECO_FIXO_FERTI[String(it.codigo)])||buscarCusto(it.fornecedor,it.codigo)||it.preco||0,ativo:true,origem,modelo:nomeModelo,
       });
       n++;
     });
@@ -4337,7 +4423,9 @@ function carregarModelo(nomeModelo){
       // sempre a partir da Adutora 01 (ver comentário de gerarItensAutomacaoProjeto),
       // não da adutora do modelo sendo carregado.
       gerarItensAutomacaoProjeto(d,atual.adutora01&&atual.adutora01.cotas,d.numValvulasAdutora01,d.numValvulasAdutora02).forEach(it=>{
-        adicionarItemCustoFixo(it.categoria||it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,buscarCusto(it.fornecedor,it.codigo)||0,it.grupo,origem,nomeModelo);
+        const custo=buscarCusto(it.fornecedor,it.codigo)||PRECO_FIXO_PLANILHA[it.descricao]||0;
+        adicionarItemCustoFixo(it.categoria||it.grupo,it.fornecedor,it.codigo,it.descricao,it.qtd,custo,it.grupo,origem,nomeModelo);
+        if(it.qtdForaFrete)atual.bom[atual.bom.length-1].qtdForaFrete=it.qtdForaFrete;
         n++;
       });
       // Saída Cavalete — mesmo padrão (sempre Adutora 01 e 02, não a do modelo sendo
@@ -4525,26 +4613,31 @@ function carregarModelo(nomeModelo){
             n++;
           });
         });
-        if(grupoManifold){
-          // "CONJUNTO LEITOR DE PRESSÃO" (categoria estática de conjuntos.js): o COLAR
-          // DE TOMADA do leitor de pressão casa com o mesmo diâmetro do manifold do
-          // cavalete (MF75/90/110/160/225) — não é um código fixo. Confirmado
-          // divergindo entre 2 orçamentos reais (Miguel Angelo: manifold 90mm,
-          // 801588; Antonio Gilberto da Silveira: manifold 110mm, 801564) — v1.52
-          // removeu o código fixo (801564) do dump estático e gera esse 1 item aqui.
-          const colarLeitorPressao=COLAR_TOMADA_POR_MANIFOLD[manifoldDiametro];
-          if(colarLeitorPressao){
-            atual.bom.push({id:uid(),categoria:'CONJUNTO LEITOR DE PRESSÃO',grupo:'CONJUNTO LEITOR DE PRESSÃO',fornecedor:'Bolsa Irriga',codigo:colarLeitorPressao.codigo,descricao:colarLeitorPressao.descricao,
-              qtd:2,custoUnit:buscarCusto('Bolsa Irriga',colarLeitorPressao.codigo)||0,ativo:true,origem,modelo:nomeModelo});
-            n++;
-          }
-        }else{
+        if(!grupoManifold){
           avisos.push(`Cavaletes (saída adutora): nenhuma combinação "${chave}" cadastrada — confira o diâmetro calculado na aba Adutora.`);
         }
       }else if(!nominalAdutora){
         avisos.push('Cavaletes (saída adutora): calcule a aba Adutora/Recalque primeiro (precisa do diâmetro nominal calculado).');
       }
     }
+
+    // "CONJUNTO LEITOR DE PRESSÃO" — colar de tomada. v1.56: NÃO é o manifold do
+    // cavalete (regra da v1.52, que só batia por coincidência no Miguel/Antonio) — é
+    // a tabela "Manifold Saida Bomba" (Parametros!N40:Q45) pela VAZÃO da Adutora 01
+    // ('Dados de Entrada'!D31); qtd × Parametros!P25 (1 bomba se P.Total<80 mca,
+    // senão 2 = nº de bombas). Achado no José Ricardo Cunha (65,44 m³/h → 110 mm,
+    // cavalete MF90).
+    if(nomeModelo.startsWith('gotejamento')){
+      for(const it of gerarItensColarLeitorPressao(atual.adutora01)){
+        atual.bom.push({id:uid(),categoria:'CONJUNTO LEITOR DE PRESSÃO',grupo:'CONJUNTO LEITOR DE PRESSÃO',fornecedor:'Bolsa Irriga',codigo:it.codigo,descricao:it.descricao,
+          qtd:it.qtd,custoUnit:buscarCusto('Bolsa Irriga',it.codigo)||0,ativo:true,origem,modelo:nomeModelo});
+        n++;
+      }
+    }
+
+    // v1.56: FRETE = 2% do custo de material do modelo (ver calcularBaseFrete).
+    const itemFrete=atual.bom.find(it=>it.modelo===nomeModelo&&it.codigo==='XXXXXX-19');
+    if(itemFrete)itemFrete.custoUnit=Math.round(calcularBaseFrete(atual.bom.filter(it=>it.modelo===nomeModelo),nomeModelo)*0.02*100)/100;
   }
   persistirAtual();
   renderBOM();renderMargem();renderProposta();
