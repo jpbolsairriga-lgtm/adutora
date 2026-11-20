@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.57 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.58 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -300,9 +300,9 @@ tr.item-row.inativo{opacity:.4}
     <div class="ct">Condições Comerciais</div>
     <div class="g4" style="margin-bottom:1rem">
       <div class="tile"><div class="tl">Estado</div><div class="tv" id="mvEstado">—</div></div>
-      <div class="tile"><div class="tl">Desconto</div><div class="tv" id="mvDesconto">0%</div></div>
+      <div class="tile"><div class="tl">Desconto</div><div class="tv"><input type="number" step="0.1" id="mvDesconto" onchange="atualizarMargemVenda('mvDesconto',this.value)"> %</div></div>
       <div class="tile"><div class="tl">Fator de Margem Bolsa Irriga</div><div class="tv" id="mvFator">0,000</div></div>
-      <div class="tile"><div class="tl">Valores Extras (Conexões)</div><div class="tv" id="mvExtras">0%</div></div>
+      <div class="tile"><div class="tl">Valores Extras (Conexões)</div><div class="tv"><input type="number" step="0.1" id="mvExtras" onchange="atualizarMargemVenda('mvExtras',this.value)"> %</div></div>
     </div>
 
     <div class="ct">Resumo por Origem</div>
@@ -464,6 +464,11 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.58 (2026-11-20): Margem x Venda — Desconto e Valores Extras viraram campos editáveis
+//   (por orçamento; importados de 'Margem x Venda - Got 01'!E76/E78). Fator =
+//   base do estado × (1 − desconto) × (1 + extras) (E77), aplicado ao CUSTO total →
+//   Valor do Projeto/Recalque/Total, margens, impostos, por hectare, Proposta e FINAME
+//   (igual 'Proposta Comercial - v1'!C82:C85). Tabela por categoria segue item a item.
 // v1.57 (2026-11-20): Margem x Venda por categoria agora usa as MESMAS categorias e a
 //   MESMA ORDEM da aba "Margem x Venda - Got 01" da planilha (inclusive zeradas), com
 //   blocos Projeto/Recalque e % sobre o bloco — ver categoriaMargemPlanilha().
@@ -1453,7 +1458,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.57';
+const APP_VERSION='v1.58';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -1746,7 +1751,7 @@ function novoOrcDadosEntrada(){
     recalqueVazao:0,recalqueTipoSuccao:'Negativa',recalqueBombaAuxSubmersa:'-',recalqueTuboSaida:'',
     recalqueAutomacao:'Sem automação',recalqueQuedaNatural:'NÃO',recalqueInjetorCloro:'Não',
     // Comercial
-    desconto:0,conexoesPct:0,impostoSimples:CONFIG_GLOBAL.impostoSimples,impostoICMS:CONFIG_GLOBAL.impostoICMS,
+    desconto:0,conexoesPct:0,mvDesconto:0,mvExtras:0,impostoSimples:CONFIG_GLOBAL.impostoSimples,impostoICMS:CONFIG_GLOBAL.impostoICMS,
     formaPagamento:'',
   };
 }
@@ -2097,6 +2102,22 @@ function importarOrcamentoExcel(file){
           custoTotal:num('D10'),vendaTotal:num('E10'),margemBrutaRS:num('D14'),margemBrutaPct:num('D15'),
           arquivoOrigem:file.name,importadoEm:new Date().toISOString(),
         };
+      }
+      // v1.58: Desconto (E76) e Valores Extras (E78) da aba "Margem x Venda - Got 01"
+      // (frações na planilha → % no app).
+      const nomeMV=wb.SheetNames.find(n=>n.trim().toLowerCase()==='margem x venda - got 01');
+      const margemVendaImport={};
+      if(nomeMV){
+        const sv=wb.Sheets[nomeMV];
+        const fr=cel=>{const c=sv[cel];return c&&typeof c.v==='number'?Math.round(c.v*10000)/100:0;};
+        margemVendaImport.mvDesconto=fr('E76');margemVendaImport.mvExtras=fr('E78');
+        Object.assign(dadosEntrada,margemVendaImport);
+        // referência = o que a proposta real usa ('Proposta Comercial - v1'!C82:C85 →
+        // 'Margem x Venda - Got 01'!F81:F83), não a soma item a item da aba Margens.
+        const v=cel=>{const c=sv[cel];return c&&typeof c.v==='number'?c.v:null;};
+        if(referenciaHistorica&&v('F83')!=null){
+          referenciaHistorica.vendaProjeto=v('F81')||0;referenciaHistorica.vendaRecalque=v('F82')||0;referenciaHistorica.vendaTotal=v('F83');
+        }
       }
 
       // Lista de peças real da planilha (só para o Relatório de Divergências —
@@ -4790,8 +4811,25 @@ function calcularRollup(orc){
     porOrigem[og].venda+=venda;
   });
   const custoTotal=Object.values(porCategoria).reduce((s,c)=>s+c.custo,0);
-  const vendaTotal=Object.values(porCategoria).reduce((s,c)=>s+c.venda,0);
-  return {porCategoria,porOrigem,custoTotal,vendaTotal,fator:f};
+  const vendaItens=Object.values(porCategoria).reduce((s,c)=>s+c.venda,0);
+  // v1.58: igual à aba "Margem x Venda" da planilha — a venda do Projeto/Recalque/
+  // Total (resumo, Proposta, FINAME) é CUSTO × fator próprio da aba:
+  // E77 = base do estado × (1 − Desconto E76) × (1 + Valores Extras E78).
+  // A tabela por categoria continua com a venda item a item (fator da aba Margens).
+  const fr=fatorResumoMargem(orc.dadosEntrada);
+  porOrigem.projeto.venda=porOrigem.projeto.custo*fr;
+  porOrigem.recalque.venda=porOrigem.recalque.custo*fr;
+  const vendaTotal=custoTotal*fr;
+  return {porCategoria,porOrigem,custoTotal,vendaTotal,vendaItens,fator:f,fatorResumo:fr};
+}
+function fatorResumoMargem(d){
+  const base=(d.uf==='SP')?CONFIG_GLOBAL.fatorMargemSP:CONFIG_GLOBAL.fatorMargemOutros;
+  return base*(1-(parseFloat(d.mvDesconto)||0)/100)*(1+(parseFloat(d.mvExtras)||0)/100);
+}
+function atualizarMargemVenda(key,val){
+  atual.dadosEntrada[key]=parseFloat(val)||0;
+  persistirAtual();
+  renderMargem();renderProposta();
 }
 function renderMargem(){
   const r=calcularRollup(atual);
@@ -4816,9 +4854,9 @@ function renderMargem(){
 
   // Condições comerciais (recap)
   $('mvEstado').textContent=d.uf||'—';
-  $('mvDesconto').textContent=`${d.desconto||0}%`;
-  $('mvFator').textContent=fmtN(r.fator,3);
-  $('mvExtras').textContent=`${d.conexoesPct||0}%`;
+  $('mvDesconto').value=d.mvDesconto||0;
+  $('mvFator').textContent=fmtN(r.fatorResumo,3);
+  $('mvExtras').value=d.mvExtras||0;
 
   // Resumo por origem: Projeto de Irrigação / Recalque / Total do Equipamento
   const proj=r.porOrigem.projeto, rec=r.porOrigem.recalque;
@@ -4866,7 +4904,7 @@ function renderMargem(){
   const temRecalque=mp.recalque.lista.some(n=>mp.recalque.v[n].custo||mp.recalque.v[n].venda);
   $('margemBody').innerHTML=bloco('Categoria - Projeto',mp.projeto)
     +(temRecalque?bloco('Categoria - Recalque',mp.recalque)
-      +`<tr style="font-weight:800;background:#dfe9f5"><td>TOTAL GERAL</td><td class="num">${fmtR(r.custoTotal)}</td><td class="num">${fmtR(r.vendaTotal)}</td><td class="num">${fmtR(margemBruta)}</td><td class="num">100,00%</td></tr>`:'');
+      +`<tr style="font-weight:800;background:#dfe9f5"><td>TOTAL GERAL</td><td class="num">${fmtR(r.custoTotal)}</td><td class="num">${fmtR(r.vendaItens)}</td><td class="num">${fmtR(r.vendaItens-r.custoTotal)}</td><td class="num">100,00%</td></tr>`:'');
 }
 // v1.57: categorias da aba "Margem x Venda - Got 01/02" da planilha (coluna M da
 // 'Conj.Irri.Projeto'), na ordem real. O BOM do app usa os títulos específicos das
