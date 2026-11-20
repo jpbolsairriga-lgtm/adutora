@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Sistema de Orçamento de Irrigação v1.56 — Bolsa Irriga</title>
+<title>Sistema de Orçamento de Irrigação v1.57 — Bolsa Irriga</title>
 <style>
 :root{
   --bl:#005f8e;--bl2:#0077b6;--bl3:#00b4d8;--bl4:#caf0f8;
@@ -464,6 +464,9 @@ tr.item-row.inativo{opacity:.4}
 <!-- SheetJS: só usada para ler a aba "Dados de Entrada" de orçamentos antigos (.xlsm/.xlsx) na importação -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+// v1.57 (2026-11-20): Margem x Venda por categoria agora usa as MESMAS categorias e a
+//   MESMA ORDEM da aba "Margem x Venda - Got 01" da planilha (inclusive zeradas), com
+//   blocos Projeto/Recalque e % sobre o bloco — ver categoriaMargemPlanilha().
 // v1.56 (2026-11-20): 4º orçamento real (José Ricardo Cunha, 67,70 ha, 121126).
 //   (1) FRETE deixa de ser R$ 0: = 2% × custo de material do modelo, replicando a
 //   lista fixa de subtotais de 'Conj.Irri.Projeto - Got 01'!G2768 (ver
@@ -1450,7 +1453,7 @@ tr.item-row.inativo{opacity:.4}
 // v1.0 (2026-10-19): versão inicial — Dados de Entrada (parcial), Conjuntos/BOM
 //   (modelos reais extraídos do template v22-130826), Margem x Venda, Proposta
 //   Comercial com geração de PDF via impressão.
-const APP_VERSION='v1.56';
+const APP_VERSION='v1.57';
 document.addEventListener('DOMContentLoaded',()=>{const vb=document.getElementById('ver-badge');if(vb)vb.textContent=APP_VERSION;});
 
 const $=id=>document.getElementById(id);
@@ -4845,15 +4848,120 @@ function renderMargem(){
   $('mvVendaHa').textContent=area?fmtR(r.vendaTotal/area):'—';
   $('mvCustoHa').textContent=area?fmtR(r.custoTotal/area):'—';
 
-  // esconde categorias sem custo nem venda (não aplicáveis a este orçamento)
-  const cats=ordenarCategoriasMapa(r.porCategoria).filter(cat=>r.porCategoria[cat].custo!==0||r.porCategoria[cat].venda!==0);
-  $('margemBody').innerHTML=cats.length?cats.map(cat=>{
-    const c=r.porCategoria[cat];
-    const m=c.venda-c.custo;
-    const rep=r.vendaTotal?c.venda/r.vendaTotal*100:0;
-    return `<tr><td>${escapeHTML(cat)}</td><td class="num">${fmtR(c.custo)}</td><td class="num">${fmtR(c.venda)}</td><td class="num">${fmtR(m)}</td><td class="num">${fmtN(rep,1)}%</td></tr>`;
-  }).join('')+`<tr style="font-weight:800;background:#f4f7fb"><td>TOTAL</td><td class="num">${fmtR(r.custoTotal)}</td><td class="num">${fmtR(r.vendaTotal)}</td><td class="num">${fmtR(margemBruta)}</td><td class="num">100,0%</td></tr>`
-    :'<tr><td colspan="5" style="text-align:center;color:var(--mu);padding:2rem">Nenhum item no BOM ainda.</td></tr>';
+  // v1.57: mesmas categorias e MESMA ORDEM da aba "Margem x Venda - Got 01" da
+  // planilha (inclusive as zeradas), Projeto e Recalque em blocos separados, %
+  // sobre a venda do bloco — pra conferir linha a linha contra a planilha.
+  if(!atual.bom.some(i=>i.ativo)){
+    $('margemBody').innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--mu);padding:2rem">Nenhum item no BOM ainda.</td></tr>';
+    return;
+  }
+  const mp=calcularMargemPlanilha(atual,r.fator);
+  const linha=(nome,c,tot,estilo)=>`<tr${estilo?` style="${estilo}"`:''}><td>${escapeHTML(nome)}</td><td class="num">${fmtR(c.custo)}</td><td class="num">${fmtR(c.venda)}</td><td class="num">${fmtR(c.venda-c.custo)}</td><td class="num">${tot?fmtN(c.venda/tot*100,2):'0,00'}%</td></tr>`;
+  const bloco=(titulo,sec)=>{
+    const tot=sec.lista.reduce((s,n)=>({custo:s.custo+sec.v[n].custo,venda:s.venda+sec.v[n].venda}),{custo:0,venda:0});
+    return `<tr style="font-weight:800;background:#e8f1fb"><td colspan="5">${titulo}</td></tr>`
+      +sec.lista.map(n=>linha(n,sec.v[n],tot.venda,(sec.v[n].custo||sec.v[n].venda)?'':'color:var(--mu)')).join('')
+      +linha('Total',tot,tot.venda,'font-weight:800;background:#f4f7fb');
+  };
+  const temRecalque=mp.recalque.lista.some(n=>mp.recalque.v[n].custo||mp.recalque.v[n].venda);
+  $('margemBody').innerHTML=bloco('Categoria - Projeto',mp.projeto)
+    +(temRecalque?bloco('Categoria - Recalque',mp.recalque)
+      +`<tr style="font-weight:800;background:#dfe9f5"><td>TOTAL GERAL</td><td class="num">${fmtR(r.custoTotal)}</td><td class="num">${fmtR(r.vendaTotal)}</td><td class="num">${fmtR(margemBruta)}</td><td class="num">100,00%</td></tr>`:'');
+}
+// v1.57: categorias da aba "Margem x Venda - Got 01/02" da planilha (coluna M da
+// 'Conj.Irri.Projeto'), na ordem real. O BOM do app usa os títulos específicos das
+// seções (ex. "Sucção 160 Com Mangote 6\"", "Regua Aceletadora - Adutora 01") —
+// categoriaMargemPlanilha() traduz cada item pra linha da planilha.
+const MARGEM_PLANILHA_PROJETO=[
+  'Sucção Projeto','Moto-Bomba','Quadro de Partida','MB Projeto - Saida','Injetor de Cloro',
+  'Automação - Projeto','Monitoramento - Leitor de Pressão','FILTRAGEM','Fertikit','Ferti-Irrigação',
+  'ADUTORA - PROJETO 01','ADUTORA - PROJETO 02','Adesivos/Solução','Junção Adutora','Derivação Adutora',
+  'CAVALETES','Saida Cavalete','Rede Chicoteada','Rede Secundaria',
+  'F. Linha 35 mm','F. Linha 35 mm+ AV1/2','F. Linha 50 mm+ AV1"',
+  'Av 150mm x 1"','Av 125mm x 1"','Av 100mm x 1"','Av 75mm x 1"','Av 50mm x 1"','Av 75mm x 1/2"','Av 50mm x 1/2"','Av 35mm x 1/2"',
+  'TE 150 x 35','TE 125 x 35','TE 100 x 35','TE 75 x 35','TE 50 x 35',
+  'CURVA90° 150 X 35','CURVA90° 125 X 35','CURVA90° 100 X 35','CURVA90° 75 X 35','CURVA90° 50 X 35',
+  'Luvas Secundarias','Luvas Principais','Gotejador','Micro-Aspersores','Tb Polietileno - Micro','Aspersor',
+  'Conectores - Aspersor','Tubo de Polietileno','Conectores','Conectores - Micro','Monitoramento','SERVIÇOS PROJETO',
+];
+const MARGEM_PLANILHA_RECALQUE=[
+  'Sucção - Recalque','Moto-Bomba - Recalque','Quadro de Partida - Recalque','Saida bomba - Recalque',
+  'Injetor de Cloro - Recalque','Automação - Recalque','ADUTORA - RECALQUE','Adesivos/Solução - Recalque',
+  'Ventosa Recalque','Derivação Recalque','Luvas Principais','SERVIÇOS PROJETO - Recalque',
+];
+function categoriaMargemPlanilha(it,sistema){
+  const n=_normCat(it.categoria),g=_normCat(it.grupo),cat=String(it.categoria||'');
+  const tem=(...ps)=>ps.some(p=>n.startsWith(p)||g.startsWith(p));
+  if(it.origem==='recalque'){
+    if(tem('SUCCAO'))return'Sucção - Recalque';
+    if(tem('MOTOBOMBA'))return'Moto-Bomba - Recalque';
+    if(tem('QUADRODEPARTIDA'))return'Quadro de Partida - Recalque';
+    if(tem('SAIDABOMBA','MB'))return'Saida bomba - Recalque';
+    if(tem('INJETORDECLORO','INJETRODECLORO'))return'Injetor de Cloro - Recalque';
+    if(tem('AUTOMACAO'))return'Automação - Recalque';
+    if(tem('ADUTORA'))return'ADUTORA - RECALQUE';
+    if(tem('ADESIVOS','ADESOL'))return'Adesivos/Solução - Recalque';
+    if(tem('VENTOSA'))return'Ventosa Recalque';
+    if(tem('DERIVACAO'))return'Derivação Recalque';
+    if(tem('LUVASPRINCIPAIS'))return'Luvas Principais';
+    if(tem('SERVICOS'))return'SERVIÇOS PROJETO - Recalque';
+    return it.categoria||'(sem categoria)';
+  }
+  // categoria primeiro (ex. tubulação PE 8mm da automação pneumática está na
+  // categoria ADUTORA - PROJETO 01 com grupo 'Automação Pneumática')
+  if(n.startsWith('ADUTORAPROJETO01'))return'ADUTORA - PROJETO 01';
+  if(n.startsWith('ADUTORAPROJETO02'))return'ADUTORA - PROJETO 02';
+  if(tem('SUCCAO'))return'Sucção Projeto';
+  if(tem('MOTOBOMBA'))return'Moto-Bomba';
+  if(tem('QUADRODEPARTIDA'))return'Quadro de Partida';
+  if(tem('MBPROJETOSAIDA')||/^MB-(ST|ES)-/.test(cat))return'MB Projeto - Saida';
+  if(tem('INJETORDECLORO','INJETRODECLORO'))return'Injetor de Cloro';
+  if(tem('CONJUNTOLEITORDEPRESSAO'))return'Monitoramento - Leitor de Pressão';
+  if(tem('AUTOMACAO','REGUAACELETADORA','CONTROLADORES'))return'Automação - Projeto';
+  if(tem('FILTRAGEM','CONJUNTODEFILTRAGEM'))return'FILTRAGEM';
+  if(tem('FERTIKIT'))return'Fertikit';
+  if(tem('FERTIIRRIGACAO'))return'Ferti-Irrigação';
+  if(tem('ADESIVOS','ADESOL'))return'Adesivos/Solução';
+  if(tem('JUNCAOADUTORA'))return'Junção Adutora';
+  if(tem('DERIVACAOADUTORA'))return'Derivação Adutora';
+  if(tem('SAIDACAVALETE'))return'Saida Cavalete';
+  if(tem('CAVALETES')||/^(CV-|SD-|PR\.DOROT)/i.test(cat))return'CAVALETES';
+  if(tem('REDECHICOTEADA'))return'Rede Chicoteada';
+  if(tem('REDESECUNDARIA'))return'Rede Secundaria';
+  if(tem('FINALDELINHADE35MMCOMANTIVACUO','FLINHA35MMAV'))return'F. Linha 35 mm+ AV1/2';
+  if(tem('FINALDELINHADE50MM','FLINHA50MM'))return'F. Linha 50 mm+ AV1"';
+  if(tem('FINALDELINHADE35MM','FLINHA35MM'))return'F. Linha 35 mm';
+  let m=cat.match(/ANTI-?V[AÁ]CUO\s*(1\/2|1)"?\s*X\s*TUBULA\S*\s*(\d+)\s*MM/i);
+  if(m)return`Av ${m[2]}mm x ${m[1]}"`;
+  if((m=cat.match(/RAMAL COM TE\s*(\d+)/i)))return`TE ${m[1]} x 35`;
+  if((m=cat.match(/RAMAL COM CURVA\s*90\D*?(\d+)\s*MM/i)))return`CURVA90° ${m[1]} X 35`;
+  if(tem('LUVASSECUNDARIAS'))return'Luvas Secundarias';
+  if(tem('LUVASPRINCIPAIS'))return'Luvas Principais';
+  if(tem('GOTEJADOR'))return'Gotejador';
+  if(tem('MICROASPERSOR'))return'Micro-Aspersores';
+  if(g==='ASPERSOR'||n==='ASPERSOR'||n==='ASPERSORES')return'Aspersor';
+  if(tem('TUBOSDEPOLIETILENO','TUBODEPOLIETILENO','CONECTORES')){
+    const tubo=g==='TUBODEPOLIETILENO'||/^TUBO/i.test(String(it.descricao||'').trim());
+    if(sistema==='Micro-Aspersão'||n.includes('MICROASPERSAO'))return tubo?'Tb Polietileno - Micro':'Conectores - Micro';
+    if(sistema==='Aspersão')return tubo?'Tubo de Polietileno':'Conectores - Aspersor';
+    return tubo?'Tubo de Polietileno':'Conectores';
+  }
+  if(tem('MONITORAMENTO'))return'Monitoramento';
+  if(tem('SERVICOS'))return'SERVIÇOS PROJETO';
+  return it.categoria||'(sem categoria)';
+}
+function calcularMargemPlanilha(orc,fator){
+  const sistema=(orc.dadosEntrada||{}).sistemaIrrigacao;
+  const mk=lista=>({lista:[...lista],v:Object.fromEntries(lista.map(n=>[n,{custo:0,venda:0}]))});
+  const out={projeto:mk(MARGEM_PLANILHA_PROJETO),recalque:mk(MARGEM_PLANILHA_RECALQUE)};
+  orc.bom.filter(i=>i.ativo).forEach(it=>{
+    const sec=out[it.origem==='recalque'?'recalque':'projeto'];
+    const nome=categoriaMargemPlanilha(it,sistema);
+    if(!sec.v[nome]){sec.v[nome]={custo:0,venda:0};sec.lista.push(nome);} // não mapeada: vai pro fim
+    const custo=it.qtd*it.custoUnit;
+    sec.v[nome].custo+=custo;sec.v[nome].venda+=custo*fator;
+  });
+  return out;
 }
 function atualizarImpostoMargem(key,val){
   atual.dadosEntrada[key]=parseFloat(val)||0;
