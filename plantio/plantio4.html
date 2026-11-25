@@ -539,7 +539,7 @@ body.apresentacao-ativa #statusBarCad{display:none;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v6.06 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v6.07 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
   <div class="tb-spacer"></div>
@@ -14137,10 +14137,70 @@ function _semPontoDeFechamento(pts) {
 
 // Acha, dentro do .zip, todas as pastas de talhão da Trimble (qualquer "Boundary.shp" dentro de
 // uma pasta "AgGPS/Data/.../<Talhão>/") e lê contorno + linhas de plantio de cada uma.
+// v6.07: arquivo real do usuário ("AgGPS (8).zip", TIAGO PEREIRA/FORTALEZA/SEDE) — pasta de talhão
+// SÓ com LineFeature.shp, sem Boundary.shp: o monitor/software gravou o CONTORNO como polilinha
+// fechada (1º ponto = último) dentro do próprio LineFeature, junto com as linhas de plantio (147
+// registros: 145 linhas + 2 anéis fechados = 2 blocos com sentidos de linha diferentes). Antes o
+// importador só procurava Boundary.shp e dizia "não reconheci o formato". Agora, sem Boundary.shp:
+// cada anel fechado vira um talhão e cada linha aberta vai pro anel que contém a maioria dos seus
+// vértices (ou o mais próximo); sem anel nenhum, o contorno é o casco convexo de todas as linhas.
+function _fontesTrimbleSoLineFeature(lineLida, nomeTalhao) {
+  const fechadas = [], abertas = [];
+  lineLida.registros.forEach(r => r.partes.forEach(parte => {
+    if(parte.length < 2) return;
+    const pts = parte.map(([x, y]) => ({ lat: y, lng: x }));
+    const fechada = pts.length >= 4 && haversineM(pts[0], pts[pts.length - 1]) < 0.5;
+    (fechada ? fechadas : abertas).push(pts);
+  }));
+  const aneis = [];
+  fechadas.forEach(pts => {
+    const polyPts = _semPontoDeFechamento(pts);
+    if(polyPts.length < 3) return;
+    try {
+      const poly = turf.polygon([[...polyPts.map(p => [p.lng, p.lat]), [polyPts[0].lng, polyPts[0].lat]]]);
+      aneis.push({ polyPts, poly, area: turf.area(poly), centro: turf.centroid(poly).geometry.coordinates, linhasCoords: [] });
+    } catch(e) {}
+  });
+  if(!aneis.length) {
+    const todos = abertas.flat();
+    if(todos.length < 3) return [];
+    let casco = null;
+    try { casco = turf.convex(turf.featureCollection(todos.map(p => turf.point([p.lng, p.lat])))); } catch(e) {}
+    if(!casco) return [];
+    return [{ nome: nomeTalhao, polyPts: _semPontoDeFechamento(casco.geometry.coordinates[0].map(([x, y]) => ({ lat: y, lng: x }))), linhasCoords: abertas, contornoEstimado: true }];
+  }
+  abertas.forEach(linha => {
+    // amostra até ~20 vértices da linha pra decidir a qual anel ela pertence
+    const passo = Math.max(1, Math.floor(linha.length / 20));
+    let melhor = null, melhorConta = 0;
+    aneis.forEach(a => {
+      let conta = 0;
+      for(let i = 0; i < linha.length; i += passo) if(turf.booleanPointInPolygon(turf.point([linha[i].lng, linha[i].lat]), a.poly)) conta++;
+      if(conta > melhorConta) { melhorConta = conta; melhor = a; }
+    });
+    if(!melhor) {
+      const m = linha[Math.floor(linha.length / 2)];
+      melhor = aneis.reduce((b, a) => (Math.hypot(a.centro[0] - m.lng, a.centro[1] - m.lat) < Math.hypot(b.centro[0] - m.lng, b.centro[1] - m.lat) ? a : b));
+    }
+    melhor.linhasCoords.push(linha);
+  });
+  aneis.sort((a, b) => b.area - a.area);
+  return aneis.map((a, i) => ({ nome: aneis.length > 1 ? `${nomeTalhao} ${i + 1}` : nomeTalhao, polyPts: a.polyPts, linhasCoords: a.linhasCoords }));
+}
+
 async function _importarTrimbleAgGpsZip(zip) {
   const caminhos = Object.keys(zip.files).filter(p => !zip.files[p].dir);
   const boundaries = caminhos.filter(p => /\/Boundary\.shp$/i.test(p) && /AgGPS/i.test(p));
   const fontes = [];
+  // v6.07: pastas de talhão com LineFeature.shp mas SEM Boundary.shp (ver _fontesTrimbleSoLineFeature)
+  const pastasComBoundary = new Set(boundaries.map(p => p.slice(0, p.length - 'Boundary.shp'.length).toLowerCase()));
+  for(const caminhoLine of caminhos.filter(p => /\/LineFeature\.shp$/i.test(p) && /AgGPS/i.test(p))) {
+    const pasta = caminhoLine.slice(0, caminhoLine.length - 'LineFeature.shp'.length);
+    if(pastasComBoundary.has(pasta.toLowerCase())) continue;
+    const seg = pasta.split('/').filter(Boolean);
+    const lineLida = await _lerShpDoZipEntry(zip.files[caminhoLine]);
+    if(lineLida && lineLida.registros.length) fontes.push(..._fontesTrimbleSoLineFeature(lineLida, seg[seg.length - 1] || 'Talhão importado'));
+  }
   for(const caminhoBoundary of boundaries) {
     const pastaTalhao = caminhoBoundary.slice(0, caminhoBoundary.length - 'Boundary.shp'.length);
     const segPasta = pastaTalhao.split('/').filter(Boolean);
@@ -14319,7 +14379,7 @@ async function importarMonitorGPS(file) {
   catch(e) { alert('Não consegui abrir o arquivo como .zip: ' + e.message); return; }
 
   const caminhos = Object.keys(zip.files);
-  const ehTrimble = caminhos.some(p => /AgGPS\/Data\//i.test(p) && /Boundary\.shp$/i.test(p));
+  const ehTrimble = caminhos.some(p => /AgGPS\/Data\//i.test(p) && /(Boundary|LineFeature)\.shp$/i.test(p)); // v6.07: só LineFeature também
   const ehJohnDeere = !ehTrimble && caminhos.some(p => /MasterData\.xml$/i.test(p));
   // "shapefile genérico" — Agres/Fendt Vario/FendtONE/Hexagon/Jacto/Precision Planting/Raven/
   // Stara/Topcon, todos batem byte a byte entre si (ver _gerarPacoteAgres) e todos têm um
@@ -14351,7 +14411,8 @@ async function importarMonitorGPS(file) {
     talhoesArquivados.slice(-importados).forEach(t => t.polyPts.forEach(p => allPts.push([p.lat, p.lng])));
     if(allPts.length) map.fitBounds(allPts, { padding: [50, 50] });
 
-    setStatus(`✓ ${importados} talhão(ões) importado(s) do monitor ${ehTrimble ? 'Trimble' : 'John Deere'}.`, 'ok');
+    const estimado = fontes.some(f => f.contornoEstimado);
+    setStatus(`✓ ${importados} talhão(ões) importado(s) do monitor ${ehTrimble ? 'Trimble' : ehJohnDeere ? 'John Deere' : 'GPS'}.${estimado ? ' Atenção: o arquivo não tinha contorno — usei o contorno externo das linhas; confira e ajuste os vértices se precisar.' : ''}`, 'ok');
   } catch(e) {
     alert('Erro ao importar do monitor GPS: ' + e.message);
     console.error(e);
