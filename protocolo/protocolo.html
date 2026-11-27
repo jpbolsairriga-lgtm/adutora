@@ -161,7 +161,8 @@ main{flex:1;min-height:0;position:relative}
         <b>Desenhar:</b> escolha a ferramenta e clique no mapa. Linhas/talhão: duplo clique ou <b>Concluir</b> termina;
         <b>Backspace</b> desfaz o último ponto; <b>Esc</b> cancela.<br>
         <b>Editar:</b> clique no item para selecionar e arraste os vértices. Clique com o botão direito num vértice para apagá-lo.
-        <b>Delete</b> remove o item selecionado.
+        <b>Delete</b> remove o item selecionado.<br>
+        <b>Encaixe:</b> o círculo verde/amarelo mostra onde o ponto vai encaixar (componente, vértice ou meio do tubo). Componentes encaixados ficam conectados: arrastar a bomba leva o tubo junto. Segure <b>Alt</b> para desenhar sem encaixe.
       </p>
     </aside>
   </section>
@@ -207,8 +208,10 @@ main{flex:1;min-height:0;position:relative}
 /* Protocolo de Projetos — changelog
    v1.0 2026-11-27  versão inicial
    v1.1 2026-11-27  bombas/boosters do recalque em laranja; observação mostra o texto só ao clicar;
-                    nomenclatura redesenhada em vetor; logo Bolsa Irriga no cabeçalho */
-const APP_VERSION = 'v1.1';
+                    nomenclatura redesenhada em vetor; logo Bolsa Irriga no cabeçalho
+   v1.2 2026-11-27  encaixe (snap) e junções: componentes encaixam nos tubos (vértice/meio do trecho cria nó),
+                    tubos encaixam nos componentes, arrastar componente leva os tubos conectados; Alt desliga */
+const APP_VERSION = 'v1.2';
 const MAPS_KEY = 'AIzaSyD9gjUQfQroOs5tvObcqESlB6Wb9YKMoaw';
 const STORE = 'protocolo_bi_v1';
 document.getElementById('verTag').textContent = APP_VERSION;
@@ -487,8 +490,12 @@ window.mapaPronto = function(){
   map.addListener('idle', ()=>{ const c=map.getCenter(); S.view={lat:c.lat(),lng:c.lng(),zoom:map.getZoom()}; salvar(); });
   map.addListener('click', e=>mapaClique(e.latLng));
   map.addListener('dblclick', e=>{ if(draft){ e.stop(); concluir(); } });
-  map.addListener('mousemove', e=>{ if(draft && draft.pts.length) { draft.rubber.setPath([draft.pts[draft.pts.length-1], e.latLng]); } });
+  map.addListener('mousemove', e=>moverCursor(e.latLng));
   map.addListener('rightclick', ()=>{ if(draft) concluir(); });
+  // projeção para medir distância em pixels (encaixe)
+  projOv = new google.maps.OverlayView(); projOv.onAdd=()=>{}; projOv.draw=()=>{}; projOv.onRemove=()=>{}; projOv.setMap(map);
+  snapMk = new google.maps.Marker({map, clickable:false, zIndex:999, visible:false,
+    icon:{path:google.maps.SymbolPath.CIRCLE, scale:9, strokeColor:'#00e676', strokeWeight:3, fillColor:'#00e676', fillOpacity:.25}});
   S.items.forEach(criarOverlay);
   if(S.items.length && !S.view) enquadrar();
   renderLista();
@@ -506,6 +513,12 @@ function montarTools(){
     else sw=`<svg width="22" height="22" viewBox="0 0 28 28">${simbolo(t.sym,'!')}</svg>`;
     bt(k, sw, t.nome, null, t.ab);
   });
+  const hE=document.createElement('h3'); hE.textContent='Conexões'; T.appendChild(hE);
+  const bE=document.createElement('button'); bE.className='tool'; bE.id='btnEncaixe';
+  bE.title='Encaixa componentes nos tubos e tubos nos componentes (segure Alt para desligar momentaneamente)';
+  const pintaE=()=>{ const on=S.encaixe!==false; bE.classList.toggle('on',on);
+    bE.innerHTML=`<span class="sw">&#129522;</span><span class="tx">Encaixe: ${on?'ligado':'desligado'}</span><span class="ab">${on?'Snap on':'Snap off'}</span>`; };
+  bE.onclick=()=>{ S.encaixe = S.encaixe===false; salvar(); pintaE(); bE.blur(); }; pintaE(); T.appendChild(bE);
   const h=document.createElement('h3'); h.textContent='Referência'; T.appendChild(h);
   const b=document.createElement('button'); b.className='tool'; b.innerHTML='<span class="sw">&#128214;</span><span class="tx">Ver nomenclatura</span>';
   b.onclick=abrirNomenclatura; T.appendChild(b);
@@ -514,7 +527,7 @@ function montarTools(){
 function marcarTool(){ document.querySelectorAll('.tool[data-t]').forEach(b=>b.classList.toggle('on', (b.dataset.t||null)===(tool||null) || (!tool && b.dataset.t===''))); }
 function escolherTool(k){
   if(!map) return;
-  cancelarDraft();
+  cancelarDraft(); snapMk?.setVisible(false);
   tool = k||null; selecionar(null);
   marcarTool();
   const desenhando = !!tool;
@@ -549,9 +562,63 @@ function atualizarHintDraft(){
                                      : ` — ${fmt(google.maps.geometry.spherical.computeLength(draft.pts),0)} m`; }
   hint(`<b>${T.nome}</b>: ${n} ponto(s)${med}`, true);
 }
+/* ======================= ENCAIXE (snap) E JUNÇÕES =======================
+   Componentes encaixam nos tubos (vértice ou meio do trecho) e tubos encaixam nos componentes.
+   Encaixar no meio de uma adutora cria um vértice ali → junção real: arrastar o componente leva o tubo junto. */
+let projOv=null, snapMk=null, altDown=false;
+const SNAP_PX=16, TUBOS=['adutora','recalque'];
+const pxDe = ll => projOv?.getProjection()?.fromLatLngToContainerPixel(ll instanceof google.maps.LatLng ? ll : new google.maps.LatLng(ll));
+function encaixar(ll, exclId, soPontos){
+  if(S.encaixe===false || altDown || !projOv?.getProjection()) return {ll};
+  const P=pxDe(ll); let best=null;
+  const cons=c=>{ if(c.d>SNAP_PX) return; if(!best || c.pri<best.pri || (c.pri===best.pri && c.d<best.d)) best=c; };
+  for(const it of S.items){
+    if(it.id===exclId || it.tipo==='obs') continue;
+    const T=TIPOS[it.tipo];
+    if(T.g==='pt'){ const q=pxDe(it.path[0]); cons({pri:0, d:Math.hypot(P.x-q.x,P.y-q.y), ll:it.path[0], kind:'pt', it}); continue; }
+    const pts=it.path.map(pxDe), n=pts.length;
+    pts.forEach((q,i)=>cons({pri:1, d:Math.hypot(P.x-q.x,P.y-q.y), ll:it.path[i], kind:'vtx', it, i}));
+    if(soPontos) continue;
+    const segs = T.g==='poly' ? n : n-1;
+    for(let i=0;i<segs;i++){
+      const a=pts[i], b=pts[(i+1)%n], dx=b.x-a.x, dy=b.y-a.y, L2=dx*dx+dy*dy; if(!L2) continue;
+      const t=Math.max(0,Math.min(1,((P.x-a.x)*dx+(P.y-a.y)*dy)/L2)); if(t<0.02||t>0.98) continue;
+      const qx=a.x+t*dx, qy=a.y+t*dy;
+      cons({pri:2, d:Math.hypot(P.x-qx,P.y-qy), qx, qy, kind:'seg', it, i});
+    }
+  }
+  if(!best) return {ll};
+  const out = best.kind==='seg' ? projOv.getProjection().fromContainerPixelToLatLng(new google.maps.Point(best.qx,best.qy))
+                                : new google.maps.LatLng(best.ll);
+  return {...best, ll:out};
+}
+/* encaixou no meio de um tubo → insere vértice (vira nó de junção) */
+function criarJuncao(s){
+  if(s.kind==='seg' && TUBOS.includes(s.it.tipo)) ov[s.it.id]?.getPath().insertAt(s.i+1, s.ll);
+}
+function moverCursor(ll){
+  if(!tool || !ll){ snapMk?.setVisible(false); return; }
+  const s = tool==='obs' ? {ll} : encaixar(ll);
+  if(s.kind){ snapMk.setPosition(s.ll); snapMk.setIcon({path:google.maps.SymbolPath.CIRCLE, scale:s.kind==='seg'?7:10,
+      strokeColor:s.kind==='seg'?'#ffd600':'#00e676', strokeWeight:3, fillColor:s.kind==='seg'?'#ffd600':'#00e676', fillOpacity:.25}); snapMk.setVisible(true); }
+  else snapMk.setVisible(false);
+  if(draft && draft.pts.length) draft.rubber.setPath([draft.pts[draft.pts.length-1], s.ll]);
+}
+/* vértices de tubos/linhas exatamente sobre o componente (conectados a ele) */
+function conexoes(it){
+  const p0=it.path[0], L=[];
+  S.items.forEach(j=>{ if(TIPOS[j.tipo].g==='pt') return; j.path.forEach((q,k)=>{ if(Math.abs(q.lat-p0.lat)<1e-9 && Math.abs(q.lng-p0.lng)<1e-9) L.push([j.id,k]); }); });
+  return L;
+}
+let arrastandoComp=false;
+document.addEventListener('keydown', e=>{ if(e.key==='Alt') altDown=true; });
+document.addEventListener('keyup', e=>{ if(e.key==='Alt') altDown=false; });
+window.addEventListener('blur', ()=>altDown=false);
+
 function mapaClique(ll){
   if(!tool){ selecionar(null); return; }
   const T=TIPOS[tool];
+  if(tool!=='obs'){ const s=encaixar(ll); ll=s.ll; if(s.kind) criarJuncao(s); }
   if(T.g==='pt'){ novoPonto(tool, ll); return; }
   const last = draft.pts[draft.pts.length-1];
   if(last && Math.abs(last.lat()-ll.lat())<1e-10 && Math.abs(last.lng()-ll.lng())<1e-10) return; // 2º clique do duplo clique
@@ -601,18 +668,33 @@ function criarOverlay(it){
     o = new google.maps.Marker({map, position:it.path[0], zIndex:10,
       icon:{url:ic.url, scaledSize:new google.maps.Size(ic.W,ic.H), anchor:new google.maps.Point(ic.ax,ic.ay)},
       title: rotuloItem(it)});
-    o.addListener('dragend', e=>{ it.path=[{lat:e.latLng.lat(),lng:e.latLng.lng()}]; salvar(); });
+    // junção: ao arrastar o componente, os vértices conectados a ele vão junto
+    o.addListener('dragstart', ()=>{ arrastandoComp=true; o._links = it.tipo==='obs' ? [] : conexoes(it); });
+    o.addListener('drag', e=>{ o._links.forEach(([id,k])=>ov[id]?.getPath().setAt(k, e.latLng)); });
+    o.addListener('dragend', e=>{
+      let ll=e.latLng;
+      if(!o._links.length && it.tipo!=='obs'){ const s=encaixar(ll, it.id); if(s.kind){ ll=s.ll; o.setPosition(ll); criarJuncao(s); } }
+      else o._links.forEach(([id,k])=>ov[id]?.getPath().setAt(k, ll));
+      arrastandoComp=false;
+      it.path=[{lat:ll.lat(),lng:ll.lng()}]; salvar();
+    });
   } else {
     const opt = {map, path:it.path, strokeColor:T.cor, strokeWeight:T.w, strokeOpacity:1, zIndex:T.g==='poly'?1:(it.tipo==='plantio'?2:3)};
     o = T.g==='poly' ? new google.maps.Polygon({...opt, fillColor:'#ffffff', fillOpacity:.08}) : new google.maps.Polyline(opt);
-    const p=o.getPath(); const sync=()=>{ it.path=p.getArray().map(x=>({lat:x.lat(),lng:x.lng()})); salvar(); renderLista(); };
-    ['set_at','insert_at','remove_at'].forEach(ev=>p.addListener(ev,sync));
+    const p=o.getPath(); let guard=false;
+    const sync=()=>{ it.path=p.getArray().map(x=>({lat:x.lat(),lng:x.lng()})); salvar(); renderLista(); };
+    // vértice arrastado perto de um componente/vértice encaixa nele
+    const snapV=i=>{ if(guard||arrastandoComp) return; const s=encaixar(p.getAt(i), it.id, true);
+      if(s.kind){ guard=true; p.setAt(i, s.ll); guard=false; } };
+    p.addListener('set_at', i=>{ snapV(i); sync(); });
+    p.addListener('insert_at', i=>{ snapV(i); sync(); });
+    p.addListener('remove_at', sync);
     o.addListener('rightclick', e=>{ if(e.vertex!=null && selId===it.id){ const min=T.g==='poly'?3:2; if(p.getLength()>min) p.removeAt(e.vertex); } });
   }
   // com ferramenta ativa, o item existente repassa o clique para o desenho (ex.: linha de plantio dentro do talhão)
   o.addListener('click', e=>{ if(tool){ if(e.latLng) mapaClique(e.latLng); } else selecionar(it.id); });
   o.addListener('dblclick', e=>{ if(draft){ e.stop?.(); concluir(); } });
-  o.addListener('mousemove', e=>{ if(draft && draft.pts.length && e.latLng) draft.rubber.setPath([draft.pts[draft.pts.length-1], e.latLng]); });
+  o.addListener('mousemove', e=>moverCursor(e.latLng));
   ov[it.id]=o;
 }
 function refrescarIcone(it){
