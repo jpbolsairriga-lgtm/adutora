@@ -216,8 +216,9 @@ main{flex:1;min-height:0;position:relative}
    v1.2 2026-11-27  encaixe (snap) e junções: componentes encaixam nos tubos (vértice/meio do trecho cria nó),
                     tubos encaixam nos componentes, arrastar componente leva os tubos conectados; Alt desliga
    v1.3 2026-11-27  sistemas separados: projeto (bomba/booster projeto, filtragem, válvula, adutora) × recalque
-                    (bomba/booster recalque, adutora recalque) não se conectam — aviso e nada é feito; reservatório liga os dois */
-const APP_VERSION = 'v1.3';
+                    (bomba/booster recalque, adutora recalque) não se conectam — aviso e nada é feito; reservatório liga os dois
+   v1.4 2026-11-27  linha de plantio pede o espaçamento entre linhas antes de desenhar; vai na descrição do KML */
+const APP_VERSION = 'v1.4';
 const MAPS_KEY = 'AIzaSyD9gjUQfQroOs5tvObcqESlB6Wb9YKMoaw';
 const STORE = 'protocolo_bi_v1';
 document.getElementById('verTag').textContent = APP_VERSION;
@@ -509,7 +510,7 @@ window.mapaPronto = function(){
 function montarTools(){
   const T=$('tools'); T.innerHTML='';
   let g='';
-  const bt=(k,html,tx,title,ab)=>{const b=document.createElement('button');b.className='tool';b.dataset.t=k;b.title=title||tx;b.innerHTML=`<span class="sw">${html}</span><span class="tx">${tx}</span>${ab?`<span class="ab">${ab}</span>`:''}`;b.onclick=()=>{escolherTool(k); b.blur();};T.appendChild(b);};
+  const bt=(k,html,tx,title,ab)=>{const b=document.createElement('button');b.className='tool';b.dataset.t=k;b.title=title||tx;b.innerHTML=`<span class="sw">${html}</span><span class="tx">${tx}</span>${ab?`<span class="ab">${ab}</span>`:''}`;b.onclick=async()=>{ b.blur(); if(k==='plantio'){ const v=await pedirEspacamento(); if(v==null) return; espPlantio=v; } escolherTool(k); };T.appendChild(b);};
   bt('', '<span style="font-size:1.1rem">&#9995;</span>', 'Navegar / Selecionar', 'Navegar e selecionar itens (Esc)');
   Object.entries(TIPOS).forEach(([k,t])=>{
     if(t.grupo!==g){ g=t.grupo; const h=document.createElement('h3'); h.textContent=g; T.appendChild(h); }
@@ -658,6 +659,7 @@ function concluir(){
   if(draft.pts.length<min){ alert(`${T.nome} precisa de pelo menos ${min} pontos.`); return; }
   const it = {id:seq++, tipo:draft.tipo, path:draft.pts.map(p=>({lat:p.lat(),lng:p.lng()}))};
   if(draft.tipo==='talhao') it.nome = 'Talhão '+(S.items.filter(i=>i.tipo==='talhao').length+1);
+  if(draft.tipo==='plantio' && espPlantio) it.esp = espPlantio;
   cancelarDraft();
   S.items.push(it); criarOverlay(it); salvar();
   const t=tool; escolherTool(''); selecionar(it.id); renderLista();
@@ -767,8 +769,27 @@ function comprimento(tipo){
   if(!window.google?.maps?.geometry) return 0;
   return S.items.filter(i=>i.tipo===tipo).reduce((s,i)=>s+google.maps.geometry.spherical.computeLength(i.path.map(p=>new google.maps.LatLng(p))),0);
 }
+/* espaçamento entre linhas de plantio (m) — perguntado antes de desenhar, vai na descrição do KML */
+let espPlantio=null;
+const numBR = v => { const n=parseFloat(String(v??'').replace(',','.')); return isNaN(n)||n<=0 ? null : n; };
+const fmtEsp = e => fmt(e,2).replace(/,?0+$/,'');
+const txtEsp = it => it.esp ? `Espaçamento entre linhas: ${fmtEsp(it.esp)} m` : 'Espaçamento entre linhas: não informado';
+async function pedirEspacamento(){
+  const def = espPlantio || numBR(S.form.espLinhas) || '';
+  const v = await perguntar('Linha de Plantio — espaçamento',
+    `<label style="display:block;font-size:.85rem;margin-bottom:6px">Espaçamento entre linhas (m)</label>
+     <input id="mIn" inputmode="decimal" placeholder="ex.: 3,5" value="${def?String(def).replace('.',','):''}">
+     <p class="dica" style="margin-top:8px">Esse valor vai na descrição da linha no KML para a engenharia.</p>`,
+    ()=>$('mIn').value);
+  if(v==null) return null;
+  const n=numBR(v);
+  if(!n){ alert('Informe um espaçamento válido em metros (ex.: 3,5).'); return pedirEspacamento(); }
+  if(!numBR(S.form.espLinhas)){ S.form.espLinhas=String(n); const f=$('f_espLinhas'); if(f) f.value=n; salvar(); }
+  return n;
+}
 function nomeItem(it){
   if(it.tipo==='talhao') return it.nome||'Talhão';
+  if(it.tipo==='plantio') return it.esp ? `Linha de Plantio · ${fmtEsp(it.esp)} m` : 'Linha de Plantio';
   if(it.tipo==='obs') return `Obs ${numObs(it)}: ${it.texto}`;
   return rotuloItem(it);
 }
@@ -798,6 +819,7 @@ function renderLista(){
   if(!it){ sb.style.display='none'; return; }
   const T=TIPOS[it.tipo]; let h=`<h3>Selecionado: ${esc(T.nome)}</h3>`;
   if(it.tipo==='talhao') h+=`<label>Nome do talhão</label><input id="sNome" value="${esc(it.nome||'')}">`;
+  if(it.tipo==='plantio') h+=`<label>Espaçamento entre linhas (m)</label><input id="sEsp" inputmode="decimal" value="${it.esp?String(it.esp).replace('.',','):''}">`;
   if(it.tipo==='obs') h+=`<label>Texto da observação</label><textarea id="sTx">${esc(it.texto||'')}</textarea>`;
   if(T.subs) h+=`<label>Tipo</label><select id="sSub">${T.subs.map(s=>`<option${s===it.sub?' selected':''}>${esc(s)}</option>`).join('')}</select>`;
   if(T.g!=='pt') h+=`<p class="dica" style="margin-top:6px">Arraste os vértices para ajustar. Os pontinhos no meio de cada trecho criam vértices novos.</p>`;
@@ -805,6 +827,7 @@ function renderLista(){
   h+=`<div class="btns"><button class="btn del" id="sDel">Excluir</button><button class="btn sec" id="sOk">Fechar</button></div>`;
   sb.innerHTML=h; sb.style.display='block';
   $('sDel').onclick=()=>removerItem(it.id); $('sOk').onclick=()=>selecionar(null);
+  if($('sEsp')) $('sEsp').oninput=e=>{ const n=numBR(e.target.value); if(n){ it.esp=n; espPlantio=n; salvar(); const q=document.querySelector(`.it[data-id="${it.id}"] .nm`); if(q) q.textContent=nomeItem(it); } };
   if($('sNome')) $('sNome').oninput=e=>{ it.nome=e.target.value; salvar(); const n=document.querySelector(`.it[data-id="${it.id}"] .nm`); if(n) n.textContent=nomeItem(it); };
   if($('sTx')) $('sTx').oninput=e=>{ it.texto=e.target.value; salvar(); refrescarIcone(it); const n=document.querySelector(`.it[data-id="${it.id}"] .nm`); if(n) n.textContent=nomeItem(it); };
   if($('sSub')) $('sSub').onchange=e=>{ it.sub=e.target.value; salvar(); refrescarIcone(it); renderLista(); };
@@ -818,7 +841,7 @@ $('btnLista').onclick=()=>$('lista').classList.toggle('mob');
 /* teclado */
 document.addEventListener('keydown', e=>{
   if(e.key==='Escape' && $('modalNom').classList.contains('on')){ $('modalNom').classList.remove('on'); return; }
-  if($('modal').classList.contains('on')){ if(e.key==='Escape') $('mCan').click(); if(e.key==='Enter'&&e.ctrlKey) $('mOk').click(); return; }
+  if($('modal').classList.contains('on')){ if(e.key==='Escape') $('mCan').click(); if(e.key==='Enter'&&(e.ctrlKey||document.activeElement.tagName==='INPUT')){ e.preventDefault(); $('mOk').click(); } return; }
   if(/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
   if(!$('paneMapa').classList.contains('on')) return;
   if(e.key==='Escape'){ if(draft&&draft.pts.length) cancelarDraft(), escolherTool(tool); else escolherTool(''); }
@@ -1028,7 +1051,9 @@ async function gerarPDF(){
       else if(T.g==='poly'){ doc.setFillColor(90,100,110); doc.rect(lx,ly-3.4,10,4,'F'); doc.setDrawColor(255); doc.setLineWidth(.7); doc.rect(lx+.6,ly-2.8,8.8,2.8); }
       else { try{ const ic=await svgPng(T.sym); doc.addImage(ic,'PNG',lx+2,ly-4,5,5);}catch(e){} }
       let tx = T.g==='pt' ? `${T.nome}${its.length>1?' ('+its.length+')':''}`
-             : T.g==='poly' ? `${T.nome} — ${fmt(areaTalhoes()/10000)} ha` : `${T.nome} — ${fmt(comprimento(k),0)} m`;
+             : T.g==='poly' ? `${T.nome} — ${fmt(areaTalhoes()/10000)} ha`
+             : k==='plantio' ? `${T.nome} — esp. ${[...new Set(its.map(i=>i.esp).filter(Boolean))].map(e=>fmtEsp(e)+' m').join(' / ')||'não informado'}`
+             : `${T.nome} — ${fmt(comprimento(k),0)} m`;
       doc.text(tx, lx+13, ly, {maxWidth:LW-M-lx-13}); ly+=6.2;
     }
     const obs=S.items.filter(i=>i.tipo==='obs');
@@ -1071,12 +1096,12 @@ function gerarKML(){
     pastas+=`<Folder><name>${x(T.nome)}</name>`;
     its.forEach(it=>{
       const nome = k==='talhao' ? (it.nome||'Talhão') : k==='obs' ? `Obs ${numObs(it)}` : rotuloItem(it);
-      const desc = k==='obs' ? it.texto : (medida(it)||'');
+      const desc = k==='obs' ? it.texto : k==='plantio' ? `${txtEsp(it)}\nComprimento: ${medida(it)}` : (medida(it)||'');
       let geo;
       if(T.g==='pt') geo=`<Point><coordinates>${coords(it.path)}</coordinates></Point>`;
       else if(T.g==='line') geo=`<LineString><tessellate>1</tessellate><coordinates>${coords(it.path)}</coordinates></LineString>`;
       else geo=`<Polygon><tessellate>1</tessellate><outerBoundaryIs><LinearRing><coordinates>${coords([...it.path, it.path[0]])}</coordinates></LinearRing></outerBoundaryIs></Polygon>`;
-      const ext=`<ExtendedData><Data name="tipo"><value>${k}</value></Data>${it.sub?`<Data name="sub"><value>${x(it.sub)}</value></Data>`:''}${it.texto?`<Data name="texto"><value>${x(it.texto)}</value></Data>`:''}${it.nome?`<Data name="nome"><value>${x(it.nome)}</value></Data>`:''}</ExtendedData>`;
+      const ext=`<ExtendedData><Data name="tipo"><value>${k}</value></Data>${it.sub?`<Data name="sub"><value>${x(it.sub)}</value></Data>`:''}${it.texto?`<Data name="texto"><value>${x(it.texto)}</value></Data>`:''}${it.nome?`<Data name="nome"><value>${x(it.nome)}</value></Data>`:''}${it.esp?`<Data name="espacamento_m"><value>${it.esp}</value></Data>`:''}</ExtendedData>`;
       pastas+=`<Placemark><name>${x(nome)}</name><description>${x(desc)}</description><styleUrl>#s_${k}</styleUrl>${ext}${geo}</Placemark>`;
     });
     pastas+=`</Folder>`;
@@ -1169,6 +1194,7 @@ function importarKML(txt){
         const T=TIPOS[tipo]; if((T.g==='pt')!==(geo==='Point')) tipo = geo==='Point'?'obs':(geo==='Polygon'?'talhao':'plantio');
         const it={id:0, tipo, path};
         if(tipo==='talhao') it.nome=dataDe(pm,'nome')||nome||'Talhão';
+        if(tipo==='plantio'){ const e=numBR(dataDe(pm,'espacamento_m')) || numBR((pm.getElementsByTagName('description')[0]?.textContent||'').match(/linhas:\s*([\d.,]+)/)?.[1]); if(e) it.esp=e; }
         if(tipo==='obs') it.texto=dataDe(pm,'texto')||pm.getElementsByTagName('description')[0]?.textContent||nome;
         if(tipo==='reserv') it.sub=dataDe(pm,'sub')||(TIPOS.reserv.subs.find(s=>nome.toLowerCase().includes(s.toLowerCase().slice(0,5)))||'Reservatório');
         novos.push(it);
