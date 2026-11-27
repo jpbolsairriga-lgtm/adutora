@@ -3,6 +3,15 @@
 Todas as mudanças notáveis deste app ficam registradas aqui. O número de versão aparece
 no canto do título, dentro do próprio app (`v2.0.0` etc.) — clique nele pra abrir este arquivo.
 
+## v2.10.0 — 2026-11-27
+
+### Adicionado
+- Crédito do desenvolvedor (João Paulo de Oliveira — Engenheiro Agrônomo, telefone/WhatsApp
+  e e-mail) no rodapé do app e no cabeçalho do relatório impresso/PDF.
+- Aviso automático quando o app é aberto pelo arquivo local (`file://`), com link para a
+  versão publicada — o login do Google Earth Engine não funciona fora de `https://`
+  ("Acesso bloqueado… Erro 400: invalid_request").
+
 ## v2.9.1 — 2026-08-26
 
 ### Corrigido
