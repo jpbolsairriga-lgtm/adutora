@@ -111,6 +111,7 @@ main{flex:1;min-height:0;position:relative}
 .chk .ok{color:var(--ok)}.chk .no{color:var(--erro)}
 .acoes{display:flex;gap:8px;flex-wrap:wrap}
 .acoes .btn{padding:11px 16px}
+.acoes .btn.bloq{opacity:.45;filter:grayscale(1)}
 #status{margin-top:10px;font-size:.85rem;color:var(--sub);min-height:1.2em}
 /* ---------- Modal ---------- */
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:50;padding:16px}
@@ -234,8 +235,10 @@ main{flex:1;min-height:0;position:relative}
    v1.3 2026-11-27  sistemas separados: projeto (bomba/booster projeto, filtragem, válvula, adutora) × recalque
                     (bomba/booster recalque, adutora recalque) não se conectam — aviso e nada é feito; reservatório liga os dois
    v1.4 2026-11-27  linha de plantio pede o espaçamento entre linhas antes de desenhar; vai na descrição do KML
-   v1.5 2026-11-27  perfil de elevação (adutora, recalque, plantio, carreador): gráfico interativo + estatísticas */
-const APP_VERSION = 'v1.5';
+   v1.5 2026-11-27  perfil de elevação (adutora, recalque, plantio, carreador): gráfico interativo + estatísticas
+   v1.6 2026-11-27  talhão pergunta variedade/idade; bomba de recalque pergunta vazão; listas obrigatórias com
+                    "Não se aplica"; exportação bloqueada enquanto houver campo obrigatório em branco */
+const APP_VERSION = 'v1.6';
 const MAPS_KEY = 'AIzaSyD9gjUQfQroOs5tvObcqESlB6Wb9YKMoaw';
 const STORE = 'protocolo_bi_v1';
 document.getElementById('verTag').textContent = APP_VERSION;
@@ -304,6 +307,26 @@ const SECOES = [
   ]},
 ];
 const CAMPOS = SECOES.flatMap(s=>s.f);
+const NAO_SE_APLICA = 'Não se aplica';
+/* perguntas feitas dentro dos itens do croqui (vão na descrição do KML e no PDF) */
+const ATRIB = {
+  talhao:   [{k:'variedade', l:'Variedade', ph:'ex.: Catuaí 144'},
+             {k:'idade', l:'Idade da lavoura (anos)', num:1, un:'anos', ph:'ex.: 4  (0 = plantio novo)'}],
+  bombaRec: [{k:'vazao', l:'Vazão a ser recalcada (m³/h)', num:1, un:'m³/h', ph:'ex.: 25', def:()=>S.form.vazaoRec}],
+};
+const valAtrib = (it,a) => { const v=it[a.k]; if(v==null||v==='') return 'não informado';
+  return a.num ? `${Number(v).toLocaleString('pt-BR',{maximumFractionDigits:2})} ${a.un}` : v; };
+const descAtrib = it => (ATRIB[it.tipo]||[]).map(a=>`${a.l.replace(/ \(.*\)$/,'')}: ${valAtrib(it,a)}`).join('\n');
+function camposAtribHTML(it){
+  return (ATRIB[it.tipo]||[]).map((a,i)=>{ const v = it[a.k] ?? (a.def?a.def():'') ?? '';
+    return `<label style="display:block;font-size:.82rem;margin:${i?10:0}px 0 4px">${esc(a.l)}</label>
+      <input id="${i?'mAt_'+a.k:'mIn'}" data-k="${a.k}" class="mAt" ${a.num?'inputmode="decimal"':''} placeholder="${esc(a.ph||'')}" value="${esc(String(v??'').replace('.',a.num?',':'.'))}">`; }).join('');
+}
+function lerAtribModal(it){
+  document.querySelectorAll('#mBody .mAt').forEach(el=>{ const a=ATRIB[it.tipo].find(x=>x.k===el.dataset.k); let v=el.value.trim();
+    if(a.num){ const n=parseFloat(v.replace(',','.')); v = isNaN(n)?'':n; } it[a.k]=v; });
+  return true;
+}
 
 /* ======================= TIPOS DO CROQUI (nomenclatura padrão) ======================= */
 const TIPOS = {
@@ -347,7 +370,7 @@ function montarForm(){
       const r = document.createElement('div'); r.className='row'; r.id='row_'+c.k;
       let inp;
       if(c.opts){
-        inp = `<select id="f_${c.k}"><option value=""></option>${L[c.opts].map(o=>`<option>${esc(o)}</option>`).join('')}</select>`;
+        inp = `<select id="f_${c.k}"><option value="" disabled>Selecione…</option>${L[c.opts].map(o=>`<option>${esc(o)}</option>`).join('')}<option>${NAO_SE_APLICA}</option></select>`;
       } else if(c.type==='textarea'){
         inp = `<textarea id="f_${c.k}"></textarea>`;
       } else {
@@ -357,7 +380,7 @@ function montarForm(){
       }
       if(c.extra) inp += `<input id="f_${c.extra.k}" type="number" step="any" min="0" placeholder="${esc(c.extra.ph)}" style="max-width:140px">`;
       if(c.btn==='areaBtn') inp += `<button class="mini" id="areaBtn" type="button" title="Somar a área dos talhões desenhados no croqui">Usar área do croqui</button>`;
-      r.innerHTML = `<label class="l" for="f_${c.k}">${esc(c.l)}${c.req?'<span class="req">*</span>':''}</label><div class="v">${inp}</div>`;
+      r.innerHTML = `<label class="l" for="f_${c.k}">${esc(c.l)}${(c.req||c.opts)?'<span class="req">*</span>':''}</label><div class="v">${inp}</div>`;
       box.appendChild(r);
     });
     F.appendChild(box);
@@ -384,9 +407,15 @@ function dependencias(){
   [...CAMPOS, ...CAMPOS.filter(c=>c.extra).map(c=>c.extra)].forEach(c=>{
     if(!c.when) return;
     const el=$('f_'+c.k); const on = (S.form[c.when[0]]===c.when[1]);
+    if(el.dataset.on===String(on)) return; el.dataset.on=String(on);
     el.disabled = !on;
+    if(!on){ if(el.tagName==='SELECT') el.value=NAO_SE_APLICA; else { el.value=''; el.placeholder=NAO_SE_APLICA; } }
+    else { el.value = S.form[c.k] ?? ''; if(el.tagName!=='SELECT') el.placeholder = c.ph || ''; }
+    $('row_'+c.k)?.classList.remove('falta');
   });
 }
+/* campo ativo = não depende de outro, ou a condição está satisfeita (ex.: recalque = Sim) */
+const ativo = c => !(c.when && S.form[c.when[0]]!==c.when[1]);
 function mascara(v,t){
   const d = v.replace(/\D/g,'');
   if(t==='tel'){
@@ -407,7 +436,7 @@ function mascara(v,t){
 function valor(c){
   const v = S.form[c.k];
   if(c.extra && v==='Sim' && S.form[c.extra.k]) return `Sim — ${fmt(S.form[c.extra.k])} ha`;
-  if(c.when && S.form[c.when[0]]!==c.when[1]) return v ? v : '';
+  if(!ativo(c)) return NAO_SE_APLICA;
   if(v==null||v==='') return '';
   if(c.type==='date'){ const [y,m,d]=v.split('-'); return `${d}/${m}/${y}`; }
   if(c.type==='number'){ const n=parseFloat(v); return isNaN(n)?v:n.toLocaleString('pt-BR',{maximumFractionDigits:3}); }
@@ -478,7 +507,7 @@ function iconeSVG(it, sel, escala=1){
       <g transform="translate(0,${sy})"><circle cx="14" cy="14" r="15" fill="none" stroke="#ffb300" stroke-width="3"/>${simbolo('obs', numObs(it))}</g></svg>`;
     return {url:'data:image/svg+xml;charset=UTF-8,'+encodeURIComponent(svg), W:W*escala, H:H*escala, ax:14*escala, ay:(sy+14)*escala};
   }
-  let txt = rotuloItem(it); if(txt.length>34) txt = txt.slice(0,32)+'…';
+  let txt = rotuloItem(it) + (it.tipo==='bombaRec' && it.vazao!=null && it.vazao!=='' ? ` · ${Number(it.vazao).toLocaleString('pt-BR')} m³/h` : ''); if(txt.length>34) txt = txt.slice(0,32)+'…';
   const tw = Math.max(20, Math.round(txt.length*6.6)+12);
   const W = 32+tw, H = 44;
   const box = txt ? `<rect x="32" y="1" width="${tw}" height="18" rx="2" fill="${sel?'#fff3c4':'#e8ecf0'}" fill-opacity=".95" stroke="#222" stroke-width="1"/>
@@ -670,7 +699,7 @@ function mapaClique(ll){
 }
 function desfazerPonto(){ if(!draft||!draft.pts.length) return; draft.pts.pop(); draft.shape.setPath(draft.pts); draft.rubber.setPath([]); atualizarHintDraft(); }
 function cancelarDraft(){ if(draft){ draft.shape.setMap(null); draft.rubber.setMap(null); draft=null; } }
-function concluir(){
+async function concluir(){
   if(!draft) return;
   const T=TIPOS[draft.tipo], min = T.g==='poly'?3:2;
   if(draft.pts.length<min){ alert(`${T.nome} precisa de pelo menos ${min} pontos.`); return; }
@@ -678,6 +707,11 @@ function concluir(){
   if(draft.tipo==='talhao') it.nome = 'Talhão '+(S.items.filter(i=>i.tipo==='talhao').length+1);
   if(draft.tipo==='plantio' && espPlantio) it.esp = espPlantio;
   cancelarDraft();
+  if(it.tipo==='talhao'){
+    await perguntar('Dados do talhão', `<label style="display:block;font-size:.82rem;margin-bottom:4px">Nome do talhão</label>
+      <input id="mNome" value="${esc(it.nome)}" style="margin-bottom:10px">${camposAtribHTML(it)}`,
+      ()=>{ it.nome=$('mNome').value.trim()||it.nome; return lerAtribModal(it); });
+  }
   S.items.push(it); criarOverlay(it); salvar();
   const t=tool; escolherTool(''); selecionar(it.id); renderLista();
   if(t!=='talhao' && t!=='plantio' && t!=='carreador'){ /* mantém fluxo simples */ }
@@ -692,6 +726,10 @@ async function novoPonto(tipo, ll){
     const def = T.subs.includes(S.form.fonte) ? S.form.fonte : T.subs[0];
     const sub = await perguntar('Tipo de reservatório', `<select id="mIn">${T.subs.map(s=>`<option${s===def?' selected':''}>${esc(s)}</option>`).join('')}</select>`, ()=>$('mIn').value);
     if(!sub){ seq--; return; } it.sub=sub;
+  }
+  if(ATRIB[tipo]){
+    const ok = await perguntar(T.nome, camposAtribHTML(it), ()=>lerAtribModal(it));
+    if(!ok){ seq--; return; }
   }
   S.items.push(it); criarOverlay(it); salvar();
   escolherTool(''); selecionar(it.id); renderLista();
@@ -837,6 +875,7 @@ function renderLista(){
   if(!it){ sb.style.display='none'; return; }
   const T=TIPOS[it.tipo]; let h=`<h3>Selecionado: ${esc(T.nome)}</h3>`;
   if(it.tipo==='talhao') h+=`<label>Nome do talhão</label><input id="sNome" value="${esc(it.nome||'')}">`;
+  (ATRIB[it.tipo]||[]).forEach(a=>{ h+=`<label>${esc(a.l)}</label><input class="sAt" data-k="${a.k}" ${a.num?'inputmode="decimal"':''} placeholder="${esc(a.ph||'')}" value="${esc(String(it[a.k]??'').replace('.',a.num?',':'.'))}">`; });
   if(it.tipo==='plantio') h+=`<label>Espaçamento entre linhas (m)</label><input id="sEsp" inputmode="decimal" value="${it.esp?String(it.esp).replace('.',','):''}">`;
   if(it.tipo==='obs') h+=`<label>Texto da observação</label><textarea id="sTx">${esc(it.texto||'')}</textarea>`;
   if(T.subs) h+=`<label>Tipo</label><select id="sSub">${T.subs.map(s=>`<option${s===it.sub?' selected':''}>${esc(s)}</option>`).join('')}</select>`;
@@ -848,6 +887,8 @@ function renderLista(){
   if($('sPerf')) $('sPerf').onclick=()=>abrirPerfil(it);
   $('sDel').onclick=()=>removerItem(it.id); $('sOk').onclick=()=>selecionar(null);
   if($('sEsp')) $('sEsp').oninput=e=>{ const n=numBR(e.target.value); if(n){ it.esp=n; espPlantio=n; salvar(); const q=document.querySelector(`.it[data-id="${it.id}"] .nm`); if(q) q.textContent=nomeItem(it); } };
+  document.querySelectorAll('#selBox .sAt').forEach(el=>el.oninput=()=>{ const a=ATRIB[it.tipo].find(x=>x.k===el.dataset.k);
+    let v=el.value.trim(); if(a.num){ const n=parseFloat(v.replace(',','.')); v=isNaN(n)?'':n; } it[a.k]=v; salvar(); refrescarIcone(it); });
   if($('sNome')) $('sNome').oninput=e=>{ it.nome=e.target.value; salvar(); const n=document.querySelector(`.it[data-id="${it.id}"] .nm`); if(n) n.textContent=nomeItem(it); };
   if($('sTx')) $('sTx').oninput=e=>{ it.texto=e.target.value; salvar(); refrescarIcone(it); const n=document.querySelector(`.it[data-id="${it.id}"] .nm`); if(n) n.textContent=nomeItem(it); };
   if($('sSub')) $('sSub').onchange=e=>{ it.sub=e.target.value; salvar(); refrescarIcone(it); renderLista(); };
@@ -1054,11 +1095,18 @@ function abrirNomenclatura(){
 }
 
 /* ======================= ENVIAR / CONFERÊNCIA ======================= */
-function faltando(){ return CAMPOS.filter(c=>c.req && !S.form[c.k]); }
+function faltando(){
+  const f = CAMPOS.filter(c=>(c.req||c.opts) && ativo(c) && !String(S.form[c.k]??'').trim());
+  CAMPOS.filter(c=>c.extra && S.form[c.k]==='Sim' && !S.form[c.extra.k]).forEach(c=>f.push({k:c.k, l:c.l+' (informar a área)'}));
+  return f;
+}
 function atualizarEnvio(){
   $('assuntoTx').textContent = assunto();
   const f=faltando(); const li=[];
-  li.push(f.length ? `<li class="no">&#10007; Campos obrigatórios em branco: ${f.map(c=>esc(c.l)).join(', ')}</li>` : `<li class="ok">&#10003; Campos obrigatórios preenchidos</li>`);
+  li.push(f.length ? `<li class="no">&#10007; <b>Exportação bloqueada</b> — ${f.length} campo(s) obrigatório(s) em branco: ${f.map(c=>esc(c.l)).join(', ')}</li>` : `<li class="ok">&#10003; Campos obrigatórios preenchidos</li>`);
+  ['expZip','expPdf','expKml'].forEach(id=>$(id).classList.toggle('bloq', !!f.length));
+  S.items.filter(i=>ATRIB[i.tipo]).forEach(i=>{ const fl=ATRIB[i.tipo].filter(a=>!String(i[a.k]??'').trim()).map(a=>a.l);
+    if(fl.length) li.push(`<li class="no">&#9888; ${esc(nomeItem(i))}: falta ${esc(fl.join(', ').toLowerCase())}</li>`); });
   const n=k=>S.items.filter(i=>i.tipo===k).length;
   li.push(n('talhao') ? `<li class="ok">&#10003; ${n('talhao')} talhão(ões) no croqui</li>` : `<li class="no">&#10007; Nenhum contorno de talhão desenhado</li>`);
   li.push(n('adutora') ? `<li class="ok">&#10003; Adutora de projeto desenhada</li>` : `<li class="no">&#10007; Adutora de projeto não desenhada</li>`);
@@ -1189,12 +1237,19 @@ async function gerarPDF(){
       if(T.g==='line'){ const [r,gg,bb]=hexRgb(T.cor); doc.setFillColor(40); doc.rect(lx,ly-2.6,10,2.2,'F'); doc.setFillColor(r,gg,bb); doc.rect(lx,ly-2.3,10,1.6,'F'); }
       else if(T.g==='poly'){ doc.setFillColor(90,100,110); doc.rect(lx,ly-3.4,10,4,'F'); doc.setDrawColor(255); doc.setLineWidth(.7); doc.rect(lx+.6,ly-2.8,8.8,2.8); }
       else { try{ const ic=await svgPng(T.sym); doc.addImage(ic,'PNG',lx+2,ly-4,5,5);}catch(e){} }
-      let tx = T.g==='pt' ? `${T.nome}${its.length>1?' ('+its.length+')':''}`
+      let tx = k==='bombaRec' ? `${T.nome} — ${its.map(i=>valAtrib(i,ATRIB.bombaRec[0])).join(' / ')}`
+             : T.g==='pt' ? `${T.nome}${its.length>1?' ('+its.length+')':''}`
              : T.g==='poly' ? `${T.nome} — ${fmt(areaTalhoes()/10000)} ha`
              : k==='plantio' ? `${T.nome} — esp. ${[...new Set(its.map(i=>i.esp).filter(Boolean))].map(e=>fmtEsp(e)+' m').join(' / ')||'não informado'}`
              : `${T.nome} — ${fmt(comprimento(k),0)} m`;
       doc.text(tx, lx+13, ly, {maxWidth:LW-M-lx-13}); ly+=6.2;
     }
+    const tals=S.items.filter(i=>i.tipo==='talhao');
+    if(tals.length){ ly+=3; doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(0,61,92); doc.text('Talhões',lx,ly); ly+=2;
+      doc.autoTable({startY:ly, margin:{left:lx, right:M}, theme:'grid', head:[['Talhão','Área','Variedade','Idade']],
+        body:tals.map(t=>[t.nome||'Talhão', medida(t), t.variedade||'—', (t.idade!==''&&t.idade!=null)?`${Number(t.idade).toLocaleString('pt-BR')} anos`:'—']),
+        styles:{fontSize:7.4, cellPadding:1, lineColor:[200,208,216], lineWidth:.1, textColor:[20,30,40]}, headStyles:{fillColor:[224,229,236], textColor:[0,61,92], fontStyle:'bold'}});
+      ly=doc.lastAutoTable.finalY+2; doc.setFont('helvetica','normal'); doc.setTextColor(20); }
     const obs=S.items.filter(i=>i.tipo==='obs');
     if(obs.length){ ly+=3; doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(0,61,92); doc.text('Observações',lx,ly); ly+=2;
       doc.autoTable({startY:ly, margin:{left:lx, right:M}, theme:'plain', body:obs.map((o,i)=>[String(i+1), o.texto||'']),
@@ -1235,12 +1290,13 @@ function gerarKML(){
     pastas+=`<Folder><name>${x(T.nome)}</name>`;
     its.forEach(it=>{
       const nome = k==='talhao' ? (it.nome||'Talhão') : k==='obs' ? `Obs ${numObs(it)}` : rotuloItem(it);
-      const desc = k==='obs' ? it.texto : k==='plantio' ? `${txtEsp(it)}\nComprimento: ${medida(it)}` : (medida(it)||'');
+      const desc = k==='obs' ? it.texto : k==='plantio' ? `${txtEsp(it)}\nComprimento: ${medida(it)}`
+                 : k==='talhao' ? `Área: ${medida(it)}\n${descAtrib(it)}` : ATRIB[k] ? descAtrib(it) : (medida(it)||'');
       let geo;
       if(T.g==='pt') geo=`<Point><coordinates>${coords(it.path)}</coordinates></Point>`;
       else if(T.g==='line') geo=`<LineString><tessellate>1</tessellate><coordinates>${coords(it.path)}</coordinates></LineString>`;
       else geo=`<Polygon><tessellate>1</tessellate><outerBoundaryIs><LinearRing><coordinates>${coords([...it.path, it.path[0]])}</coordinates></LinearRing></outerBoundaryIs></Polygon>`;
-      const ext=`<ExtendedData><Data name="tipo"><value>${k}</value></Data>${it.sub?`<Data name="sub"><value>${x(it.sub)}</value></Data>`:''}${it.texto?`<Data name="texto"><value>${x(it.texto)}</value></Data>`:''}${it.nome?`<Data name="nome"><value>${x(it.nome)}</value></Data>`:''}${it.esp?`<Data name="espacamento_m"><value>${it.esp}</value></Data>`:''}</ExtendedData>`;
+      const ext=`<ExtendedData><Data name="tipo"><value>${k}</value></Data>${it.sub?`<Data name="sub"><value>${x(it.sub)}</value></Data>`:''}${it.texto?`<Data name="texto"><value>${x(it.texto)}</value></Data>`:''}${it.nome?`<Data name="nome"><value>${x(it.nome)}</value></Data>`:''}${it.esp?`<Data name="espacamento_m"><value>${it.esp}</value></Data>`:''}${(ATRIB[k]||[]).map(a=>`<Data name="${a.k}"><value>${x(it[a.k]??'')}</value></Data>`).join('')}</ExtendedData>`;
       pastas+=`<Placemark><name>${x(nome)}</name><description>${x(desc)}</description><styleUrl>#s_${k}</styleUrl>${ext}${geo}</Placemark>`;
     });
     pastas+=`</Folder>`;
@@ -1260,8 +1316,11 @@ function baixar(blob, nome){ const a=document.createElement('a'); a.href=URL.cre
 function conferir(){
   const f=faltando();
   f.forEach(c=>$('row_'+c.k)?.classList.add('falta'));
-  if(f.length) return confirm(`Campos obrigatórios em branco:\n• ${f.map(c=>c.l).join('\n• ')}\n\nExportar mesmo assim?`);
-  return true;
+  if(!f.length) return true;
+  alert(`Não é possível gerar o PDF/KML: preencha os campos obrigatórios do protocolo.\n\n• ${f.map(c=>c.l).join('\n• ')}\n\nNas listas, use "${NAO_SE_APLICA}" quando o item não fizer parte do projeto.`);
+  document.querySelector('nav.tabs button[data-p="paneForm"]').click();
+  const r=$('row_'+f[0].k); if(r){ r.scrollIntoView({behavior:'smooth', block:'center'}); setTimeout(()=>$('f_'+f[0].k)?.focus(),400); }
+  return false;
 }
 async function exportar(modo){
   if(!conferir()) return;
@@ -1333,6 +1392,7 @@ function importarKML(txt){
         const T=TIPOS[tipo]; if((T.g==='pt')!==(geo==='Point')) tipo = geo==='Point'?'obs':(geo==='Polygon'?'talhao':'plantio');
         const it={id:0, tipo, path};
         if(tipo==='talhao') it.nome=dataDe(pm,'nome')||nome||'Talhão';
+        (ATRIB[tipo]||[]).forEach(a=>{ const v=dataDe(pm,a.k); if(v!=null && v!=='') it[a.k]= a.num ? parseFloat(v) : v; });
         if(tipo==='plantio'){ const e=numBR(dataDe(pm,'espacamento_m')) || numBR((pm.getElementsByTagName('description')[0]?.textContent||'').match(/linhas:\s*([\d.,]+)/)?.[1]); if(e) it.esp=e; }
         if(tipo==='obs') it.texto=dataDe(pm,'texto')||pm.getElementsByTagName('description')[0]?.textContent||nome;
         if(tipo==='reserv') it.sub=dataDe(pm,'sub')||(TIPOS.reserv.subs.find(s=>nome.toLowerCase().includes(s.toLowerCase().slice(0,5)))||'Reservatório');
