@@ -57,6 +57,8 @@ main{flex:1;min-height:0;position:relative}
 .tool .ab{display:none;font-size:.58rem;font-weight:700;line-height:1;color:var(--sub)}
 #busca input{width:280px;max-width:60vw;border:0;border-radius:8px;padding:8px 10px;font:inherit;font-size:.88rem;box-shadow:0 2px 8px rgba(0,0,0,.3)}
 #busca button{border:0;border-radius:8px;padding:0 10px;background:#fff;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.3);font-size:1rem}
+#aviso{position:absolute;top:60px;left:50%;transform:translateX(-50%);background:#fff4e5;color:#7a3e00;border:1px solid #ffb74d;border-left:5px solid #f57c00;border-radius:10px;padding:10px 14px;font-size:.85rem;line-height:1.45;max-width:min(560px,calc(100% - 20px));box-shadow:0 6px 20px rgba(0,0,0,.3);z-index:7;display:none}
+#aviso.on{display:block}
 #hint{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);background:rgba(0,30,50,.92);color:#fff;border-radius:10px;padding:8px 12px;font-size:.84rem;display:none;align-items:center;gap:10px;z-index:5;max-width:calc(100% - 20px);flex-wrap:wrap;justify-content:center}
 #hint button{border:0;border-radius:6px;padding:5px 10px;font-weight:700;cursor:pointer;font-size:.8rem}
 #hint .ok{background:#43a047;color:#fff}#hint .un{background:#fff;color:#333}#hint .cx{background:#e53935;color:#fff}
@@ -151,6 +153,7 @@ main{flex:1;min-height:0;position:relative}
       </div>
       <button id="btnLista">Itens</button>
       <div id="hint"></div>
+      <div id="aviso"></div>
     </div>
     <aside id="lista">
       <h3>Itens do croqui</h3>
@@ -162,7 +165,8 @@ main{flex:1;min-height:0;position:relative}
         <b>Backspace</b> desfaz o último ponto; <b>Esc</b> cancela.<br>
         <b>Editar:</b> clique no item para selecionar e arraste os vértices. Clique com o botão direito num vértice para apagá-lo.
         <b>Delete</b> remove o item selecionado.<br>
-        <b>Encaixe:</b> o círculo verde/amarelo mostra onde o ponto vai encaixar (componente, vértice ou meio do tubo). Componentes encaixados ficam conectados: arrastar a bomba leva o tubo junto. Segure <b>Alt</b> para desenhar sem encaixe.
+        <b>Encaixe:</b> o círculo verde/amarelo mostra onde o ponto vai encaixar (componente, vértice ou meio do tubo). Componentes encaixados ficam conectados: arrastar a bomba leva o tubo junto. Segure <b>Alt</b> para desenhar sem encaixe.<br>
+        <b>Sistemas:</b> peças do projeto (rosa) não se ligam às do recalque (laranja) — o X vermelho indica conexão proibida. A ligação entre os dois é pelo reservatório.
       </p>
     </aside>
   </section>
@@ -210,8 +214,10 @@ main{flex:1;min-height:0;position:relative}
    v1.1 2026-11-27  bombas/boosters do recalque em laranja; observação mostra o texto só ao clicar;
                     nomenclatura redesenhada em vetor; logo Bolsa Irriga no cabeçalho
    v1.2 2026-11-27  encaixe (snap) e junções: componentes encaixam nos tubos (vértice/meio do trecho cria nó),
-                    tubos encaixam nos componentes, arrastar componente leva os tubos conectados; Alt desliga */
-const APP_VERSION = 'v1.2';
+                    tubos encaixam nos componentes, arrastar componente leva os tubos conectados; Alt desliga
+   v1.3 2026-11-27  sistemas separados: projeto (bomba/booster projeto, filtragem, válvula, adutora) × recalque
+                    (bomba/booster recalque, adutora recalque) não se conectam — aviso e nada é feito; reservatório liga os dois */
+const APP_VERSION = 'v1.3';
 const MAPS_KEY = 'AIzaSyD9gjUQfQroOs5tvObcqESlB6Wb9YKMoaw';
 const STORE = 'protocolo_bi_v1';
 document.getElementById('verTag').textContent = APP_VERSION;
@@ -568,10 +574,25 @@ function atualizarHintDraft(){
 let projOv=null, snapMk=null, altDown=false;
 const SNAP_PX=16, TUBOS=['adutora','recalque'];
 const pxDe = ll => projOv?.getProjection()?.fromLatLngToContainerPixel(ll instanceof google.maps.LatLng ? ll : new google.maps.LatLng(ll));
-function encaixar(ll, exclId, soPontos){
+/* sistemas hidráulicos: projeto (P) × recalque (R) não se conectam; reservatório e demais itens são neutros */
+const SISTEMA = {bombaProj:'P', boosterProj:'P', filtragem:'P', valvula:'P', adutora:'P', bombaRec:'R', boosterRec:'R', recalque:'R'};
+const incompativel = (a,b) => !!(SISTEMA[a] && SISTEMA[b] && SISTEMA[a]!==SISTEMA[b]);
+function avisoBloqueio(ator, alvo){
+  const n=t=>TIPOS[t].nome, sis=t=>SISTEMA[t]==='P'?'projeto':'recalque';
+  aviso(`<b>Conexão não permitida:</b> ${esc(n(ator))} (sistema de ${sis(ator)}) não pode ser ligada a ${esc(n(alvo))} (sistema de ${sis(alvo)}). A ligação entre os dois sistemas é feita pelo reservatório.`);
+}
+let avisoT=null;
+function aviso(html){
+  const a=$('aviso'); a.innerHTML='&#9888;&#65039; '+html; a.classList.add('on');
+  clearTimeout(avisoT); avisoT=setTimeout(()=>a.classList.remove('on'), 5000);
+}
+/* ator = tipo do item que está sendo colocado/movido; candidatos de outro sistema são bloqueados */
+function encaixar(ll, exclId, soPontos, ator){
   if(S.encaixe===false || altDown || !projOv?.getProjection()) return {ll};
-  const P=pxDe(ll); let best=null;
-  const cons=c=>{ if(c.d>SNAP_PX) return; if(!best || c.pri<best.pri || (c.pri===best.pri && c.d<best.d)) best=c; };
+  const P=pxDe(ll); let best=null, bloq=null;
+  const cons=c=>{ if(c.d>SNAP_PX) return;
+    if(incompativel(ator, c.it.tipo)){ if(!bloq || c.pri<bloq.pri || (c.pri===bloq.pri && c.d<bloq.d)) bloq=c; return; }
+    if(!best || c.pri<best.pri || (c.pri===best.pri && c.d<best.d)) best=c; };
   for(const it of S.items){
     if(it.id===exclId || it.tipo==='obs') continue;
     const T=TIPOS[it.tipo];
@@ -587,7 +608,7 @@ function encaixar(ll, exclId, soPontos){
       cons({pri:2, d:Math.hypot(P.x-qx,P.y-qy), qx, qy, kind:'seg', it, i});
     }
   }
-  if(!best) return {ll};
+  if(!best) return bloq ? {ll, bloq} : {ll};
   const out = best.kind==='seg' ? projOv.getProjection().fromContainerPixelToLatLng(new google.maps.Point(best.qx,best.qy))
                                 : new google.maps.LatLng(best.ll);
   return {...best, ll:out};
@@ -598,8 +619,9 @@ function criarJuncao(s){
 }
 function moverCursor(ll){
   if(!tool || !ll){ snapMk?.setVisible(false); return; }
-  const s = tool==='obs' ? {ll} : encaixar(ll);
-  if(s.kind){ snapMk.setPosition(s.ll); snapMk.setIcon({path:google.maps.SymbolPath.CIRCLE, scale:s.kind==='seg'?7:10,
+  const s = tool==='obs' ? {ll} : encaixar(ll, null, false, tool);
+  if(s.bloq){ snapMk.setPosition(ll); snapMk.setIcon({path:'M -7 -7 L 7 7 M 7 -7 L -7 7', scale:1, strokeColor:'#ff1744', strokeWeight:4}); snapMk.setVisible(true); }
+  else if(s.kind){ snapMk.setPosition(s.ll); snapMk.setIcon({path:google.maps.SymbolPath.CIRCLE, scale:s.kind==='seg'?7:10,
       strokeColor:s.kind==='seg'?'#ffd600':'#00e676', strokeWeight:3, fillColor:s.kind==='seg'?'#ffd600':'#00e676', fillOpacity:.25}); snapMk.setVisible(true); }
   else snapMk.setVisible(false);
   if(draft && draft.pts.length) draft.rubber.setPath([draft.pts[draft.pts.length-1], s.ll]);
@@ -618,7 +640,11 @@ window.addEventListener('blur', ()=>altDown=false);
 function mapaClique(ll){
   if(!tool){ selecionar(null); return; }
   const T=TIPOS[tool];
-  if(tool!=='obs'){ const s=encaixar(ll); ll=s.ll; if(s.kind) criarJuncao(s); }
+  if(tool!=='obs'){
+    const s=encaixar(ll, null, false, tool);
+    if(s.bloq){ avisoBloqueio(tool, s.bloq.it.tipo); return; }   // nada é colocado nem conectado
+    ll=s.ll; if(s.kind) criarJuncao(s);
+  }
   if(T.g==='pt'){ novoPonto(tool, ll); return; }
   const last = draft.pts[draft.pts.length-1];
   if(last && Math.abs(last.lat()-ll.lat())<1e-10 && Math.abs(last.lng()-ll.lng())<1e-10) return; // 2º clique do duplo clique
@@ -669,11 +695,15 @@ function criarOverlay(it){
       icon:{url:ic.url, scaledSize:new google.maps.Size(ic.W,ic.H), anchor:new google.maps.Point(ic.ax,ic.ay)},
       title: rotuloItem(it)});
     // junção: ao arrastar o componente, os vértices conectados a ele vão junto
-    o.addListener('dragstart', ()=>{ arrastandoComp=true; o._links = it.tipo==='obs' ? [] : conexoes(it); });
+    o.addListener('dragstart', ()=>{ arrastandoComp=true; o._ini={...it.path[0]}; o._links = it.tipo==='obs' ? [] : conexoes(it); });
     o.addListener('drag', e=>{ o._links.forEach(([id,k])=>ov[id]?.getPath().setAt(k, e.latLng)); });
     o.addListener('dragend', e=>{
       let ll=e.latLng;
-      if(!o._links.length && it.tipo!=='obs'){ const s=encaixar(ll, it.id); if(s.kind){ ll=s.ll; o.setPosition(ll); criarJuncao(s); } }
+      if(!o._links.length && it.tipo!=='obs'){
+        const s=encaixar(ll, it.id, false, it.tipo);
+        if(s.bloq){ avisoBloqueio(it.tipo, s.bloq.it.tipo); ll=new google.maps.LatLng(o._ini); o.setPosition(ll); } // volta para onde estava
+        else if(s.kind){ ll=s.ll; o.setPosition(ll); criarJuncao(s); }
+      }
       else o._links.forEach(([id,k])=>ov[id]?.getPath().setAt(k, ll));
       arrastandoComp=false;
       it.path=[{lat:ll.lat(),lng:ll.lng()}]; salvar();
@@ -684,10 +714,12 @@ function criarOverlay(it){
     const p=o.getPath(); let guard=false;
     const sync=()=>{ it.path=p.getArray().map(x=>({lat:x.lat(),lng:x.lng()})); salvar(); renderLista(); };
     // vértice arrastado perto de um componente/vértice encaixa nele
-    const snapV=i=>{ if(guard||arrastandoComp) return; const s=encaixar(p.getAt(i), it.id, true);
+    // se bloquear (sistema diferente), o vértice volta para onde estava / o vértice novo é desfeito
+    const snapV=(i,prev)=>{ if(guard||arrastandoComp) return; const s=encaixar(p.getAt(i), it.id, true, it.tipo);
+      if(s.bloq){ avisoBloqueio(it.tipo, s.bloq.it.tipo); guard=true; if(prev) p.setAt(i, prev); else p.removeAt(i); guard=false; return; }
       if(s.kind){ guard=true; p.setAt(i, s.ll); guard=false; } };
-    p.addListener('set_at', i=>{ snapV(i); sync(); });
-    p.addListener('insert_at', i=>{ snapV(i); sync(); });
+    p.addListener('set_at', (i,prev)=>{ snapV(i,prev); sync(); });
+    p.addListener('insert_at', i=>{ snapV(i,null); sync(); });
     p.addListener('remove_at', sync);
     o.addListener('rightclick', e=>{ if(e.vertex!=null && selId===it.id){ const min=T.g==='poly'?3:2; if(p.getLength()>min) p.removeAt(e.vertex); } });
   }
