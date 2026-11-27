@@ -13,6 +13,14 @@ header{background:linear-gradient(90deg,#003d5c,#0077b6);color:#fff;display:flex
 header a.voltar{color:#fff;text-decoration:none;font-size:.85rem;opacity:.85;border:1px solid rgba(255,255,255,.4);border-radius:8px;padding:4px 10px}
 header h1{font-size:1.1rem;font-weight:800}
 header .hlogo{height:34px;width:34px;object-fit:contain;background:#fff;border-radius:8px;padding:2px}
+header .numtag{font-size:.8rem;background:#fff;color:#003d5c;border-radius:8px;padding:3px 10px;font-weight:800;letter-spacing:.03em;display:none}
+header .numtag.on{display:inline-block}
+.mlTop{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap}.mlTop select,.mlTop input{flex:1;min-width:160px;border:1px solid var(--borda);border-radius:8px;padding:8px 10px;font:inherit;font-size:.88rem}
+.mlLista{max-height:55vh;overflow:auto;display:grid;gap:6px}
+.mlIt{border:1px solid var(--borda);border-radius:10px;padding:9px 12px;cursor:pointer;display:grid;gap:2px}
+.mlIt:hover{border-color:var(--azul2);background:#f3f9fd}
+.mlIt b{color:var(--azul);letter-spacing:.03em}.mlIt span{font-size:.86rem}.mlIt small{color:var(--sub);font-size:.75rem}
+#numInfo{font-size:.86rem;margin-bottom:10px;padding:8px 10px;border-radius:8px;background:#f5f8fa}
 header .ver{font-size:.7rem;background:rgba(255,255,255,.18);border-radius:10px;padding:2px 8px;font-weight:700}
 header .sp{flex:1}
 header button{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.35);border-radius:8px;padding:5px 10px;font-size:.8rem;cursor:pointer}
@@ -143,8 +151,9 @@ main{flex:1;min-height:0;position:relative}
 <header>
   <a class="voltar" href="../index.html">&larr; Ferramentas</a>
   <img class="hlogo" src="logo-bolsa.png" alt="Bolsa Irriga">
-  <h1>Protocolo de Projetos</h1><span class="ver" id="verTag"></span>
+  <h1>Protocolo de Projetos</h1><span class="ver" id="verTag"></span><span class="numtag" id="numTag"></span>
   <span class="sp"></span>
+  <button id="btnMeus" title="Abrir um protocolo já enviado (planilha online)" style="display:none">Meus protocolos</button>
   <button id="btnNovo" title="Limpar tudo e começar um protocolo novo">Novo</button>
   <button id="btnAbrir" title="Abrir um protocolo exportado (.zip ou .kml) ou um KML de talhões">Abrir…</button>
   <input type="file" id="fileAbrir" accept=".zip,.kml" hidden>
@@ -191,6 +200,7 @@ main{flex:1;min-height:0;position:relative}
   <section class="pane" id="paneEnv">
     <div class="env">
       <div class="card">
+        <div id="numInfo"></div>
         <h2>Assunto do e-mail</h2>
         <div class="assunto"><code id="assuntoTx"></code><button class="btn sec" id="copiar">Copiar</button></div>
       </div>
@@ -213,6 +223,10 @@ main{flex:1;min-height:0;position:relative}
   </section>
 </main>
 
+<div class="modal" id="modalLista"><div class="box" style="max-width:640px">
+  <div style="display:flex;align-items:center;margin-bottom:10px"><h3 style="margin:0">Meus protocolos</h3>
+  <button class="btn sec" style="margin-left:auto" onclick="this.closest('.modal').classList.remove('on')">Fechar</button></div>
+  <div id="mlBody"></div></div></div>
 <div class="modal" id="modal"><div class="box"><h3 id="mTit"></h3><div id="mBody"></div>
   <div class="btns"><button class="btn sec" id="mCan">Cancelar</button><button class="btn pri" id="mOk">OK</button></div></div></div>
 <div class="modal" id="modalNom"><div class="box">
@@ -237,8 +251,10 @@ main{flex:1;min-height:0;position:relative}
    v1.4 2026-11-27  linha de plantio pede o espaçamento entre linhas antes de desenhar; vai na descrição do KML
    v1.5 2026-11-27  perfil de elevação (adutora, recalque, plantio, carreador): gráfico interativo + estatísticas
    v1.6 2026-11-27  talhão pergunta variedade/idade; bomba de recalque pergunta vazão; listas obrigatórias com
-                    "Não se aplica"; exportação bloqueada enquanto houver campo obrigatório em branco */
-const APP_VERSION = 'v1.6';
+                    "Não se aplica"; exportação bloqueada enquanto houver campo obrigatório em branco
+   v1.7 2026-11-27  observações na bomba de recalque; polígono azul de ampliação futura; numeração única
+                    (CÓDIGO-AAMM-SEQ + revisão Rn) e histórico em planilha Google via Apps Script */
+const APP_VERSION = 'v1.7';
 const MAPS_KEY = 'AIzaSyD9gjUQfQroOs5tvObcqESlB6Wb9YKMoaw';
 const STORE = 'protocolo_bi_v1';
 document.getElementById('verTag').textContent = APP_VERSION;
@@ -312,7 +328,8 @@ const NAO_SE_APLICA = 'Não se aplica';
 const ATRIB = {
   talhao:   [{k:'variedade', l:'Variedade', ph:'ex.: Catuaí 144'},
              {k:'idade', l:'Idade da lavoura (anos)', num:1, un:'anos', ph:'ex.: 4  (0 = plantio novo)'}],
-  bombaRec: [{k:'vazao', l:'Vazão a ser recalcada (m³/h)', num:1, un:'m³/h', ph:'ex.: 25', def:()=>S.form.vazaoRec}],
+  bombaRec: [{k:'vazao', l:'Vazão a ser recalcada (m³/h)', num:1, un:'m³/h', ph:'ex.: 25', def:()=>S.form.vazaoRec},
+             {k:'obs', l:'Observações', area:1, ph:'ex.: bomba existente, captação em balsa, distância da rede elétrica…'}],
 };
 const valAtrib = (it,a) => { const v=it[a.k]; if(v==null||v==='') return 'não informado';
   return a.num ? `${Number(v).toLocaleString('pt-BR',{maximumFractionDigits:2})} ${a.un}` : v; };
@@ -320,7 +337,8 @@ const descAtrib = it => (ATRIB[it.tipo]||[]).map(a=>`${a.l.replace(/ \(.*\)$/,''
 function camposAtribHTML(it){
   return (ATRIB[it.tipo]||[]).map((a,i)=>{ const v = it[a.k] ?? (a.def?a.def():'') ?? '';
     return `<label style="display:block;font-size:.82rem;margin:${i?10:0}px 0 4px">${esc(a.l)}</label>
-      <input id="${i?'mAt_'+a.k:'mIn'}" data-k="${a.k}" class="mAt" ${a.num?'inputmode="decimal"':''} placeholder="${esc(a.ph||'')}" value="${esc(String(v??'').replace('.',a.num?',':'.'))}">`; }).join('');
+      ${a.area ? `<textarea id="${i?'mAt_'+a.k:'mIn'}" data-k="${a.k}" class="mAt" placeholder="${esc(a.ph||'')}" style="min-height:80px">${esc(v??'')}</textarea>`
+               : `<input id="${i?'mAt_'+a.k:'mIn'}" data-k="${a.k}" class="mAt" ${a.num?'inputmode="decimal"':''} placeholder="${esc(a.ph||'')}" value="${esc(String(v??'').replace('.',a.num?',':'.'))}">`}`; }).join('');
 }
 function lerAtribModal(it){
   document.querySelectorAll('#mBody .mAt').forEach(el=>{ const a=ATRIB[it.tipo].find(x=>x.k===el.dataset.k); let v=el.value.trim();
@@ -331,6 +349,7 @@ function lerAtribModal(it){
 /* ======================= TIPOS DO CROQUI (nomenclatura padrão) ======================= */
 const TIPOS = {
   talhao:   {g:'poly', nome:'Contorno do Talhão', cor:'#FFFFFF', w:3, grupo:'Áreas e linhas'},
+  ampliacao:{g:'poly', nome:'Área de Ampliação Futura', cor:'#2979FF', fill:'#2979FF', w:3, grupo:'Áreas e linhas', ab:'Ampl.'},
   plantio:  {g:'line', nome:'Linha de Plantio',   cor:'#FFFF00', w:2, grupo:'Áreas e linhas'},
   carreador:{g:'line', nome:'Carreador',          cor:'#FF0000', w:3, grupo:'Áreas e linhas'},
   adutora:  {g:'line', nome:'Adutora Projeto',    cor:'#FF00FF', w:4, grupo:'Áreas e linhas'},
@@ -402,6 +421,7 @@ function montarForm(){
     $('f_area').value = (a/10000).toFixed(2); S.form.area = $('f_area').value; salvar(); atualizarEnvio();
   };
   dependencias();
+  aplicarConsultores();
 }
 function dependencias(){
   [...CAMPOS, ...CAMPOS.filter(c=>c.extra).map(c=>c.extra)].forEach(c=>{
@@ -448,6 +468,7 @@ function valor(c){
 function proper(s){ return String(s||'').trim().toLocaleLowerCase('pt-BR').replace(/(^|[^\p{L}])(\p{L})/gu,(m,a,b)=>a+b.toLocaleUpperCase('pt-BR')); }
 function assunto(){
   const f=S.form; const p=[];
+  if(numeroCompleto()) p.push(numeroCompleto());
   p.push(f.tipoOrc||'Orçamento');
   if(f.nome) p.push(proper(f.nome));
   if(f.area!==undefined && f.area!=='') p.push(fmt(parseFloat(f.area))+' ha');
@@ -562,7 +583,7 @@ function montarTools(){
     if(t.grupo!==g){ g=t.grupo; const h=document.createElement('h3'); h.textContent=g; T.appendChild(h); }
     let sw;
     if(t.g==='line') sw=`<i style="background:${t.cor}"></i>`;
-    else if(t.g==='poly') sw=`<span style="display:block;width:22px;height:15px;border:2.5px solid #fff;outline:1px solid #555;background:rgba(0,0,0,.25)"></span>`;
+    else if(t.g==='poly') sw=`<span style="display:block;width:22px;height:15px;border:2.5px solid ${t.cor};outline:1px solid #555;background:${t.fill?t.fill+'55':'rgba(0,0,0,.25)'}"></span>`;
     else sw=`<svg width="22" height="22" viewBox="0 0 28 28">${simbolo(t.sym,'!')}</svg>`;
     bt(k, sw, t.nome, null, t.ab);
   });
@@ -593,7 +614,7 @@ function escolherTool(k){
     const T=TIPOS[tool];
     if(T.g==='pt') hint(`<b>${T.nome}</b>: clique no mapa para posicionar.`, false);
     else { draft = {pts:[], tipo:tool,
-      shape: T.g==='poly' ? new google.maps.Polygon({map, strokeColor:T.cor, strokeWeight:T.w, fillColor:'#fff', fillOpacity:.1, clickable:false})
+      shape: T.g==='poly' ? new google.maps.Polygon({map, strokeColor:T.cor, strokeWeight:T.w, fillColor:T.fill||'#fff', fillOpacity:T.fill?.25:.1, clickable:false})
                          : new google.maps.Polyline({map, strokeColor:T.cor, strokeWeight:T.w, clickable:false}),
       rubber: new google.maps.Polyline({map, strokeColor:T.cor, strokeOpacity:.7, strokeWeight:2, clickable:false})};
       atualizarHintDraft(); }
@@ -707,6 +728,13 @@ async function concluir(){
   if(draft.tipo==='talhao') it.nome = 'Talhão '+(S.items.filter(i=>i.tipo==='talhao').length+1);
   if(draft.tipo==='plantio' && espPlantio) it.esp = espPlantio;
   cancelarDraft();
+  if(it.tipo==='ampliacao'){
+    it.nome='Ampliação '+(S.items.filter(i=>i.tipo==='ampliacao').length+1);
+    // preenche a "Previsão de ampliação" do protocolo se ainda estiver vazia
+    if(!S.form.ampArea && S.form.amp!=='Não'){ setTimeout(()=>{ const ha=areaTipo('ampliacao')/10000;
+      S.form.amp='Sim'; S.form.ampArea=ha.toFixed(2); salvar(); montarForm(); atualizarEnvio();
+      aviso(`Previsão de ampliação do protocolo preenchida com <b>${fmt(ha)} ha</b> (área desenhada).`); }, 50); }
+  }
   if(it.tipo==='talhao'){
     await perguntar('Dados do talhão', `<label style="display:block;font-size:.82rem;margin-bottom:4px">Nome do talhão</label>
       <input id="mNome" value="${esc(it.nome)}" style="margin-bottom:10px">${camposAtribHTML(it)}`,
@@ -767,7 +795,7 @@ function criarOverlay(it){
     });
   } else {
     const opt = {map, path:it.path, strokeColor:T.cor, strokeWeight:T.w, strokeOpacity:1, zIndex:T.g==='poly'?1:(it.tipo==='plantio'?2:3)};
-    o = T.g==='poly' ? new google.maps.Polygon({...opt, fillColor:'#ffffff', fillOpacity:.08}) : new google.maps.Polyline(opt);
+    o = T.g==='poly' ? new google.maps.Polygon({...opt, fillColor:T.fill||'#ffffff', fillOpacity:T.fill?.25:.08}) : new google.maps.Polyline(opt);
     const p=o.getPath(); let guard=false;
     const sync=()=>{ it.path=p.getArray().map(x=>({lat:x.lat(),lng:x.lng()})); salvar(); renderLista(); };
     // vértice arrastado perto de um componente/vértice encaixa nele
@@ -817,6 +845,10 @@ function medida(it){
   if(T.g==='poly') return fmt(google.maps.geometry.spherical.computeArea(it.path.map(p=>new google.maps.LatLng(p)))/10000)+' ha';
   return '';
 }
+function areaTipo(t){
+  if(!window.google?.maps?.geometry) return 0;
+  return S.items.filter(i=>i.tipo===t).reduce((s,i)=>s+google.maps.geometry.spherical.computeArea(i.path.map(p=>new google.maps.LatLng(p))),0);
+}
 function areaTalhoes(){
   if(!window.google?.maps?.geometry) return 0;
   return S.items.filter(i=>i.tipo==='talhao').reduce((s,i)=>s+google.maps.geometry.spherical.computeArea(i.path.map(p=>new google.maps.LatLng(p))),0);
@@ -845,6 +877,7 @@ async function pedirEspacamento(){
 }
 function nomeItem(it){
   if(it.tipo==='talhao') return it.nome||'Talhão';
+  if(it.tipo==='ampliacao') return it.nome||'Área de Ampliação';
   if(it.tipo==='plantio') return it.esp ? `Linha de Plantio · ${fmtEsp(it.esp)} m` : 'Linha de Plantio';
   if(it.tipo==='obs') return `Obs ${numObs(it)}: ${it.texto}`;
   return rotuloItem(it);
@@ -855,7 +888,7 @@ function renderLista(){
   else L.innerHTML = S.items.map(it=>{
     const T=TIPOS[it.tipo];
     const sw = T.g==='line'?`<i style="display:inline-block;width:14px;height:4px;background:${T.cor};box-shadow:0 0 0 1px #555"></i>`
-             : T.g==='poly'?`<i style="display:inline-block;width:12px;height:10px;border:2px solid #fff;outline:1px solid #555"></i>`
+             : T.g==='poly'?`<i style="display:inline-block;width:12px;height:10px;border:2px solid ${T.cor};outline:1px solid #555;background:${T.fill?T.fill+'55':'transparent'}"></i>`
              : `<svg width="16" height="16" viewBox="0 0 28 28">${simbolo(T.sym,numObs(it))}</svg>`;
     return `<div class="it${it.id===selId?' sel':''}" data-id="${it.id}">${sw}<span class="nm">${esc(nomeItem(it))}</span><span class="ms">${medida(it)}</span><button class="x" data-del="${it.id}" title="Excluir">&#10005;</button></div>`;
   }).join('');
@@ -868,14 +901,17 @@ function renderLista(){
   // totais
   const a=areaTalhoes(); const tl=[];
   if(a) tl.push(`<b>Área dos talhões:</b> ${fmt(a/10000)} ha`);
+  const aa=areaTipo('ampliacao'); if(aa) tl.push(`<b>Ampliação futura:</b> ${fmt(aa/10000)} ha`);
   ['adutora','recalque','carreador','plantio'].forEach(t=>{ const c=comprimento(t); if(c) tl.push(`<b>${TIPOS[t].nome}:</b> ${fmt(c,0)} m`); });
   $('tot').style.display = tl.length?'block':'none'; $('tot').innerHTML=tl.join('<br>');
   // painel do selecionado
   const sb=$('selBox'); const it=S.items.find(i=>i.id===selId);
   if(!it){ sb.style.display='none'; return; }
   const T=TIPOS[it.tipo]; let h=`<h3>Selecionado: ${esc(T.nome)}</h3>`;
+  if(it.tipo==='ampliacao') h+=`<label>Nome da área</label><input id="sNome" value="${esc(it.nome||'')}">`;
   if(it.tipo==='talhao') h+=`<label>Nome do talhão</label><input id="sNome" value="${esc(it.nome||'')}">`;
-  (ATRIB[it.tipo]||[]).forEach(a=>{ h+=`<label>${esc(a.l)}</label><input class="sAt" data-k="${a.k}" ${a.num?'inputmode="decimal"':''} placeholder="${esc(a.ph||'')}" value="${esc(String(it[a.k]??'').replace('.',a.num?',':'.'))}">`; });
+  (ATRIB[it.tipo]||[]).forEach(a=>{ h+= a.area ? `<label>${esc(a.l)}</label><textarea class="sAt" data-k="${a.k}" placeholder="${esc(a.ph||'')}">${esc(it[a.k]??'')}</textarea>`
+      : `<label>${esc(a.l)}</label><input class="sAt" data-k="${a.k}" ${a.num?'inputmode="decimal"':''} placeholder="${esc(a.ph||'')}" value="${esc(String(it[a.k]??'').replace('.',a.num?',':'.'))}">`; });
   if(it.tipo==='plantio') h+=`<label>Espaçamento entre linhas (m)</label><input id="sEsp" inputmode="decimal" value="${it.esp?String(it.esp).replace('.',','):''}">`;
   if(it.tipo==='obs') h+=`<label>Texto da observação</label><textarea id="sTx">${esc(it.texto||'')}</textarea>`;
   if(T.subs) h+=`<label>Tipo</label><select id="sSub">${T.subs.map(s=>`<option${s===it.sub?' selected':''}>${esc(s)}</option>`).join('')}</select>`;
@@ -1097,11 +1133,13 @@ function abrirNomenclatura(){
 /* ======================= ENVIAR / CONFERÊNCIA ======================= */
 function faltando(){
   const f = CAMPOS.filter(c=>(c.req||c.opts) && ativo(c) && !String(S.form[c.k]??'').trim());
+  if(PLANILHA_URL && consultores.length && S.form.consultor && !codigoConsultor()) f.push({k:'consultor', l:'Consultor(a) de Vendas (escolha na lista da planilha)'});
   CAMPOS.filter(c=>c.extra && S.form[c.k]==='Sim' && !S.form[c.extra.k]).forEach(c=>f.push({k:c.k, l:c.l+' (informar a área)'}));
   return f;
 }
 function atualizarEnvio(){
   $('assuntoTx').textContent = assunto();
+  infoNumero();
   const f=faltando(); const li=[];
   li.push(f.length ? `<li class="no">&#10007; <b>Exportação bloqueada</b> — ${f.length} campo(s) obrigatório(s) em branco: ${f.map(c=>esc(c.l)).join(', ')}</li>` : `<li class="ok">&#10003; Campos obrigatórios preenchidos</li>`);
   ['expZip','expPdf','expKml'].forEach(id=>$(id).classList.toggle('bloq', !!f.length));
@@ -1154,6 +1192,11 @@ async function croquiCanvas(){
     await Promise.all(jobs);
   }
   const lw=ESC*1.1;
+  // áreas de ampliação (azul)
+  S.items.filter(i=>i.tipo==='ampliacao').forEach(it=>{
+    g.beginPath(); it.path.forEach((p,j)=>{const [x,y]=px(p.lat,p.lng); j?g.lineTo(x,y):g.moveTo(x,y);}); g.closePath();
+    g.fillStyle='rgba(41,121,255,.28)'; g.fill(); g.setLineDash([10,6]); g.strokeStyle='#2979FF'; g.lineWidth=TIPOS.ampliacao.w*lw; g.stroke(); g.setLineDash([]);
+  });
   // talhões
   S.items.filter(i=>i.tipo==='talhao').forEach(it=>{
     g.beginPath(); it.path.forEach((p,j)=>{const [x,y]=px(p.lat,p.lng); j?g.lineTo(x,y):g.moveTo(x,y);}); g.closePath();
@@ -1166,10 +1209,10 @@ async function croquiCanvas(){
     g.strokeStyle='rgba(0,0,0,.55)'; g.lineWidth=TIPOS[t].w*lw+2.5; g.stroke();
     g.strokeStyle=TIPOS[t].cor; g.lineWidth=TIPOS[t].w*lw; g.stroke();
   }));
-  // nomes dos talhões
-  S.items.filter(i=>i.tipo==='talhao').forEach(it=>{
+  // nomes dos talhões / ampliações
+  S.items.filter(i=>i.tipo==='talhao'||i.tipo==='ampliacao').forEach(it=>{
     let sx=0,sy=0; it.path.forEach(p=>{const [x,y]=px(p.lat,p.lng); sx+=x; sy+=y;}); sx/=it.path.length; sy/=it.path.length;
-    const t1=it.nome||'Talhão', t2=medida(it);
+    const t1=it.nome||TIPOS[it.tipo].nome, t2=medida(it);
     g.font=`bold ${13*ESC}px Arial`; g.textAlign='center'; g.lineWidth=4; g.strokeStyle='rgba(0,0,0,.8)'; g.fillStyle='#fff';
     g.strokeText(t1,sx,sy); g.fillText(t1,sx,sy);
     if(t2){ g.font=`${11*ESC}px Arial`; g.strokeText(t2,sx,sy+14*ESC); g.fillText(t2,sx,sy+14*ESC); }
@@ -1211,6 +1254,7 @@ async function gerarPDF(){
   let y=32;
   SECOES.forEach(sec=>{
     const body = sec.f.map(c=>[c.l, valor(c)]);
+    if(sec.t==='Protocolo' && PLANILHA_URL) body.unshift(['Nº do Protocolo', numeroCompleto()||'—']);
     doc.autoTable({startY:y, margin:{left:M,right:M}, theme:'grid',
       head:[[{content:sec.t, colSpan:2}]], body,
       styles:{fontSize:8.2, cellPadding:{top:.95,bottom:.95,left:1.5,right:1.5}, lineColor:[180,190,200], lineWidth:.15, textColor:[20,30,40], overflow:'linebreak'},
@@ -1235,11 +1279,12 @@ async function gerarPDF(){
     for(const [k,T] of Object.entries(TIPOS)){
       const its=S.items.filter(i=>i.tipo===k); if(!its.length || k==='obs') continue;
       if(T.g==='line'){ const [r,gg,bb]=hexRgb(T.cor); doc.setFillColor(40); doc.rect(lx,ly-2.6,10,2.2,'F'); doc.setFillColor(r,gg,bb); doc.rect(lx,ly-2.3,10,1.6,'F'); }
-      else if(T.g==='poly'){ doc.setFillColor(90,100,110); doc.rect(lx,ly-3.4,10,4,'F'); doc.setDrawColor(255); doc.setLineWidth(.7); doc.rect(lx+.6,ly-2.8,8.8,2.8); }
+      else if(T.g==='poly'){ if(T.fill){ const [r,gg,bb]=hexRgb(T.fill); doc.setFillColor(r,gg,bb); doc.rect(lx,ly-3.4,10,4,'F'); }
+        else { doc.setFillColor(90,100,110); doc.rect(lx,ly-3.4,10,4,'F'); doc.setDrawColor(255); doc.setLineWidth(.7); doc.rect(lx+.6,ly-2.8,8.8,2.8); } }
       else { try{ const ic=await svgPng(T.sym); doc.addImage(ic,'PNG',lx+2,ly-4,5,5);}catch(e){} }
       let tx = k==='bombaRec' ? `${T.nome} — ${its.map(i=>valAtrib(i,ATRIB.bombaRec[0])).join(' / ')}`
              : T.g==='pt' ? `${T.nome}${its.length>1?' ('+its.length+')':''}`
-             : T.g==='poly' ? `${T.nome} — ${fmt(areaTalhoes()/10000)} ha`
+             : T.g==='poly' ? `${T.nome} — ${fmt(areaTipo(k)/10000)} ha`
              : k==='plantio' ? `${T.nome} — esp. ${[...new Set(its.map(i=>i.esp).filter(Boolean))].map(e=>fmtEsp(e)+' m').join(' / ')||'não informado'}`
              : `${T.nome} — ${fmt(comprimento(k),0)} m`;
       doc.text(tx, lx+13, ly, {maxWidth:LW-M-lx-13}); ly+=6.2;
@@ -1251,8 +1296,10 @@ async function gerarPDF(){
         styles:{fontSize:7.4, cellPadding:1, lineColor:[200,208,216], lineWidth:.1, textColor:[20,30,40]}, headStyles:{fillColor:[224,229,236], textColor:[0,61,92], fontStyle:'bold'}});
       ly=doc.lastAutoTable.finalY+2; doc.setFont('helvetica','normal'); doc.setTextColor(20); }
     const obs=S.items.filter(i=>i.tipo==='obs');
-    if(obs.length){ ly+=3; doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(0,61,92); doc.text('Observações',lx,ly); ly+=2;
-      doc.autoTable({startY:ly, margin:{left:lx, right:M}, theme:'plain', body:obs.map((o,i)=>[String(i+1), o.texto||'']),
+    const linhasObs=[...obs.map((o,i)=>[String(i+1), o.texto||'']),
+      ...S.items.filter(i=>i.tipo==='bombaRec' && String(i.obs||'').trim()).map(b=>['BR', 'Bomba Recalque: '+b.obs])];
+    if(linhasObs.length){ ly+=3; doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(0,61,92); doc.text('Observações',lx,ly); ly+=2;
+      doc.autoTable({startY:ly, margin:{left:lx, right:M}, theme:'plain', body:linhasObs,
         styles:{fontSize:8, cellPadding:1.1, textColor:[20,30,40]}, columnStyles:{0:{cellWidth:6, fontStyle:'bold', textColor:[21,101,192]}},
         didDrawPage:d=>{} });
     }
@@ -1280,7 +1327,7 @@ function gerarKML(){
   let st='';
   for(const [k,T] of Object.entries(TIPOS)){
     if(T.g==='line') st+=`<Style id="s_${k}"><LineStyle><color>${kmlCor(T.cor)}</color><width>${T.w+1}</width></LineStyle></Style>`;
-    else if(T.g==='poly') st+=`<Style id="s_${k}"><LineStyle><color>${kmlCor(T.cor)}</color><width>${T.w}</width></LineStyle><PolyStyle><fill>0</fill><outline>1</outline></PolyStyle></Style>`;
+    else if(T.g==='poly') st+=`<Style id="s_${k}"><LineStyle><color>${kmlCor(T.cor)}</color><width>${T.w}</width></LineStyle><PolyStyle>${T.fill?`<color>${kmlCor(T.fill,'59')}</color><fill>1</fill>`:'<fill>0</fill>'}<outline>1</outline></PolyStyle></Style>`;
     else st+=`<Style id="s_${k}"><IconStyle><color>${kmlCor(COR_PT[T.sym])}</color><scale>1.1</scale><Icon><href>http://maps.google.com/mapfiles/kml/${ICONES[T.sym]}</href></Icon></IconStyle><LabelStyle><scale>0.9</scale></LabelStyle></Style>`;
   }
   const coords=p=>p.map(q=>`${q.lng.toFixed(8)},${q.lat.toFixed(8)},0`).join(' ');
@@ -1289,9 +1336,9 @@ function gerarKML(){
     const its=S.items.filter(i=>i.tipo===k); if(!its.length) continue;
     pastas+=`<Folder><name>${x(T.nome)}</name>`;
     its.forEach(it=>{
-      const nome = k==='talhao' ? (it.nome||'Talhão') : k==='obs' ? `Obs ${numObs(it)}` : rotuloItem(it);
+      const nome = (k==='talhao'||k==='ampliacao') ? (it.nome||T.nome) : k==='obs' ? `Obs ${numObs(it)}` : rotuloItem(it);
       const desc = k==='obs' ? it.texto : k==='plantio' ? `${txtEsp(it)}\nComprimento: ${medida(it)}`
-                 : k==='talhao' ? `Área: ${medida(it)}\n${descAtrib(it)}` : ATRIB[k] ? descAtrib(it) : (medida(it)||'');
+                 : k==='talhao' ? `Área: ${medida(it)}\n${descAtrib(it)}` : k==='ampliacao' ? `Área de ampliação futura: ${medida(it)}` : ATRIB[k] ? descAtrib(it) : (medida(it)||'');
       let geo;
       if(T.g==='pt') geo=`<Point><coordinates>${coords(it.path)}</coordinates></Point>`;
       else if(T.g==='line') geo=`<LineString><tessellate>1</tessellate><coordinates>${coords(it.path)}</coordinates></LineString>`;
@@ -1305,11 +1352,124 @@ function gerarKML(){
   return `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${x(assunto())}</name><open>1</open>
 <description>${x(resumo)}</description>
-<ExtendedData><Data name="protocolo_bi"><value>${x(JSON.stringify({v:1, form:S.form}))}</value></Data></ExtendedData>
+<ExtendedData><Data name="protocolo_bi"><value>${x(JSON.stringify({v:1, form:S.form, proto:S.proto||null}))}</value></Data></ExtendedData>
 ${st}
 ${pastas}
 </Document></kml>`;
 }
+
+/* ======================= PLANILHA ONLINE (numeração única + histórico) =======================
+   Número: CÓDIGO-AAMM-SEQ (ex.: JP-2611-07) — código do consultor, ano/mês, sequência do consultor no mês.
+   Cada alteração reenviada vira uma revisão do MESMO número: JP-2611-07 R1, R2…
+   Backend: planilha Google + Apps Script (arquivo planilha-apps-script.gs). Cole a URL do "App da Web" abaixo. */
+const PLANILHA_PADRAO = '';
+const PLANILHA_URL = (()=>{ try{ return localStorage.getItem('protocolo_bi_planilha') || PLANILHA_PADRAO; }catch(e){ return PLANILHA_PADRAO; } })();
+const LS_CONS='protocolo_bi_consultores', LS_PIN='protocolo_bi_pin_';
+let consultores = (()=>{ try{ return JSON.parse(localStorage.getItem(LS_CONS)||'[]'); }catch(e){ return []; } })();
+const numeroCompleto = () => S.proto?.numero ? S.proto.numero + (S.proto.rev ? ' R'+S.proto.rev : '') : '';
+function hashTxt(t){ let h=2166136261; for(let i=0;i<t.length;i++){ h^=t.charCodeAt(i); h=Math.imul(h,16777619); } return 'h'+(h>>>0).toString(36); }
+const hashDados = () => hashTxt(JSON.stringify({form:S.form, items:S.items}));
+const codigoConsultor = () => consultores.find(c=>c.nome===S.form.consultor)?.codigo || '';
+async function api(params, post){
+  if(!PLANILHA_URL) throw new Error('planilha não configurada');
+  const r = post ? await fetch(PLANILHA_URL, {method:'POST', body:JSON.stringify(params)})
+                 : await fetch(PLANILHA_URL+'?'+new URLSearchParams(params));
+  const j = await r.json(); if(!j.ok) throw new Error(j.erro||'erro na planilha'); return j;
+}
+function mostrarNumero(){
+  const t=$('numTag'), n=numeroCompleto();
+  t.textContent = n ? 'Nº '+n : ''; t.classList.toggle('on', !!n);
+  $('btnMeus').style.display = PLANILHA_URL ? '' : 'none';
+}
+function infoNumero(){
+  const el=$('numInfo'); if(!el) return;
+  if(!PLANILHA_URL){ el.innerHTML='Numeração automática desativada (planilha online não configurada).'; return; }
+  const n=numeroCompleto();
+  if(!n) el.innerHTML='<b>Nº do protocolo:</b> será gerado automaticamente ao exportar.';
+  else if(S.proto.hash===hashDados()) el.innerHTML=`<b>Nº do protocolo:</b> ${esc(n)} — registrado na planilha.`;
+  else el.innerHTML=`<b>Nº do protocolo:</b> ${esc(n)} — houve alterações: ao exportar vira <b>${esc(S.proto.numero)} R${(S.proto.rev||0)+1}</b>.`;
+}
+/* consultores vêm da aba "Consultores" da planilha → o campo vira lista suspensa */
+async function carregarConsultores(){
+  if(!PLANILHA_URL) return;
+  try{ const j=await api({acao:'consultores'}); consultores=j.consultores||[]; localStorage.setItem(LS_CONS, JSON.stringify(consultores)); }catch(e){}
+  aplicarConsultores(); atualizarEnvio();
+}
+function aplicarConsultores(){
+  const el=$('f_consultor'); if(!el || !PLANILHA_URL || !consultores.length || el.tagName==='SELECT') return;
+  const sel=document.createElement('select'); sel.id='f_consultor';
+  sel.innerHTML=`<option value="" disabled>Selecione…</option>`+consultores.map(c=>`<option value="${esc(c.nome)}">${esc(c.nome)} (${esc(c.codigo)})</option>`).join('');
+  sel.value = consultores.some(c=>c.nome===S.form.consultor) ? S.form.consultor : '';
+  sel.onchange=()=>{ S.form.consultor=sel.value; salvar(); atualizarEnvio(); $('row_consultor')?.classList.remove('falta'); };
+  el.replaceWith(sel);
+}
+async function pegarPin(codigo, forcar){
+  let pin=''; try{ pin=localStorage.getItem(LS_PIN+codigo)||''; }catch(e){}
+  if(pin && !forcar) return pin;
+  pin = await perguntar(`PIN do consultor ${codigo}`, `<label style="display:block;font-size:.85rem;margin-bottom:6px">${forcar?'<b style="color:#c62828">PIN incorreto.</b> ':''}Digite seu PIN (cadastrado pelo gestor na planilha)</label>
+    <input id="mIn" type="password" inputmode="numeric" autocomplete="off">`, ()=>$('mIn').value.trim());
+  if(pin){ try{ localStorage.setItem(LS_PIN+codigo, pin); }catch(e){} }
+  return pin;
+}
+/* chama a planilha com o PIN; se o PIN estiver errado, pede de novo uma vez */
+async function comPin(codigo, fn){
+  for(let t=0;t<2;t++){
+    const pin=await pegarPin(codigo, t>0); if(!pin) throw new Error('PIN não informado');
+    try{ return await fn(pin); }
+    catch(e){ if(/PIN/i.test(e.message) && t===0){ try{ localStorage.removeItem(LS_PIN+codigo); }catch(_){} continue; } throw e; }
+  }
+}
+/* gera o número (1º envio) ou uma nova revisão (se o projeto mudou desde o último envio) */
+async function registrar(){
+  const codigo=codigoConsultor();
+  if(!codigo) throw new Error('consultor não encontrado na planilha — escolha o consultor na lista');
+  const h=hashDados();
+  if(S.proto?.numero && S.proto.hash===h) return;
+  const f=S.form;
+  const j = await comPin(codigo, pin=>api({acao:'salvar', codigo, pin, numero:S.proto?.numero||'', hash:h,
+    resumo:{data:f.data, consultor:f.consultor, cliente:f.nome, propriedade:f.propriedade, municipio:f.municipio, area:f.area, tipo:f.tipoOrc},
+    dados:JSON.stringify({form:S.form, items:S.items})}, true));
+  S.proto={numero:j.numero, rev:j.rev, hash:h}; salvar(); mostrarNumero();
+}
+/* "Meus protocolos": lista do consultor na planilha → abre para alterar (mesmo número, nova revisão) */
+async function meusProtocolos(){
+  $('modalLista').classList.add('on');
+  const cod=codigoConsultor()||consultores[0]?.codigo||'';
+  $('mlBody').innerHTML = consultores.length ? `<div class="mlTop">
+      <select id="mlCons">${consultores.map(c=>`<option value="${esc(c.codigo)}"${c.codigo===cod?' selected':''}>${esc(c.nome)} (${esc(c.codigo)})</option>`).join('')}</select>
+      <input id="mlBusca" placeholder="Buscar por número, cliente, propriedade, município…"></div><div id="mlLista" class="mlLista"></div>`
+    : '<p class="dica">Nenhum consultor cadastrado na planilha (aba Consultores).</p>';
+  if(!consultores.length) return;
+  let lista=[];
+  const render=()=>{ const q=$('mlBusca').value.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+    const fil=lista.filter(p=>!q || [p.numero,p.cliente,p.propriedade,p.municipio].join(' ').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').includes(q));
+    $('mlLista').innerHTML = fil.length ? fil.map(p=>`<div class="mlIt" data-n="${esc(p.numero)}"><b>${esc(p.numero)}${p.rev?' R'+p.rev:''}</b>
+      <span>${esc(p.cliente||'—')} · ${esc(p.propriedade||'')}</span><small>${esc(p.municipio||'')}${p.area?' · '+esc(String(p.area).replace('.',','))+' ha':''} · ${esc(p.tipo||'')} · salvo em ${esc(p.salvo||'')}</small></div>`).join('')
+      : '<p class="dica">Nenhum protocolo encontrado.</p>';
+    document.querySelectorAll('#mlLista .mlIt').forEach(d=>d.onclick=()=>abrirDaPlanilha($('mlCons').value, d.dataset.n)); };
+  const carregarLista=async()=>{ $('mlLista').innerHTML='<p class="dica">Carregando…</p>'; const codigo=$('mlCons').value;
+    try{ lista=(await comPin(codigo, pin=>api({acao:'lista', codigo, pin}))).protocolos||[]; render(); }
+    catch(e){ $('mlLista').innerHTML=`<p class="dica" style="color:var(--erro)">${esc(e.message)}</p>`; } };
+  $('mlCons').onchange=carregarLista; $('mlBusca').oninput=render;
+  carregarLista();
+}
+async function abrirDaPlanilha(codigo, numero){
+  if((S.items.length || S.form.nome) && !confirm(`Abrir o protocolo ${numero}? O protocolo que está na tela será substituído (exporte antes se precisar).`)) return;
+  try{
+    const j=await comPin(codigo, pin=>api({acao:'abrir', codigo, pin, numero}));
+    const d=JSON.parse(j.dados);
+    Object.values(ov).forEach(o=>o.setMap(null)); ov={}; selId=null; if(perfAtual) fecharPerfil();
+    S={form:d.form||{}, items:d.items||[], view:null, encaixe:S.encaixe};
+    S.proto={numero:j.numero, rev:j.rev, hash:hashDados()};
+    S.form.tipoOrc='Atualização de Orçamento';   // reaberto para alterar → atualização (próximo envio = nova revisão)
+    seq=S.items.reduce((m,i)=>Math.max(m,i.id),0)+1;
+    salvar(); montarForm(); if(map){ S.items.forEach(criarOverlay); enquadrar(); } renderLista(); atualizarEnvio(); mostrarNumero();
+    $('modalLista').classList.remove('on');
+    document.querySelector('nav.tabs button[data-p="paneForm"]').click();
+    aviso(`Protocolo <b>${esc(j.numero)}${j.rev?' R'+j.rev:''}</b> aberto. Ao exportar com alterações, ele sai como revisão <b>R${j.rev+1}</b>.`);
+  }catch(e){ alert('Não foi possível abrir: '+e.message); }
+}
+$('btnMeus').onclick=meusProtocolos;
 
 /* ======================= EXPORTAÇÃO ======================= */
 function baixar(blob, nome){ const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=nome; document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},2000); }
@@ -1324,7 +1484,14 @@ function conferir(){
 }
 async function exportar(modo){
   if(!conferir()) return;
-  const st=$('status'); const nome=nomeArquivo();
+  const st=$('status');
+  if(PLANILHA_URL){
+    st.textContent='Registrando o protocolo na planilha…';
+    try{ await registrar(); }
+    catch(e){ if(!confirm(`Não foi possível registrar na planilha:\n${e.message}\n\nExportar mesmo assim, sem número de protocolo atualizado?`)){ st.textContent='Exportação cancelada.'; return; } }
+    atualizarEnvio();
+  }
+  const nome=nomeArquivo();
   try{
     st.textContent='Gerando…';
     if(modo==='kml'){ baixar(new Blob([gerarKML()],{type:'application/vnd.google-earth.kml+xml'}), nome+'.kml'); st.textContent='KML gerado.'; return; }
@@ -1344,7 +1511,7 @@ $('expZip').onclick=()=>exportar('zip'); $('expPdf').onclick=()=>exportar('pdf')
 $('btnNovo').onclick=()=>{
   if(!confirm('Começar um protocolo novo? Os dados e o croqui atuais serão apagados (exporte antes se precisar).')) return;
   Object.values(ov).forEach(o=>o.setMap(null)); ov={}; selId=null;
-  S={form:{data:hoje(), tipoOrc:'Orçamento'}, items:[], view:S.view}; seq=1; salvar(); montarForm(); renderLista(); atualizarEnvio();
+  S={form:{data:hoje(), tipoOrc:'Orçamento'}, items:[], view:S.view, encaixe:S.encaixe}; seq=1; salvar(); montarForm(); renderLista(); atualizarEnvio(); mostrarNumero();
 };
 $('btnAbrir').onclick=()=>$('fileAbrir').click();
 $('fileAbrir').onchange=async e=>{
@@ -1358,7 +1525,7 @@ $('fileAbrir').onchange=async e=>{
 };
 function tipoPorNome(n, geo){
   n=(n||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
-  if(geo==='Polygon') return 'talhao';
+  if(geo==='Polygon') return /amplia/.test(n) ? 'ampliacao' : 'talhao';
   if(geo==='LineString'){
     if(n.includes('recalque')) return 'recalque';
     if(n.includes('adutora')) return 'adutora';
@@ -1377,8 +1544,8 @@ function importarKML(txt){
   const d=new DOMParser().parseFromString(txt,'application/xml');
   if(d.getElementsByTagName('parsererror').length) throw new Error('KML inválido');
   const dataDe=(el,nm)=>{ for(const x of el.getElementsByTagName('Data')) if(x.getAttribute('name')===nm) return x.getElementsByTagName('value')[0]?.textContent; return null; };
-  let form=null; const docEl=d.getElementsByTagName('Document')[0];
-  if(docEl){ for(const x of docEl.children) if(x.tagName==='ExtendedData'){ const v=dataDe(x,'protocolo_bi'); if(v) try{ form=JSON.parse(v).form; }catch(e){} } }
+  let form=null, proto=null; const docEl=d.getElementsByTagName('Document')[0];
+  if(docEl){ for(const x of docEl.children) if(x.tagName==='ExtendedData'){ const v=dataDe(x,'protocolo_bi'); if(v) try{ const j=JSON.parse(v); form=j.form; proto=j.proto||null; }catch(e){} } }
   const novos=[];
   for(const pm of d.getElementsByTagName('Placemark')){
     const nome=pm.getElementsByTagName('name')[0]?.textContent||'';
@@ -1392,6 +1559,7 @@ function importarKML(txt){
         const T=TIPOS[tipo]; if((T.g==='pt')!==(geo==='Point')) tipo = geo==='Point'?'obs':(geo==='Polygon'?'talhao':'plantio');
         const it={id:0, tipo, path};
         if(tipo==='talhao') it.nome=dataDe(pm,'nome')||nome||'Talhão';
+        if(tipo==='ampliacao') it.nome=dataDe(pm,'nome')||nome||'Área de Ampliação';
         (ATRIB[tipo]||[]).forEach(a=>{ const v=dataDe(pm,a.k); if(v!=null && v!=='') it[a.k]= a.num ? parseFloat(v) : v; });
         if(tipo==='plantio'){ const e=numBR(dataDe(pm,'espacamento_m')) || numBR((pm.getElementsByTagName('description')[0]?.textContent||'').match(/linhas:\s*([\d.,]+)/)?.[1]); if(e) it.esp=e; }
         if(tipo==='obs') it.texto=dataDe(pm,'texto')||pm.getElementsByTagName('description')[0]?.textContent||nome;
@@ -1404,7 +1572,7 @@ function importarKML(txt){
   const substituir = form ? true : (S.items.length ? confirm(`Encontrados ${novos.length} item(ns).\n\nOK = substituir o croqui atual\nCancelar = adicionar ao croqui atual`) : true);
   S.view=null;
   if(substituir){ Object.values(ov).forEach(o=>o.setMap(null)); ov={}; S.items=[]; selId=null; }
-  if(form){ S.form=form; montarForm(); }
+  if(form){ S.form=form; S.proto=proto; montarForm(); mostrarNumero(); }
   seq = S.items.reduce((m,i)=>Math.max(m,i.id),0)+1;
   novos.forEach(it=>{ it.id=seq++; S.items.push(it); criarOverlay(it); });
   salvar(); renderLista(); atualizarEnvio();
@@ -1413,7 +1581,7 @@ function importarKML(txt){
 }
 
 /* ======================= INÍCIO ======================= */
-carregar(); montarForm(); montarTools(); renderLista(); atualizarEnvio();
+carregar(); montarForm(); montarTools(); renderLista(); atualizarEnvio(); mostrarNumero(); carregarConsultores();
 window.addEventListener('beforeunload', salvar);
 </script>
 </body>
