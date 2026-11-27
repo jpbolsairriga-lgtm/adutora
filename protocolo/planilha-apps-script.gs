@@ -9,7 +9,8 @@
  * INSTALAÇÃO (uma vez só, pelo gestor):
  *  1. Crie uma planilha Google nova (ex.: "Protocolos Bolsa Irriga").
  *  2. Menu Extensões → Apps Script. Apague o conteúdo e cole ESTE arquivo inteiro. Salve.
- *  3. No editor, selecione a função "configurar" e clique em Executar (autorize o acesso à planilha).
+ *  3. SALVE (Ctrl+S). Depois escolha a função "configurar" e clique em Executar (autorize o acesso à planilha).
+ *     Se o script foi criado solto (fora da planilha), ele cria a planilha "Protocolos Bolsa Irriga" no seu Drive.
  *     → cria as abas "Protocolos" e "Consultores".
  *  4. Na aba Consultores, cadastre cada consultor: Nome, Código (2 letras, único), PIN (4 a 6 dígitos), Ativo (Sim/Não).
  *  5. Implantar → Nova implantação → tipo "App da Web":
@@ -22,8 +23,17 @@ const CAB_P = ['Número','Revisão','Número completo','Consultor','Código','Cl
 const CAB_C = ['Nome','Código','PIN','Ativo','E-mail'];
 const TAM = 45000;           // limite seguro por célula (Google: 50.000 caracteres)
 
+/* planilha usada: a do próprio script (Extensões → Apps Script) ou, se o script foi criado solto,
+   uma planilha "Protocolos Bolsa Irriga" criada automaticamente no seu Drive (o endereço aparece no registo de execução). */
+function planilha(){
+  const a = SpreadsheetApp.getActive(); if(a) return a;
+  const props = PropertiesService.getScriptProperties(), id = props.getProperty('PLANILHA_ID');
+  if(id){ try{ return SpreadsheetApp.openById(id); }catch(e){} }
+  const ss = SpreadsheetApp.create('Protocolos Bolsa Irriga'); props.setProperty('PLANILHA_ID', ss.getId()); return ss;
+}
+
 function configurar(){
-  const ss = SpreadsheetApp.getActive();
+  const ss = planilha();
   let c = ss.getSheetByName(ABA_C);
   if(!c){ c = ss.insertSheet(ABA_C); }
   if(c.getLastRow() === 0){
@@ -36,6 +46,7 @@ function configurar(){
     p.getRange('A:M').setNumberFormat('@');
     p.appendRow(CAB_P); p.setFrozenRows(1);
   }
+  Logger.log('Planilha pronta: ' + ss.getUrl());
 }
 
 function doGet(e){ return saida(rotear((e && e.parameter) || {})); }
@@ -57,7 +68,7 @@ function rotear(p){
 function cod(p){ return String(p.codigo||'').trim().toUpperCase(); }
 
 function consultores(){
-  const sh = SpreadsheetApp.getActive().getSheetByName(ABA_C);
+  const sh = planilha().getSheetByName(ABA_C);
   return sh.getDataRange().getDisplayValues().slice(1)
     .filter(r => r[0] && r[1])
     .map(r => ({nome:String(r[0]).trim(), codigo:String(r[1]).trim().toUpperCase(), pin:String(r[2]).trim(), ativo:!/^n/i.test(String(r[3]||'Sim').trim())}));
@@ -69,7 +80,7 @@ function autenticar(p){
   return c;
 }
 function linhas(){
-  const sh = SpreadsheetApp.getActive().getSheetByName(ABA_P);
+  const sh = planilha().getSheetByName(ABA_P);
   const n = sh.getLastRow(); if(n < 2) return [];
   return sh.getRange(2, 1, n-1, CAB_P.length-1).getDisplayValues().map((r,i) => ({
     row:i+2, numero:r[0], rev:Number(r[1])||0, completo:r[2], consultor:r[3], codigo:r[4], cliente:r[5], propriedade:r[6],
@@ -88,7 +99,7 @@ function abrir(codigo, numero){
   const u = ultimaRevisao(linhas(), numero);
   if(!u) throw new Error('Protocolo ' + numero + ' não encontrado');
   if(u.codigo !== codigo) throw new Error('Este protocolo pertence a outro consultor');
-  const sh = SpreadsheetApp.getActive().getSheetByName(ABA_P);
+  const sh = planilha().getSheetByName(ABA_P);
   const ini = CAB_P.length, n = Math.max(1, sh.getLastColumn() - ini + 1);
   const dados = sh.getRange(u.row, ini, 1, n).getValues()[0].map(String).join('');
   return {ok:true, numero:u.numero, rev:u.rev, dados:dados};
@@ -96,7 +107,7 @@ function abrir(codigo, numero){
 function salvar(p){
   const lock = LockService.getScriptLock(); lock.waitLock(30000);   // evita número duplicado em envios simultâneos
   try{
-    const sh = SpreadsheetApp.getActive().getSheetByName(ABA_P), tz = Session.getScriptTimeZone(), L = linhas(), codigo = cod(p);
+    const sh = planilha().getSheetByName(ABA_P), tz = Session.getScriptTimeZone(), L = linhas(), codigo = cod(p);
     let numero = String(p.numero||'').trim(), rev = 0;
     if(numero){
       const u = ultimaRevisao(L, numero);
