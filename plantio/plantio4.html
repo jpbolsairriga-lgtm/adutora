@@ -539,9 +539,10 @@ body.apresentacao-ativa #statusBarCad{display:none;}
 <div id="titlebar">
   <img src="logo-icone-64.png" alt="Agrolinhas" onerror="this.style.display='none'">
   <div class="tb-id">
-    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v6.07 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
+    <h1>Agrolinhas — Sistematização de Plantio <span id="verLabel">v6.08 · Ribbon</span><span id="dotAtualizacao" title="Nova versão disponível — clique pra ver" onclick="_cliqueDotAtualizacao()"></span></h1>
     <div class="tb-sub">João Paulo de Oliveira · Eng. Agrônomo</div>
   </div>
+  <div id="projArqLbl"></div>
   <div class="tb-spacer"></div>
   <button id="btnDesfazer" onclick="desfazerUltimaExclusao()" style="display:none;" title="Desfazer a última exclusão (talhão, curvas locais, ortofoto local, etc.)">&#8630; Desfazer</button>
   <button id="btnLayoutRibbon" onclick="alternarLayoutRibbon()" title="Experimental: move a barra de ferramentas pra lateral esquerda (mais altura útil de mapa)">&#8622; Ribbon Lateral</button>
@@ -591,6 +592,9 @@ if(localStorage.getItem("agrolinhasAdmin")==="1")document.getElementById("linkMe
       <div class="rgroup">
         <div class="rgroup-body">
           <button class="rbtn c-red" id="btnNovoProjeto" onclick="novoProjeto()" title="Recomeça do zero — se já houver algo desenhado, pergunta antes se você quer exportar."><span class="ico">&#128196;</span><span class="lbl">Novo Projeto</span></button>
+          <button class="rbtn c-blue" id="btnAbrirProjetoArq" onclick="projAbrir()" title="Abre um projeto salvo (.agrolinhas) — Ctrl+O. Depois de aberto, Salvar (Ctrl+S) grava por cima desse mesmo arquivo."><span class="ico">&#128194;</span><span class="lbl">Abrir Projeto</span></button>
+          <button class="rbtn c-green" id="btnSalvarProjetoArq" onclick="projSalvar(false)" title="Salvar (Ctrl+S) — igual ao AutoCAD: na 1ª vez escolhe onde guardar o arquivo .agrolinhas; depois grava sempre por cima do MESMO arquivo. Guarda tudo: talhões, linhas, cores, curvas, DEM, ortofoto e configurações."><span class="ico">&#128190;</span><span class="lbl">Salvar</span></button>
+          <button class="rbtn c-grey" id="btnSalvarComoProjetoArq" onclick="projSalvar(true)" title="Salvar como… (Ctrl+Shift+S) — grava uma cópia com outro nome/lugar; a partir daí o Salvar passa a usar esse arquivo novo."><span class="ico">&#128221;</span><span class="lbl">Salvar como</span></button>
           <button class="rbtn c-grey" onclick="$('inputKml').click()" title="Importa um projeto exportado por este app (estrutura 'Talhão N'), ou qualquer outro KML com talhão(ões) + linhas de plantio — inclusive o export bruto do AutoCAD Civil3D (cada entidade do desenho vira um Placemark solto; reconstrói e classifica contorno/linha por geometria)."><span class="ico">&#8599;</span><span class="lbl">Importar Projeto</span></button>
           <input type="file" id="inputKml" accept=".kml" style="display:none" onchange="if(this.files[0]){const r=new FileReader();r.onload=e=>_processarKMLImportado(e.target.result);r.readAsText(this.files[0]);this.value='';}">
           <button class="rbtn c-green" onclick="$('inputKmlPoly').click()" title="Importa 1 polígono do Google Earth como referência ativa (pronta pra travar/desenhar guia), ou VÁRIOS de uma vez (pasta/Folder com múltiplos polígonos) já como talhões travados."><span class="ico">&#9671;</span><span class="lbl">Importar Polígono</span></button>
@@ -21467,6 +21471,359 @@ async function gerarVista3DAnalise() {
     $('m3da-btnFecharErro').style.display = 'inline-block';
   } });
 }
+</script>
+<!-- ── v6.08: Arquivo de projeto (.agrolinhas) — Salvar/Salvar como/Abrir estilo AutoCAD ── -->
+<style>
+#projArqLbl{margin-left:14px;font-size:12px;display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden;max-width:46vw;}
+#projArqLbl .pa{padding:3px 9px;border-radius:12px;border:1px solid var(--panel-border);background:var(--panel-bg);cursor:pointer;overflow:hidden;text-overflow:ellipsis;}
+#projArqLbl .pa.ok{color:var(--c-ok,#2e7d32);border-color:currentColor;}
+#projArqLbl .pa.warn{color:#e65100;border-color:currentColor;}
+#projArqLbl .pa.rec{color:var(--panel-text-dim);}
+</style>
+<script>
+// v6.08: pedido do usuário — "quero opção de salvar o projeto igual no AutoCAD, sempre no mesmo
+// arquivo, para evitar falhar" (mesmo esquema já feito no HidroCalc BI). Até aqui o "projeto" era
+// só o KML exportado (perde espaçamento, sentido manual, grade das curvas, DEM, ortofoto,
+// configurações…) e cada exportação virava um arquivo novo na pasta Downloads.
+//
+// • Salvar (Ctrl+S): na 1ª vez escolhe onde gravar (File System Access API — Chrome/Edge); daí em
+//   diante grava POR CIMA do mesmo arquivo. createWritable grava num temporário e só troca o
+//   arquivo no close() — se algo falhar no meio, o arquivo anterior fica intacto.
+// • Salvar como (Ctrl+Shift+S), Abrir (Ctrl+O). Navegador sem a API (Firefox/celular): baixa o arquivo.
+// • Formato .agrolinhas = zip (JSZip): projeto.json + dem.bin (Float32) + ortofoto (imagem).
+// • Barra de título: "💾 nome · ✓ salvo / ● alterações não salvas"; aviso ao fechar a aba.
+// • SEGURANÇA: o app sempre abre VAZIO — então o vínculo com o arquivo NÃO volta sozinho ao
+//   recarregar (um Ctrl+S na tela vazia apagaria o projeto). O último arquivo fica lembrado só
+//   como atalho "Reabrir último projeto"; depois de reaberto, o Ctrl+S volta a gravar nele.
+const PROJ = { fh: null, nome: null, salvoEm: null, assin: null, recente: null, ocupado: false };
+const _PROJ_EXT = '.agrolinhas';
+const _PROJ_TIPOS = [{ description: 'Projeto Agrolinhas (.agrolinhas)', accept: { 'application/zip': [_PROJ_EXT] } }];
+
+// ── IndexedDB mínimo (só pra lembrar o "último projeto" — handles não cabem no localStorage) ──
+function _projIdb() {
+  return new Promise((ok, erro) => {
+    const r = indexedDB.open('agrolinhas-projeto', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('kv');
+    r.onsuccess = () => ok(r.result); r.onerror = () => erro(r.error);
+  });
+}
+async function _projIdbSet(k, v) { const db = await _projIdb(); return new Promise((ok, erro) => { const tx = db.transaction('kv', 'readwrite'); tx.objectStore('kv').put(v, k); tx.oncomplete = ok; tx.onerror = () => erro(tx.error); }); }
+async function _projIdbGet(k) { const db = await _projIdb(); return new Promise((ok, erro) => { const r = db.transaction('kv').objectStore('kv').get(k); r.onsuccess = () => ok(r.result); r.onerror = () => erro(r.error); }); }
+
+// ── Serialização ─────────────────────────────────────────────────────────────────────────────
+const _r7 = v => Math.round(v * 1e7) / 1e7;
+const _llArr = pts => (pts || []).map(p => [_r7(p.lat), _r7(p.lng)]);
+const _arrLL = a => (a || []).map(([lat, lng]) => ({ lat, lng }));
+function _plSer(pl) {
+  let pts = []; try { pts = pl.getLatLngs().flat(Infinity); } catch(e) {}
+  const o = pl.options || {};
+  return { p: _llArr(pts), c: o.color, w: o.weight, o: o.opacity };
+}
+const _PROJ_CAMPOS_FORA = new Set(['gmKey', 'demProxyUrl', 'searchInput']);
+function _projCampos() {
+  const out = {};
+  document.querySelectorAll('#ribbonPanels input[id], #ribbonPanels select[id], #ribbonPanels textarea[id]').forEach(el => {
+    if(_PROJ_CAMPOS_FORA.has(el.id) || el.type === 'file' || el.type === 'password' || el.type === 'button') return;
+    out[el.id] = (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
+  });
+  return out;
+}
+function _projTalhaoSer(t, ativo) {
+  return {
+    uid: t.uid, cor: t.cor, corLinha: t.corLinha, areaHa: t.areaHa, spacing: t.spacing, count: t.count, metrosLin: t.metrosLin,
+    baseLabelZoom: t.baseLabelZoom, polyPts: _llArr(t.polyPts), poliGuidePts: t.poliGuidePts ? _llArr(t.poliGuidePts) : null,
+    linhas: (t.linhas || []).map(_plSer), linhasDecl: (t.linhasDecl || []).map(_plSer),
+    direcaoManualPts: t.direcaoManualPts ? _llArr(t.direcaoManualPts) : null, direcaoManualBrg: t.direcaoManualBrg ?? null,
+    ativo: !!ativo
+  };
+}
+function _projMontar() {
+  const talhoes = talhoesArquivados.map(t => _projTalhaoSer(t, false));
+  if(polyPts.length >= 3) talhoes.push(_projTalhaoSer({
+    uid: null, cor: '#42a5f5', corLinha: corLinhaAtual, areaHa: areaHaAtual, spacing: spacingAtual, count: countLinhasAtual,
+    metrosLin: metrosLinAtual, baseLabelZoom, polyPts, poliGuidePts: poliGuidePtsAtual, linhas, linhasDecl
+  }, true));
+  const c = map.getCenter();
+  return {
+    formato: 'agrolinhas-projeto', versaoFormato: 1, app: ($('verLabel') || {}).textContent || '', salvoEm: new Date().toISOString(),
+    mapa: { lat: c.lat, lng: c.lng, zoom: map.getZoom() },
+    campos: _projCampos(),
+    talhoes,
+    areaCurvas: turfCurvaPoly ? { geo: turfCurvaPoly, pts: _llArr(curvaPolyPts) } : null,
+    curvasGeradas: _curvaGeradaCache || null,
+    curvasLocais: (_curvasLocais && _curvasLocais.contornosDecimados) ? _curvasLocais.contornosDecimados.map(cn => ({ p: cn.pontos.map(p => [_r7(p.lat), _r7(p.lng), Math.round(p.z * 1000) / 1000]) })) : null,
+    dem: _demLocal ? { nx: _demLocal.nx, ny: _demLocal.ny, minZ: _demLocal.minZ, maxZ: _demLocal.maxZ, noData: _demLocal.noData ?? null,
+      tl: _demLocal.cantoTL, tr: _demLocal.cantoTR, bl: _demLocal.cantoBL } : null,
+    ortofoto: _ortofotoLocal ? { larguraPx: _ortofotoLocal.larguraPx, alturaPx: _ortofotoLocal.alturaPx,
+      tl: _ortofotoLocal.cantoTL, tr: _ortofotoLocal.cantoTR, bl: _ortofotoLocal.cantoBL } : null
+  };
+}
+function _projTemConteudo() {
+  return talhoesArquivados.length > 0 || polyPts.length >= 3 || !!_curvaGeradaCache || !!turfCurvaPoly || !!_curvasLocais || !!_demLocal || !!_ortofotoLocal;
+}
+async function _projGerarBlob() {
+  const j = _projMontar();
+  if(typeof JSZip === 'undefined') return new Blob([JSON.stringify(j)], { type: 'application/json' }); // sem internet pro JSZip: JSON puro (o Abrir lê os dois)
+  const zip = new JSZip();
+  if(_demLocal && _demLocal.valores) zip.file('dem.bin', new Uint8Array(_demLocal.valores.buffer, _demLocal.valores.byteOffset, _demLocal.valores.byteLength));
+  if(_ortofotoLocal && _ortofotoLocal.dataUrl) {
+    const m = /^data:([^;]+);base64,(.*)$/.exec(_ortofotoLocal.dataUrl);
+    if(m) { zip.file('ortofoto.img', m[2], { base64: true }); j.ortofoto.mime = m[1]; }
+  }
+  zip.file('projeto.json', JSON.stringify(j));
+  return zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 }, mimeType: 'application/zip' });
+}
+
+// ── Assinatura barata do estado (pra "● alterações não salvas") ─────────────────────────────
+const _projIds = new WeakMap(); let _projIdSeq = 1;
+const _projId = o => { if(!o || typeof o !== 'object') return 0; if(!_projIds.has(o)) _projIds.set(o, _projIdSeq++); return _projIds.get(o); };
+function _projAssinatura() {
+  let h = 2166136261;
+  const mix = v => { const s = String(v); for(let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } h ^= 124; };
+  const linhasMix = arr => { mix(arr.length); arr.forEach(pl => { const o = pl.options || {}; mix(o.color); let ll; try { ll = pl.getLatLngs(); } catch(e) { ll = []; } mix(ll.length); if(ll.length) { const a = ll[0], b = ll[ll.length - 1]; if(a && a.lat != null) mix(a.lat.toFixed(6) + a.lng.toFixed(6) + b.lat.toFixed(6)); } }); };
+  talhoesArquivados.forEach(t => {
+    mix(t.uid); mix(t.cor); mix(t.corLinha); mix(t.spacing); mix(t.direcaoManualBrg);
+    mix(t.polyPts.length); t.polyPts.forEach(p => mix(p.lat.toFixed(7) + p.lng.toFixed(7)));
+    linhasMix(t.linhas); mix(t.linhasDecl.length);
+  });
+  mix('ativo'); mix(polyPts.length); polyPts.forEach(p => mix(p.lat.toFixed(7) + p.lng.toFixed(7))); linhasMix(linhas); mix(corLinhaAtual); mix(spacingAtual);
+  mix(_projId(_curvaGeradaCache)); mix(_projId(turfCurvaPoly)); mix(_projId(_curvasLocais)); mix(_projId(_demLocal)); mix(_projId(_ortofotoLocal));
+  if(_ortofotoLocal) mix(JSON.stringify([_ortofotoLocal.cantoTL, _ortofotoLocal.cantoTR, _ortofotoLocal.cantoBL]));
+  mix(JSON.stringify(_projCampos()));
+  return h >>> 0;
+}
+function _projSujo() { return PROJ.assin == null ? _projTemConteudo() : _projAssinatura() !== PROJ.assin; }
+const _projEsc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+function _projAtualizarRotulo() {
+  const el = $('projArqLbl'); if(!el) return;
+  let html = '';
+  if(PROJ.nome) {
+    const sujo = _projSujo();
+    const hora = PROJ.salvoEm ? ' às ' + PROJ.salvoEm.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
+    html = `<span class="pa ${sujo ? 'warn' : 'ok'}" onclick="projSalvar(false)" title="Arquivo do projeto — Salvar (Ctrl+S) grava por cima dele · Salvar como (Ctrl+Shift+S) cria outro">&#128190; ${_projEsc(PROJ.nome)} · ${sujo ? '&#9679; alterações não salvas' : '&#10003; salvo' + hora}</span>`;
+  } else if(_projTemConteudo()) {
+    html = `<span class="pa warn" onclick="projSalvar(false)" title="O projeto ainda não tem arquivo. Clique (ou Ctrl+S) e escolha onde guardar — depois cada Salvar atualiza esse mesmo arquivo.">&#9888; projeto não salvo (Ctrl+S)</span>`;
+  } else if(PROJ.recente) {
+    html = `<span class="pa rec" onclick="projReabrirRecente()" title="Reabre o último projeto salvo/aberto neste navegador">&#8634; Reabrir último projeto: ${_projEsc(PROJ.recente.name)}</span>`;
+  }
+  if(el.innerHTML !== html) el.innerHTML = html;
+}
+
+// ── Salvar ───────────────────────────────────────────────────────────────────────────────────
+function _projNomeSugerido() {
+  const nome = (($('rPropriedade') || {}).value || ($('monitorFazenda') || {}).value || ($('rCliente') || {}).value || 'projeto').trim() || 'projeto';
+  return nome.replace(/[\\/:*?"<>|]+/g, '-') + _PROJ_EXT;
+}
+async function projSalvar(como) {
+  if(PROJ.ocupado) return;
+  if(!_projTemConteudo() && !confirm('O projeto está vazio. Salvar mesmo assim' + (PROJ.fh && !como ? ` (vai substituir o conteúdo de "${PROJ.nome}")` : '') + '?')) return;
+  PROJ.ocupado = true;
+  try {
+    if(window.showSaveFilePicker) {
+      if(como || !PROJ.fh) {
+        let h;
+        const sug = PROJ.nome && como ? PROJ.nome.replace(/(\.agrolinhas)?$/i, ' - cópia' + _PROJ_EXT) : (PROJ.nome || _projNomeSugerido());
+        try { h = await showSaveFilePicker({ suggestedName: sug, types: _PROJ_TIPOS }); }
+        catch(e) { if(e && e.name === 'AbortError') return; throw e; }
+        PROJ.fh = h; PROJ.nome = h.name;
+      }
+      setStatus(`Salvando "${PROJ.nome}"…`, 'info');
+      const assinAntes = _projAssinatura();
+      const blob = await _projGerarBlob();
+      try {
+        let perm = await PROJ.fh.queryPermission({ mode: 'readwrite' });
+        if(perm !== 'granted') perm = await PROJ.fh.requestPermission({ mode: 'readwrite' });
+        if(perm !== 'granted') throw new Error('o navegador não deu permissão para gravar no arquivo');
+        const w = await PROJ.fh.createWritable();
+        try { await w.write(blob); await w.close(); }
+        catch(e) { try { await w.abort(); } catch(_) {} throw e; } // aborta: o arquivo anterior continua intacto
+      } catch(e) {
+        console.error('Salvar projeto', e);
+        baixarArquivo(blob, PROJ.nome || _projNomeSugerido(), 'application/zip');
+        setStatus(`⚠ Não consegui gravar direto em "${PROJ.nome}" (${e.message || e}) — baixei uma cópia do projeto na pasta Downloads pra você não perder nada.`, 'err');
+        return;
+      }
+      PROJ.salvoEm = new Date(); PROJ.assin = assinAntes;
+      _projIdbSet('ultimo', PROJ.fh).catch(() => {});
+      PROJ.recente = PROJ.fh;
+      setStatus(`✓ Projeto salvo em "${PROJ.nome}" às ${PROJ.salvoEm.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} (arquivo atualizado). Ctrl+S salva de novo no mesmo arquivo.`, 'ok');
+    } else {
+      // Navegador sem acesso a arquivos (Firefox/celular): só dá pra baixar uma cópia a cada vez.
+      const assinAntes = _projAssinatura();
+      const blob = await _projGerarBlob();
+      PROJ.nome = PROJ.nome || _projNomeSugerido();
+      baixarArquivo(blob, PROJ.nome, 'application/zip');
+      PROJ.salvoEm = new Date(); PROJ.assin = assinAntes;
+      setStatus(`✓ Projeto baixado como "${PROJ.nome}". (Este navegador não permite gravar sempre no mesmo arquivo — use Chrome ou Edge pra isso.)`, 'ok');
+    }
+  } catch(e) {
+    console.error('Salvar projeto', e);
+    setStatus('Erro ao salvar o projeto: ' + (e.message || e), 'err');
+  } finally { PROJ.ocupado = false; _projAtualizarRotulo(); }
+}
+
+// ── Abrir ────────────────────────────────────────────────────────────────────────────────────
+async function _projLerArquivo(file) {
+  const buf = await file.arrayBuffer();
+  const u8 = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
+  let j, demBuf = null, ortoB64 = null;
+  if(u8[0] === 0x50 && u8[1] === 0x4B) { // "PK" — zip
+    if(typeof JSZip === 'undefined') throw new Error('a biblioteca de compactação (JSZip) não carregou — verifique a internet');
+    const zip = await JSZip.loadAsync(buf);
+    const fj = zip.file('projeto.json'); if(!fj) throw new Error('não é um projeto do Agrolinhas (falta projeto.json)');
+    j = JSON.parse(await fj.async('text'));
+    if(zip.file('dem.bin')) demBuf = await zip.file('dem.bin').async('arraybuffer');
+    if(zip.file('ortofoto.img')) ortoB64 = await zip.file('ortofoto.img').async('base64');
+  } else j = JSON.parse(new TextDecoder().decode(buf));
+  if(!j || j.formato !== 'agrolinhas-projeto') throw new Error('não é um projeto do Agrolinhas');
+  return { j, demBuf, ortoB64 };
+}
+function _projLimparTudoSemPerguntar() {
+  _modoPickLinha = null;
+  limparTudo(); limparCurvas(); limparPoligonoCurva(); limparRegua();
+  talhaoSelecionadoUid = null;
+  if(typeof _zerarSelecaoTalhoesSilenciosa === 'function') _zerarSelecaoTalhoesSilenciosa();
+}
+function _projRestaurarTalhao(d) {
+  const pts = _arrLL(d.polyPts);
+  const linhasOk = (d.linhas || []).filter(l => l.p && l.p.length >= 2);
+  if(!_criarTalhaoArquivadoComLinhas('Talhão', pts, linhasOk.map(l => _arrLL(l.p)))) return null;
+  const t = talhoesArquivados[talhoesArquivados.length - 1];
+  if(d.uid != null && !talhoesArquivados.some(x => x !== t && x.uid === d.uid)) t.uid = d.uid;
+  if(t.uid >= nextTalhaoUid) nextTalhaoUid = t.uid + 1;
+  if(d.cor) { t.cor = d.cor; t.polyLayer.setStyle({ color: d.cor, fillColor: d.cor }); }
+  t.corLinha = d.corLinha || t.corLinha;
+  t.areaHa = d.areaHa ?? t.areaHa; t.spacing = d.spacing || 0; t.count = d.count ?? t.count; t.metrosLin = d.metrosLin ?? t.metrosLin;
+  if(d.baseLabelZoom) t.baseLabelZoom = d.baseLabelZoom;
+  t.poliGuidePts = d.poliGuidePts ? _arrLL(d.poliGuidePts) : null;
+  // cada linha com a SUA cor (setores) / espessura
+  linhasOk.forEach((l, i) => { const pl = t.linhas[i]; if(pl) pl.setStyle({ color: l.c || t.corLinha, weight: l.w || 1.5, opacity: l.o ?? .95 }); });
+  t.linhasDecl = (d.linhasDecl || []).filter(l => l.p && l.p.length >= 2).map(l => L.polyline(l.p, { color: l.c, weight: l.w || 2, opacity: l.o ?? .9 }).addTo(map));
+  if(d.direcaoManualPts) { t.direcaoManualPts = _arrLL(d.direcaoManualPts).map(p => L.latLng(p.lat, p.lng)); t.direcaoManualBrg = d.direcaoManualBrg; try { _desenharSetaSentido(t); } catch(e) {} }
+  return t;
+}
+async function _projAplicar(dados) {
+  const { j, demBuf, ortoB64 } = dados;
+  _projLimparTudoSemPerguntar();
+  const avisos = [];
+  // 1) configurações (antes de redesenhar curvas — a suavização salva vale pro redesenho)
+  Object.entries(j.campos || {}).forEach(([id, v]) => {
+    const el = document.getElementById(id); if(!el) return;
+    if(el.type === 'checkbox' || el.type === 'radio') el.checked = !!v; else el.value = v;
+  });
+  // 2) dados locais (DEM / ortofoto / curvas importadas)
+  if(j.dem && demBuf) {
+    try {
+      const valores = new Float32Array(demBuf);
+      const cantosGeo = { topleft: L.latLng(j.dem.tl), topright: L.latLng(j.dem.tr), bottomleft: L.latLng(j.dem.bl) };
+      const overlay = _construirOverlayDem(valores, j.dem.nx, j.dem.ny, j.dem.minZ, j.dem.maxZ, cantosGeo);
+      _demLocal = { valores, nx: j.dem.nx, ny: j.dem.ny, minZ: j.dem.minZ, maxZ: j.dem.maxZ, noData: j.dem.noData,
+        cantoTL: cantosGeo.topleft, cantoTR: cantosGeo.topright, cantoBL: cantosGeo.bottomleft,
+        bounds: _boundsDe3Cantos(cantosGeo.topleft, cantosGeo.topright, cantosGeo.bottomleft), overlay, sampler: null };
+      const st = $('demLocalStatus'); if(st) st.innerHTML = `✓ ${j.dem.nx}×${j.dem.ny}px · cotas ${j.dem.minZ.toFixed(1)}–${j.dem.maxZ.toFixed(1)}m (do projeto)`;
+      const b = $('btnRemoverDemLocal'); if(b) b.style.display = 'flex';
+      _atualizarIndicadorFonteElevacao();
+    } catch(e) { console.error(e); avisos.push('DEM não pôde ser restaurado'); }
+  }
+  if(j.ortofoto && ortoB64) {
+    try {
+      const dataUrl = `data:${j.ortofoto.mime || 'image/png'};base64,${ortoB64}`;
+      const tl = L.latLng(j.ortofoto.tl), tr = L.latLng(j.ortofoto.tr), bl = L.latLng(j.ortofoto.bl);
+      const overlay = L.imageOverlay.rotated(dataUrl, tl, tr, bl, { opacity: 1 }).addTo(map);
+      _ortofotoLocal = { overlay, bounds: _boundsDe3Cantos(tl, tr, bl), larguraPx: j.ortofoto.larguraPx, alturaPx: j.ortofoto.alturaPx, dataUrl, rotacionada: true, cantoTL: tl, cantoTR: tr, cantoBL: bl };
+      const st = $('tiffOrtoStatus'); if(st) st.innerHTML = `✓ ${j.ortofoto.larguraPx}×${j.ortofoto.alturaPx}px (do projeto)`;
+      const b = $('btnRemoverOrtofotoLocal'); if(b) b.style.display = 'flex';
+      _atualizarBotaoAlinharOrtofoto();
+    } catch(e) { console.error(e); avisos.push('ortofoto não pôde ser restaurada'); }
+  }
+  if(j.curvasLocais && j.curvasLocais.length) {
+    try { _finalizarImportacaoCurvas(j.curvasLocais.map(c => ({ pontos: c.p.map(([lat, lng, z]) => ({ lat, lng, z })) })), 0, ''); }
+    catch(e) { console.error(e); avisos.push('curvas importadas não puderam ser restauradas'); }
+  }
+  // 3) talhões (o que estava em edição volta pra edição)
+  let ativoUid = null, nTal = 0;
+  (j.talhoes || []).forEach(d => { const t = _projRestaurarTalhao(d); if(t) { nTal++; if(d.ativo) ativoUid = t.uid; } });
+  renumerarTalhoes(); _updateLabelScale();
+  if(talhoesArquivados.length) {
+    $('btnLimparArquivados').style.display = ''; $('btnDeclivTodos').disabled = false; $('btnComprimentoTodos').disabled = false;
+    $('btnKml').style.display = 'flex'; $('btnDxf').style.display = 'flex';
+  }
+  if(ativoUid != null) { try { selecionarTalhao(ativoUid); ativarTalhaoParaEdicao(); } catch(e) { console.error(e); } }
+  // 4) área de curvas + curvas geradas (redesenhadas pela grade salva — dá pra seguir mexendo na suavização)
+  if(j.areaCurvas && j.areaCurvas.geo) {
+    try {
+      turfCurvaPoly = j.areaCurvas.geo; turfCurvaBound = turf.polygonToLine(turfCurvaPoly);
+      curvaPolyPts = _arrLL(j.areaCurvas.pts).map(p => L.latLng(p.lat, p.lng));
+      const g = turfCurvaPoly.geometry;
+      const aneis = g.type === 'MultiPolygon' ? g.coordinates.map(p => p[0]) : [g.coordinates[0]];
+      curvaPolyLayer = L.polygon(aneis.map(r => r.map(([lng, lat]) => [lat, lng])), { color: '#26a69a', fillColor: '#1de9b6', fillOpacity: .05, weight: 2, interactive: false }).addTo(map);
+      $('btnLimparAreaCurva').style.display = 'flex';
+    } catch(e) { console.error(e); avisos.push('área de curvas não pôde ser restaurada'); }
+  }
+  if(j.curvasGeradas) {
+    try { _curvaGeradaCache = j.curvasGeradas; _redesenharCurvasGeradas(); }
+    catch(e) { console.error(e); _curvaGeradaCache = null; avisos.push('curvas de nível geradas não puderam ser redesenhadas'); }
+  }
+  if(turfCurvaPoly || turfPoly || _curvaGeradaCache) $('btnCurvas').disabled = false;
+  try { _aplicarTodasCamadas(); } catch(e) {}
+  try { _garantirCurvasNoTopo(); } catch(e) {}
+  if(j.mapa) map.setView([j.mapa.lat, j.mapa.lng], j.mapa.zoom);
+  return { nTal, avisos };
+}
+async function _projAbrirHandleOuArquivo(handle, file) {
+  if(_projTemConteudo() && _projSujo() && !confirm('O projeto atual tem alterações não salvas que serão perdidas. Abrir o outro projeto mesmo assim?')) return false;
+  setStatus('Abrindo projeto…', 'info');
+  let dados;
+  try { dados = await _projLerArquivo(file); }
+  catch(e) { setStatus('Não consegui abrir o projeto: ' + (e.message || e), 'err'); return false; }
+  let r;
+  try { r = await _projAplicar(dados); }
+  catch(e) { console.error('Abrir projeto', e); setStatus('Erro ao montar o projeto: ' + (e.message || e), 'err'); return false; }
+  PROJ.fh = handle || null; PROJ.nome = file.name; PROJ.salvoEm = dados.j.salvoEm ? new Date(dados.j.salvoEm) : null;
+  PROJ.assin = _projAssinatura();
+  if(handle) { _projIdbSet('ultimo', handle).catch(() => {}); PROJ.recente = handle; }
+  _projAtualizarRotulo();
+  setStatus(`✓ Projeto "${file.name}" aberto — ${r.nTal} talhão(ões).${r.avisos.length ? ' ⚠ ' + r.avisos.join('; ') + '.' : ''}${handle ? ' Ctrl+S salva por cima deste arquivo.' : ' (Aberto sem vínculo com o arquivo — o próximo Salvar pergunta onde gravar.)'}`, r.avisos.length ? 'err' : 'ok');
+  return true;
+}
+async function projAbrir() {
+  if(window.showOpenFilePicker) {
+    let h;
+    try { [h] = await showOpenFilePicker({ types: _PROJ_TIPOS, multiple: false }); }
+    catch(e) { if(e && e.name === 'AbortError') return; console.warn(e); $('inputProjetoArq').click(); return; }
+    await _projAbrirHandleOuArquivo(h, await h.getFile());
+  } else $('inputProjetoArq').click();
+}
+async function projReabrirRecente() {
+  const h = PROJ.recente; if(!h) return projAbrir();
+  try {
+    let perm = await h.queryPermission({ mode: 'readwrite' });
+    if(perm !== 'granted') perm = await h.requestPermission({ mode: 'readwrite' });
+    if(perm !== 'granted') { setStatus('O navegador não liberou o acesso ao arquivo — use "Abrir Projeto".', 'err'); return; }
+    await _projAbrirHandleOuArquivo(h, await h.getFile());
+  } catch(e) { setStatus(`Não consegui reabrir "${h.name}" (${e.message || e}) — ele pode ter sido movido ou renomeado. Use "Abrir Projeto".`, 'err'); }
+}
+
+// ── Ligações ─────────────────────────────────────────────────────────────────────────────────
+(function _projInstalar() {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.id = 'inputProjetoArq'; inp.accept = _PROJ_EXT + ',.json,.zip'; inp.style.display = 'none';
+  inp.onchange = () => { const f = inp.files[0]; inp.value = ''; if(f) _projAbrirHandleOuArquivo(null, f); };
+  document.body.appendChild(inp);
+  // Ctrl+S / Ctrl+Shift+S / Ctrl+O (sempre previne o "salvar página" do navegador)
+  document.addEventListener('keydown', e => {
+    if(!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    const k = (e.key || '').toLowerCase();
+    if(k === 's') { e.preventDefault(); projSalvar(e.shiftKey); }
+    else if(k === 'o') { e.preventDefault(); projAbrir(); }
+  });
+  // Novo Projeto solta o arquivo (o próximo Salvar pergunta onde gravar de novo)
+  const origNovo = _executarNovoProjeto;
+  _executarNovoProjeto = function() { const r = origNovo.apply(this, arguments); PROJ.fh = null; PROJ.nome = null; PROJ.salvoEm = null; PROJ.assin = null; _projAtualizarRotulo(); return r; };
+  window.addEventListener('beforeunload', e => { if(_projTemConteudo() && _projSujo()) { e.preventDefault(); e.returnValue = ''; } });
+  _projIdbGet('ultimo').then(h => { if(h && h.name) PROJ.recente = h; _projAtualizarRotulo(); }).catch(() => _projAtualizarRotulo());
+  setInterval(_projAtualizarRotulo, 1500);
+})();
 </script>
 </body>
 </html>
