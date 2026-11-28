@@ -156,7 +156,7 @@ main{flex:1;min-height:0;position:relative}
   <button id="btnMeus" title="Abrir um protocolo já enviado (planilha online)" style="display:none">Meus protocolos</button>
   <button id="btnNovo" title="Limpar tudo e começar um protocolo novo">Novo</button>
   <button id="btnAbrir" title="Abrir um protocolo exportado (.zip ou .kml) ou um KML de talhões">Abrir…</button>
-  <input type="file" id="fileAbrir" accept=".zip,.kml" hidden>
+  <input type="file" id="fileAbrir" accept=".zip,.kml,.gz,.json,application/gzip,application/json,application/zip,application/vnd.google-earth.kml+xml" hidden>
 </header>
 <nav class="tabs">
   <button data-p="paneForm" class="on">1. Protocolo</button>
@@ -214,6 +214,7 @@ main{flex:1;min-height:0;position:relative}
           <button class="btn pri" id="expZip">&#128230; Baixar pasta compactada (PDF + KML)</button>
           <button class="btn sec" id="expPdf">Só PDF</button>
           <button class="btn sec" id="expKml">Só KML</button>
+          <button class="btn sec" id="expBkp" title="Arquivo pequeno com o protocolo completo (formulário + croqui + número). Reabre pelo botão Abrir…">&#128190; Backup leve</button>
         </div>
         <div id="status"></div>
         <p class="dica">O arquivo .zip já vem com o nome do assunto e está pronto para anexar no e-mail para a engenharia.
@@ -254,8 +255,10 @@ main{flex:1;min-height:0;position:relative}
                     "Não se aplica"; exportação bloqueada enquanto houver campo obrigatório em branco
    v1.7 2026-11-27  observações na bomba de recalque; polígono azul de ampliação futura; numeração única
                     (CÓDIGO-AAMM-SEQ + revisão Rn) e histórico em planilha Google via Apps Script
-   v1.8 2026-11-27  planilha online ligada (URL do App da Web) */
-const APP_VERSION = 'v1.8';
+   v1.8 2026-11-27  planilha online ligada (URL do App da Web)
+   v1.9 2026-11-28  formato leve (coordenadas 1 cm + gzip, ~5x menor); dados de cada revisão em arquivo no Drive
+                    (planilha vira só índice); botão Backup leve (.json.gz) que reabre pelo Abrir… */
+const APP_VERSION = 'v1.9';
 const MAPS_KEY = 'AIzaSyD9gjUQfQroOs5tvObcqESlB6Wb9YKMoaw';
 const STORE = 'protocolo_bi_v1';
 document.getElementById('verTag').textContent = APP_VERSION;
@@ -1369,7 +1372,29 @@ const LS_CONS='protocolo_bi_consultores', LS_PIN='protocolo_bi_pin_';
 let consultores = (()=>{ try{ return JSON.parse(localStorage.getItem(LS_CONS)||'[]'); }catch(e){ return []; } })();
 const numeroCompleto = () => S.proto?.numero ? S.proto.numero + (S.proto.rev ? ' R'+S.proto.rev : '') : '';
 function hashTxt(t){ let h=2166136261; for(let i=0;i<t.length;i++){ h^=t.charCodeAt(i); h=Math.imul(h,16777619); } return 'h'+(h>>>0).toString(36); }
-const hashDados = () => hashTxt(JSON.stringify({form:S.form, items:S.items}));
+/* formato leve (v2): coordenadas arredondadas a 1 cm em pares [lat,lng]; compactado com gzip ao salvar */
+function empacotar(){
+  return {v:2, form:S.form, items:S.items.map(i=>{ const o={...i}; delete o.path; o.p=i.path.map(q=>[+q.lat.toFixed(7), +q.lng.toFixed(7)]); return o; })};
+}
+function desempacotar(d){
+  const items=(d.items||[]).map(i=>{ if(!i.p) return i; const o={...i, path:i.p.map(a=>({lat:a[0], lng:a[1]}))}; delete o.p; return o; });
+  return {form:d.form||{}, items, proto:d.proto||null};
+}
+let servidorV = 1;   // versão do script da planilha (2 = arquivos .json.gz no Drive)
+const temGzip = () => typeof CompressionStream!=='undefined' && typeof DecompressionStream!=='undefined';
+function b64DeBytes(u8){ let s=''; for(let i=0;i<u8.length;i+=0x8000) s+=String.fromCharCode.apply(null, u8.subarray(i,i+0x8000)); return btoa(s); }
+async function gzipBytes(txt){ return new Uint8Array(await new Response(new Blob([txt]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer()); }
+async function gunzipTexto(bytes){ return await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text(); }
+const hashDados = () => hashTxt(JSON.stringify(empacotar()));
+/* coloca um protocolo (vindo da planilha, de backup ou de KML) na tela */
+function carregarEstado(d, proto){
+  Object.values(ov).forEach(o=>o.setMap(null)); ov={}; selId=null; if(perfAtual) fecharPerfil();
+  S={form:d.form||{}, items:d.items||[], view:null, encaixe:S.encaixe};
+  seq=S.items.reduce((m,i)=>Math.max(m,i.id||0),0)+1;
+  S.items.forEach((i,k)=>{ if(!i.id) i.id=seq++; });
+  S.proto = proto ? {...proto, hash: proto.hash || hashDados()} : null;
+  salvar(); montarForm(); if(map){ S.items.forEach(criarOverlay); enquadrar(); } renderLista(); atualizarEnvio(); mostrarNumero();
+}
 const codigoConsultor = () => consultores.find(c=>c.nome===S.form.consultor)?.codigo || '';
 async function api(params, post){
   if(!PLANILHA_URL) throw new Error('planilha não configurada');
@@ -1393,7 +1418,7 @@ function infoNumero(){
 /* consultores vêm da aba "Consultores" da planilha → o campo vira lista suspensa */
 async function carregarConsultores(){
   if(!PLANILHA_URL) return;
-  try{ const j=await api({acao:'consultores'}); consultores=j.consultores||[]; localStorage.setItem(LS_CONS, JSON.stringify(consultores)); }catch(e){}
+  try{ const j=await api({acao:'consultores'}); servidorV=j.versao||1; consultores=j.consultores||[]; localStorage.setItem(LS_CONS, JSON.stringify(consultores)); }catch(e){}
   aplicarConsultores(); atualizarEnvio();
 }
 function aplicarConsultores(){
@@ -1421,15 +1446,21 @@ async function comPin(codigo, fn){
   }
 }
 /* gera o número (1º envio) ou uma nova revisão (se o projeto mudou desde o último envio) */
+async function pacoteParaEnvio(){
+  const txt=JSON.stringify(empacotar());
+  if(servidorV>=2 && temGzip()){ try{ return {fmt:'gz64', dados:b64DeBytes(await gzipBytes(txt))}; }catch(e){} }
+  return {fmt:'json', dados:txt};
+}
 async function registrar(){
   const codigo=codigoConsultor();
   if(!codigo) throw new Error('consultor não encontrado na planilha — escolha o consultor na lista');
   const h=hashDados();
   if(S.proto?.numero && S.proto.hash===h) return;
   const f=S.form;
+  const pac = await pacoteParaEnvio();
   const j = await comPin(codigo, pin=>api({acao:'salvar', codigo, pin, numero:S.proto?.numero||'', hash:h,
     resumo:{data:f.data, consultor:f.consultor, cliente:f.nome, propriedade:f.propriedade, municipio:f.municipio, area:f.area, tipo:f.tipoOrc},
-    dados:JSON.stringify({form:S.form, items:S.items})}, true));
+    ...pac}, true));
   S.proto={numero:j.numero, rev:j.rev, hash:h}; salvar(); mostrarNumero();
 }
 /* "Meus protocolos": lista do consultor na planilha → abre para alterar (mesmo número, nova revisão) */
@@ -1457,14 +1488,12 @@ async function meusProtocolos(){
 async function abrirDaPlanilha(codigo, numero){
   if((S.items.length || S.form.nome) && !confirm(`Abrir o protocolo ${numero}? O protocolo que está na tela será substituído (exporte antes se precisar).`)) return;
   try{
-    const j=await comPin(codigo, pin=>api({acao:'abrir', codigo, pin, numero}));
-    const d=JSON.parse(j.dados);
-    Object.values(ov).forEach(o=>o.setMap(null)); ov={}; selId=null; if(perfAtual) fecharPerfil();
-    S={form:d.form||{}, items:d.items||[], view:null, encaixe:S.encaixe};
-    S.proto={numero:j.numero, rev:j.rev, hash:hashDados()};
+    const j=await comPin(codigo, pin=>api({acao:'abrir', codigo, pin, numero, gz:temGzip()?'1':''}));
+    const txt = j.fmt==='gz64' ? await gunzipTexto(Uint8Array.from(atob(j.dados), c=>c.charCodeAt(0))) : j.dados;
+    const d=desempacotar(JSON.parse(txt));
+    carregarEstado(d, {numero:j.numero, rev:j.rev});
     S.form.tipoOrc='Atualização de Orçamento';   // reaberto para alterar → atualização (próximo envio = nova revisão)
-    seq=S.items.reduce((m,i)=>Math.max(m,i.id),0)+1;
-    salvar(); montarForm(); if(map){ S.items.forEach(criarOverlay); enquadrar(); } renderLista(); atualizarEnvio(); mostrarNumero();
+    salvar(); montarForm(); atualizarEnvio();
     $('modalLista').classList.remove('on');
     document.querySelector('nav.tabs button[data-p="paneForm"]').click();
     aviso(`Protocolo <b>${esc(j.numero)}${j.rev?' R'+j.rev:''}</b> aberto. Ao exportar com alterações, ele sai como revisão <b>R${j.rev+1}</b>.`);
@@ -1506,6 +1535,12 @@ async function exportar(modo){
   }catch(e){ console.error(e); st.textContent='Erro ao exportar: '+e.message; }
 }
 function esperarMapa(){ return new Promise(r=>{ const t=setInterval(()=>{ if(window.google?.maps?.geometry){clearInterval(t);r();} },200); setTimeout(()=>{clearInterval(t);r();},15000); }); }
+$('expBkp').onclick=async()=>{   // não exige campos obrigatórios: serve para nunca perder o trabalho
+  const txt=JSON.stringify({...empacotar(), proto:S.proto||null});
+  const nome=nomeArquivo()+' - backup';
+  try{ if(temGzip()){ baixar(new Blob([await gzipBytes(txt)],{type:'application/gzip'}), nome+'.json.gz'); $('status').textContent='Backup leve gerado (.json.gz).'; return; } }catch(e){}
+  baixar(new Blob([txt],{type:'application/json'}), nome+'.json'); $('status').textContent='Backup gerado (.json).';
+};
 $('expZip').onclick=()=>exportar('zip'); $('expPdf').onclick=()=>exportar('pdf'); $('expKml').onclick=()=>exportar('kml');
 
 /* ======================= NOVO / ABRIR ======================= */
@@ -1519,6 +1554,16 @@ $('fileAbrir').onchange=async e=>{
   const f=e.target.files[0]; e.target.value=''; if(!f) return;
   try{
     let txt;
+    if(/\.(json\.gz|gz|json)$/i.test(f.name)){   // backup leve
+      const bytes=new Uint8Array(await f.arrayBuffer());
+      const t = (bytes[0]===0x1f && bytes[1]===0x8b) ? await gunzipTexto(bytes) : new TextDecoder().decode(bytes);
+      const d=desempacotar(JSON.parse(t));
+      if((S.items.length || S.form.nome) && !confirm('Abrir este backup? O protocolo que está na tela será substituído.')) return;
+      carregarEstado(d, d.proto);
+      document.querySelector('nav.tabs button[data-p="paneForm"]').click();
+      aviso(`Backup aberto${d.proto?.numero?` — protocolo <b>${esc(d.proto.numero)}${d.proto.rev?' R'+d.proto.rev:''}</b>`:''}.`);
+      return;
+    }
     if(/\.zip$/i.test(f.name)){ const z=await JSZip.loadAsync(f); const k=Object.keys(z.files).find(n=>/\.kml$/i.test(n)); if(!k) throw new Error('o .zip não tem KML'); txt=await z.files[k].async('string'); }
     else txt=await f.text();
     importarKML(txt);
